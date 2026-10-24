@@ -2,6 +2,8 @@ import { useState } from "react";
 import { Check, ShieldAlert } from "lucide-react";
 import type { ApprovalDecision, ApprovalRequest } from "../cw.js";
 import { useAppStore } from "../stores/appStore.js";
+import { ipcErrorMessage } from "./ipcError.js";
+import { useNotifs } from "./Notifications.js";
 import { shortenHome } from "./pathDisplay.js";
 
 function ApprovalPanel({ request, position, total }: { request: ApprovalRequest; position: number; total: number }) {
@@ -16,7 +18,10 @@ function ApprovalPanel({ request, position, total }: { request: ApprovalRequest;
   const act = (decision: ApprovalDecision) => {
     if (chosen !== null) return;
     setChosen(decision);
-    void respond(request.requestId, decision).catch(() => setChosen(null));
+    void respond(request.requestId, decision).catch((err) => {
+      setChosen(null);
+      useNotifs.getState().push({ kind: "error", title: "Could not send the approval", message: ipcErrorMessage(err) });
+    });
   };
 
   return (

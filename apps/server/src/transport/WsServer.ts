@@ -7,13 +7,16 @@ import {
   CLOSE_UNAUTHORIZED,
   PROTOCOL_VERSION
 } from "@cw-code/shared/protocol";
-import { randomUUID, timingSafeEqual } from "node:crypto";
-import { toRpcError, type CallContext, type Router } from "./Router.js";
+import { randomUUID } from "node:crypto";
+import { connectHost } from "./bindPolicy.js";
+import { toRpcError, type CallContext, type ClientAuth, type Router } from "./Router.js";
 
 export interface WsServerOptions {
   host: string;
   port: number;
-  token: string;
+  authorize(token: string): ClientAuth | null;
+  isOriginAllowed?(origin: string | null, hostHeader: string | null): boolean;
+  onOriginRejected?(origin: string | null): void;
   version: string;
   router: Router;
   helloTimeoutMs?: number;
@@ -34,6 +37,8 @@ const MAX_PAYLOAD_BYTES = 64 * 1024 * 1024;
 const DEFAULT_HELLO_TIMEOUT_MS = 5000;
 const SOCKET_OPEN = 1;
 const SEND_DROPPED = 0;
+const MAX_TOKEN_LENGTH = 256;
+const DESKTOP_CLIENT_KINDS = new Set<string>(["desktop-ui", "desktop-shell"] satisfies ClientKind[]);
 const CLIENT_KINDS = new Set<string>(["desktop-ui", "desktop-shell", "web"] satisfies ClientKind[]);
 
 function parseJsonObject(raw: string | Buffer): Record<string, unknown> | null {
@@ -59,12 +64,6 @@ function asCall(message: Record<string, unknown>): CallMessage | null {
   return message as CallMessage;
 }
 
-function tokensEqual(expected: string, received: string): boolean {
-  const a = Buffer.from(expected);
-  const b = Buffer.from(received);
-  return a.length === b.length && timingSafeEqual(a, b);
-}
-
 export function sendRaw(ws: FrameSink, data: string): void {
   if (ws.readyState !== SOCKET_OPEN) return;
   let sent: number;
@@ -87,6 +86,8 @@ export function wsUrl(host: string, port: number): string {
 export class WsServer {
   private server: Bun.Server<SocketData> | null = null;
   private sockets = new Set<Socket>();
+  private socketsByClient = new Map<string, Socket>();
+  private acceptedListeners = new Set<(ctx: CallContext) => void>();
   private closedListeners = new Set<(ctx: CallContext) => void>();
   private readonly helloTimeoutMs: number;
 
@@ -101,6 +102,11 @@ export class WsServer {
       port: this.options.port,
       fetch: (req, srv) => {
         if (new URL(req.url).pathname !== WS_PATH) return new Response("not found", { status: 404 });
+        const origin = req.headers.get("origin");
+        if (this.options.isOriginAllowed && !this.options.isOriginAllowed(origin, req.headers.get("host"))) {
+          this.options.onOriginRejected?.(origin);
+          return new Response("forbidden", { status: 403 });
+        }
         if (srv.upgrade(req, { data: { ctx: null, helloTimer: null } })) return undefined;
         return new Response("upgrade required", { status: 426 });
       },
@@ -114,7 +120,7 @@ export class WsServer {
     });
     this.server = server;
     const port = server.port ?? this.options.port;
-    return { port, url: wsUrl(this.options.host, port) };
+    return { port, url: wsUrl(connectHost(this.options.host), port) };
   }
 
   broadcast(channel: string, payload: unknown, accept?: (ctx: CallContext) => boolean): void {
@@ -123,6 +129,36 @@ export class WsServer {
       const ctx = ws.data.ctx;
       if (ctx && (!accept || accept(ctx))) sendRaw(ws, data);
     }
+  }
+
+  sendTo(clientIds: Iterable<string>, channel: string, payload: unknown): void {
+    const data = JSON.stringify({ t: "event", channel, payload } satisfies ServerMessage);
+    for (const clientId of clientIds) {
+      const ws = this.socketsByClient.get(clientId);
+      if (ws) sendRaw(ws, data);
+    }
+  }
+
+  isConnected(clientId: string): boolean {
+    return this.socketsByClient.has(clientId);
+  }
+
+  closeClients(match: (ctx: CallContext) => boolean, code: number, reason: string): number {
+    let closed = 0;
+    for (const ws of [...this.sockets]) {
+      const ctx = ws.data.ctx;
+      if (!ctx || !match(ctx)) continue;
+      ws.close(code, reason);
+      closed += 1;
+    }
+    return closed;
+  }
+
+  onClientAccepted(cb: (ctx: CallContext) => void): () => void {
+    this.acceptedListeners.add(cb);
+    return () => {
+      this.acceptedListeners.delete(cb);
+    };
   }
 
   onClientClosed(cb: (ctx: CallContext) => void): () => void {
@@ -154,15 +190,19 @@ export class WsServer {
 
   private onClose(ws: Socket): void {
     this.sockets.delete(ws);
+    if (ws.data.ctx && this.socketsByClient.get(ws.data.ctx.clientId) === ws) this.socketsByClient.delete(ws.data.ctx.clientId);
     if (ws.data.helloTimer) clearTimeout(ws.data.helloTimer);
     ws.data.helloTimer = null;
     const ctx = ws.data.ctx;
-    if (!ctx) return;
-    for (const cb of [...this.closedListeners]) {
+    if (ctx) this.notify(this.closedListeners, ctx, "client-closed");
+  }
+
+  private notify(listeners: Set<(ctx: CallContext) => void>, ctx: CallContext, label: string): void {
+    for (const cb of [...listeners]) {
       try {
         cb(ctx);
       } catch (error) {
-        console.warn(`client-closed listener failed: ${(error as Error).message}`);
+        console.warn(`${label} listener failed: ${error instanceof Error ? error.message : String(error)}`);
       }
     }
   }
@@ -183,7 +223,7 @@ export class WsServer {
 
   private authenticate(ws: Socket, message: Record<string, unknown> | null): void {
     const hello = asHello(message);
-    if (!hello || !tokensEqual(this.options.token, hello.token)) {
+    if (!hello || hello.token.length > MAX_TOKEN_LENGTH) {
       ws.close(CLOSE_UNAUTHORIZED, "unauthorized");
       return;
     }
@@ -191,11 +231,19 @@ export class WsServer {
       ws.close(CLOSE_PROTOCOL_MISMATCH, "protocol mismatch");
       return;
     }
+    const auth = this.options.authorize(hello.token);
+    if (!auth || (auth.kind === "device" && DESKTOP_CLIENT_KINDS.has(hello.client))) {
+      ws.close(CLOSE_UNAUTHORIZED, "unauthorized");
+      return;
+    }
     if (ws.data.helloTimer) clearTimeout(ws.data.helloTimer);
     ws.data.helloTimer = null;
-    ws.data.ctx = { clientId: randomUUID(), client: hello.client };
-    const welcome: ServerMessage = { t: "welcome", protocol: PROTOCOL_VERSION, serverVersion: this.options.version, clientId: ws.data.ctx.clientId };
+    const ctx: CallContext = { clientId: randomUUID(), client: hello.client, auth };
+    ws.data.ctx = ctx;
+    this.socketsByClient.set(ctx.clientId, ws);
+    const welcome: ServerMessage = { t: "welcome", protocol: PROTOCOL_VERSION, serverVersion: this.options.version, clientId: ctx.clientId };
     sendRaw(ws, JSON.stringify(welcome));
+    this.notify(this.acceptedListeners, ctx, "client-accepted");
   }
 
   private async runCall(ws: Socket, ctx: CallContext, call: CallMessage): Promise<void> {

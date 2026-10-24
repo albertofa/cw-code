@@ -61,6 +61,7 @@ const SETTINGS: AppSettings = {
   panelAnimationMs: 0,
   themeId: "dark",
   customThemes: [],
+  serverBindHost: "",
   notificationSounds: {
     done: { enabled: true, sound: "felt-chord", volume: 60 },
     question: { enabled: true, sound: "triple-tap", volume: 60 },

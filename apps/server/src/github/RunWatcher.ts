@@ -11,7 +11,7 @@ const MIN_RATE_LIMIT_DELAY_MS = 60_000;
 const RUN_POLL_CONCURRENCY = 4;
 const NOTIFICATIONS_SCOPE = "notifications";
 
-function runKey(ref: RunRef): string {
+export function runKey(ref: RunRef): string {
   return `${ref.host}/${ref.owner}/${ref.repo}/runs/${ref.runId}`.toLowerCase();
 }
 

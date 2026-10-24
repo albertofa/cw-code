@@ -1,6 +1,19 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { ServerClient } from "@cw-code/client";
-import type { AppSettings, ServerReady, StartupState } from "@cw-code/contracts";
+import type {
+  AppNotice,
+  AppSettings,
+  ClientKind,
+  DeviceCreateResult,
+  DeviceInfo,
+  PrSummary,
+  Project,
+  ServerReady,
+  SessionMeta,
+  ShutdownPrepareResult,
+  ShutdownStatus,
+  StartupState
+} from "@cw-code/contracts";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -18,9 +31,9 @@ let server: ServerProcess;
 let ready: ServerReady;
 let token = "";
 
-function spawnServer(): ServerProcess {
-  const proc = Bun.spawn([process.execPath, ENTRY, "--port", "0"], {
-    env: { ...process.env, CW_CODE_HOME: home },
+function spawnServer(serverHome = home, extraArgs: string[] = []): ServerProcess {
+  const proc = Bun.spawn([process.execPath, ENTRY, "--port", "0", ...extraArgs], {
+    env: { ...process.env, CW_CODE_HOME: serverHome },
     stdin: "ignore",
     stdout: "pipe",
     stderr: "pipe"
@@ -55,8 +68,8 @@ async function readTaggedLine(proc: ServerProcess, tag: string): Promise<string>
   }
 }
 
-async function connect(): Promise<ServerClient> {
-  const client = new ServerClient({ endpoint: { url: ready.url, token }, client: "desktop-ui" });
+async function connect(clientToken = token, kind: ClientKind = "desktop-ui", url = ready.url): Promise<ServerClient> {
+  const client = new ServerClient({ endpoint: { url, token: clientToken }, client: kind });
   clients.push(client);
   await client.connect();
   return client;
@@ -121,6 +134,97 @@ describe("server process", () => {
     expect((await changed).claudeReasoningExpanded).toBe(next);
   });
 
+  it("accepts topic subscriptions and rejects pty topics", async () => {
+    const client = await connect();
+    expect(await client.call("topics.subscribe", { topics: ["sidebar"] })).toEqual({});
+    await expect(client.call("topics.subscribe", { topics: ["pty/x:shell"] })).rejects.toMatchObject({ code: "invalid-topic" });
+    await expect(client.call("topics.unsubscribe", { topics: ["pty/x:shell"] })).rejects.toMatchObject({ code: "invalid-topic" });
+    expect(await client.call("topics.unsubscribe", { topics: ["sidebar", "app"] })).toBeNull();
+  });
+
+  it("pushes tracked PRs only to the subscriber and still broadcasts settings", async () => {
+    const subscriber = await connect();
+    const bystander = await connect();
+    const pushed: PrSummary[][] = [];
+    const leaked: unknown[] = [];
+    subscriber.on("prs.tracked", (payload) => pushed.push(payload as PrSummary[]));
+    bystander.on("prs.tracked", (payload) => leaked.push(payload));
+    expect(await subscriber.call("topics.subscribe", { topics: ["prs"] })).toEqual({});
+    expect(pushed).toEqual([[]]);
+
+    const settingsSeen = (client: ServerClient) =>
+      new Promise<AppSettings>((resolve) => {
+        client.on("settings.changed", (payload) => resolve(payload as AppSettings));
+      });
+    const both = Promise.all([settingsSeen(subscriber), settingsSeen(bystander)]);
+    const current = await subscriber.call<AppSettings>("settings.get");
+    await subscriber.call("settings.set", { claudeReasoningExpanded: !current.claudeReasoningExpanded });
+    for (const seen of await both) expect(seen.claudeReasoningExpanded).toBe(!current.claudeReasoningExpanded);
+    expect(leaked).toEqual([]);
+  });
+
+  it("broadcasts project and session mutations only to sidebar subscribers", async () => {
+    const watcher = await connect();
+    const bystander = await connect();
+    const projectsSeen: Project[] = [];
+    const sessionsSeen: SessionMeta[] = [];
+    const leaked: unknown[] = [];
+    watcher.on("projects.changed", (payload) => projectsSeen.push(payload as Project));
+    watcher.on("session.updated", (payload) => sessionsSeen.push(payload as SessionMeta));
+    bystander.on("projects.changed", (payload) => leaked.push(payload));
+    bystander.on("session.updated", (payload) => leaked.push(payload));
+    await watcher.call("topics.subscribe", { topics: ["sidebar"] });
+
+    const root = mkdtempSync(join(tmpdir(), "cw-sidebar-"));
+    try {
+      const project = await bystander.call<Project>("projects.add", root);
+      const session = await bystander.call<SessionMeta>("sessions.create", { projectId: project.id, driver: "claude" });
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      expect(projectsSeen.map((seen) => seen.id)).toEqual([project.id]);
+      expect(sessionsSeen.map((seen) => seen.id)).toEqual([session.id]);
+      expect(leaked).toEqual([]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("lets only the owner manage device tokens and closes a revoked device with 4401", async () => {
+    const owner = await connect();
+    const created = await owner.call<DeviceCreateResult>("devices.create", { name: "Phone" });
+    expect(created.device).toMatchObject({ name: "Phone", connected: false });
+    expect(readFileSync(join(home, "userdata", "devices.json"), "utf8")).not.toContain(created.token);
+
+    await owner.call("topics.subscribe", { topics: ["app"] });
+    const deviceSeen = new Promise<DeviceInfo[]>((resolve) => {
+      const off = owner.on("devices.changed", (payload) => {
+        const infos = payload as DeviceInfo[];
+        if (!infos.some((info) => info.id === created.device.id && info.connected)) return;
+        off();
+        resolve(infos);
+      });
+    });
+    const device = await connect(created.token, "web");
+    expect((await deviceSeen).find((info) => info.id === created.device.id)?.lastSeenAt).not.toBeNull();
+    await expect(device.call("settings.set", { serverBindHost: "0.0.0.0" })).rejects.toMatchObject({ code: "forbidden" });
+    await expect(device.call("devices.create", { name: "Rogue" })).rejects.toMatchObject({ code: "forbidden" });
+    await expect(device.call("devices.revoke", { id: created.device.id })).rejects.toMatchObject({ code: "forbidden" });
+    expect((await device.call<DeviceInfo[]>("devices.list")).map((info) => info.id)).toContain(created.device.id);
+
+    const changed = new Promise<DeviceInfo[]>((resolve) => {
+      owner.on("devices.changed", (payload) => resolve(payload as DeviceInfo[]));
+    });
+    const closed = new Promise<void>((resolve) => {
+      device.onState((state) => {
+        if (state === "closed") resolve();
+      });
+    });
+    await owner.call("devices.revoke", { id: created.device.id });
+    await closed;
+    expect(device.lastError?.code).toBe("unauthorized");
+    expect((await changed).some((info) => info.id === created.device.id)).toBe(false);
+    await expect(connect(created.token, "web")).rejects.toMatchObject({ code: "unauthorized" });
+  });
+
   it("refuses to start a second server on the same home", async () => {
     const second = spawnServer();
     const running = JSON.parse(await readTaggedLine(second, "CW_SERVER_RUNNING")) as ServerReady;
@@ -134,4 +238,88 @@ describe("server process", () => {
     expect(await exitWithin(server, 15_000)).toBe(0);
     expect(existsSync(join(home, "userdata", "server.json"))).toBe(false);
   }, 20_000);
+});
+
+describe("bind host policy", () => {
+  const homes: string[] = [];
+
+  function freshHome(): string {
+    const dir = mkdtempSync(join(tmpdir(), "cw-server-bind-"));
+    homes.push(dir);
+    return dir;
+  }
+
+  afterAll(async () => {
+    await Bun.sleep(200);
+    for (const dir of homes) rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("exits 1 when the --host flag asks for a non-loopback host without device tokens", async () => {
+    const proc = spawnServer(freshHome(), ["--host", "0.0.0.0"]);
+    expect(await exitWithin(proc, STARTUP_TIMEOUT_MS)).toBe(1);
+  }, STARTUP_TIMEOUT_MS + 5_000);
+
+  it("falls back to loopback and notifies the shell when the setting asks for a non-loopback host without device tokens", async () => {
+    const dir = freshHome();
+    const first = spawnServer(dir);
+    const firstReady = JSON.parse(await readTaggedLine(first, "CW_SERVER_READY")) as ServerReady;
+    const ownerToken = readFileSync(join(dir, "userdata", "server-token"), "utf8").trim();
+    const owner = await connect(ownerToken, "desktop-ui", firstReady.url);
+    expect((await owner.call<AppSettings>("settings.set", { serverBindHost: "0.0.0.0" })).serverBindHost).toBe("0.0.0.0");
+    await owner.call("server.stop");
+    expect(await exitWithin(first, 15_000)).toBe(0);
+
+    const second = spawnServer(dir);
+    const secondReady = JSON.parse(await readTaggedLine(second, "CW_SERVER_READY")) as ServerReady;
+    expect(secondReady.url).toBe(`ws://127.0.0.1:${secondReady.port}/ws`);
+    const shell = new ServerClient({ endpoint: { url: secondReady.url, token: ownerToken }, client: "desktop-shell" });
+    clients.push(shell);
+    const notice = new Promise<AppNotice>((resolve) => {
+      shell.on("app.notice", (payload) => resolve(payload as AppNotice));
+    });
+    await shell.connect();
+    expect(await notice).toMatchObject({ level: "warning", message: "cw-code is listening on 127.0.0.1 only" });
+    expect(readFileSync(join(dir, "logs", "crash.log"), "utf8")).toContain("ignoring the serverBindHost setting 0.0.0.0");
+    await shell.call("server.stop");
+    expect(await exitWithin(second, 15_000)).toBe(0);
+  }, 3 * STARTUP_TIMEOUT_MS);
+});
+
+describe("abandoned shutdown recovery", () => {
+  let dir = "";
+
+  afterAll(async () => {
+    await Bun.sleep(200);
+    if (dir) rmSync(dir, { recursive: true, force: true });
+  });
+
+  async function shutdownStatusEventually(client: ServerClient, idle: boolean): Promise<ShutdownStatus> {
+    for (let attempt = 0; attempt < 50; attempt += 1) {
+      const status = await client.call<ShutdownStatus>("shutdown.status");
+      if (status.idle === idle) return status;
+      await Bun.sleep(100);
+    }
+    return client.call<ShutdownStatus>("shutdown.status");
+  }
+
+  it("keeps a prepared shutdown while another desktop window is connected and recovers when the last one leaves", async () => {
+    dir = mkdtempSync(join(tmpdir(), "cw-server-shutdown-"));
+    const proc = spawnServer(dir);
+    const procReady = JSON.parse(await readTaggedLine(proc, "CW_SERVER_READY")) as ServerReady;
+    const ownerToken = readFileSync(join(dir, "userdata", "server-token"), "utf8").trim();
+    const first = await connect(ownerToken, "desktop-ui", procReady.url);
+    const second = await connect(ownerToken, "desktop-ui", procReady.url);
+    const shell = await connect(ownerToken, "desktop-shell", procReady.url);
+    const prepared = await first.call<ShutdownPrepareResult>("shutdown.prepare", { reason: "quit", stopActiveTurns: true, timeoutMs: 10_000 });
+    expect(prepared.ok).toBe(true);
+
+    second.close();
+    await Bun.sleep(300);
+    expect((await shell.call<ShutdownStatus>("shutdown.status")).idle).toBe(false);
+
+    first.close();
+    expect((await shutdownStatusEventually(shell, true)).idle).toBe(true);
+    await shell.call("server.stop");
+    expect(await exitWithin(proc, 15_000)).toBe(0);
+  }, 2 * STARTUP_TIMEOUT_MS);
 });

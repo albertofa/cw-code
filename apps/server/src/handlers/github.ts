@@ -38,14 +38,11 @@ export function registerGitHubHandlers(router: Router, app: ServerApp): void {
     assertRunRef(ref);
     return services().runs.runLog(ref);
   });
-  handle(router, "github.watchRuns", (args) => {
+  handle(router, "github.watchRuns", (args, ctx) => {
     const { refs } = parseArgs(args, "github.watchRuns");
-    services().runWatcher.watch(parseList<RunRef>(refs, MAX_WATCHED_RUNS, "refs", assertRunRef));
-  });
-  handle(router, "github.setActive", (args) => {
-    const { active } = parseArgs(args, "github.setActive");
-    if (typeof active !== "boolean") throw new Error("active must be a boolean");
-    services().runWatcher.setActive(active);
+    services();
+    app.clientInputs.setRunRefs(ctx.clientId, parseList<RunRef>(refs, MAX_WATCHED_RUNS, "refs", assertRunRef));
+    app.syncWatchedRuns();
   });
   handle(router, "github.clone", (args) => {
     const { repo } = parseArgs(args, "github.clone");

@@ -1,8 +1,11 @@
 import type { ClientKind, RpcError } from "@cw-code/contracts";
 
+export type ClientAuth = { kind: "owner" } | { kind: "device"; deviceId: string };
+
 export interface CallContext {
   clientId: string;
   client: ClientKind;
+  auth: ClientAuth;
 }
 
 export type Handler = (params: unknown, ctx: CallContext) => unknown | Promise<unknown>;

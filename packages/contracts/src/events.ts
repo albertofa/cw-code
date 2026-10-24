@@ -88,6 +88,8 @@ export interface QuestionRequest {
 }
 
 export type ThreadEvent =
+  | { type: "turn.started"; turnId: string; sessionId: string; startedAt: number; prompt: string }
+  | { type: "turn.interrupted"; turnId: string; sessionId: string; reason?: "shutdown" }
   | { type: "assistant.delta"; turnId: string; text: string }
   | { type: "reasoning.delta"; turnId: string; text: string }
   | {

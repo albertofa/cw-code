@@ -10,10 +10,11 @@ import {
   PROTOCOL_VERSION
 } from "@cw-code/shared/protocol";
 import { connect, type Socket } from "node:net";
-import { Router, type CallContext } from "./Router.js";
+import { Router, type CallContext, type ClientAuth } from "./Router.js";
 import { sendRaw, WsServer, wsUrl, type FrameSink, type WsServerOptions } from "./WsServer.js";
 
 const TOKEN = "t".repeat(64);
+const OWNER: ClientAuth = { kind: "owner" };
 const servers: WsServer[] = [];
 const clients: ServerClient[] = [];
 const sockets: WebSocket[] = [];
@@ -30,7 +31,7 @@ interface RawSocket {
 
 function startServer(overrides: Partial<WsServerOptions> = {}): { server: WsServer; router: Router; url: string } {
   const router = overrides.router ?? new Router();
-  const server = new WsServer({ host: "127.0.0.1", port: 0, token: TOKEN, version: "9.9.9", router, ...overrides });
+  const server = new WsServer({ host: "127.0.0.1", port: 0, authorize: (token) => (token === TOKEN ? OWNER : null), version: "9.9.9", router, ...overrides });
   servers.push(server);
   return { server, router, url: server.start().url };
 }
@@ -147,6 +148,20 @@ describe("WsServer", () => {
     expect(await client.call("echo", { a: 1 })).toEqual({ params: { a: 1 }, client: "desktop-ui" });
   });
 
+  test("reports whether a client is connected", async () => {
+    const { server, url } = startServer();
+    const client = newClient(url);
+    const { clientId } = await client.connect();
+    expect(server.isConnected(clientId)).toBe(true);
+    expect(server.isConnected("unknown")).toBe(false);
+    const closed = new Promise<void>((resolve) => {
+      server.onClientClosed(() => resolve());
+    });
+    client.close();
+    await closed;
+    expect(server.isConnected(clientId)).toBe(false);
+  });
+
   test("resolves null for handlers that return nothing", async () => {
     const { router, url } = startServer();
     router.handle("noop", () => undefined);
@@ -187,7 +202,7 @@ describe("WsServer", () => {
     const client = newClient(url);
     const welcome = await client.connect();
     await client.call("who");
-    expect(seen).toEqual([{ clientId: welcome.clientId, client: "desktop-ui" }]);
+    expect(seen).toEqual([{ clientId: welcome.clientId, client: "desktop-ui", auth: OWNER }]);
   });
 
   test("fire-and-forget reaches the handler and produces no result", async () => {
@@ -231,6 +246,53 @@ describe("WsServer", () => {
     const error = await newClient(url, "wrong").connect().catch((e: unknown) => e);
     expect(error).toBeInstanceOf(ServerCallError);
     expect((error as ServerCallError).code).toBe("unauthorized");
+  });
+
+  test("accepts owner and device tokens and rejects unknown ones", async () => {
+    const auths: unknown[] = [];
+    const { router, url } = startServer({
+      authorize: (token) => (token === TOKEN ? OWNER : token === "device-token" ? { kind: "device", deviceId: "dev_1" } : null)
+    });
+    router.handle("whoami", (_params, ctx) => ctx.auth);
+    const owner = newClient(url);
+    const device = newClient(url, "device-token", "web");
+    await owner.connect();
+    await device.connect();
+    auths.push(await owner.call("whoami"), await device.call("whoami"));
+    expect(auths).toEqual([{ kind: "owner" }, { kind: "device", deviceId: "dev_1" }]);
+    const error = await newClient(url, "unknown").connect().catch((e: unknown) => e);
+    expect((error as ServerCallError).code).toBe("unauthorized");
+  });
+
+  test("rejects a device token that claims a desktop client kind", async () => {
+    const { url } = startServer({ authorize: (token) => (token === "device-token" ? { kind: "device", deviceId: "dev_1" } : null) });
+    for (const kind of ["desktop-ui", "desktop-shell"] as const) {
+      const socket = rawSocket(url);
+      await socket.opened;
+      socket.send({ t: "hello", token: "device-token", protocol: PROTOCOL_VERSION, client: kind });
+      expect(await socket.closed).toBe(CLOSE_UNAUTHORIZED);
+    }
+    const web = newClient(url, "device-token", "web");
+    await web.connect();
+  });
+
+  test("checks the protocol version before authorizing and bounds the token length", async () => {
+    const seen: string[] = [];
+    const { url } = startServer({
+      authorize: (token) => {
+        seen.push(token);
+        return OWNER;
+      }
+    });
+    const mismatch = rawSocket(url);
+    await mismatch.opened;
+    mismatch.send({ t: "hello", token: TOKEN, protocol: 999, client: "web" });
+    expect(await mismatch.closed).toBe(CLOSE_PROTOCOL_MISMATCH);
+    const oversize = rawSocket(url);
+    await oversize.opened;
+    oversize.send({ t: "hello", token: "x".repeat(257), protocol: PROTOCOL_VERSION, client: "web" });
+    expect(await oversize.closed).toBe(CLOSE_UNAUTHORIZED);
+    expect(seen).toEqual([]);
   });
 
   test("rejects a token of a different length without throwing", async () => {
@@ -305,6 +367,32 @@ describe("WsServer", () => {
     expect(silent.messages).toEqual([]);
   });
 
+  test("sendTo reaches only the named authenticated clients", async () => {
+    const { server, url } = startServer();
+    const target = newClient(url);
+    const other = newClient(url);
+    const otherSaw: unknown[] = [];
+    other.on("direct", (payload) => otherSaw.push(payload));
+    const received = new Promise<unknown>((resolve) => target.on("direct", resolve));
+    const [targetWelcome] = await Promise.all([target.connect(), other.connect()]);
+    server.sendTo([targetWelcome.clientId, "unknown-client"], "direct", { n: 1 });
+    expect(await received).toEqual({ n: 1 });
+    await sleep(100);
+    expect(otherSaw).toEqual([]);
+  });
+
+  test("closeClients closes only the matching sockets and reports the count", async () => {
+    const { server, url } = startServer();
+    const keep = await authenticatedSocket(url);
+    const drop = rawSocket(url);
+    await drop.opened;
+    drop.send({ t: "hello", token: TOKEN, protocol: PROTOCOL_VERSION, client: "desktop-shell" });
+    await drop.nextMessage();
+    expect(server.closeClients((ctx) => ctx.client === "desktop-shell", 4321, "revoked")).toBe(1);
+    expect(await drop.closed).toBe(4321);
+    expect(keep.ws.readyState).toBe(WebSocket.OPEN);
+  });
+
   test("broadcast skips clients the filter rejects", async () => {
     const { server, url } = startServer();
     const ui = newClient(url);
@@ -352,14 +440,27 @@ describe("WsServer", () => {
     }
   });
 
+  test("onClientAccepted fires only for fully accepted hellos", async () => {
+    const { server, url } = startServer({ authorize: (token) => (token === "device-token" ? { kind: "device", deviceId: "dev_1" } : null) });
+    const accepted: CallContext[] = [];
+    server.onClientAccepted((ctx) => accepted.push(ctx));
+    const desktop = rawSocket(url);
+    await desktop.opened;
+    desktop.send({ t: "hello", token: "device-token", protocol: PROTOCOL_VERSION, client: "desktop-ui" });
+    expect(await desktop.closed).toBe(CLOSE_UNAUTHORIZED);
+    expect(accepted).toEqual([]);
+    const welcome = await newClient(url, "device-token", "web").connect();
+    expect(accepted).toEqual([{ clientId: welcome.clientId, client: "web", auth: { kind: "device", deviceId: "dev_1" } }]);
+  });
+
   test("onClientClosed fires with the context of an authenticated client", async () => {
     const { server, url } = startServer();
     const closed = new Promise<CallContext>((resolve) => server.onClientClosed(resolve));
     const client = newClient(url);
     const welcome = await client.connect();
-    expect(server.clients()).toEqual([{ clientId: welcome.clientId, client: "desktop-ui" }]);
+    expect(server.clients()).toEqual([{ clientId: welcome.clientId, client: "desktop-ui", auth: OWNER }]);
     client.close();
-    expect(await closed).toEqual({ clientId: welcome.clientId, client: "desktop-ui" });
+    expect(await closed).toEqual({ clientId: welcome.clientId, client: "desktop-ui", auth: OWNER });
     expect(server.clients()).toEqual([]);
   });
 
@@ -411,6 +512,29 @@ describe("WsServer", () => {
     const base = url.replace("ws://", "http://");
     expect((await fetch(base.replace(/\/ws$/, "/other"))).status).toBe(404);
     expect((await fetch(base)).status).toBe(426);
+  });
+
+  test("answers 403 to a rejected Origin before upgrading and passes origin and host to the policy", async () => {
+    const seen: Array<[string | null, string | null]> = [];
+    const rejected: Array<string | null> = [];
+    const { url } = startServer({
+      isOriginAllowed: (origin, host) => {
+        seen.push([origin, host]);
+        return origin !== "https://evil.example";
+      },
+      onOriginRejected: (origin) => rejected.push(origin)
+    });
+    const base = url.replace("ws://", "http://");
+    const host = new URL(base).host;
+    expect((await fetch(base, { headers: { Origin: "https://evil.example" } })).status).toBe(403);
+    expect((await fetch(base, { headers: { Origin: "file://" } })).status).toBe(426);
+    expect((await fetch(base)).status).toBe(426);
+    expect(seen).toEqual([
+      ["https://evil.example", host],
+      ["file://", host],
+      [null, host]
+    ]);
+    expect(rejected).toEqual(["https://evil.example"]);
   });
 
   test("start reports the bound port and url, and refuses a second start", () => {

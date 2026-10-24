@@ -58,9 +58,25 @@ const LOCAL_NOTICE_TURN_ID = "worktree-cleanup";
 function hasLoadedMessages(messages: ChatMessage[] | undefined): boolean {
   return (messages ?? []).some((m) => m.turnId !== LOCAL_NOTICE_TURN_ID);
 }
+
+function historyAheadOfLive(history: ChatMessage[], current: ChatMessage[]): ChatMessage[] {
+  const live = current.filter((m) => m.turnId !== LOCAL_NOTICE_TURN_ID);
+  const ids = new Set(live.map((m) => m.id));
+  const turnIds = new Set(live.map((m) => m.turnId));
+  const stamps = live.flatMap((m) => (m.timestamp !== undefined ? [m.timestamp] : []));
+  const liveSince = stamps.length > 0 ? Math.min(...stamps) : undefined;
+  const earlier = history.filter(
+    (m) =>
+      !ids.has(m.id) &&
+      !turnIds.has(m.turnId) &&
+      (liveSince === undefined || m.timestamp === undefined || m.timestamp < liveSince)
+  );
+  return [...earlier, ...current];
+}
 let pendingSeq = 0;
 let lastUpdateAppliedAt = 0;
 let pendingPromptInFlight = false;
+let appliedSettingsJson: string | null = null;
 
 function nextPendingTurnId(): string {
   pendingSeq += 1;
@@ -209,6 +225,7 @@ interface AppState {
   pauseAutoFollowUp(sessionId: string, reason?: AutoFollowUpPause): void;
   resumeAutoFollowUp(sessionId: string): void;
   loadingHistory: Record<string, boolean>;
+  historyLoadedBySession: Record<string, boolean>;
   historyErrorBySession: Record<string, string>;
   turnStartedAt: Record<string, number>;
   turnDurations: Record<string, Record<string, number>>;
@@ -275,6 +292,9 @@ interface AppState {
   createSessionIn(projectId: string, driver: DriverName, prefs?: ComposerPrefs, workspace?: CreateSessionOptions): Promise<Session>;
   importSession(request: ImportSessionRequest): Promise<Session>;
   applySession(session: Session): void;
+  applyProject(project: Project): void;
+  applySettings(saved: AppSettings): void;
+  applyComposer(sessionId: string, prefs: ComposerPrefs): void;
   sendPrompt(prompt: string, attachments?: string[], opts?: ComposerSendOptions): Promise<void>;
   sendPromptTo(sessionId: string, prompt: string, attachments?: string[], opts?: SendPromptOptions): Promise<void>;
   interrupt(): Promise<void>;
@@ -382,6 +402,17 @@ function patchSession(
   return next;
 }
 
+function upsertInList(list: Session[], session: Session): Session[] {
+  return list.some((s) => s.id === session.id) ? list.map((s) => (s.id === session.id ? session : s)) : [session, ...list];
+}
+
+function upsertSession(byProject: Record<string, Session[]>, session: Session): Record<string, Session[]> {
+  const known = Object.values(byProject).some((list) => list.some((s) => s.id === session.id));
+  if (known) return replaceSession(byProject, session);
+  const list = byProject[session.projectId];
+  return list ? { ...byProject, [session.projectId]: [session, ...list] } : byProject;
+}
+
 function replaceSession(byProject: Record<string, Session[]>, session: Session): Record<string, Session[]> {
   const next: Record<string, Session[]> = {};
   for (const [pid, list] of Object.entries(byProject)) {
@@ -412,8 +443,20 @@ function closeTurn(book: TurnBookkeeping, sessionId: string, turnId: string | un
   return { busyTurns, turnStartedAt, turnDurations };
 }
 
+type TurnStartedEvent = Extract<TurnEvent, { type: "turn.started" }>;
+
+const ignoredTurnStarts = new Map<string, TurnStartedEvent>();
+
 function knownTurnId(value: string | undefined): string | undefined {
   return value !== undefined && !isPendingTurn(value) ? value : undefined;
+}
+
+async function answerPendingRequest(answer: Promise<void>): Promise<void> {
+  try {
+    await answer;
+  } catch (err) {
+    if ((err as { code?: unknown } | null)?.code !== "request-not-pending") throw err;
+  }
 }
 
 export const useAppStore = create<AppState>((set, get) => ({
@@ -429,6 +472,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   autoFollowUpTurns: {},
   autoFollowUpPaused: {},
   loadingHistory: {},
+  historyLoadedBySession: {},
   historyErrorBySession: {},
   subagentToolsByKey: {},
   subagentToolsLoading: {},
@@ -581,6 +625,7 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   async loadProjects() {
     const [projects, settings] = await Promise.all([window.cw.listProjects(), window.cw.getSettings()]);
+    appliedSettingsJson = JSON.stringify(settings);
     void get().ensureHomeDir().catch(() => {});
     set({
       projects,
@@ -920,7 +965,7 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   async ensureHistory(sessionId: string, opts?: { force?: boolean; isRetry?: boolean }) {
     if (!opts?.force) {
-      if (hasLoadedMessages(get().messagesBySession[sessionId])) return;
+      if (get().historyLoadedBySession[sessionId]) return;
       if (get().loadingHistory[sessionId]) return;
     }
     set({
@@ -932,10 +977,15 @@ export const useAppStore = create<AppState>((set, get) => ({
     try {
       const history = await window.cw.getHistory(sessionId);
       const current = get().messagesBySession[sessionId] ?? [];
-      if (!hasLoadedMessages(current) && history.length > 0) {
+      const firstLoad = !get().historyLoadedBySession[sessionId];
+      set({ historyLoadedBySession: { ...get().historyLoadedBySession, [sessionId]: true } });
+      if (firstLoad && history.length > 0) {
         const merged = withBufferedTasks(sessionId, mergeToolPairs(history));
         set({
-          messagesBySession: { ...get().messagesBySession, [sessionId]: [...merged, ...current] }
+          messagesBySession: {
+            ...get().messagesBySession,
+            [sessionId]: hasLoadedMessages(current) ? historyAheadOfLive(merged, current) : [...merged, ...current]
+          }
         });
         if (get().todosBySession[sessionId] === undefined) {
           const seeded = [...merged].reverse().find((m) => m.todos !== undefined)?.todos;
@@ -1034,8 +1084,18 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   async saveSettings(patch: SettingsPatch) {
     const saved = await window.cw.setSettings(patch);
+    const version = get().settingsVersion;
+    get().applySettings(saved);
+    if (get().settingsVersion === version) set({ settingsVersion: version + 1 });
+    return saved;
+  },
+
+  applySettings(saved: AppSettings) {
+    const json = JSON.stringify(saved);
+    const changed = json !== appliedSettingsJson;
+    appliedSettingsJson = json;
     set({
-      settingsVersion: get().settingsVersion + 1,
+      ...(changed ? { settingsVersion: get().settingsVersion + 1 } : {}),
       sourceControlRefreshIntervalSeconds: saved.sourceControlRefreshIntervalSeconds,
       prRefreshIntervalSeconds: saved.prRefreshIntervalSeconds,
       holdingAutoExpireEnabled: saved.holdingAutoExpireEnabled,
@@ -1047,7 +1107,10 @@ export const useAppStore = create<AppState>((set, get) => ({
       reasoningExpandedByDriver: reasoningExpandedFrom(saved),
       defaultModelByDriver: defaultModelsFrom(saved)
     });
-    return saved;
+  },
+
+  applyComposer(sessionId: string, prefs: ComposerPrefs) {
+    set({ composerBySession: { ...get().composerBySession, [sessionId]: { ...DEFAULT_COMPOSER, ...prefs } } });
   },
 
   async saveDefaultModel(driver: DriverName, id: string) {
@@ -1095,10 +1158,11 @@ export const useAppStore = create<AppState>((set, get) => ({
     set({
       sessionsByProject: {
         ...get().sessionsByProject,
-        [projectId]: [session, ...(get().sessionsByProject[projectId] ?? [])]
+        [projectId]: upsertInList(get().sessionsByProject[projectId] ?? [], session)
       },
       activeProjectId: projectId,
       activeSessionId: session.id,
+      historyLoadedBySession: { ...get().historyLoadedBySession, [session.id]: true },
       pendingDriver: null,
       lastDriver: driver
     });
@@ -1114,7 +1178,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       projects: withProject(get().projects, project),
       sessionsByProject: {
         ...get().sessionsByProject,
-        [project.id]: [session, ...(get().sessionsByProject[project.id] ?? [])]
+        [project.id]: upsertInList(get().sessionsByProject[project.id] ?? [], session)
       }
     });
     get().selectSession(session.id);
@@ -1129,7 +1193,11 @@ export const useAppStore = create<AppState>((set, get) => ({
           .find((s) => s.id === session.id)
       : undefined;
     const next = current ? { ...session, status: current.status } : session;
-    set({ sessionsByProject: replaceSession(sessionsByProject, next) });
+    set({ sessionsByProject: upsertSession(sessionsByProject, next) });
+  },
+
+  applyProject(project: Project) {
+    set({ projects: withProject(get().projects, project) });
   },
 
   pauseAutoFollowUp(sessionId: string, reason: AutoFollowUpPause = "user") {
@@ -1160,6 +1228,8 @@ export const useAppStore = create<AppState>((set, get) => ({
     const previousTodos = get().todosBySession[sessionId];
     const acceptFolderHead = opts?.acceptFolderHead ?? useBranchStore.getState().keptFolderHeadBySession[sessionId];
     const pending = nextPendingTurnId();
+    const previousAutoTurns = get().autoFollowUpTurns[sessionId];
+    ignoredTurnStarts.delete(sessionId);
     set({
       busyTurns: { ...get().busyTurns, [sessionId]: pending },
       autoFollowUpTurns: { ...get().autoFollowUpTurns, [sessionId]: opts?.auto ? (get().autoFollowUpTurns[sessionId] ?? 0) + 1 : 0 },
@@ -1182,7 +1252,10 @@ export const useAppStore = create<AppState>((set, get) => ({
         ...(acceptFolderHead ? { acceptFolderHead } : {})
       });
     } catch (err) {
+      const remoteStart = ignoredTurnStarts.get(sessionId);
+      ignoredTurnStarts.delete(sessionId);
       if (get().busyTurns[sessionId] === pending) {
+        const revertAutoTurns = opts?.auto && (err as { code?: unknown } | null)?.code === "session-busy";
         const book = closeTurn(
           { busyTurns: get().busyTurns, turnStartedAt: get().turnStartedAt, turnDurations: get().turnDurations },
           sessionId,
@@ -1192,6 +1265,14 @@ export const useAppStore = create<AppState>((set, get) => ({
           busyTurns: book.busyTurns,
           turnStartedAt: book.turnStartedAt,
           turnDurations: book.turnDurations,
+          ...(revertAutoTurns
+            ? {
+                autoFollowUpTurns:
+                  previousAutoTurns === undefined
+                    ? without(get().autoFollowUpTurns, sessionId)
+                    : { ...get().autoFollowUpTurns, [sessionId]: previousAutoTurns }
+              }
+            : {}),
           ...(previousTodos && previousTodos.length > 0 && (get().todosBySession[sessionId] ?? []).length === 0
             ? { todosBySession: { ...get().todosBySession, [sessionId]: previousTodos } }
             : {}),
@@ -1199,19 +1280,23 @@ export const useAppStore = create<AppState>((set, get) => ({
             ? { sessionsByProject: withSessionStatus(get().sessionsByProject, sessionId, previous.status) }
             : {})
         });
+        if (remoteStart) get().applyEvent(sessionId, remoteStart);
       }
       throw err;
     }
+    ignoredTurnStarts.delete(sessionId);
     const superseded = get().busyTurns[sessionId] !== pending;
+    const existing = get().messagesBySession[sessionId] ?? [];
     set({
       ...(superseded ? {} : { busyTurns: { ...get().busyTurns, [sessionId]: turnId } }),
-      messagesBySession: {
-        ...get().messagesBySession,
-        [sessionId]: [
-          ...(get().messagesBySession[sessionId] ?? []),
-          { id: `${turnId}-u`, role: "user", text: prompt, turnId, timestamp: Date.now() }
-        ]
-      }
+      ...(existing.some((m) => m.id === `${turnId}-u`)
+        ? {}
+        : {
+            messagesBySession: {
+              ...get().messagesBySession,
+              [sessionId]: [...existing, { id: `${turnId}-u`, role: "user", text: prompt, turnId, timestamp: Date.now() }]
+            }
+          })
     });
     if (superseded) void window.cw.interrupt(turnId);
     else void get().hydrateActiveTurns();
@@ -1282,7 +1367,8 @@ export const useAppStore = create<AppState>((set, get) => ({
         messagesBySession: {
           ...get().messagesBySession,
           [sessionId]: withBufferedTasks(sessionId, mergeToolPairs(result.history))
-        }
+        },
+        historyLoadedBySession: { ...get().historyLoadedBySession, [sessionId]: true }
       });
       void get().hydrateActiveTurns();
     } catch (err) {
@@ -1295,7 +1381,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   async respondApproval(requestId: string, decision: ApprovalDecision) {
-    await window.cw.respondApproval(requestId, decision);
+    await answerPendingRequest(window.cw.respondApproval(requestId, decision));
     const approvals = get().pendingApprovals;
     let changed = false;
     const next: Record<string, ApprovalRequest[]> = {};
@@ -1308,7 +1394,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   async respondQuestion(sessionId: string, requestId: string, answers: Record<string, string>) {
-    await window.cw.respondQuestion(requestId, answers);
+    await answerPendingRequest(window.cw.respondQuestion(requestId, answers));
     const pending = get().pendingQuestions[sessionId] ?? [];
     set({
       pendingQuestions: {
@@ -1349,6 +1435,52 @@ export const useAppStore = create<AppState>((set, get) => ({
           ...get().messagesBySession,
           [sessionId]: idx >= 0 ? [...messages.slice(0, idx), notice, ...messages.slice(idx + 1)] : [...messages, notice]
         }
+      });
+      return;
+    }
+    if (event.type === "turn.started") {
+      const current = get().busyTurns[sessionId];
+      if (isPendingTurn(current)) {
+        ignoredTurnStarts.set(sessionId, event);
+        return;
+      }
+      if (current === event.turnId) return;
+      const userId = `${event.turnId}-u`;
+      set({
+        busyTurns: { ...get().busyTurns, [sessionId]: event.turnId },
+        turnStartedAt: { ...get().turnStartedAt, [sessionId]: event.startedAt },
+        todosBySession: { ...get().todosBySession, [sessionId]: [] },
+        sessionsByProject: withSessionStatus(get().sessionsByProject, sessionId, "working"),
+        ...(event.prompt === "" || messages.some((m) => m.id === userId)
+          ? {}
+          : {
+              messagesBySession: {
+                ...get().messagesBySession,
+                [sessionId]: [...messages, { id: userId, role: "user", text: event.prompt, turnId: event.turnId, timestamp: event.startedAt }]
+              }
+            })
+      });
+      return;
+    }
+    if (event.type === "turn.interrupted") {
+      if (get().busyTurns[sessionId] !== event.turnId) return;
+      const book = closeTurn(
+        { busyTurns: get().busyTurns, turnStartedAt: get().turnStartedAt, turnDurations: get().turnDurations },
+        sessionId,
+        event.turnId
+      );
+      const approvals = { ...get().pendingApprovals };
+      delete approvals[sessionId];
+      const questions = { ...get().pendingQuestions };
+      delete questions[sessionId];
+      set({
+        busyTurns: book.busyTurns,
+        turnStartedAt: book.turnStartedAt,
+        turnDurations: book.turnDurations,
+        pendingApprovals: approvals,
+        pendingQuestions: questions,
+        ...(event.reason === "shutdown" ? {} : { autoFollowUpPaused: withAutoPause(get().autoFollowUpPaused, sessionId, "interrupted") }),
+        sessionsByProject: patchSession(get().sessionsByProject, sessionId, { status: "holding", updatedAt: Date.now() })
       });
       return;
     }

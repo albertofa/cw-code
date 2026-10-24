@@ -10,6 +10,7 @@ export type {
   PermissionOption,
   EffortLevel,
   ComposerPrefs,
+  ComposerChangedEvent,
   ModelOption,
   ModelMeta,
   GitStatus,
@@ -155,5 +156,5 @@ export type {
   FsChangeEvent
 } from "./files.js";
 export type { NativeSession, ImportableSession, ImportSessionRequest, ImportSessionResult } from "./importer.js";
-export type { ClientKind, RpcError, ClientMessage, ServerMessage, ServerEndpoint, ServerReady } from "./protocol.js";
+export type { ClientKind, RpcError, ClientMessage, ServerMessage, ServerEndpoint, ServerReady, TopicsParams, TopicSubscribeResult, DeviceInfo, DeviceCreateResult } from "./protocol.js";
 export type { DesktopApi } from "./desktop.js";

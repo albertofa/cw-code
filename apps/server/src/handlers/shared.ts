@@ -2,10 +2,19 @@ import type { RepoRef, RunSources, TextSearchQuery } from "@cw-code/contracts";
 import { assertSearchQuery } from "../github/GitHubSearchService.js";
 import { assertOwnerLogin, assertRepoRef } from "../github/githubRefs.js";
 import { MAX_RUN_ORGS, MAX_RUN_REPOS } from "../github/runQueries.js";
+import type { ServerApp } from "../app/ServerApp.js";
 import type { CallContext, Router } from "../transport/Router.js";
 
 export function handle<T = unknown>(router: Router, method: string, handler: (args: T, ctx: CallContext) => unknown): void {
   router.handle(method, (params, ctx) => handler(params as T, ctx));
+}
+
+export function requireOwner(ctx: CallContext, action: string): void {
+  if (ctx.auth.kind !== "owner") throw Object.assign(new Error(`${action} requires the owner token`), { code: "forbidden" });
+}
+
+export function subscribeIfConnected(app: Pick<ServerApp, "isConnected" | "topics">, clientId: string, topics: string[]): void {
+  if (app.isConnected(clientId)) app.topics.subscribe(clientId, topics);
 }
 
 export function parseArgs(args: unknown, channel: string): Record<string, unknown> {

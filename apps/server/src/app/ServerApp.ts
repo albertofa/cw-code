@@ -1,5 +1,5 @@
-import type { AppNotice, ServerReady, ShutdownCommitResult, ShutdownExpiredEvent, ShutdownReason, ShutdownStatus, StartupState } from "@cw-code/contracts";
-import { PROTOCOL_VERSION, SERVER_READY_PREFIX } from "@cw-code/shared/protocol";
+import type { AppNotice, DeviceInfo, ServerReady, ShutdownCommitResult, ShutdownExpiredEvent, ShutdownReason, ShutdownStatus, StartupState } from "@cw-code/contracts";
+import { CLOSE_UNAUTHORIZED, PROTOCOL_VERSION, SERVER_READY_PREFIX } from "@cw-code/shared/protocol";
 import { appendCrashLog, initCrashLog } from "../debug/crashLog.js";
 import { initHarnessTrace } from "../debug/harnessTrace.js";
 import { initSessionStatusTrace } from "../debug/sessionStatusTrace.js";
@@ -9,14 +9,21 @@ import { reapOrphanedServers } from "../orphanServers.js";
 import { claudeCommandsCachePath, logsDir, opencodeModelsCachePath, sessionDbPath, settingsFilePath, userdataDir } from "../paths/appPaths.js";
 import { initClaudeCommandsCache } from "../providers/claude/claudeCommands.js";
 import { initOpencodeModelsCache } from "../providers/opencode/opencodeModels.js";
-import { openMetadataStores } from "../storage/metadataStores.js";
+import { openMetadataStores, type OpenedMetadataStores } from "../storage/metadataStores.js";
 import type { ServerArgs } from "../transport/args.js";
+import { decideBindHost } from "../transport/bindPolicy.js";
 import { removeEndpoint, writeEndpoint } from "../transport/endpointFile.js";
-import { loadOrCreateOwnerToken } from "../transport/ownerToken.js";
-import { Router } from "../transport/Router.js";
+import { DeviceTokens } from "../transport/deviceTokens.js";
+import { createOriginPolicy, createRejectedOriginLogger } from "../transport/originPolicy.js";
+import { loadOrCreateOwnerToken, tokensEqual } from "../transport/ownerToken.js";
+import { Router, type ClientAuth } from "../transport/Router.js";
+import { TopicRegistry } from "../transport/TopicRegistry.js";
 import { WsServer } from "../transport/WsServer.js";
+import { ClientInputs } from "./clientInputs.js";
 import { eventAudience } from "./eventAudience.js";
+import { eventTopic, isRoutableTopic } from "./eventTopics.js";
 import { createServices, type Services } from "./services.js";
+import { wireTopics } from "./topicWiring.js";
 
 const SESSION_SETTLE_INTERVAL_MS = 60_000;
 const SESSION_SETTLE_INITIAL_DELAY_MS = 5_000;
@@ -35,6 +42,10 @@ function isProcessGone(pid: number): boolean {
 
 export class ServerApp {
   readonly router = new Router();
+  readonly topics = new TopicRegistry();
+  readonly clientInputs = new ClientInputs();
+  private readonly topicWiring = wireTopics(this);
+  private deviceTokens: DeviceTokens | null = null;
   private services: Services | null = null;
   private state: StartupState = { mode: "ready" };
   private servicesDisposed = false;
@@ -44,6 +55,7 @@ export class ServerApp {
   private parentTimer: ReturnType<typeof setInterval> | null = null;
   private stopping = false;
   private lastShutdownStatus: ShutdownStatus = { idle: true, committed: false, reason: null };
+  private pendingShellNotices: AppNotice[] = [];
 
   constructor(
     private readonly args: ServerArgs,
@@ -60,7 +72,55 @@ export class ServerApp {
   }
 
   emit(channel: string, payload?: unknown): void {
-    this.ws?.broadcast(channel, payload, eventAudience(channel));
+    const topic = eventTopic(channel, payload);
+    if (topic === null) {
+      this.ws?.broadcast(channel, payload, eventAudience(channel));
+      return;
+    }
+    if (!isRoutableTopic(channel, topic)) return;
+    const subscribers = this.topics.subscribers(topic);
+    if (subscribers.size === 0) return;
+    this.ws?.sendTo(subscribers, channel, payload);
+  }
+
+  isConnected(clientId: string): boolean {
+    return this.ws?.isConnected(clientId) ?? false;
+  }
+
+  sendTo(clientId: string, channel: string, payload?: unknown): void {
+    this.ws?.sendTo([clientId], channel, payload);
+  }
+
+  get devices(): DeviceTokens {
+    if (!this.deviceTokens) throw new Error("device tokens are not loaded");
+    return this.deviceTokens;
+  }
+
+  deviceInfos(): DeviceInfo[] {
+    const connected = new Set(this.ws?.clients().flatMap((ctx) => (ctx.auth.kind === "device" ? [ctx.auth.deviceId] : [])));
+    return this.devices.list().map(({ id, name, createdAt, lastSeenAt }) => ({ id, name, createdAt, lastSeenAt, connected: connected.has(id) }));
+  }
+
+  emitDevicesChanged(): void {
+    this.emit("devices.changed", this.deviceInfos());
+  }
+
+  revokeDevice(id: string): void {
+    if (!this.devices.revoke(id)) throw Object.assign(new Error(`unknown device '${id}'`), { code: "not-found" });
+    this.ws?.closeClients((ctx) => ctx.auth.kind === "device" && ctx.auth.deviceId === id, CLOSE_UNAUTHORIZED, "device revoked");
+    this.emitDevicesChanged();
+  }
+
+  syncWatchedRuns(): void {
+    this.topicWiring.syncWatchedRuns();
+  }
+
+  applyWatchedFiles(sessionId: string): void {
+    this.topicWiring.applyFiles(sessionId);
+  }
+
+  currentServices(): Services | null {
+    return this.services;
   }
 
   start(loginShellWarnings: string[]): ServerReady {
@@ -87,14 +147,55 @@ export class ServerApp {
     process.on("unhandledRejection", (reason) => {
       appendCrashLog(`unhandledRejection: ${String(reason)}`);
     });
-    const token = loadOrCreateOwnerToken(userdataDir());
+    const ownerToken = loadOrCreateOwnerToken(userdataDir());
+    const devices = new DeviceTokens(userdataDir());
+    this.deviceTokens = devices;
     registerHandlers(this.router, this);
-    const ws = new WsServer({ host: this.args.host, port: this.args.port, token, version: this.version, router: this.router });
-    const { url, port } = this.bind(ws);
+    const authorize = (token: string): ClientAuth | null => {
+      const device = devices.verify(token);
+      if (tokensEqual(ownerToken, token)) return { kind: "owner" };
+      return device ? { kind: "device", deviceId: device.id } : null;
+    };
+    const stores = this.loadStores();
+    const decision = decideBindHost(this.args.host, stores.ok ? stores.settingsStore.get().serverBindHost : undefined, devices.count());
+    if (decision.kind === "refuse") {
+      appendCrashLog(decision.reason);
+      console.error(decision.reason);
+      process.exit(1);
+    }
+    if (decision.kind === "fallback") {
+      appendCrashLog(decision.reason);
+      console.warn(decision.reason);
+      this.pendingShellNotices.push({
+        level: "warning",
+        title: "cw-code",
+        message: `cw-code is listening on ${decision.host} only`,
+        detail: `The server bind host setting asks for ${decision.ignoredHost}, but no device tokens exist. Create a device token first, then restart cw-code.`
+      });
+    }
+    const host = decision.host;
+    const isOriginAllowed = createOriginPolicy(this.args.allowOrigins);
+    const onOriginRejected = createRejectedOriginLogger((entry) => {
+      console.warn(entry);
+      appendCrashLog(entry);
+    });
+    const ws = new WsServer({ host, port: this.args.port, authorize, isOriginAllowed, onOriginRejected, version: this.version, router: this.router });
+    const { url, port } = this.bind(ws, host);
     this.ws = ws;
-    this.openStores();
+    this.applyStores(stores);
+    ws.onClientAccepted((ctx) => {
+      if (ctx.client === "desktop-shell") this.flushShellNotices(ctx.clientId);
+      if (ctx.auth.kind !== "device") return;
+      devices.touch(ctx.auth.deviceId, Date.now());
+      this.emitDevicesChanged();
+    });
     ws.onClientClosed((ctx) => {
-      if (ctx.client === "desktop-ui" && !this.stopping) this.handleUiDisconnected(ws);
+      this.topics.dropClient(ctx.clientId);
+      this.clientInputs.dropClient(ctx.clientId);
+      if (ctx.auth.kind === "device" && !this.stopping) this.emitDevicesChanged();
+      if (ctx.client === "desktop-ui" && !this.stopping && !ws.clients().some((other) => other.client === "desktop-ui")) {
+        this.handleUiDisconnected();
+      }
     });
     const ready: ServerReady = { url, port, pid: process.pid, protocol: PROTOCOL_VERSION, version: this.version };
     writeEndpoint(userdataDir(), ready);
@@ -128,11 +229,11 @@ export class ServerApp {
     this.emit("shutdown.changed", status);
   }
 
-  private bind(ws: WsServer): { url: string; port: number } {
+  private bind(ws: WsServer, host: string): { url: string; port: number } {
     try {
       return ws.start();
     } catch (err) {
-      const message = `could not listen on ${this.args.host}:${this.args.port}: ${(err as Error).message}`;
+      const message = `could not listen on ${host}:${this.args.port}: ${err instanceof Error ? err.message : String(err)}`;
       appendCrashLog(message);
       console.error(message);
       process.exit(1);
@@ -194,7 +295,14 @@ export class ServerApp {
   }
 
   private openStores(): void {
-    const stores = openMetadataStores({ dbPath: sessionDbPath(), settingsPath: settingsFilePath() });
+    this.applyStores(this.loadStores());
+  }
+
+  private loadStores(): OpenedMetadataStores {
+    return openMetadataStores({ dbPath: sessionDbPath(), settingsPath: settingsFilePath() });
+  }
+
+  private applyStores(stores: OpenedMetadataStores): void {
     if (!stores.ok) {
       this.state = { mode: "recovery", issues: stores.issues, dataDir: userdataDir() };
       for (const issue of stores.issues) {
@@ -206,6 +314,7 @@ export class ServerApp {
     initClaudeCommandsCache(claudeCommandsCachePath());
     const services = createServices(stores, {
       emit: (channel, payload) => this.emit(channel, payload),
+      dropTopic: (topic) => this.topics.dropTopic(topic),
       legacyAppRoots: this.args.legacyUserData,
       onShutdownRecovered: (failure) => this.handleShutdownRecovered(failure),
       onShutdownExpired: (reason) => this.handleShutdownExpired(reason)
@@ -229,16 +338,24 @@ export class ServerApp {
         console.warn(`turn snapshot index sweep failed: ${(err as Error).message}`);
       });
     this.startSessionSweeps();
+    this.topicWiring.resync();
   }
 
   private handleShutdownRecovered(failure: string | null): void {
     this.servicesDisposed = false;
     this.startSessionSweeps();
+    this.topicWiring.resync();
     this.emitShutdownChanged();
     if (!failure) return;
     appendCrashLog(`shutdown recovery could not restart CLI drivers: ${failure}`);
     const notice: AppNotice = { level: "error", title: "cw-code", message: "cw-code could not restart its CLI drivers", detail: failure };
     this.emit("app.notice", notice);
+  }
+
+  private flushShellNotices(clientId: string): void {
+    const notices = this.pendingShellNotices;
+    this.pendingShellNotices = [];
+    for (const notice of notices) this.sendTo(clientId, "app.notice", notice);
   }
 
   private handleShutdownExpired(reason: ShutdownReason): void {
@@ -247,10 +364,8 @@ export class ServerApp {
     this.emitShutdownChanged();
   }
 
-  private handleUiDisconnected(ws: WsServer): void {
+  private handleUiDisconnected(): void {
     this.recoverAbandonedShutdown();
-    if (ws.clients().some((client) => client.client === "desktop-ui")) return;
-    this.services?.ptys.detachAll();
   }
 
   private recoverAbandonedShutdown(): void {

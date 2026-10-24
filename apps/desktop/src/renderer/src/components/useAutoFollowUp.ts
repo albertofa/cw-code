@@ -52,6 +52,7 @@ async function sendAutoFollowUp(followUp: AutoFollowUp, settings: AppSettings, h
       ...(finalReview ? { finalReview: { ref: link.ref, sha: detail.headRefOid } } : {})
     });
   } catch (err) {
+    if ((err as { code?: unknown } | null)?.code === "session-busy") return false;
     useAppStore.getState().pauseAutoFollowUp(sessionId, "error");
     useNotifs.getState().push({
       kind: "error",

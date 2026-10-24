@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from "react";
 import { Check, ChevronLeft, ChevronRight, MessageCircleQuestion } from "lucide-react";
 import type { QuestionInfo, QuestionOption, QuestionRequest } from "../cw.js";
 import { useAppStore } from "../stores/appStore.js";
+import { ipcErrorMessage } from "./ipcError.js";
+import { useNotifs } from "./Notifications.js";
 import { useThreadVisible } from "./threadVisibility.js";
 
 interface AnswerState {
@@ -103,7 +105,10 @@ function QuestionPanel({
     }
     if (Object.keys(answers).length === 0) return;
     setSubmitting(true);
-    void respond(sessionId, request.requestId, answers).catch(() => setSubmitting(false));
+    void respond(sessionId, request.requestId, answers).catch((err) => {
+      setSubmitting(false);
+      useNotifs.getState().push({ kind: "error", title: "Could not send the answer", message: ipcErrorMessage(err) });
+    });
   };
 
   const complete = request.questions.every((q) => isAnswered(q, states[q.question]));

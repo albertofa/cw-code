@@ -37,10 +37,14 @@ import { ipcErrorMessage } from "./components/ipcError.js";
 import { useAppStore } from "./stores/appStore.js";
 import { rightOpenTabs } from "./stores/panelLayout.js";
 import { selectSessionPanel, usePanelStore } from "./stores/panelStore.js";
+import { useGitHubStore } from "./stores/githubStore.js";
 import { usePrStore } from "./stores/prStore.js";
+import { useSkillsStore } from "./stores/skillsStore.js";
 import { projectDirty, useSettingsDraftStore } from "./stores/settingsDraftStore.js";
 import { prKey } from "./components/prInbox.js";
 import type { TurnEvent } from "./cw.js";
+import { APP_TOPIC, PRS_TOPIC, SIDEBAR_TOPIC, gitTopic, sessionTopic } from "@cw-code/shared/topics";
+import { useDocumentVisible, useTopics } from "./server/useTopics.js";
 
 const VERSION_NOTIF_ID = "cli-versions";
 const BINARY_NOTIF_ID = "cli-binaries";
@@ -186,6 +190,13 @@ export function App() {
     const off = window.cw.onTurnEvent(handleTurnEvent);
     const offTitle = window.cw.onSessionTitle(({ sessionId, title }) => useAppStore.getState().applySessionTitle(sessionId, title));
     const offSession = window.cw.onSessionUpdated((session) => useAppStore.getState().applySession(session));
+    const offProject = window.cw.onProjectChanged((project) => useAppStore.getState().applyProject(project));
+    const offSettings = window.cw.onSettingsChanged((settings) => {
+      useAppStore.getState().applySettings(settings);
+      useGitHubStore.getState().applySavedViews(settings.githubSavedViews ?? []);
+    });
+    const offSkills = window.cw.onSkillsChanged((result) => useSkillsStore.getState().applyList(result));
+    const offComposer = window.cw.onComposerChanged(({ sessionId, prefs }) => useAppStore.getState().applyComposer(sessionId, prefs));
     const offGitStatus = window.cw.onGitStatus(({ sessionId, status }) => useAppStore.getState().applyGitStatus(sessionId, status));
     const offTrackedPrs = window.cw.onTrackedPrs((items) => usePrStore.getState().applyTracked(items));
     void usePrStore.getState().loadTracked();
@@ -223,6 +234,10 @@ export function App() {
       off();
       offTitle();
       offSession();
+      offProject();
+      offSettings();
+      offSkills();
+      offComposer();
       offGitStatus();
       offTrackedPrs();
       offUpdates();
@@ -244,29 +259,29 @@ export function App() {
     [sessionsByProject]
   );
 
+  const subscribedTopics = useMemo(() => {
+    const topics = [APP_TOPIC, SIDEBAR_TOPIC, PRS_TOPIC];
+    for (const session of Object.values(sessionsByProject).flat()) {
+      if (session.status === "resolved" || session.status === "archived") continue;
+      topics.push(sessionTopic(session.id));
+    }
+    if (activeSessionId) topics.push(sessionTopic(activeSessionId));
+    return topics;
+  }, [sessionsByProject, activeSessionId]);
+  useTopics(subscribedTopics);
+
   const watchedGitKey = useMemo(() => {
     const ids = new Set(workingSetKey ? workingSetKey.split("|") : []);
     if (activeSessionId) ids.add(activeSessionId);
     return [...ids].sort().join("|");
   }, [workingSetKey, activeSessionId]);
 
-  useEffect(() => {
-    if (!window.cw) return;
-    void window.cw.watchGitStatus(watchedGitKey ? watchedGitKey.split("|") : []).catch((err: unknown) =>
-      console.warn(`git status watch failed: ${ipcErrorMessage(err)}`)
-    );
-  }, [watchedGitKey]);
-
-  useEffect(() => {
-    if (!window.cw) return;
-    const sync = () =>
-      void window.cw.setGitActive(!document.hidden).catch((err: unknown) =>
-        console.warn(`git status activity update failed: ${ipcErrorMessage(err)}`)
-      );
-    sync();
-    document.addEventListener("visibilitychange", sync);
-    return () => document.removeEventListener("visibilitychange", sync);
-  }, []);
+  const documentVisible = useDocumentVisible();
+  const gitTopics = useMemo(
+    () => (documentVisible && watchedGitKey ? watchedGitKey.split("|").map(gitTopic) : []),
+    [documentVisible, watchedGitKey]
+  );
+  useTopics(gitTopics);
 
   useEffect(() => {
     const onFocus = () => {

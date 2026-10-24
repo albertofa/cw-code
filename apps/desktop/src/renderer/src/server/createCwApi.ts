@@ -42,6 +42,7 @@ import type {
 import { assertPasteImageSize } from "@cw-code/shared/protocol";
 import type {
   ActiveTurn,
+  ComposerChangedEvent,
   ComposerPrefs,
   CwApi,
   HistoryMessage,
@@ -53,6 +54,7 @@ import type {
   SessionCleanupResult
 } from "../cw.js";
 import { ipcErrorMessage } from "../components/ipcError.js";
+import { createPtyAttachments, type PtyOpenResult } from "./ptyAttachments.js";
 
 const BASE64_CHUNK = 0x8000;
 
@@ -70,6 +72,7 @@ export function createCwApi(client: ServerClient, desktop: DesktopApi, shutdownH
   const call = <T>(method: string, params?: unknown): Promise<T> => client.call<T>(method, params);
   const callVoid = (method: string, params?: unknown): Promise<void> => client.call(method, params).then(() => undefined);
   const subscribe = <T>(channel: string, cb: (payload: T) => void): (() => void) => client.on(channel, (payload) => cb(payload as T));
+  const ptyAttachments = createPtyAttachments((ptyId) => client.send("pty.detach", { ptyId }));
 
   function searchGitHub(kind: "pr", query: string, countBase: string, force?: boolean): Promise<GitHubSearchResult<PrSummary>>;
   function searchGitHub(kind: "issue", query: string, countBase: string, force?: boolean): Promise<GitHubSearchResult<IssueSummary>>;
@@ -191,8 +194,6 @@ export function createCwApi(client: ServerClient, desktop: DesktopApi, shutdownH
       importAll: () => call<SkillsListResult>("skills.importAll")
     },
     getGitStatus: (sessionId) => call<GitStatus>("git.status", { sessionId }),
-    watchGitStatus: (sessionIds) => callVoid("git.watch", { sessionIds }),
-    setGitActive: (active) => callVoid("git.setActive", { active }),
     onGitStatus: (cb) => subscribe("git.statusChanged", cb),
     listGitBranches: (sessionId) => call<GitBranchInfo[]>("git.branches", { sessionId }),
     listProjectBranches: (projectId) => call<GitBranchInfo[]>("git.projectBranches", { projectId }),
@@ -217,9 +218,9 @@ export function createCwApi(client: ServerClient, desktop: DesktopApi, shutdownH
     getGitHubRuns: (sources, force) => call<RunsResult>("github.runs", { sources, force }),
     getRunLog: (ref) => call<string>("github.runLog", { ref }),
     watchGitHubRuns: (refs) => callVoid("github.watchRuns", { refs }),
-    setGitHubActive: (active) => callVoid("github.setActive", { active }),
     onGitHubRunsChanged: (cb) => subscribe("github.runsChanged", cb),
     onGitHubCiActivity: (cb) => client.on("github.ciActivity", () => cb()),
+    subscribeTopics: (topics) => client.subscribe(topics),
     cloneGitHubRepo: (repo) => call<Project>("github.clone", { repo }),
     getProjectGitHubRepos: () => call<ProjectGitHubRepo[]>("prs.projectRepos"),
     linkSessionPr: (sessionId, link) => call<Session>("sessions.linkPr", { sessionId, link }),
@@ -234,6 +235,10 @@ export function createCwApi(client: ServerClient, desktop: DesktopApi, shutdownH
     onTurnEvent: (cb) => subscribe("turn.event", cb),
     onSessionTitle: (cb) => subscribe("session.title", cb),
     onSessionUpdated: (cb) => subscribe("session.updated", cb),
+    onProjectChanged: (cb) => subscribe("projects.changed", cb),
+    onSettingsChanged: (cb) => subscribe("settings.changed", cb),
+    onSkillsChanged: (cb) => subscribe("skills.changed", cb),
+    onComposerChanged: (cb) => subscribe("composer.changed", cb),
     readFile: (sessionId, path) => call<string>("fs.readFile", { sessionId, path }),
     readOutsideFile: (path) => call<string>("fs.readOutsideFile", { path }),
     listFiles: (sessionId) => call<string[]>("fs.listFiles", { sessionId }),
@@ -256,17 +261,16 @@ export function createCwApi(client: ServerClient, desktop: DesktopApi, shutdownH
     gitBaseline: (sessionId, path) => call<GitBaseline>("fs.gitBaseline", { sessionId, path }),
     searchText: (sessionId, query) => call<TextSearchResult>("fs.searchText", { sessionId, query }),
     setWatchedPaths: (sessionId, paths) => callVoid("fs.setWatchedPaths", { sessionId, paths }),
-    unwatchPaths: (sessionId) => callVoid("fs.unwatchPaths", { sessionId }),
     onFsChanged: (cb) => subscribe("fs.changed", cb),
     savePasteImage: async (projectId, mime, data) => {
       assertPasteImageSize(data.byteLength);
       return call<string>("fs.savePasteImage", { projectId, mime, base64: toBase64(data) });
     },
     readImage: (args) => call<{ mime: string; base64: string }>("fs.readImage", args),
-    openPty: (sessionId, kind) => call<{ ptyId: string; token: string; replay: string }>("pty.open", { sessionId, kind }),
+    openPty: (sessionId, kind) => ptyAttachments.open(() => call<PtyOpenResult>("pty.open", { sessionId, kind })),
     writePty: (ptyId, data) => client.send("pty.write", { ptyId, data }),
     resizePty: (ptyId, cols, rows) => client.send("pty.resize", { ptyId, cols, rows }),
-    detachPty: (ptyId, token) => client.send("pty.detach", { ptyId, token }),
+    detachPty: (ptyId) => ptyAttachments.detach(ptyId),
     killPty: (ptyId) => client.send("pty.kill", { ptyId }),
     onPtyData: (cb) => subscribe("pty.data", cb),
     onPtyExit: (cb) => subscribe("pty.exit", cb),

@@ -1,5 +1,6 @@
 import type { ShutdownReason } from "@cw-code/contracts";
 import { prKey } from "@cw-code/shared/prRef";
+import { ptyTopic } from "@cw-code/shared/topics";
 import { FileService } from "../fs/FileService.js";
 import { FileWatcher } from "../fs/FileWatcher.js";
 import { GitService } from "../fs/GitService.js";
@@ -41,6 +42,7 @@ export interface Services {
 
 export interface ServiceHooks {
   emit: Emit;
+  dropTopic: (topic: string) => void;
   legacyAppRoots: string[];
   onShutdownRecovered: (failure: string | null) => void;
   onShutdownExpired: (reason: ShutdownReason) => void;
@@ -48,7 +50,7 @@ export interface ServiceHooks {
 
 const PR_STATE_REUSE_MS = 60_000;
 
-function wireServiceEvents({ sessions, sourceControl, prTracker, ptys, runWatcher }: Services, emit: Emit): void {
+function wireServiceEvents({ sessions, sourceControl, prTracker, ptys, runWatcher }: Services, { emit, dropTopic }: ServiceHooks): void {
   sessions.setEmitter((sessionId, event) => {
     emit("turn.event", { sessionId, event });
     sourceControl.onThreadEvent(sessionId, event);
@@ -58,7 +60,11 @@ function wireServiceEvents({ sessions, sourceControl, prTracker, ptys, runWatche
     emit("session.updated", session);
     prTracker.setTracked(sessions.trackedPrRefs());
   });
-  ptys.setExitEmitter((ptyId, token, exitCode) => emit("pty.exit", { ptyId, token, exitCode }));
+  sessions.setProjectEmitter((project) => emit("projects.changed", project));
+  ptys.setExitEmitter((ptyId, token, exitCode) => {
+    emit("pty.exit", { ptyId, token, exitCode });
+    if (!ptys.has(ptyId)) dropTopic(ptyTopic(ptyId));
+  });
   runWatcher.onRunsChanged = (changed) => emit("github.runsChanged", changed);
   runWatcher.onCiActivity = () => emit("github.ciActivity");
 }
@@ -125,6 +131,6 @@ export function createServices(stores: { sessionStore: SessionStore; settingsSto
     accountUsage: new AccountUsageService(() => sessions.driversForProbe()),
     shutdown: new ShutdownCoordinator({ sessions, ptys, onRecovered: hooks.onShutdownRecovered, onExpired: hooks.onShutdownExpired })
   };
-  wireServiceEvents(services, emit);
+  wireServiceEvents(services, hooks);
   return services;
 }

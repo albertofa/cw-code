@@ -356,12 +356,26 @@ describe("SessionManager driver lifecycle", () => {
 });
 
 describe("SessionManager shutdown recovery", () => {
+  it("tags turns interrupted by a shutdown so clients can tell them from user interrupts", async () => {
+    const { manager, project, events } = setup();
+    const session = await manager.createSession(project.id, "claude", { mode: "current" });
+    const userTurn = await manager.startTurn(session.id, "first");
+    manager.interrupt(userTurn);
+    const shutdownTurn = await manager.startTurn(session.id, "second");
+    manager.beginShutdownReservation();
+    manager.interrupt(shutdownTurn);
+    expect(events.filter((entry) => entry.event.type === "turn.interrupted").map((entry) => entry.event)).toEqual([
+      { type: "turn.interrupted", turnId: userTurn, sessionId: session.id },
+      { type: "turn.interrupted", turnId: shutdownTurn, sessionId: session.id, reason: "shutdown" }
+    ]);
+  });
+
   it("publishes interrupted sessions when stopped for shutdown and again after drivers are rebuilt", async () => {
     const { manager, project } = setup();
     const updates: Array<{ id: string; status: string }> = [];
-    manager.setSessionEmitter((session) => updates.push({ id: session.id, status: session.status }));
     const session = await manager.createSession(project.id, "claude", { mode: "current" });
     const turnId = await manager.startTurn(session.id, "long task");
+    manager.setSessionEmitter((emitted) => updates.push({ id: emitted.id, status: emitted.status }));
     manager.beginShutdownReservation();
     manager.interrupt(turnId);
     expect(updates).toEqual([{ id: session.id, status: "holding" }]);

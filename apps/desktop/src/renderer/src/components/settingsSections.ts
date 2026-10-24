@@ -29,7 +29,7 @@ export const SETTINGS_NAV: SettingsNavItem[] = [
   ...HARNESS_IDS.map((id): SettingsNavItem => ({ id, label: HARNESS_NAMES[id], group: "harnesses" }))
 ];
 
-export type DraftSettingKey = Exclude<keyof AppSettings, "githubSavedViews">;
+export type DraftSettingKey = Exclude<keyof AppSettings, "githubSavedViews" | "serverBindHost">;
 
 const SETTING_OWNER: Record<DraftSettingKey, SettingsNavId> = {
   claudeBinaryPath: "claude",

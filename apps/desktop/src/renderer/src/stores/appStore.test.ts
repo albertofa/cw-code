@@ -562,6 +562,28 @@ describe("appStore sendPromptTo", () => {
   });
 });
 
+describe("appStore history behind live turns", () => {
+  beforeEach(() => {
+    useAppStore.setState({ messagesBySession: {}, loadingHistory: {}, historyLoadedBySession: {}, busyTurns: {} });
+  });
+
+  it("merges history ahead of live turns received before the session was opened, once", async () => {
+    const history: HistoryMessage[] = [
+      { id: "h1", role: "user", text: "earlier", turnId: "h1", timestamp: 100 },
+      { id: "h2", role: "user", text: "live prompt as transcribed", turnId: "h2", timestamp: 250 }
+    ];
+    const getHistory = vi.fn(async () => history);
+    (window as unknown as { cw: unknown }).cw = { getHistory };
+    useAppStore.getState().applyEvent("sess_remote", { type: "turn.started", turnId: "turn_live", sessionId: "sess_remote", prompt: "live prompt", startedAt: 200 });
+
+    await useAppStore.getState().ensureHistory("sess_remote");
+    await useAppStore.getState().ensureHistory("sess_remote");
+
+    expect(useAppStore.getState().messagesBySession.sess_remote.map((m) => m.id)).toEqual(["h1", "turn_live-u"]);
+    expect(getHistory).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe("appStore context.compacted", () => {
   beforeEach(() => {
     useAppStore.setState({ messagesBySession: {}, turnUsageBySession: {} });

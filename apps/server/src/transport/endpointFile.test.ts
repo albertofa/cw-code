@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import type { ServerReady } from "@cw-code/contracts";
+import { PROTOCOL_VERSION } from "@cw-code/shared/protocol";
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -12,7 +13,7 @@ const UNUSED_PID = 2_147_483_000;
 let root: string;
 
 function ready(pid: number): ServerReady {
-  return { url: "ws://127.0.0.1:4000/ws", port: 4000, pid, protocol: 1, version: "1.2.3" };
+  return { url: "ws://127.0.0.1:4000/ws", port: 4000, pid, protocol: PROTOCOL_VERSION, version: "1.2.3" };
 }
 
 beforeEach(() => {
@@ -117,7 +118,7 @@ describe("confirmLiveEndpoint", () => {
   });
 
   test("confirms a real websocket server", async () => {
-    const server = new WsServer({ host: "127.0.0.1", port: 0, token: "t".repeat(64), version: "1.0.0", router: new Router() });
+    const server = new WsServer({ host: "127.0.0.1", port: 0, authorize: () => null, version: "1.0.0", router: new Router() });
     try {
       const { url, port } = server.start();
       expect(await confirmLiveEndpoint({ ...ready(OTHER_PID), url, port })).toBe(true);
@@ -127,7 +128,7 @@ describe("confirmLiveEndpoint", () => {
   });
 
   test("rejects a closed port", async () => {
-    const server = new WsServer({ host: "127.0.0.1", port: 0, token: "t".repeat(64), version: "1.0.0", router: new Router() });
+    const server = new WsServer({ host: "127.0.0.1", port: 0, authorize: () => null, version: "1.0.0", router: new Router() });
     const { url, port } = server.start();
     await server.stop();
     expect(await confirmLiveEndpoint({ ...ready(OTHER_PID), url, port })).toBe(false);

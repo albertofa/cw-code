@@ -107,6 +107,7 @@ export interface AppSettings {
   notificationSounds: NotificationSoundSettings;
   themeId: string;
   customThemes: CustomTheme[];
+  serverBindHost: string;
 }
 
 export type SettingsPatch = Partial<AppSettings>;

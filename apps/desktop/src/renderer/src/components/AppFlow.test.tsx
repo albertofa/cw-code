@@ -64,7 +64,6 @@ function installBridge(): void {
     getGitHubRuns: async () => ({ account: null, items: [], fetchedAt: 0, error: null }),
     getRunLog: async () => "",
     watchGitHubRuns: async () => {},
-    setGitHubActive: async () => {},
     onGitHubRunsChanged: noop,
     onGitHubCiActivity: noop,
     markSessionRunSeen: async (sessionId: string) => makeSession({ id: sessionId }),
@@ -72,8 +71,6 @@ function installBridge(): void {
     getGitStatus: async () => {
       throw new Error("no git");
     },
-    watchGitStatus: async () => {},
-    setGitActive: async () => {},
     onGitStatus: noop,
     getTrackedPrs: async () => [],
     onTrackedPrs: noop,
@@ -91,6 +88,7 @@ function installBridge(): void {
       return () => {};
     },
     onSessionTitle: noop,
+    subscribeTopics: () => () => {},
     shutdown: { onRequested: noop, onExpired: noop },
     onWindowMaximized: noop,
     isWindowMaximized: async () => false

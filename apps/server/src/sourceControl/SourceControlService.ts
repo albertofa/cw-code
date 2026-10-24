@@ -48,7 +48,6 @@ export class SourceControlService {
   private readonly requested = new Map<string, Set<string>>();
   private readonly toolEffects = new Map<string, Map<string, ToolGitEffect>>();
   private watched = new Set<string>();
-  private active = true;
   private pollTimer: ReturnType<typeof setTimeout> | null = null;
   private watchGeneration = 0;
 
@@ -82,12 +81,6 @@ export class SourceControlService {
     if (!this.scheduler || (added.length === 0 && !removed)) return;
     for (const id of added) void this.refresh(id);
     void this.syncWatcherRoots();
-  }
-
-  setActive(active: boolean): void {
-    if (this.active === active) return;
-    this.active = active;
-    if (active && this.scheduler) this.refreshWatched();
   }
 
   refresh(sessionId: string, request: { forcePullRequest?: boolean } = {}): Promise<void> {
@@ -301,7 +294,7 @@ export class SourceControlService {
     const seconds = Math.max(MIN_POLL_SECONDS, Number.isFinite(configured) ? configured : MIN_POLL_SECONDS);
     this.pollTimer = setTimeout(() => {
       this.pollTimer = null;
-      if (this.active) this.refreshWatched();
+      this.refreshWatched();
       this.schedulePoll();
     }, seconds * 1000);
     this.pollTimer.unref?.();

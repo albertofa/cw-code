@@ -403,6 +403,8 @@ export interface QuestionRequest {
 }
 
 export type TurnEvent =
+  | { type: "turn.started"; turnId: string; sessionId: string; startedAt: number; prompt: string }
+  | { type: "turn.interrupted"; turnId: string; sessionId: string; reason?: "shutdown" }
   | { type: "assistant.delta"; turnId: string; text: string }
   | { type: "reasoning.delta"; turnId: string; text: string }
   | {
@@ -478,6 +480,11 @@ export interface ComposerPrefs {
   effort?: EffortLevel;
   variant?: string;
   permissionMode?: PermissionMode;
+}
+
+export interface ComposerChangedEvent {
+  sessionId: string;
+  prefs: ComposerPrefs;
 }
 
 export interface ModelMeta {
@@ -562,6 +569,7 @@ export interface AppSettings {
   notificationSounds: NotificationSoundSettings;
   themeId: string;
   customThemes: CustomTheme[];
+  serverBindHost: string;
 }
 
 export type SettingsPatch = Partial<AppSettings>;
@@ -650,8 +658,6 @@ export interface CwApi {
     importAll(): Promise<SkillsListResult>;
   };
   getGitStatus(sessionId: string): Promise<GitStatus>;
-  watchGitStatus(sessionIds: string[]): Promise<void>;
-  setGitActive(active: boolean): Promise<void>;
   onGitStatus(cb: (update: GitStatusUpdate) => void): () => void;
   listGitBranches(sessionId: string): Promise<GitBranchInfo[]>;
   listProjectBranches(projectId: string): Promise<GitBranchInfo[]>;
@@ -677,9 +683,9 @@ export interface CwApi {
   getGitHubRuns(sources: RunSources, force?: boolean): Promise<RunsResult>;
   getRunLog(ref: RunRef): Promise<string>;
   watchGitHubRuns(refs: RunRef[]): Promise<void>;
-  setGitHubActive(active: boolean): Promise<void>;
   onGitHubRunsChanged(cb: (runs: WorkflowRunSummary[]) => void): () => void;
   onGitHubCiActivity(cb: () => void): () => void;
+  subscribeTopics(topics: readonly string[]): () => void;
   cloneGitHubRepo(repo: RepoRef): Promise<Project>;
   getProjectGitHubRepos(): Promise<ProjectGitHubRepo[]>;
   linkSessionPr(sessionId: string, link: SessionPrLink): Promise<Session>;
@@ -694,6 +700,10 @@ export interface CwApi {
   onTurnEvent(cb: (msg: { sessionId: string; event: TurnEvent }) => void): () => void;
   onSessionTitle(cb: (msg: { sessionId: string; title: string }) => void): () => void;
   onSessionUpdated(cb: (session: Session) => void): () => void;
+  onProjectChanged(cb: (project: Project) => void): () => void;
+  onSettingsChanged(cb: (settings: AppSettings) => void): () => void;
+  onSkillsChanged(cb: (result: SkillsListResult) => void): () => void;
+  onComposerChanged(cb: (event: ComposerChangedEvent) => void): () => void;
   readFile(sessionId: string, path: string): Promise<string>;
   readOutsideFile(path: string): Promise<string>;
   listFiles(sessionId: string): Promise<string[]>;
@@ -712,14 +722,13 @@ export interface CwApi {
   gitBaseline(sessionId: string, path: string): Promise<GitBaseline>;
   searchText(sessionId: string, query: TextSearchQuery): Promise<TextSearchResult>;
   setWatchedPaths(sessionId: string, paths: string[]): Promise<void>;
-  unwatchPaths(sessionId: string): Promise<void>;
   onFsChanged(cb: (e: FsChangeEvent) => void): () => void;
   savePasteImage(projectId: string, mime: string, data: Uint8Array): Promise<string>;
   readImage(args: { sessionId?: string; projectId?: string; path: string }): Promise<{ mime: string; base64: string }>;
   openPty(sessionId: string, kind: DriverName | "shell"): Promise<{ ptyId: string; token: string; replay: string }>;
   writePty(ptyId: string, data: string): void;
   resizePty(ptyId: string, cols: number, rows: number): void;
-  detachPty(ptyId: string, token: string): void;
+  detachPty(ptyId: string): void;
   killPty(ptyId: string): void;
   onPtyData(cb: (msg: { ptyId: string; data: string }) => void): () => void;
   onPtyExit(cb: (msg: { ptyId: string; token: string; exitCode: number }) => void): () => void;

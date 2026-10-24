@@ -83,6 +83,18 @@ export function allowRestart(history: readonly number[], now: number, max = MAX_
   return recent.length >= max ? null : [...recent, now];
 }
 
+export function serverArgs(port: number, parentPid: number, legacyUserData: string, env: NodeJS.ProcessEnv): string[] {
+  const args = ["--port", String(port), "--parent-pid", String(parentPid), "--legacy-user-data", legacyUserData];
+  const rendererUrl = env.ELECTRON_RENDERER_URL?.trim();
+  if (!rendererUrl) return args;
+  try {
+    return [...args, "--allow-origin", new URL(rendererUrl).origin];
+  } catch {
+    console.warn(`[server] ignoring invalid ELECTRON_RENDERER_URL: ${rendererUrl}`);
+    return args;
+  }
+}
+
 export function serverCommand(
   launch: ServerLaunch,
   platform: NodeJS.Platform,
@@ -193,7 +205,7 @@ export class ServerProcess {
       this.options.launch,
       process.platform,
       process.stdout.isTTY || process.stdin.isTTY ? { ...process.env, CW_LAUNCHED_FROM_TERMINAL: "1" } : process.env,
-      ["--port", String(this.port), "--parent-pid", String(process.pid), "--legacy-user-data", this.options.launch.legacyUserData],
+      serverArgs(this.port, process.pid, this.options.launch.legacyUserData, process.env),
       { homeDir: homedir(), exists: existsSync }
     );
     this.stderrTail = [];

@@ -99,6 +99,8 @@ import { cwCodeHome, opencodeServerDir, sessionDbPath, settingsFilePath, titleGe
 import { UsageLedger } from "../usage/UsageLedger.js";
 import { shutdownReservedError } from "../shutdown/shutdownReservation.js";
 import { overlayLiveTasks } from "../tasks/overlayLiveTasks.js";
+import { SessionBusyError } from "./SessionBusyError.js";
+import { PendingRequests, type PendingRequest } from "./PendingRequests.js";
 
 export interface SessionManagerOptions {
   dbPath?: string;
@@ -229,6 +231,7 @@ export class SessionManager {
   private interruptedForShutdown = new Set<string>();
   private activeTurns = new Map<string, { sessionId: string; startedAt: number }>();
   private settledTurns = new Map<string, string>();
+  private pendingRequests = new PendingRequests();
   private titleTurns = new Map<string, TitleTurn>();
   private firstPrompts = new Map<string, string>();
   private pendingTurns = new Set<string>();
@@ -246,6 +249,7 @@ export class SessionManager {
   private onTitle: (sessionId: string, title: string) => void;
   private onResolved: (sessionId: string) => void;
   private onSession: (session: SessionMeta) => void = () => {};
+  private onProject: (project: Project) => void = () => {};
   private git: GitService;
   private worktreesRoot: string;
   private deltaBuffer = new Map<string, { sessionId: string; text: string; timer: NodeJS.Timeout }>();
@@ -439,6 +443,15 @@ export class SessionManager {
     this.onSession = onSession;
   }
 
+  setProjectEmitter(onProject: (project: Project) => void): void {
+    this.onProject = onProject;
+  }
+
+  private emitProject(project: Project): Project {
+    this.onProject(project);
+    return project;
+  }
+
   private emitSession(sessionId: string): SessionMeta {
     const updated = this.store.getSession(sessionId);
     if (!updated) throw new Error(`unknown session ${sessionId}`);
@@ -522,6 +535,7 @@ export class SessionManager {
         const wasActive = this.activeTurns.has(event.turnId);
         const turnStartedAt = this.activeTurns.get(event.turnId)?.startedAt;
         this.settleTurn(event.turnId, event.sessionId);
+        this.dropPendingRequests(this.pendingRequests.clearTurn(event.turnId));
         const stillActive = [...this.activeTurns.values()].some((entry) => entry.sessionId === event.sessionId);
         if (stillActive) {
           this.store.updateSession(event.sessionId, { resumeCursor: event.resumeCursor });
@@ -540,6 +554,7 @@ export class SessionManager {
     if (event.type === "turn.error") {
       if (sessionId) this.settleTurn(event.turnId, sessionId);
       else this.activeTurns.delete(event.turnId);
+      this.dropPendingRequests(this.pendingRequests.clearTurn(event.turnId));
       this.turnPrRefs.delete(event.turnId);
       this.turnFinalReviews.delete(event.turnId);
       if (sessionId) {
@@ -555,9 +570,17 @@ export class SessionManager {
       }
     }
     if (event.type === "approval.request" || event.type === "question.request") {
-      if (sessionId) this.store.updateSession(sessionId, { status: "input-required" }, "approval-pending");
+      if (sessionId) {
+        this.pendingRequests.add(
+          event.type === "approval.request"
+            ? { kind: "approval", sessionId, turnId: event.turnId, request: event.request }
+            : { kind: "question", sessionId, turnId: event.turnId, request: event.request }
+        );
+        this.store.updateSession(sessionId, { status: "input-required" }, "approval-pending");
+      }
     }
     if (event.type === "approval.resolved" || event.type === "question.resolved") {
+      this.pendingRequests.resolve(event.requestId);
       if (sessionId && this.activeTurns.has(event.turnId)) {
         this.store.updateSession(sessionId, { status: "working" }, "approval-resolved");
       }
@@ -604,7 +627,7 @@ export class SessionManager {
   }
 
   addProject(rootPath: string): Project {
-    return this.store.addProject(rootPath);
+    return this.emitProject(this.store.addProject(rootPath));
   }
 
   getProject(projectId: string): Project {
@@ -622,11 +645,11 @@ export class SessionManager {
   setProjectGitHubAccount(projectId: string, account: { host: string; login: string } | null): Project {
     const project = this.store.updateProject(projectId, { githubAccount: account ?? undefined }, account === null);
     void this.refreshGitHubToken(project);
-    return project;
+    return this.emitProject(project);
   }
 
   updateProjectSettings(projectId: string, settings: ProjectSettings): Project {
-    return this.store.updateProjectSettings(projectId, settings);
+    return this.emitProject(this.store.updateProjectSettings(projectId, settings));
   }
 
   async listSessions(projectId: string): Promise<SessionMeta[]> {
@@ -640,6 +663,12 @@ export class SessionManager {
   }
 
   async createSession(projectId: string, driver: DriverKind, options: CreateSessionOptions = {}): Promise<SessionMeta> {
+    const session = await this.buildSession(projectId, driver, options);
+    this.emitSession(session.id);
+    return session;
+  }
+
+  private async buildSession(projectId: string, driver: DriverKind, options: CreateSessionOptions): Promise<SessionMeta> {
     this.assertNotReserved();
     if (options.baseFallback !== undefined && options.baseFallback !== "default") {
       throw new Error("invalid base fallback");
@@ -746,8 +775,9 @@ export class SessionManager {
     const [importable] = importableSessions([native], this.importContext());
     if (!importable) throw new Error(`The ${request.driver} session ${request.resumeCursor} is already managed by cw-code`);
     if (!existsSync(native.cwd)) throw new Error(`The folder of this session no longer exists: ${native.cwd}`);
-    const project = projectForCwd(this.store.listProjects(), native.cwd) ?? this.store.addProject(native.cwd);
+    const project = projectForCwd(this.store.listProjects(), native.cwd) ?? this.addProject(native.cwd);
     const session = this.store.createSession(project.id, native.driver, native.title, { resumeCursor: native.resumeCursor });
+    this.emitSession(session.id);
     return { project, session };
   }
 
@@ -917,6 +947,7 @@ export class SessionManager {
     const session = this.store.getSession(sessionId);
     if (!session) throw new Error(`unknown session ${sessionId}`);
     this.store.updateSession(sessionId, { title });
+    this.emitSession(sessionId);
     if (session.resumeCursor) {
       await this.drivers[session.driver].renameSession(session.resumeCursor, title);
     }
@@ -926,9 +957,7 @@ export class SessionManager {
     const session = this.store.getSession(sessionId);
     if (!session) throw new Error(`unknown session ${sessionId}`);
     this.store.updateSession(sessionId, { status }, reason);
-    const updated = this.store.getSession(sessionId);
-    if (!updated) throw new Error(`unknown session ${sessionId}`);
-    return updated;
+    return this.emitSession(sessionId);
   }
 
   syncFromStatus(sessionId: string, status: GitStatus): SessionMeta | null {
@@ -1063,7 +1092,9 @@ export class SessionManager {
     const expired: SessionMeta[] = [];
     for (const sessionId of sessionIds) {
       const updated = this.store.expireHolding(sessionId);
-      if (updated) expired.push(updated);
+      if (!updated) continue;
+      expired.push(updated);
+      this.emitSession(sessionId);
     }
     return expired;
   }
@@ -1209,7 +1240,9 @@ export class SessionManager {
     const entry = { status, promise: run };
     this.pendingResolves.set(sessionId, entry);
     try {
-      return await run;
+      const result = await run;
+      if (this.store.getSession(sessionId)) this.emitSession(sessionId);
+      return result;
     } finally {
       if (this.pendingResolves.get(sessionId) === entry) this.pendingResolves.delete(sessionId);
     }
@@ -1259,6 +1292,7 @@ export class SessionManager {
     this.firstPrompts.delete(sessionId);
     this.branchRenamed.delete(sessionId);
     this.cancelTitleTurns(sessionId);
+    this.dropPendingRequests(this.pendingRequests.clearSession(sessionId));
     this.store.updateSession(
       sessionId,
       { status, ...(opts.auto ? { autoResolved: true } : {}) },
@@ -1436,6 +1470,7 @@ export class SessionManager {
       if (session.worktreePath && !pinsWorktree(session) && !existsSync(session.worktreePath)) {
         this.store.updateSession(session.id, { worktreePath: undefined });
         summary.clearedSessionIds.push(session.id);
+        this.emitSession(session.id);
       }
     }
   }
@@ -1507,6 +1542,7 @@ export class SessionManager {
     const session = this.store.getSession(sessionId);
     if (!session) throw new Error(`unknown session ${sessionId}`);
     this.store.updateComposer(sessionId, prefs);
+    this.emitSession(sessionId);
     return this.getComposer(sessionId);
   }
 
@@ -1922,9 +1958,9 @@ export class SessionManager {
     const project = this.store.getProject(session.projectId);
     if (!project) throw new Error(`unknown project ${session.projectId}`);
     for (const [turnId, entry] of this.activeTurns) {
-      if (entry.sessionId === sessionId) throw new Error(`session busy (turn ${turnId})`);
+      if (entry.sessionId === sessionId) throw new SessionBusyError(`turn ${turnId}`);
     }
-    if (this.pendingTurns.has(sessionId)) throw new Error("session busy (turn pending)");
+    if (this.pendingTurns.has(sessionId)) throw new SessionBusyError("turn pending");
     if (this.pendingResolves.has(sessionId)) throw new Error("session busy (resolve pending)");
     if (this.undoPendingOnRoot(session)) throw new Error("session busy (undo pending)");
     if (this.branchSwitchPendingOnRoot(session)) throw new Error(`${project.name} is switching branches — try again in a moment`);
@@ -1961,7 +1997,9 @@ export class SessionManager {
         ...(!opts?.command && opts?.skills?.length ? { skills: opts.skills } : {}),
         env: buildTurnEnv(process.env, this.sessionEnvVars(session.id, session, project, cwd, session.driver === "claude"))
       });
-      this.activeTurns.set(handle.turnId, { sessionId, startedAt: Date.now() });
+      const startedAt = Date.now();
+      this.activeTurns.set(handle.turnId, { sessionId, startedAt });
+      this.onEvent(sessionId, { type: "turn.started", turnId: handle.turnId, sessionId, startedAt, prompt });
       if (opts?.prRefs && opts.prRefs.length > 0) this.turnPrRefs.set(handle.turnId, opts.prRefs);
       if (opts?.finalReview) this.turnFinalReviews.set(handle.turnId, opts.finalReview);
       const lastTurnSnapshot = snapshot ? { turnId: handle.turnId, ...snapshot } : undefined;
@@ -2221,10 +2259,12 @@ export class SessionManager {
     const driver = session ? this.drivers[session.driver] : undefined;
     driver?.interrupt(turnId);
     this.settleTurn(turnId, sessionId);
+    this.dropPendingRequests(this.pendingRequests.clearTurn(turnId));
     this.turnPrRefs.delete(turnId);
     this.turnFinalReviews.delete(turnId);
     this.captureEndSnapshot(sessionId, turnId, driver ? () => this.driverSettled(driver, sessionId) : undefined);
     this.store.updateSession(sessionId, { status: "holding" }, "turn-interrupted");
+    this.onEvent(sessionId, { type: "turn.interrupted", turnId, sessionId, ...(this.shutdownReserved ? { reason: "shutdown" as const } : {}) });
     if (!session) return;
     if (this.shutdownReserved) this.interruptedForShutdown.add(sessionId);
     this.emitSession(sessionId);
@@ -2250,33 +2290,67 @@ export class SessionManager {
       permissionMode: this.getComposer(sessionId).permissionMode
     });
     if (result.status === "running" && result.turnId) {
-      this.activeTurns.set(result.turnId, { sessionId, startedAt: Date.now() });
+      const startedAt = Date.now();
+      this.activeTurns.set(result.turnId, { sessionId, startedAt });
+      this.onEvent(sessionId, { type: "turn.started", turnId: result.turnId, sessionId, startedAt, prompt: "" });
       this.store.updateSession(sessionId, { status: "working" }, "retry-connected");
     } else {
       this.store.updateSession(sessionId, { status: "idle" }, "retry-idle");
     }
+    this.emitSession(sessionId);
     return { ...result, history: overlayLiveTasks(result.history, driverLiveTasks(driver, sessionId)) };
   }
 
+  listPendingRequests(sessionId: string): PendingRequest[] {
+    return this.pendingRequests.list(sessionId);
+  }
+
   async respondApproval(requestId: string, decision: ApprovalDecision): Promise<void> {
-    for (const driver of Object.values(this.drivers)) {
-      if (typeof driver.respondToApproval !== "function") continue;
-      try {
-        await driver.respondToApproval(requestId, decision);
-      } catch (err) {
-        console.warn(`approval response failed for ${driver.kind}: ${(err as Error).message}`);
-      }
-    }
+    await this.answerPendingRequest(requestId, "approval", async (driver) => {
+      if (typeof driver.respondToApproval !== "function") throw new Error(`${driver.kind} cannot answer approvals`);
+      await driver.respondToApproval(requestId, decision);
+    });
   }
 
   async respondQuestion(requestId: string, answers: Record<string, string>): Promise<void> {
-    for (const driver of Object.values(this.drivers)) {
-      if (typeof driver.respondToQuestion !== "function") continue;
-      try {
-        await driver.respondToQuestion(requestId, answers);
-      } catch (err) {
-        console.warn(`question response failed for ${driver.kind}: ${(err as Error).message}`);
+    await this.answerPendingRequest(requestId, "question", async (driver) => {
+      if (typeof driver.respondToQuestion !== "function") throw new Error(`${driver.kind} cannot answer questions`);
+      await driver.respondToQuestion(requestId, answers);
+    });
+  }
+
+  private async answerPendingRequest(
+    requestId: string,
+    kind: PendingRequest["kind"],
+    answer: (driver: CliDriver) => Promise<void>
+  ): Promise<void> {
+    const entry = this.pendingRequests.claim(requestId, kind);
+    try {
+      const session = this.store.getSession(entry.sessionId);
+      if (!session) throw new Error(`unknown session ${entry.sessionId}`);
+      await answer(this.drivers[session.driver]);
+    } catch (err) {
+      if (this.pendingRequests.release(entry)) {
+        this.onEvent(
+          entry.sessionId,
+          entry.kind === "approval"
+            ? { type: "approval.request", turnId: entry.turnId, request: entry.request }
+            : { type: "question.request", turnId: entry.turnId, request: entry.request }
+        );
       }
+      throw err;
+    }
+  }
+
+  private dropPendingRequests(entries: PendingRequest[]): void {
+    for (const entry of entries) {
+      const requestId = entry.request.requestId;
+      this.onEvent(
+        entry.sessionId,
+        entry.kind === "approval"
+          ? { type: "approval.resolved", turnId: entry.turnId, requestId }
+          : { type: "question.resolved", turnId: entry.turnId, requestId, answers: null }
+      );
     }
   }
 

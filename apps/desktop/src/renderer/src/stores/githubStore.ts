@@ -14,6 +14,7 @@ import type {
   SavedGitHubView,
   WorkflowRunSummary
 } from "../cw.js";
+import { GITHUB_RUNS_TOPIC } from "@cw-code/shared/topics";
 import { errorMessage } from "../components/errorMessage.js";
 import { normalizeQuery, kindFromQuery, runSources, sortedRemoteOf, splitQuery, tokenize, type SplitQuery } from "../components/githubQuery.js";
 import { useAppStore } from "./appStore.js";
@@ -61,6 +62,7 @@ export interface GitHubStore {
   renameView(id: string, name: string): Promise<void>;
   deleteView(id: string): Promise<void>;
   loadSavedViews(): Promise<void>;
+  applySavedViews(views: SavedGitHubView[]): void;
   setActive(active: boolean, force?: boolean): void;
   setWatchedRuns(refs: RunRef[]): void;
   syncContext(): void;
@@ -281,6 +283,21 @@ function reconcileRuns(incoming: RunsResult, existing: Record<string, Loadable<R
 }
 
 let teardownRuntime: () => void = () => undefined;
+let runsTopicDisposer: (() => void) | null = null;
+
+function holdRunsTopic(): void {
+  if (runsTopicDisposer) return;
+  try {
+    runsTopicDisposer = window.cw.subscribeTopics([GITHUB_RUNS_TOPIC]);
+  } catch (err) {
+    console.warn(`[github] cannot subscribe to ${GITHUB_RUNS_TOPIC}:`, err);
+  }
+}
+
+function releaseRunsTopic(): void {
+  runsTopicDisposer?.();
+  runsTopicDisposer = null;
+}
 
 export const useGitHubStore = create<GitHubStore>((set, get) => {
   const keySequences = new Map<string, number>();
@@ -291,6 +308,7 @@ export const useGitHubStore = create<GitHubStore>((set, get) => {
   let refreshTimer: ReturnType<typeof setTimeout> | null = null;
   let unsubscribers: Array<() => void> = [];
   let watchedSignature: string | null = null;
+  let requestedRuns: RunRef[] = [];
   const touched = new Map<string, number>();
   let touchClock = 0;
   let persistFailure: string | null = null;
@@ -673,6 +691,10 @@ export const useGitHubStore = create<GitHubStore>((set, get) => {
       });
     },
 
+    applySavedViews(views: SavedGitHubView[]) {
+      if (savedViewsLoaded) set({ savedViews: views });
+    },
+
     async loadSavedViews() {
       try {
         const settings = await window.cw.getSettings();
@@ -685,14 +707,14 @@ export const useGitHubStore = create<GitHubStore>((set, get) => {
 
     setActive(active: boolean, force?: boolean) {
       set({ active });
-      void window.cw.setGitHubActive(active).catch((err: unknown) => {
-        fail("setActive failed", err);
-      });
       if (!active) {
+        releaseRunsTopic();
         teardownRuntime();
         watchedSignature = null;
         return;
       }
+      holdRunsTopic();
+      if (requestedRuns.length > 0) get().setWatchedRuns(requestedRuns);
       subscribe();
       scheduleRefresh();
       if (!savedViewsLoaded) void get().loadSavedViews();
@@ -701,6 +723,7 @@ export const useGitHubStore = create<GitHubStore>((set, get) => {
     },
 
     setWatchedRuns(refs: RunRef[]) {
+      requestedRuns = refs;
       const known = knownRuns();
       const rank = (ref: RunRef): number => {
         const status = known.get(runKeyOf(ref))?.status;
@@ -743,5 +766,5 @@ export const useGitHubStore = create<GitHubStore>((set, get) => {
 
 import.meta.hot?.dispose(() => {
   teardownRuntime();
-  void window.cw?.setGitHubActive(false).catch(() => undefined);
+  releaseRunsTopic();
 });

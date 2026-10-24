@@ -1,8 +1,9 @@
 import { describe, expect, it } from "bun:test";
+import { PROTOCOL_VERSION } from "@cw-code/shared/protocol";
 import { join, resolve } from "node:path";
-import { allowRestart, parseServerLine, serverCommand, splitLines } from "./serverProcess.js";
+import { allowRestart, parseServerLine, serverArgs, serverCommand, splitLines } from "./serverProcess.js";
 
-const READY = { url: "ws://127.0.0.1:51234/ws", port: 51234, pid: 4242, protocol: 1, version: "0.0.1-alpha.21" };
+const READY = { url: "ws://127.0.0.1:51234/ws", port: 51234, pid: 4242, protocol: PROTOCOL_VERSION, version: "0.0.1-alpha.21" };
 
 describe("parseServerLine", () => {
   it("reads the ready and already-running announcements", () => {
@@ -40,6 +41,26 @@ describe("allowRestart", () => {
 
   it("forgets restarts older than the window", () => {
     expect(allowRestart([1_000, 2_000, 3_000], 61_500)).toEqual([2_000, 3_000, 61_500]);
+  });
+});
+
+describe("serverArgs", () => {
+  const base = ["--port", "0", "--parent-pid", "42", "--legacy-user-data", "/legacy"];
+
+  it("passes port, parent pid and legacy user data", () => {
+    expect(serverArgs(0, 42, "/legacy", {})).toEqual(base);
+  });
+
+  it("allows the dev renderer origin when ELECTRON_RENDERER_URL is set", () => {
+    expect(serverArgs(0, 42, "/legacy", { ELECTRON_RENDERER_URL: "http://localhost:5173/index.html" })).toEqual([
+      ...base,
+      "--allow-origin",
+      "http://localhost:5173"
+    ]);
+  });
+
+  it("ignores an invalid renderer url", () => {
+    expect(serverArgs(0, 42, "/legacy", { ELECTRON_RENDERER_URL: "not a url" })).toEqual(base);
   });
 });
 
