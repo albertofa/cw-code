@@ -116,7 +116,7 @@ bun run dist
 
 `bun run dist` creates the Windows installer; on Linux,
 `bun --filter @cw-code/desktop dist:linux` creates the AppImage and the .deb.
-Both build the server first (`bun --filter @cw-code/server build`), which compiles
+Both compile the server first (`bun --filter @cw-code/server compile`), which compiles
 `apps/server` into `apps/server/dist/cw-code-server` with `node-pty` beside it as a
 sidecar; the installers ship them under `resources/server/`.
 On Linux, `bun install` compiles `node-pty` from source, so install a C++

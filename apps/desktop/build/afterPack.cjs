@@ -33,7 +33,7 @@ async function requireServerFiles(context) {
   for (const file of required) {
     const target = path.join(context.appOutDir, file);
     if (!(await exists(target))) {
-      throw new Error(`cw-code server file missing from the package: ${target}. Run bun --filter @cw-code/server build before electron-builder.`);
+      throw new Error(`cw-code server file missing from the package: ${target}. Run bun --filter @cw-code/server compile before electron-builder.`);
     }
   }
 }

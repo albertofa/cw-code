@@ -166,7 +166,7 @@ jobs:
             echo "::error::CW_UPDATE_TEST_BUILD is set; a production package must never contain the update autotest mode"
             exit 1
           fi
-      - run: bun --filter @cw-code/server build
+      - run: bun --filter @cw-code/server compile
       - run: bun --filter @cw-code/desktop build
       - name: Package win-unpacked (NSIS target writes app-update.yml; the installer built here is discarded)
         env:

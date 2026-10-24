@@ -32,16 +32,17 @@ lists them.
 
 ```sh
 bun install
-bun --filter @cw-code/desktop dist:linux   # server build + electron-vite build + AppImage and deb, --publish never
+bun --filter @cw-code/desktop dist:linux   # server compile + electron-vite build + AppImage and deb, --publish never
 ```
 
-Build on Linux x64. `dist:linux` is `bun --filter @cw-code/server build && electron-vite
+Build on Linux x64. `dist:linux` is `bun --filter @cw-code/server compile && electron-vite
 build && electron-builder --linux AppImage deb --x64 --publish never`; output goes to
 `apps/desktop/dist/`, the unpacked tree to `apps/desktop/dist/linux-unpacked/`.
 
-The server build runs `apps/server/scripts/compile.ts`. All operations run in that server,
-a Bun executable compiled with `bun build --compile --external node-pty`, and
-the Electron shell spawns it. The build writes `apps/server/dist/cw-code-server` plus
+The server compile step runs `apps/server/scripts/compile.ts`; the server's plain `build`
+script only bundles `src/index.ts` into `apps/server/out/` as a quick check. All operations
+run in that server, a Bun executable compiled with `bun build --compile --external node-pty`,
+and the Electron shell spawns it. The compile step writes `apps/server/dist/cw-code-server` plus
 the node-pty sidecar `apps/server/dist/node_modules/node-pty` (`package.json`,
 `LICENSE`, `lib/` without `*.test.js` and `*.js.map`, and `build/Release/pty.node`).
 electron-builder ships both through `extraResources` to `resources/server/`, outside
@@ -54,7 +55,7 @@ macOS only, so on Linux `bun install` compiles it from source with `node-gyp`. Y
 a C++ toolchain and Python 3 (`sudo apt-get install build-essential python3` on Debian
 and Ubuntu) and Bun 1.4.4. This is the only place a native compile
 happens: installs on Windows and macOS are unaffected. `electron-builder.yml` sets
-`npmRebuild: false`, so packaging never recompiles; the server build copies the
+`npmRebuild: false`, so packaging never recompiles; the server compile step copies the
 `build/Release/pty.node` that the install produced, and it fails if that file is missing.
 
 `apps/desktop/build/afterPack.cjs` runs for the Linux targets only and does two things.

@@ -97,7 +97,7 @@ All NSIS keys already used in `electron-builder.yml`
 ## Server binary and node-pty sidecar
 
 All operations run in `apps/server`, a standalone Bun WebSocket server that the Electron
-shell spawns (`apps/desktop/src/main/serverProcess.ts`). `bun run build` in `apps/server`
+shell spawns (`apps/desktop/src/main/serverProcess.ts`). `bun run compile` in `apps/server`
 (`scripts/compile.ts`) writes `apps/server/dist/`:
 
 - `cw-code-server.exe`, from `bun build src/index.ts --compile --external node-pty`.
@@ -139,7 +139,7 @@ The packaged startup probe (below) confirms that the sidecar loads and spawns a 
 ## Packaging locally
 
 ```sh
-bun --filter @cw-code/desktop dist       # server build + electron-vite build + NSIS installer, --publish never
+bun --filter @cw-code/desktop dist       # server compile + electron-vite build + NSIS installer, --publish never
 bun --filter @cw-code/desktop dist:dir   # same, but --dir (unpacked win-unpacked/ only, for diagnostics)
 ```
 

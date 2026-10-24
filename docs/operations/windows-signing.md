@@ -129,7 +129,7 @@ without the owner's explicit approval.
      writes the request (mode, version, source-sha, run SHA/ref, tooling commit) to the step
      summary.
 2. **package-app**: checks out `source-sha`, runs a frozen install, `release apply
-   --version`, the server build (`bun --filter @cw-code/server build`), `electron-vite
+   --version`, the server compile (`bun --filter @cw-code/server compile`), `electron-vite
    build`, and `electron-builder --win nsis --x64 --publish never`. In `signpath` mode it adds
    `-c.win.signtoolOptions.publisherName=<CW_WINDOWS_PUBLISHER_NAME>` and fails if that
    variable is empty. It writes `package-info.json` (`version`, `sourceSha`,

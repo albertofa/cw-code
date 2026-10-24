@@ -34,7 +34,7 @@ The version applied to the six `package.json` files happens only inside the CI w
 at build time, via `apply`, and is never committed. Because there is no version-bump commit,
 there is no recursive CI trigger. The server binary embeds the version of
 `apps/server/package.json` when it is compiled, so `apply` must run before the server
-build in every packaging job. The publish job of `release.yml` creates the git tag `v<version>`
+compile in every packaging job. The publish job of `release.yml` creates the git tag `v<version>`
 at the exact source SHA recorded in the plan — the tag is never created here.
 
 ## Stable promotion

@@ -24,7 +24,3 @@ export function firstRunChannelPatch(
   if (!updatesEnabled || settings.updateChannel !== null) return null;
   return { updateChannel: channelOfVersion(runningVersion) };
 }
-
-export function touchesUpdatePreferences(patch: Partial<AppSettings>): boolean {
-  return patch.updateChannel !== undefined || patch.updateBackgroundDownload !== undefined;
-}

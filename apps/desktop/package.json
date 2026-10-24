@@ -10,9 +10,9 @@
     "build": "bun --bun electron-vite build",
     "typecheck": "bun --bun tsc --noEmit -p tsconfig.json",
     "test": "bun test --parallel --timeout 20000",
-    "dist": "bun --filter @cw-code/server build && bun --bun electron-vite build && bun --bun electron-builder --win nsis --x64 --publish never",
-    "dist:dir": "bun --filter @cw-code/server build && bun --bun electron-vite build && bun --bun electron-builder --win nsis --x64 --dir --publish never",
-    "dist:linux": "bun --filter @cw-code/server build && bun --bun electron-vite build && bun --bun electron-builder --linux AppImage deb --x64 --publish never"
+    "dist": "bun --filter @cw-code/server compile && bun --bun electron-vite build && bun --bun electron-builder --win nsis --x64 --publish never",
+    "dist:dir": "bun --filter @cw-code/server compile && bun --bun electron-vite build && bun --bun electron-builder --win nsis --x64 --dir --publish never",
+    "dist:linux": "bun --filter @cw-code/server compile && bun --bun electron-vite build && bun --bun electron-builder --linux AppImage deb --x64 --publish never"
   },
   "author": "cw-code",
   "dependencies": {
