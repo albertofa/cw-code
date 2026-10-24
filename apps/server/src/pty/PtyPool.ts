@@ -1,4 +1,7 @@
 import type { AppSettings, TerminalLaunch } from "@cw-code/contracts";
+import { existsSync } from "node:fs";
+import { createRequire } from "node:module";
+import { dirname, join } from "node:path";
 import { toShellTarget } from "./resolve.js";
 import { parseExtraArgs } from "../settings/settingsUtils.js";
 import { traceHarnessCall, truncateError } from "../debug/harnessTrace.js";
@@ -48,17 +51,29 @@ const REPLAY_LIMIT_CHARS = 262_144;
 let cachedPty: PtyModule | null = null;
 let loadError: string | null = null;
 
+function bundledPtyEntry(): string | null {
+  const explicit = process.env.CW_NODE_PTY?.trim();
+  if (explicit) return explicit;
+  const sibling = join(dirname(process.execPath), "node_modules", "node-pty", "lib", "index.js");
+  return existsSync(sibling) ? sibling : null;
+}
+
+async function importPty(): Promise<PtyModule> {
+  const entry = bundledPtyEntry();
+  if (entry) return createRequire(entry)(entry) as PtyModule;
+  return (await import("node-pty")) as unknown as PtyModule;
+}
+
 async function loadPty(): Promise<PtyModule> {
   if (cachedPty) return cachedPty;
   if (loadError) throw new Error(loadError);
   try {
-    cachedPty = (await import("node-pty")) as unknown as PtyModule;
+    cachedPty = await importPty();
     return cachedPty;
   } catch (err) {
     loadError =
-      "PTY unavailable: node-pty was built for a different runtime. " +
-      "Install VS C++ build tools and run electron-rebuild, then restart. " +
-      `(${(err as Error).message.split("\n")[0]})`;
+      `PTY unavailable: could not load node-pty (${(err as Error).message.split("\n")[0]}). ` +
+      "Reinstall cw-code or set CW_NODE_PTY to node-pty/lib/index.js.";
     throw new Error(loadError);
   }
 }
