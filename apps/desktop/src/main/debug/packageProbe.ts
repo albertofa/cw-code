@@ -1,9 +1,9 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import type { StartupState } from "@cw-code/contracts";
-import { checkCliVersions, type CliVersionCheck } from "../cliVersions.js";
-import { defaultCliBinaryPath } from "../settings/settingsUtils.js";
-import type { PtyModule } from "../pty/PtyPool.js";
-import { sanitizedChildEnv } from "../shellEnvironment.js";
+import { checkCliVersions, type CliVersionCheck } from "@cw-code/server/cliVersions";
+import { defaultCliBinaryPath } from "@cw-code/server/settings/settingsUtils";
+import type { PtyModule } from "@cw-code/server/pty/PtyPool";
+import { sanitizedChildEnv } from "@cw-code/server/shellEnvironment";
 
 export interface PackageProbeNodePtyResult {
   loaded: boolean;

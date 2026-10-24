@@ -24,6 +24,7 @@
     "@codemirror/state": "^6.7.6",
     "@codemirror/view": "^6.43.15",
     "@cw-code/contracts": "workspace:*",
+    "@cw-code/server": "workspace:*",
     "@cw-code/shared": "workspace:*",
     "@fontsource-variable/jetbrains-mono": "^5.3.0",
     "@lezer/highlight": "^1.2.5",

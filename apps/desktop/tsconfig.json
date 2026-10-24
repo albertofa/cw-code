@@ -9,7 +9,8 @@
     "baseUrl": ".",
     "paths": {
       "@cw-code/contracts": ["../../packages/contracts/src/index.ts"],
-      "@cw-code/shared/*": ["../../packages/shared/src/*"]
+      "@cw-code/shared/*": ["../../packages/shared/src/*"],
+      "@cw-code/server/*": ["../server/src/*"]
     }
   },
   "include": ["src", "electron.vite.config.ts"]

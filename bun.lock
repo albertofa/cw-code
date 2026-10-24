@@ -17,6 +17,7 @@
         "@codemirror/state": "^6.7.6",
         "@codemirror/view": "^6.43.15",
         "@cw-code/contracts": "workspace:*",
+        "@cw-code/server": "workspace:*",
         "@cw-code/shared": "workspace:*",
         "@fontsource-variable/jetbrains-mono": "^5.3.0",
         "@lezer/highlight": "^1.2.5",
@@ -51,6 +52,22 @@
         "happy-dom": "^21.0.4",
         "typescript": "^5.6.3",
         "vite": "^6.0.6",
+      },
+    },
+    "apps/server": {
+      "name": "@cw-code/server",
+      "version": "0.0.1-alpha.21",
+      "dependencies": {
+        "@cw-code/contracts": "workspace:*",
+        "@cw-code/shared": "workspace:*",
+        "chokidar": "^4.0.1",
+        "node-pty": "1.1.0",
+        "simple-git": "^3.27.0",
+      },
+      "devDependencies": {
+        "@types/node": "^22.10.2",
+        "bun-types": "1.4.3",
+        "typescript": "^5.6.3",
       },
     },
     "packages/contracts": {
@@ -199,6 +216,8 @@
     "@cw-code/desktop": ["@cw-code/desktop@workspace:apps/desktop"],
 
     "@cw-code/release-tools": ["@cw-code/release-tools@workspace:tools/release"],
+
+    "@cw-code/server": ["@cw-code/server@workspace:apps/server"],
 
     "@cw-code/shared": ["@cw-code/shared@workspace:packages/shared"],
 

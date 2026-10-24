@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import type { ShutdownActiveTurn, ShutdownReason, ShutdownTerminal, UpdateChannel, UpdateProgress } from "@cw-code/contracts";
-import { ShutdownCoordinator, type ShutdownClock, type ShutdownPtys, type ShutdownSessions } from "../shutdown/ShutdownCoordinator.js";
+import { ShutdownCoordinator, type ShutdownClock, type ShutdownPtys, type ShutdownSessions } from "@cw-code/server/shutdown/ShutdownCoordinator";
 import type { UpdaterAdapter, UpdaterCheckOutcome, UpdaterDownloadedInfo, UpdaterDownloadHandle } from "./ElectronUpdaterAdapter.js";
 import {
   INSTALLER_MISSING_MESSAGE,

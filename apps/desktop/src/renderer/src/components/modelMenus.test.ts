@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import type { ModelOption } from "../cw.js";
-import { CLAUDE_CURATED_MODELS as DRIVER_CURATED_MODELS } from "../../../main/providers/claude/ClaudeCliDriver.js";
+import { CLAUDE_CURATED_MODELS as DRIVER_CURATED_MODELS } from "@cw-code/server/providers/claude/ClaudeCliDriver";
 import {
   CLAUDE_CURATED_MODELS,
   contextWindowLabel,
