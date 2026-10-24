@@ -1,6 +1,19 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { ServerClient } from "@cw-code/client";
-import type { AppNotice, AppSettings, ClientKind, DeviceCreateResult, DeviceInfo, PrSummary, Project, ServerReady, SessionMeta, StartupState } from "@cw-code/contracts";
+import type {
+  AppNotice,
+  AppSettings,
+  ClientKind,
+  DeviceCreateResult,
+  DeviceInfo,
+  PrSummary,
+  Project,
+  ServerReady,
+  SessionMeta,
+  ShutdownPrepareResult,
+  ShutdownStatus,
+  StartupState
+} from "@cw-code/contracts";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -270,4 +283,43 @@ describe("bind host policy", () => {
     await shell.call("server.stop");
     expect(await exitWithin(second, 15_000)).toBe(0);
   }, 3 * STARTUP_TIMEOUT_MS);
+});
+
+describe("abandoned shutdown recovery", () => {
+  let dir = "";
+
+  afterAll(async () => {
+    await Bun.sleep(200);
+    if (dir) rmSync(dir, { recursive: true, force: true });
+  });
+
+  async function shutdownStatusEventually(client: ServerClient, idle: boolean): Promise<ShutdownStatus> {
+    for (let attempt = 0; attempt < 50; attempt += 1) {
+      const status = await client.call<ShutdownStatus>("shutdown.status");
+      if (status.idle === idle) return status;
+      await Bun.sleep(100);
+    }
+    return client.call<ShutdownStatus>("shutdown.status");
+  }
+
+  it("keeps a prepared shutdown while another desktop window is connected and recovers when the last one leaves", async () => {
+    dir = mkdtempSync(join(tmpdir(), "cw-server-shutdown-"));
+    const proc = spawnServer(dir);
+    const procReady = JSON.parse(await readTaggedLine(proc, "CW_SERVER_READY")) as ServerReady;
+    const ownerToken = readFileSync(join(dir, "userdata", "server-token"), "utf8").trim();
+    const first = await connect(ownerToken, "desktop-ui", procReady.url);
+    const second = await connect(ownerToken, "desktop-ui", procReady.url);
+    const shell = await connect(ownerToken, "desktop-shell", procReady.url);
+    const prepared = await first.call<ShutdownPrepareResult>("shutdown.prepare", { reason: "quit", stopActiveTurns: true, timeoutMs: 10_000 });
+    expect(prepared.ok).toBe(true);
+
+    second.close();
+    await Bun.sleep(300);
+    expect((await shell.call<ShutdownStatus>("shutdown.status")).idle).toBe(false);
+
+    first.close();
+    expect((await shutdownStatusEventually(shell, true)).idle).toBe(true);
+    await shell.call("server.stop");
+    expect(await exitWithin(proc, 15_000)).toBe(0);
+  }, 2 * STARTUP_TIMEOUT_MS);
 });

@@ -190,7 +190,9 @@ export class ServerApp {
       this.topics.dropClient(ctx.clientId);
       this.clientInputs.dropClient(ctx.clientId);
       if (ctx.auth.kind === "device" && !this.stopping) this.emitDevicesChanged();
-      if (ctx.client === "desktop-ui" && !this.stopping) this.handleUiDisconnected();
+      if (ctx.client === "desktop-ui" && !this.stopping && !ws.clients().some((other) => other.client === "desktop-ui")) {
+        this.handleUiDisconnected();
+      }
     });
     const ready: ServerReady = { url, port, pid: process.pid, protocol: PROTOCOL_VERSION, version: this.version };
     writeEndpoint(userdataDir(), ready);
