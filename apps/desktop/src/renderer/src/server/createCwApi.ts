@@ -254,7 +254,6 @@ export function createCwApi(client: ServerClient, desktop: DesktopApi, shutdownH
     gitBaseline: (sessionId, path) => call<GitBaseline>("fs.gitBaseline", { sessionId, path }),
     searchText: (sessionId, query) => call<TextSearchResult>("fs.searchText", { sessionId, query }),
     setWatchedPaths: (sessionId, paths) => callVoid("fs.setWatchedPaths", { sessionId, paths }),
-    unwatchPaths: (sessionId) => callVoid("fs.unwatchPaths", { sessionId }),
     onFsChanged: (cb) => subscribe("fs.changed", cb),
     savePasteImage: async (projectId, mime, data) => {
       assertPasteImageSize(data.byteLength);

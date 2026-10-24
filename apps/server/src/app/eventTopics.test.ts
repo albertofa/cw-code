@@ -8,6 +8,7 @@ describe("eventTopic", () => {
     ["composer.changed", { sessionId: "sess_a", prefs: {} }, "session/sess_a"],
     ["session.title", { sessionId: "sess_a", title: "t" }, "sidebar"],
     ["git.statusChanged", { sessionId: "sess_a", status: {} }, "git/sess_a"],
+    ["fs.changed", { sessionId: "sess_a", dirs: [] }, "files/sess_a"],
     ["session.updated", { id: "sess_a" }, "sidebar"],
     ["projects.changed", { id: "proj_a" }, "sidebar"],
     ["prs.tracked", [], "prs"],
@@ -25,7 +26,6 @@ describe("eventTopic", () => {
     ["startup.changed"],
     ["shutdown.changed"],
     ["app.notice"],
-    ["fs.changed"],
     ["pty.data"],
     ["pty.exit"]
   ])("broadcasts %s", (channel) => {

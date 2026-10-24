@@ -18,6 +18,8 @@ import {
   X
 } from "lucide-react";
 import type { DirEntry, FsChangeEvent, GitBaseline } from "@cw-code/contracts";
+import { filesTopic } from "@cw-code/shared/topics";
+import { useDocumentVisible, useTopics } from "../server/useTopics.js";
 import { useConfirm } from "./ConfirmDialog.js";
 import { ipcErrorMessage } from "./ipcError.js";
 import { isAbsolutePath } from "./Markdown.js";
@@ -429,19 +431,17 @@ function FileWorkspace({ sessionId }: { sessionId: string }) {
   );
   const watchedKey = watched.join("\n");
 
+  const documentVisible = useDocumentVisible();
+  const filesTopics = useMemo(() => (documentVisible ? [filesTopic(sessionId)] : []), [documentVisible, sessionId]);
+  useTopics(filesTopics);
+
   useEffect(() => {
+    if (!documentVisible) return;
     const timer = setTimeout(() => {
       window.cw.setWatchedPaths(sessionId, watched).catch((err: unknown) => console.warn(`[files] live refresh unavailable: ${ipcErrorMessage(err)}`));
     }, WATCH_DEBOUNCE_MS);
     return () => clearTimeout(timer);
-  }, [watchedKey, sessionId]);
-
-  useEffect(
-    () => () => {
-      window.cw.unwatchPaths(sessionId).catch((err: unknown) => console.warn(`[files] could not stop watching: ${ipcErrorMessage(err)}`));
-    },
-    [sessionId]
-  );
+  }, [watchedKey, sessionId, documentVisible]);
 
   useEffect(
     () =>

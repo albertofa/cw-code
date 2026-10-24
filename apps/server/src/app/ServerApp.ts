@@ -107,6 +107,10 @@ export class ServerApp {
     this.topicWiring.syncWatchedRuns();
   }
 
+  applyWatchedFiles(sessionId: string): void {
+    this.topicWiring.applyFiles(sessionId);
+  }
+
   currentServices(): Services | null {
     return this.services;
   }

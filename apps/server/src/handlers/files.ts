@@ -1,4 +1,5 @@
 import { assertPasteImageSize } from "@cw-code/shared/protocol";
+import { filesTopic } from "@cw-code/shared/topics";
 import { readFileSync, statSync } from "node:fs";
 import { isAbsolute, relative, resolve, sep } from "node:path";
 import type { ServerApp } from "../app/ServerApp.js";
@@ -122,16 +123,14 @@ export function registerFileHandlers(router: Router, app: ServerApp): void {
     const query = parseTextSearchQuery(args.query);
     return searchText(gitBinary(), await fsRoot(args), query);
   });
-  handle(router, "fs.setWatchedPaths", async (raw) => {
+  handle(router, "fs.setWatchedPaths", (raw, ctx) => {
     const args = parseArgs(raw, "fs.setWatchedPaths");
     const sessionId = parseString(args.sessionId, "sessionId");
     const paths = parseList<string>(args.paths, MAX_WATCHED_PATHS, "paths", assertString);
-    const { sessions, fileWatcher } = services();
-    fileWatcher.setWatched(sessionId, await sessions.ensureWorktree(sessionId), paths);
+    services();
+    app.clientInputs.setPaths(ctx.clientId, sessionId, paths);
+    if (app.topics.isSubscribed(ctx.clientId, filesTopic(sessionId))) app.applyWatchedFiles(sessionId);
   });
-  handle(router, "fs.unwatchPaths", (raw) =>
-    services().fileWatcher.unwatch(parseString(parseArgs(raw, "fs.unwatchPaths").sessionId, "sessionId"))
-  );
   handle<{ projectId: string; mime: string; base64: string }>(router, "fs.savePasteImage", (args) => {
     const data = Buffer.from(parseString(args.base64, "base64"), "base64");
     assertPasteImageSize(data.byteLength);

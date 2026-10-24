@@ -710,7 +710,6 @@ export interface CwApi {
   gitBaseline(sessionId: string, path: string): Promise<GitBaseline>;
   searchText(sessionId: string, query: TextSearchQuery): Promise<TextSearchResult>;
   setWatchedPaths(sessionId: string, paths: string[]): Promise<void>;
-  unwatchPaths(sessionId: string): Promise<void>;
   onFsChanged(cb: (e: FsChangeEvent) => void): () => void;
   savePasteImage(projectId: string, mime: string, data: Uint8Array): Promise<string>;
   readImage(args: { sessionId?: string; projectId?: string; path: string }): Promise<{ mime: string; base64: string }>;
