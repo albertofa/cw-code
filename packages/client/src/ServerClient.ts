@@ -1,5 +1,6 @@
 import type { ClientKind, ClientMessage, ServerEndpoint, ServerMessage } from "@cw-code/contracts";
 import { CLOSE_PROTOCOL_MISMATCH, CLOSE_UNAUTHORIZED, PROTOCOL_VERSION } from "@cw-code/shared/protocol";
+import { MAX_TOPICS_PER_CALL } from "@cw-code/shared/topics";
 
 export type ConnectionState = "connecting" | "open" | "reconnecting" | "closed";
 
@@ -45,6 +46,12 @@ function describe(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+function chunk(topics: string[]): string[][] {
+  const batches: string[][] = [];
+  for (let i = 0; i < topics.length; i += MAX_TOPICS_PER_CALL) batches.push(topics.slice(i, i + MAX_TOPICS_PER_CALL));
+  return batches;
+}
+
 function closeError(code: number, reason: string): ServerCallError {
   const suffix = reason ? `: ${reason}` : "";
   if (code === CLOSE_UNAUTHORIZED) return new ServerCallError(`server rejected the access token${suffix}`, "unauthorized");
@@ -88,6 +95,9 @@ export class ServerClient {
   private pending = new Map<number, PendingCall>();
   private listeners = new Map<string, Set<(payload: unknown) => void>>();
   private stateListeners = new Set<(state: ConnectionState, previous: ConnectionState) => void>();
+  private topicRefs = new Map<string, number>();
+  private sentTopics = new Set<string>();
+  private flushScheduled = false;
 
   constructor(private readonly options: ServerClientOptions) {}
 
@@ -173,6 +183,27 @@ export class ServerClient {
     };
   }
 
+  get topics(): string[] {
+    return [...this.topicRefs.keys()].sort();
+  }
+
+  subscribe(topics: readonly string[]): () => void {
+    const unique = [...new Set(topics)];
+    for (const topic of unique) this.topicRefs.set(topic, (this.topicRefs.get(topic) ?? 0) + 1);
+    this.scheduleFlush();
+    let disposed = false;
+    return () => {
+      if (disposed) return;
+      disposed = true;
+      for (const topic of unique) {
+        const count = (this.topicRefs.get(topic) ?? 0) - 1;
+        if (count > 0) this.topicRefs.set(topic, count);
+        else this.topicRefs.delete(topic);
+      }
+      this.scheduleFlush();
+    };
+  }
+
   close(): void {
     this.disposed = true;
     this.clearRetryTimer();
@@ -192,6 +223,45 @@ export class ServerClient {
 
   private post(socket: WebSocket, message: ClientMessage): void {
     socket.send(JSON.stringify(message));
+  }
+
+  private scheduleFlush(): void {
+    if (this.flushScheduled) return;
+    this.flushScheduled = true;
+    queueMicrotask(() => {
+      this.flushScheduled = false;
+      this.flushTopics();
+    });
+  }
+
+  private flushTopics(): void {
+    const socket = this.liveSocket();
+    if (!socket) return;
+    const added = [...this.topicRefs.keys()].filter((topic) => !this.sentTopics.has(topic));
+    const removed = [...this.sentTopics].filter((topic) => !this.topicRefs.has(topic));
+    for (const topic of removed) this.sentTopics.delete(topic);
+    for (const batch of chunk(removed)) this.post(socket, { t: "call", method: "topics.unsubscribe", params: { topics: batch } });
+    this.postSubscribe(socket, added);
+  }
+
+  private resubscribe(socket: WebSocket): void {
+    this.sentTopics.clear();
+    this.postSubscribe(socket, [...this.topicRefs.keys()]);
+  }
+
+  private postSubscribe(socket: WebSocket, topics: string[]): void {
+    for (const batch of chunk(topics)) {
+      for (const topic of batch) this.sentTopics.add(topic);
+      const id = this.nextId++;
+      this.pending.set(id, {
+        resolve: () => undefined,
+        reject: (error) => {
+          for (const topic of batch) this.sentTopics.delete(topic);
+          if (error.code !== "disconnected") console.warn(`[ServerClient] topics.subscribe failed: ${error.message}`);
+        }
+      });
+      this.post(socket, { t: "call", id, method: "topics.subscribe", params: { topics: batch } });
+    }
   }
 
   private setState(next: ConnectionState): void {
@@ -249,6 +319,7 @@ export class ServerClient {
           this.abortConnect = null;
           this.closeFailure = null;
           this.welcome = { serverVersion: message.serverVersion, clientId: message.clientId };
+          this.resubscribe(socket);
           this.setState("open");
           resolve(this.welcome);
           return;
