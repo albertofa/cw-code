@@ -502,6 +502,50 @@ describe("ServerClient", () => {
       expect(server.calls.slice(before).filter((call) => call.method === "topics.subscribe")).toHaveLength(1);
     });
 
+    test("a persistently failing topic is sent once even after later unrelated subscribes", async () => {
+      const server = startServer();
+      const client = makeClient(server);
+      await client.connect();
+      const warnSpy = spyOn(console, "warn").mockImplementation(() => undefined);
+      failSubscribe.value = true;
+      client.subscribe(["app"]);
+      await waitFor(() => warnSpy.mock.calls.length === 1);
+
+      failSubscribe.value = false;
+      const off = client.subscribe(["usage"]);
+      await waitFor(() => topicCalls(server).length === 2);
+      off();
+      await waitFor(() => topicCalls(server).length === 3);
+      await Bun.sleep(30);
+
+      expect(topicCalls(server).map((call) => call.params)).toEqual([{ topics: ["app"] }, { topics: ["usage"] }, { topics: ["usage"] }]);
+      expect(warnSpy.mock.calls).toHaveLength(1);
+      warnSpy.mockRestore();
+    });
+
+    test("invalid and pty topics throw synchronously and nothing is sent", async () => {
+      const server = startServer();
+      const client = makeClient(server);
+      await client.connect();
+
+      for (const bad of ["nope", "pty/sess_a:shell"]) {
+        const error = (() => {
+          try {
+            client.subscribe(["app", bad]);
+          } catch (e) {
+            return e;
+          }
+          return null;
+        })();
+        expect(error).toBeInstanceOf(ServerCallError);
+        expect((error as ServerCallError).code).toBe("invalid-topic");
+      }
+      await Bun.sleep(30);
+
+      expect(client.topics).toEqual([]);
+      expect(topicCalls(server)).toHaveLength(0);
+    });
+
     test("a failed subscribe warns and is not retried", async () => {
       const server = startServer();
       const client = makeClient(server);

@@ -1,6 +1,6 @@
 import type { ClientKind, ClientMessage, ServerEndpoint, ServerMessage } from "@cw-code/contracts";
 import { CLOSE_PROTOCOL_MISMATCH, CLOSE_UNAUTHORIZED, PROTOCOL_VERSION } from "@cw-code/shared/protocol";
-import { MAX_TOPICS_PER_CALL } from "@cw-code/shared/topics";
+import { isValidTopic, MAX_TOPICS_PER_CALL } from "@cw-code/shared/topics";
 
 export type ConnectionState = "connecting" | "open" | "reconnecting" | "closed";
 
@@ -97,6 +97,8 @@ export class ServerClient {
   private stateListeners = new Set<(state: ConnectionState, previous: ConnectionState) => void>();
   private topicRefs = new Map<string, number>();
   private sentTopics = new Set<string>();
+  private failedTopics = new Set<string>();
+  private topicCallIds = new Map<string, number>();
   private flushScheduled = false;
 
   constructor(private readonly options: ServerClientOptions) {}
@@ -189,6 +191,11 @@ export class ServerClient {
 
   subscribe(topics: readonly string[]): () => void {
     const unique = [...new Set(topics)];
+    for (const topic of unique) {
+      if (!isValidTopic(topic) || topic.startsWith("pty/")) {
+        throw new ServerCallError(`invalid topic "${topic}": pty topics are managed by pty.open/pty.detach`, "invalid-topic");
+      }
+    }
     for (const topic of unique) this.topicRefs.set(topic, (this.topicRefs.get(topic) ?? 0) + 1);
     this.scheduleFlush();
     let disposed = false;
@@ -198,7 +205,10 @@ export class ServerClient {
       for (const topic of unique) {
         const count = (this.topicRefs.get(topic) ?? 0) - 1;
         if (count > 0) this.topicRefs.set(topic, count);
-        else this.topicRefs.delete(topic);
+        else {
+          this.topicRefs.delete(topic);
+          this.failedTopics.delete(topic);
+        }
       }
       this.scheduleFlush();
     };
@@ -237,7 +247,7 @@ export class ServerClient {
   private flushTopics(): void {
     const socket = this.liveSocket();
     if (!socket) return;
-    const added = [...this.topicRefs.keys()].filter((topic) => !this.sentTopics.has(topic));
+    const added = [...this.topicRefs.keys()].filter((topic) => !this.sentTopics.has(topic) && !this.failedTopics.has(topic));
     const removed = [...this.sentTopics].filter((topic) => !this.topicRefs.has(topic));
     for (const topic of removed) this.sentTopics.delete(topic);
     for (const batch of chunk(removed)) this.post(socket, { t: "call", method: "topics.unsubscribe", params: { topics: batch } });
@@ -246,18 +256,28 @@ export class ServerClient {
 
   private resubscribe(socket: WebSocket): void {
     this.sentTopics.clear();
+    this.failedTopics.clear();
     this.postSubscribe(socket, [...this.topicRefs.keys()]);
   }
 
   private postSubscribe(socket: WebSocket, topics: string[]): void {
     for (const batch of chunk(topics)) {
-      for (const topic of batch) this.sentTopics.add(topic);
       const id = this.nextId++;
+      for (const topic of batch) {
+        this.sentTopics.add(topic);
+        this.topicCallIds.set(topic, id);
+      }
       this.pending.set(id, {
         resolve: () => undefined,
         reject: (error) => {
-          for (const topic of batch) this.sentTopics.delete(topic);
-          if (error.code !== "disconnected") console.warn(`[ServerClient] topics.subscribe failed: ${error.message}`);
+          const disconnected = error.code === "disconnected";
+          for (const topic of batch) {
+            if (this.topicCallIds.get(topic) !== id) continue;
+            this.topicCallIds.delete(topic);
+            this.sentTopics.delete(topic);
+            if (!disconnected) this.failedTopics.add(topic);
+          }
+          if (!disconnected) console.warn(`[ServerClient] topics.subscribe failed: ${error.message}`);
         }
       });
       this.post(socket, { t: "call", id, method: "topics.subscribe", params: { topics: batch } });
