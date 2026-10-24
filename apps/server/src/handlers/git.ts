@@ -3,9 +3,7 @@ import type { ServerApp } from "../app/ServerApp.js";
 import type { GitService } from "../fs/GitService.js";
 import type { SessionManager } from "../sessions/SessionManager.js";
 import type { Router } from "../transport/Router.js";
-import { assertString, handle, parseArgs, parseBoolean, parseList, parseString } from "./shared.js";
-
-const MAX_WATCHED_GIT_SESSIONS = 500;
+import { handle, parseArgs, parseString } from "./shared.js";
 
 async function sessionDiffBase(sessions: SessionManager, git: GitService, sessionId: string): Promise<string | undefined> {
   const { root, baseRef } = await sessions.sessionStatusContext(sessionId);
@@ -28,13 +26,6 @@ export function registerGitHandlers(router: Router, app: ServerApp): void {
     const status = sourceControl.status(sessionId);
     if (!status) throw new Error(sourceControl.failure(sessionId) ?? `git status is not available for session ${sessionId}`);
     return status;
-  });
-  handle(router, "git.watch", (raw) => {
-    const { sessionIds } = parseArgs(raw, "git.watch");
-    services().sourceControl.setWatched(parseList<string>(sessionIds, MAX_WATCHED_GIT_SESSIONS, "sessionIds", assertString));
-  });
-  handle(router, "git.setActive", (raw) => {
-    services().sourceControl.setActive(parseBoolean(parseArgs(raw, "git.setActive").active, "active"));
   });
   handle<{ sessionId: string }>(router, "git.branches", (args) => {
     const { sessions, git } = services();

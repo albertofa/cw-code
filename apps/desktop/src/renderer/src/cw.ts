@@ -650,8 +650,6 @@ export interface CwApi {
     importAll(): Promise<SkillsListResult>;
   };
   getGitStatus(sessionId: string): Promise<GitStatus>;
-  watchGitStatus(sessionIds: string[]): Promise<void>;
-  setGitActive(active: boolean): Promise<void>;
   onGitStatus(cb: (update: GitStatusUpdate) => void): () => void;
   listGitBranches(sessionId: string): Promise<GitBranchInfo[]>;
   listProjectBranches(projectId: string): Promise<GitBranchInfo[]>;

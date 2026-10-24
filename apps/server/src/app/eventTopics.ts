@@ -1,4 +1,4 @@
-import { APP_TOPIC, PRS_TOPIC, sessionTopic, SIDEBAR_TOPIC } from "@cw-code/shared/topics";
+import { APP_TOPIC, gitTopic, PRS_TOPIC, sessionTopic, SIDEBAR_TOPIC } from "@cw-code/shared/topics";
 
 type TopicResolver = (payload: unknown) => string | null;
 
@@ -23,7 +23,7 @@ const CHANNEL_TOPICS: ReadonlyMap<string, TopicResolver> = new Map([
   ["session.title", fixed(SIDEBAR_TOPIC)],
   ["session.updated", fixed(SIDEBAR_TOPIC)],
   ["projects.changed", fixed(SIDEBAR_TOPIC)],
-  ["git.statusChanged", broadcast],
+  ["git.statusChanged", bySession(gitTopic)],
   ["fs.changed", broadcast],
   ["prs.tracked", fixed(PRS_TOPIC)],
   ["github.runsChanged", broadcast],

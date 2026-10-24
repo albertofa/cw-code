@@ -72,8 +72,6 @@ function installBridge(): void {
     getGitStatus: async () => {
       throw new Error("no git");
     },
-    watchGitStatus: async () => {},
-    setGitActive: async () => {},
     onGitStatus: noop,
     getTrackedPrs: async () => [],
     onTrackedPrs: noop,

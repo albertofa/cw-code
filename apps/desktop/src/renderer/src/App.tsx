@@ -41,8 +41,8 @@ import { usePrStore } from "./stores/prStore.js";
 import { projectDirty, useSettingsDraftStore } from "./stores/settingsDraftStore.js";
 import { prKey } from "./components/prInbox.js";
 import type { TurnEvent } from "./cw.js";
-import { APP_TOPIC, PRS_TOPIC, SIDEBAR_TOPIC, sessionTopic } from "@cw-code/shared/topics";
-import { useTopics } from "./server/useTopics.js";
+import { APP_TOPIC, PRS_TOPIC, SIDEBAR_TOPIC, gitTopic, sessionTopic } from "@cw-code/shared/topics";
+import { useDocumentVisible, useTopics } from "./server/useTopics.js";
 
 const VERSION_NOTIF_ID = "cli-versions";
 const BINARY_NOTIF_ID = "cli-binaries";
@@ -263,23 +263,12 @@ export function App() {
     return [...ids].sort().join("|");
   }, [workingSetKey, activeSessionId]);
 
-  useEffect(() => {
-    if (!window.cw) return;
-    void window.cw.watchGitStatus(watchedGitKey ? watchedGitKey.split("|") : []).catch((err: unknown) =>
-      console.warn(`git status watch failed: ${ipcErrorMessage(err)}`)
-    );
-  }, [watchedGitKey]);
-
-  useEffect(() => {
-    if (!window.cw) return;
-    const sync = () =>
-      void window.cw.setGitActive(!document.hidden).catch((err: unknown) =>
-        console.warn(`git status activity update failed: ${ipcErrorMessage(err)}`)
-      );
-    sync();
-    document.addEventListener("visibilitychange", sync);
-    return () => document.removeEventListener("visibilitychange", sync);
-  }, []);
+  const documentVisible = useDocumentVisible();
+  const gitTopics = useMemo(
+    () => (documentVisible && watchedGitKey ? watchedGitKey.split("|").map(gitTopic) : []),
+    [documentVisible, watchedGitKey]
+  );
+  useTopics(gitTopics);
 
   useEffect(() => {
     const onFocus = () => {

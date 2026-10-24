@@ -191,8 +191,6 @@ export function createCwApi(client: ServerClient, desktop: DesktopApi, shutdownH
       importAll: () => call<SkillsListResult>("skills.importAll")
     },
     getGitStatus: (sessionId) => call<GitStatus>("git.status", { sessionId }),
-    watchGitStatus: (sessionIds) => callVoid("git.watch", { sessionIds }),
-    setGitActive: (active) => callVoid("git.setActive", { active }),
     onGitStatus: (cb) => subscribe("git.statusChanged", cb),
     listGitBranches: (sessionId) => call<GitBranchInfo[]>("git.branches", { sessionId }),
     listProjectBranches: (projectId) => call<GitBranchInfo[]>("git.projectBranches", { projectId }),
