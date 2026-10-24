@@ -1544,6 +1544,14 @@ if (process.platform === "linux") {
   app.commandLine.appendSwitch("class", "cw-code");
 }
 
+if (process.platform === "win32") {
+  const disabledFeatures = app.commandLine.getSwitchValue("disable-features");
+  app.commandLine.appendSwitch(
+    "disable-features",
+    disabledFeatures ? `${disabledFeatures},CalculateNativeWinOcclusion` : "CalculateNativeWinOcclusion"
+  );
+}
+
 if (!app.isPackaged && !app.commandLine.hasSwitch("user-data-dir")) {
   app.setPath("userData", join(app.getPath("appData"), "@cw-code", "desktop-dev"));
 }
