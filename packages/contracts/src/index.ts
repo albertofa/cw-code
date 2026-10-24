@@ -153,3 +153,5 @@ export type {
   FsChangeEvent
 } from "./files.js";
 export type { NativeSession, ImportableSession, ImportSessionRequest, ImportSessionResult } from "./importer.js";
+export type { ClientKind, RpcError, ClientMessage, ServerMessage, ServerEndpoint, ServerReady } from "./protocol.js";
+export type { DesktopApi } from "./desktop.js";
