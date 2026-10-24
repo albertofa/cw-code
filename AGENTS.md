@@ -39,10 +39,36 @@ Core behaviors:
   (`@cw-code/shared/<module>`, incl. protocol constants). `packages/client`: `ServerClient`.
 - Protocol: client sends `hello` (owner token from `~/.cw-code/userdata/server-token`,
   `PROTOCOL_VERSION`), then `call`s (method names like `sessions.create`; no id =
-  fire-and-forget); the server answers `result`s and broadcasts `event`s. Payloads are JSON —
+  fire-and-forget); the server answers `result`s and pushes `event`s. Payloads are JSON —
   no `Map`/`Set`/`Date`/binary (send base64). The server writes `userdata/server.json` and
   prints `CW_SERVER_READY <json>` when listening; a second server on the same home prints
   `CW_SERVER_RUNNING <json>` and exits 3 (the shell retries for ~6 s, then fails startup).
+  `PROTOCOL_VERSION` is 2; a mismatch closes the socket.
+- Multi-client: several clients (`desktop-ui`, `desktop-shell`, `web`) connect to one server.
+  Events are routed by topic: `apps/server/src/app/eventTopics.ts` maps each channel to a
+  topic (`app`, `sidebar`, `prs`, `usage`, `github/<view>`, `session/<id>`, `git/<id>`,
+  `files/<id>`, `pty/<id>`; helpers in `packages/shared/src/topics.ts`). A channel mapped
+  to no topic (settings, startup/shutdown, `app.notice`) goes to every client, filtered by
+  client kind (`eventAudience.ts`). Clients opt in with `ServerClient.subscribe(topics)`
+  (ref-counted, resent after reconnect) which calls `topics.subscribe`/`topics.unsubscribe`
+  (limits in `shared/topics`). Terminals are the exception: attach only through
+  `pty.open`/`pty.detach`; `topics.*` reject `pty/` topics. `pty.write`/`pty.resize` from a
+  client that is not attached are ignored. The PTY size follows the client that most recently
+  typed; resizes from other clients are recorded and applied when that client becomes the
+  latest or is the first.
+- Remote access: the server binds `127.0.0.1` by default. A non-loopback host is refused
+  (exit 1) when it comes from `--host` and no device token exists. From the `serverBindHost`
+  setting it falls back to `127.0.0.1` with a crash-log line and a shell notice; only the
+  owner can set it. The WebSocket `Origin` is accepted when absent, `file://`, same-origin
+  http(s) (checked against `Host`), or listed in `--allow-origin` (URL-normalized; literal
+  `null` allows `Origin: null`). Rejected origins go to stderr and the crash log (deduped,
+  capped).
+- Devices: the owner token (`userdata/server-token`) authenticates the owner; device tokens
+  (`userdata/devices.json`, SHA-256 hashes only) authenticate remote clients, which may only
+  use the `web` client kind. `devices.create`/`devices.revoke` and `serverBindHost` are
+  owner-only, but that is not a security boundary: a device token still grants full remote
+  control (terminals, sessions, files, all other settings). Treat it like a shell login.
+  Per-method scopes are future work.
 
 ## Stack
 
@@ -60,8 +86,13 @@ Core behaviors:
   contract change in sync across all four layers: contracts type, server handler/event,
   client adapter (`createCwApi` / `CwApi`), store. Shell features follow the same rule with
   `DesktopApi`, shell IPC and preload.
-- Assume several clients may be connected: server state changes must be broadcast, never
-  returned only to the caller.
+- Assume several clients may be connected: server state changes must be emitted as events,
+  never returned only to the caller.
+- A new server event needs a topic in `eventTopics.ts` (or an explicit `broadcast` entry);
+  an unmapped channel is broadcast to everyone with a warning.
+- View-driven data (git status, file changes, PR and run lists, session threads) is
+  subscribe-while-visible: the client subscribes when the view mounts and disposes when it
+  unmounts, and the server watches only what has subscribers.
 - Never parse CLI-internal file formats as truth; use them for display only and
   degrade gracefully when shapes drift.
 - Normalize filesystem paths at storage boundaries; resolve executables through
