@@ -248,6 +248,7 @@ export class SessionManager {
   private onTitle: (sessionId: string, title: string) => void;
   private onResolved: (sessionId: string) => void;
   private onSession: (session: SessionMeta) => void = () => {};
+  private onProject: (project: Project) => void = () => {};
   private git: GitService;
   private worktreesRoot: string;
   private deltaBuffer = new Map<string, { sessionId: string; text: string; timer: NodeJS.Timeout }>();
@@ -441,6 +442,15 @@ export class SessionManager {
     this.onSession = onSession;
   }
 
+  setProjectEmitter(onProject: (project: Project) => void): void {
+    this.onProject = onProject;
+  }
+
+  private emitProject(project: Project): Project {
+    this.onProject(project);
+    return project;
+  }
+
   private emitSession(sessionId: string): SessionMeta {
     const updated = this.store.getSession(sessionId);
     if (!updated) throw new Error(`unknown session ${sessionId}`);
@@ -616,7 +626,7 @@ export class SessionManager {
   }
 
   addProject(rootPath: string): Project {
-    return this.store.addProject(rootPath);
+    return this.emitProject(this.store.addProject(rootPath));
   }
 
   getProject(projectId: string): Project {
@@ -634,11 +644,11 @@ export class SessionManager {
   setProjectGitHubAccount(projectId: string, account: { host: string; login: string } | null): Project {
     const project = this.store.updateProject(projectId, { githubAccount: account ?? undefined }, account === null);
     void this.refreshGitHubToken(project);
-    return project;
+    return this.emitProject(project);
   }
 
   updateProjectSettings(projectId: string, settings: ProjectSettings): Project {
-    return this.store.updateProjectSettings(projectId, settings);
+    return this.emitProject(this.store.updateProjectSettings(projectId, settings));
   }
 
   async listSessions(projectId: string): Promise<SessionMeta[]> {
@@ -652,6 +662,12 @@ export class SessionManager {
   }
 
   async createSession(projectId: string, driver: DriverKind, options: CreateSessionOptions = {}): Promise<SessionMeta> {
+    const session = await this.buildSession(projectId, driver, options);
+    this.emitSession(session.id);
+    return session;
+  }
+
+  private async buildSession(projectId: string, driver: DriverKind, options: CreateSessionOptions): Promise<SessionMeta> {
     this.assertNotReserved();
     if (options.baseFallback !== undefined && options.baseFallback !== "default") {
       throw new Error("invalid base fallback");
@@ -758,8 +774,9 @@ export class SessionManager {
     const [importable] = importableSessions([native], this.importContext());
     if (!importable) throw new Error(`The ${request.driver} session ${request.resumeCursor} is already managed by cw-code`);
     if (!existsSync(native.cwd)) throw new Error(`The folder of this session no longer exists: ${native.cwd}`);
-    const project = projectForCwd(this.store.listProjects(), native.cwd) ?? this.store.addProject(native.cwd);
+    const project = projectForCwd(this.store.listProjects(), native.cwd) ?? this.addProject(native.cwd);
     const session = this.store.createSession(project.id, native.driver, native.title, { resumeCursor: native.resumeCursor });
+    this.emitSession(session.id);
     return { project, session };
   }
 
@@ -929,6 +946,7 @@ export class SessionManager {
     const session = this.store.getSession(sessionId);
     if (!session) throw new Error(`unknown session ${sessionId}`);
     this.store.updateSession(sessionId, { title });
+    this.emitSession(sessionId);
     if (session.resumeCursor) {
       await this.drivers[session.driver].renameSession(session.resumeCursor, title);
     }
@@ -938,9 +956,7 @@ export class SessionManager {
     const session = this.store.getSession(sessionId);
     if (!session) throw new Error(`unknown session ${sessionId}`);
     this.store.updateSession(sessionId, { status }, reason);
-    const updated = this.store.getSession(sessionId);
-    if (!updated) throw new Error(`unknown session ${sessionId}`);
-    return updated;
+    return this.emitSession(sessionId);
   }
 
   syncFromStatus(sessionId: string, status: GitStatus): SessionMeta | null {
@@ -1075,7 +1091,9 @@ export class SessionManager {
     const expired: SessionMeta[] = [];
     for (const sessionId of sessionIds) {
       const updated = this.store.expireHolding(sessionId);
-      if (updated) expired.push(updated);
+      if (!updated) continue;
+      expired.push(updated);
+      this.emitSession(sessionId);
     }
     return expired;
   }
@@ -1221,7 +1239,9 @@ export class SessionManager {
     const entry = { status, promise: run };
     this.pendingResolves.set(sessionId, entry);
     try {
-      return await run;
+      const result = await run;
+      if (this.store.getSession(sessionId)) this.emitSession(sessionId);
+      return result;
     } finally {
       if (this.pendingResolves.get(sessionId) === entry) this.pendingResolves.delete(sessionId);
     }
@@ -1449,6 +1469,7 @@ export class SessionManager {
       if (session.worktreePath && !pinsWorktree(session) && !existsSync(session.worktreePath)) {
         this.store.updateSession(session.id, { worktreePath: undefined });
         summary.clearedSessionIds.push(session.id);
+        this.emitSession(session.id);
       }
     }
   }
@@ -2272,6 +2293,7 @@ export class SessionManager {
     } else {
       this.store.updateSession(sessionId, { status: "idle" }, "retry-idle");
     }
+    this.emitSession(sessionId);
     return { ...result, history: overlayLiveTasks(result.history, driverLiveTasks(driver, sessionId)) };
   }
 

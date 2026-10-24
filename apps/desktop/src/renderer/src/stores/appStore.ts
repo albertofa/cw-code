@@ -275,6 +275,7 @@ interface AppState {
   createSessionIn(projectId: string, driver: DriverName, prefs?: ComposerPrefs, workspace?: CreateSessionOptions): Promise<Session>;
   importSession(request: ImportSessionRequest): Promise<Session>;
   applySession(session: Session): void;
+  applyProject(project: Project): void;
   sendPrompt(prompt: string, attachments?: string[], opts?: ComposerSendOptions): Promise<void>;
   sendPromptTo(sessionId: string, prompt: string, attachments?: string[], opts?: SendPromptOptions): Promise<void>;
   interrupt(): Promise<void>;
@@ -380,6 +381,17 @@ function patchSession(
     next[pid] = list.map((s) => (s.id === sessionId ? { ...s, ...patch } : s));
   }
   return next;
+}
+
+function upsertInList(list: Session[], session: Session): Session[] {
+  return list.some((s) => s.id === session.id) ? list.map((s) => (s.id === session.id ? session : s)) : [session, ...list];
+}
+
+function upsertSession(byProject: Record<string, Session[]>, session: Session): Record<string, Session[]> {
+  const known = Object.values(byProject).some((list) => list.some((s) => s.id === session.id));
+  if (known) return replaceSession(byProject, session);
+  const list = byProject[session.projectId];
+  return list ? { ...byProject, [session.projectId]: [session, ...list] } : byProject;
 }
 
 function replaceSession(byProject: Record<string, Session[]>, session: Session): Record<string, Session[]> {
@@ -1103,7 +1115,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     set({
       sessionsByProject: {
         ...get().sessionsByProject,
-        [projectId]: [session, ...(get().sessionsByProject[projectId] ?? [])]
+        [projectId]: upsertInList(get().sessionsByProject[projectId] ?? [], session)
       },
       activeProjectId: projectId,
       activeSessionId: session.id,
@@ -1122,7 +1134,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       projects: withProject(get().projects, project),
       sessionsByProject: {
         ...get().sessionsByProject,
-        [project.id]: [session, ...(get().sessionsByProject[project.id] ?? [])]
+        [project.id]: upsertInList(get().sessionsByProject[project.id] ?? [], session)
       }
     });
     get().selectSession(session.id);
@@ -1137,7 +1149,11 @@ export const useAppStore = create<AppState>((set, get) => ({
           .find((s) => s.id === session.id)
       : undefined;
     const next = current ? { ...session, status: current.status } : session;
-    set({ sessionsByProject: replaceSession(sessionsByProject, next) });
+    set({ sessionsByProject: upsertSession(sessionsByProject, next) });
+  },
+
+  applyProject(project: Project) {
+    set({ projects: withProject(get().projects, project) });
   },
 
   pauseAutoFollowUp(sessionId: string, reason: AutoFollowUpPause = "user") {

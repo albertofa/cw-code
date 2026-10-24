@@ -234,6 +234,7 @@ export function createCwApi(client: ServerClient, desktop: DesktopApi, shutdownH
     onTurnEvent: (cb) => subscribe("turn.event", cb),
     onSessionTitle: (cb) => subscribe("session.title", cb),
     onSessionUpdated: (cb) => subscribe("session.updated", cb),
+    onProjectChanged: (cb) => subscribe("projects.changed", cb),
     readFile: (sessionId, path) => call<string>("fs.readFile", { sessionId, path }),
     readOutsideFile: (path) => call<string>("fs.readOutsideFile", { path }),
     listFiles: (sessionId) => call<string[]>("fs.listFiles", { sessionId }),

@@ -5,7 +5,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { dirname, join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
-import type { ApprovalDecision, CliDriver, HistoryMessage, ModelOption, SessionMeta, TaskSnapshot, ThreadEvent, TurnHandle, TurnSnapshot } from "@cw-code/contracts";
+import type { ApprovalDecision, CliDriver, HistoryMessage, ModelOption, Project, SessionMeta, TaskSnapshot, ThreadEvent, TurnHandle, TurnSnapshot } from "@cw-code/contracts";
 import { SessionManager, type SessionManagerOptions } from "./SessionManager.js";
 import { SYNTHETIC_FULL_ACCESS_DESCRIPTION } from "../providers/permissions.js";
 import type { SessionStore } from "./SessionStore.js";
@@ -319,7 +319,37 @@ describe("SessionManager", () => {
     expect(project.rootPath).toBe("C:\\proj");
     expect(manager.addProject("C:\\proj").id).toBe(project.id);
     manager.dispose();
-  });  it("runs parallel turns on different sessions without crossing streams", async () => {
+  });
+
+  it("emits project and session mutations", async () => {
+    const { manager } = makeManager();
+    const projects: Project[] = [];
+    const sessions: SessionMeta[] = [];
+    manager.setProjectEmitter((project) => projects.push(project));
+    manager.setSessionEmitter((session) => sessions.push(session));
+    const project = manager.addProject("C:\proj-mutations");
+    expect(projects.map((p) => p.id)).toEqual([project.id]);
+    manager.updateProjectSettings(project.id, {});
+    expect(projects).toHaveLength(2);
+
+    const session = await manager.createSession(project.id, "claude");
+    expect(sessions).toHaveLength(1);
+    expect(sessions[0]).toMatchObject({ id: session.id, title: "New session" });
+    expect(sessions[0]).not.toHaveProperty("createNotice");
+
+    await manager.renameSession(session.id, "Renamed");
+    expect(sessions.at(-1)).toMatchObject({ id: session.id, title: "Renamed" });
+
+    manager.setSessionStatus(session.id, "holding");
+    expect(sessions.at(-1)).toMatchObject({ id: session.id, status: "holding" });
+
+    manager.expireHoldingSessions([session.id]);
+    expect(sessions.at(-1)).toMatchObject({ id: session.id, status: "idle" });
+    expect(sessions).toHaveLength(4);
+    manager.dispose();
+  });
+
+  it("runs parallel turns on different sessions without crossing streams", async () => {
     const { manager, received, fake } = makeManager();
     const project = manager.addProject("C:\\proj");
     const a = await manager.createSession(project.id, "claude");

@@ -188,6 +188,7 @@ export function App() {
     const off = window.cw.onTurnEvent(handleTurnEvent);
     const offTitle = window.cw.onSessionTitle(({ sessionId, title }) => useAppStore.getState().applySessionTitle(sessionId, title));
     const offSession = window.cw.onSessionUpdated((session) => useAppStore.getState().applySession(session));
+    const offProject = window.cw.onProjectChanged((project) => useAppStore.getState().applyProject(project));
     const offGitStatus = window.cw.onGitStatus(({ sessionId, status }) => useAppStore.getState().applyGitStatus(sessionId, status));
     const offTrackedPrs = window.cw.onTrackedPrs((items) => usePrStore.getState().applyTracked(items));
     void usePrStore.getState().loadTracked();
@@ -225,6 +226,7 @@ export function App() {
       off();
       offTitle();
       offSession();
+      offProject();
       offGitStatus();
       offTrackedPrs();
       offUpdates();

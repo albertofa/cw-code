@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { ServerClient } from "@cw-code/client";
-import type { AppSettings, ClientKind, DeviceCreateResult, DeviceInfo, PrSummary, ServerReady, StartupState } from "@cw-code/contracts";
+import type { AppSettings, ClientKind, DeviceCreateResult, DeviceInfo, PrSummary, Project, ServerReady, SessionMeta, StartupState } from "@cw-code/contracts";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -148,6 +148,28 @@ describe("server process", () => {
     await subscriber.call("settings.set", { claudeReasoningExpanded: !current.claudeReasoningExpanded });
     for (const seen of await both) expect(seen.claudeReasoningExpanded).toBe(!current.claudeReasoningExpanded);
     expect(leaked).toEqual([]);
+  });
+
+  it("broadcasts project and session mutations only to sidebar subscribers", async () => {
+    const watcher = await connect();
+    const bystander = await connect();
+    const projectsSeen: Project[] = [];
+    const sessionsSeen: SessionMeta[] = [];
+    const leaked: unknown[] = [];
+    watcher.on("projects.changed", (payload) => projectsSeen.push(payload as Project));
+    watcher.on("session.updated", (payload) => sessionsSeen.push(payload as SessionMeta));
+    bystander.on("projects.changed", (payload) => leaked.push(payload));
+    bystander.on("session.updated", (payload) => leaked.push(payload));
+    await watcher.call("topics.subscribe", { topics: ["sidebar"] });
+
+    const root = mkdtempSync(join(tmpdir(), "cw-sidebar-"));
+    const project = await bystander.call<Project>("projects.add", root);
+    const session = await bystander.call<SessionMeta>("sessions.create", { projectId: project.id, driver: "claude" });
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    expect(projectsSeen.map((seen) => seen.id)).toEqual([project.id]);
+    expect(sessionsSeen.map((seen) => seen.id)).toEqual([session.id]);
+    expect(leaked).toEqual([]);
+    rmSync(root, { recursive: true, force: true });
   });
 
   it("lets only the owner manage device tokens and closes a revoked device with 4401", async () => {

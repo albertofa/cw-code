@@ -695,6 +695,7 @@ export interface CwApi {
   onTurnEvent(cb: (msg: { sessionId: string; event: TurnEvent }) => void): () => void;
   onSessionTitle(cb: (msg: { sessionId: string; title: string }) => void): () => void;
   onSessionUpdated(cb: (session: Session) => void): () => void;
+  onProjectChanged(cb: (project: Project) => void): () => void;
   readFile(sessionId: string, path: string): Promise<string>;
   readOutsideFile(path: string): Promise<string>;
   listFiles(sessionId: string): Promise<string[]>;

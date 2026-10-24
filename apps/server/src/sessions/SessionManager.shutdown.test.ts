@@ -359,9 +359,9 @@ describe("SessionManager shutdown recovery", () => {
   it("publishes interrupted sessions when stopped for shutdown and again after drivers are rebuilt", async () => {
     const { manager, project } = setup();
     const updates: Array<{ id: string; status: string }> = [];
-    manager.setSessionEmitter((session) => updates.push({ id: session.id, status: session.status }));
     const session = await manager.createSession(project.id, "claude", { mode: "current" });
     const turnId = await manager.startTurn(session.id, "long task");
+    manager.setSessionEmitter((emitted) => updates.push({ id: emitted.id, status: emitted.status }));
     manager.beginShutdownReservation();
     manager.interrupt(turnId);
     expect(updates).toEqual([{ id: session.id, status: "holding" }]);

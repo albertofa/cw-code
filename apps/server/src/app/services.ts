@@ -60,6 +60,7 @@ function wireServiceEvents({ sessions, sourceControl, prTracker, ptys, runWatche
     emit("session.updated", session);
     prTracker.setTracked(sessions.trackedPrRefs());
   });
+  sessions.setProjectEmitter((project) => emit("projects.changed", project));
   ptys.setExitEmitter((ptyId, token, exitCode) => {
     emit("pty.exit", { ptyId, token, exitCode });
     if (!ptys.has(ptyId)) dropTopic(ptyTopic(ptyId));
