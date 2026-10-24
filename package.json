@@ -16,7 +16,7 @@
   "scripts": {
     "dev": "bun --filter @cw-code/desktop dev",
     "build": "bun --filter '*' build",
-    "test": "bun --filter '*' test",
+    "test": "bun --filter '*' --sequential test",
     "typecheck": "bun --filter '*' typecheck",
     "dist": "bun --filter @cw-code/desktop dist",
     "release:plan": "bun tools/release/src/cli/release.ts plan"

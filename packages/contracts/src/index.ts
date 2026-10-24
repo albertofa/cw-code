@@ -98,7 +98,7 @@ export type {
   WorkflowSubject
 } from "./github.js";
 export type { PanelId, DockLocation, DockableTabId, MainTabId, TabDockState, TabAutoLocation, PanelLayoutSnapshot } from "./panels.js";
-export type { CliBinary, BinarySource, CliDiscoveredCandidate, CliDiscoverResult } from "./cli.js";
+export type { CliBinary, BinarySource, CliDiscoveredCandidate, CliDiscoverResult, CliVersionCheck, NodePtyProbeOutcome, ServerPackageProbe } from "./cli.js";
 export type { HarnessId, SkillSource, SkillMeta, SkillDetail, SkillsListResult, SkillSaveInput } from "./skills.js";
 export type { CommandDispatch, CommandKind, CommandOption, CommandInvocation } from "./commands.js";
 export type {
@@ -129,6 +129,7 @@ export type {
 } from "./updates.js";
 export type {
   ShutdownReason,
+  ShutdownStatus,
   ShutdownActiveTurn,
   ShutdownTerminal,
   ShutdownAssessment,
@@ -139,6 +140,7 @@ export type {
   ShutdownExpiredEvent
 } from "./shutdown.js";
 export type { AttentionState } from "./attention.js";
+export type { AppNotice } from "./notices.js";
 export type {
   DirEntry,
   FileStatInfo,
@@ -153,3 +155,5 @@ export type {
   FsChangeEvent
 } from "./files.js";
 export type { NativeSession, ImportableSession, ImportSessionRequest, ImportSessionResult } from "./importer.js";
+export type { ClientKind, RpcError, ClientMessage, ServerMessage, ServerEndpoint, ServerReady } from "./protocol.js";
+export type { DesktopApi } from "./desktop.js";

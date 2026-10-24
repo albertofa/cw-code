@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "bun:test";
-import { rotationPath } from "../debug/logRotation.js";
+import { rotationPath } from "@cw-code/server/debug/logRotation";
 import { createUpdateLogFile, describeUpdateError, formatLogValue, isMissingReleaseError, redactUpdateText } from "./updateLog.js";
 
 const HOME = "C:\\Users\\Jane Doe";

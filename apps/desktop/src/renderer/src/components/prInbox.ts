@@ -1,4 +1,4 @@
-import { prKey } from "../../../shared/prRef.js";
+import { prKey } from "@cw-code/shared/prRef";
 import type { PrBucket, PrSummary } from "../cw.js";
 
 export { prKey };

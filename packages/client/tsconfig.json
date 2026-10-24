@@ -1,0 +1,16 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "lib": ["ES2022", "DOM"],
+    "types": ["bun-types"],
+    "noEmit": true,
+    "baseUrl": ".",
+    "paths": {
+      "@cw-code/contracts": ["../contracts/src/index.ts"],
+      "@cw-code/shared/*": ["../shared/src/*"]
+    }
+  },
+  "include": ["src"]
+}

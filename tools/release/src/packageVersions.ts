@@ -1,7 +1,14 @@
 import { readFile, writeFile } from "node:fs/promises";
 import { parseVersion } from "./semver.ts";
 
-export const DEFAULT_PACKAGE_RELATIVE_PATHS = ["package.json", "apps/desktop/package.json", "packages/contracts/package.json"];
+export const DEFAULT_PACKAGE_RELATIVE_PATHS = [
+  "package.json",
+  "apps/desktop/package.json",
+  "apps/server/package.json",
+  "packages/client/package.json",
+  "packages/contracts/package.json",
+  "packages/shared/package.json"
+];
 
 export interface PackageVersionEntry {
   path: string;

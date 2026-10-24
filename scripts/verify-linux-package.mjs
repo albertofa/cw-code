@@ -84,16 +84,29 @@ async function checkArtifacts(distDir, version) {
   const debPath = join(distDir, `cw-code-${version}-amd64.deb`);
   const latestPath = join(distDir, "latest-linux.yml");
   const latestText = existsSync(latestPath) ? readFileSync(latestPath, "utf8") : null;
+  const serverDir = join(distDir, "linux-unpacked", "resources", "server");
+  const serverBinaryPath = join(serverDir, "cw-code-server");
+  const ptyNativePath = join(serverDir, "node_modules", "node-pty", "build", "Release", "pty.node");
   const artifacts = {
     appImage: await describeArtifact(appImagePath),
     deb: await describeArtifact(debPath),
-    latestLinuxYml: { path: latestPath, exists: latestText !== null, matchesVersion: latestText?.includes(`version: ${version}\n`) ?? false }
+    latestLinuxYml: { path: latestPath, exists: latestText !== null, matchesVersion: latestText?.includes(`version: ${version}\n`) ?? false },
+    serverBinary: {
+      path: serverBinaryPath,
+      exists: existsSync(serverBinaryPath),
+      sizeBytes: fileSize(serverBinaryPath),
+      executable: existsSync(serverBinaryPath) && (statSync(serverBinaryPath).mode & 0o111) !== 0
+    },
+    nodePtyNative: { path: ptyNativePath, exists: existsSync(ptyNativePath) }
   };
   const problems = [];
   if (!artifacts.appImage.exists) problems.push(`AppImage not found: ${appImagePath}`);
   if (!artifacts.deb.exists) problems.push(`deb not found: ${debPath}`);
   if (!artifacts.latestLinuxYml.exists) problems.push(`latest-linux.yml not found: ${latestPath}`);
   else if (!artifacts.latestLinuxYml.matchesVersion) problems.push(`latest-linux.yml does not declare version ${version}`);
+  if (!artifacts.serverBinary.exists) problems.push(`server binary not found: ${serverBinaryPath}`);
+  else if (!artifacts.serverBinary.executable) problems.push(`server binary is not executable: ${serverBinaryPath}`);
+  if (!artifacts.nodePtyNative.exists) problems.push(`node-pty native module not found: ${ptyNativePath}`);
   return { artifacts, problems };
 }
 
@@ -209,6 +222,8 @@ function printSummary(summary, args) {
     console.log(`  AppImage: ${summary.artifacts.appImage.exists ? "OK" : "MISSING"}`);
     console.log(`  deb: ${summary.artifacts.deb.exists ? "OK" : "MISSING"}`);
     console.log(`  latest-linux.yml: ${summary.artifacts.latestLinuxYml.matchesVersion ? "OK" : "MISSING OR STALE"}`);
+    console.log(`  server binary: ${summary.artifacts.serverBinary.executable ? "OK" : "MISSING OR NOT EXECUTABLE"}`);
+    console.log(`  node-pty native module: ${summary.artifacts.nodePtyNative.exists ? "OK" : "MISSING"}`);
     console.log(`  apparmor_restrict_unprivileged_userns: ${summary.apparmorRestrictUnprivilegedUserns ?? "absent"}`);
     console.log(`  unprivileged user namespaces usable: ${summary.unprivilegedUsernsUsable}`);
   }

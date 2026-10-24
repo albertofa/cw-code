@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { firstRunChannelPatch, touchesUpdatePreferences, updatePreferences } from "./updatePreferences.js";
+import { firstRunChannelPatch, updatePreferences } from "./updatePreferences.js";
 
 describe("updatePreferences", () => {
   it("derives the channel from the running version when none is chosen", () => {
@@ -23,11 +23,5 @@ describe("updatePreferences", () => {
     expect(firstRunChannelPatch({ updateChannel: null }, "1.2.0", true)).toEqual({ updateChannel: "stable" });
     expect(firstRunChannelPatch({ updateChannel: "alpha" }, "1.2.0", true)).toBeNull();
     expect(firstRunChannelPatch({ updateChannel: null }, "0.0.1-alpha.21", false)).toBeNull();
-  });
-
-  it("detects patches that change update preferences", () => {
-    expect(touchesUpdatePreferences({ updateChannel: null })).toBe(true);
-    expect(touchesUpdatePreferences({ updateBackgroundDownload: false })).toBe(true);
-    expect(touchesUpdatePreferences({ holdingHours: 3 })).toBe(false);
   });
 });

@@ -11,6 +11,7 @@ import type {
   CommandOption,
   ContextCompactionInfo,
   ContextUsage,
+  DesktopApi,
   DirEntry,
   FileReadResult,
   FileStatInfo,
@@ -739,5 +740,6 @@ export interface CwApi {
 declare global {
   interface Window {
     cw: CwApi;
+    cwDesktop: DesktopApi;
   }
 }

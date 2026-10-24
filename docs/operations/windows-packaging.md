@@ -2,7 +2,8 @@
 
 cw-code ships to Windows x64 as an NSIS installer built with electron-builder. This
 document is the maintained reference for that pipeline: installer identity, the
-toolchain, the node-pty native binary, and how to package and verify a build.
+toolchain, the compiled server binary and its node-pty sidecar, and how to package and
+verify a build.
 
 ## Installer identity
 
@@ -45,7 +46,7 @@ config only makes the default explicit, it does not remove per-machine capabilit
 
 ## Toolchain
 
-Pinned in `apps/desktop/package.json`:
+Pinned in `apps/desktop/package.json` (node-pty is pinned in `apps/server/package.json`):
 
 | Package | Version |
 | --- | --- |
@@ -54,14 +55,15 @@ Pinned in `apps/desktop/package.json`:
 | electron-vite | 3.1.0 |
 | node-pty | 1.1.0 |
 
-`node-pty` ships N-API prebuilds for `win32-x64`, so `npmRebuild: false` never
-requires a C++ toolchain to produce the Windows package. This is specific to the
-`win32-x64` prebuilt binary path documented below — the Linux CI job (`verify`)
-still compiles `node-pty` from source via `node-gyp` when it runs `bun install`,
-since no Linux prebuild is bundled; that job is unaffected by `npmRebuild` (which
-only governs `electron-builder`'s packaging step) and needs a working native
-toolchain on the runner, which `ubuntu-latest` already provides. The Linux
-packages are documented in [linux-packaging.md](linux-packaging.md).
+The server is compiled with `bun build --compile`, so the Windows package does not rebuild
+native modules against Electron: `npmRebuild: false` stays set, and
+node-pty is never compiled for Electron's ABI. `node-pty` ships N-API prebuilds for
+`win32-x64`, so producing the Windows package never requires a C++ toolchain. This is
+specific to the `win32-x64` prebuilt binary path documented below — the Linux CI job
+(`verify`) still compiles `node-pty` from source via `node-gyp` when it runs `bun install`,
+since no Linux prebuild is bundled; that job needs a working native toolchain on the
+runner, which `ubuntu-latest` already provides. The Linux packages are documented in
+[linux-packaging.md](linux-packaging.md).
 
 ### electron-builder 25 → 26 notes
 
@@ -79,9 +81,9 @@ config-schema changes relevant to this app:
   [windows-signing.md](windows-signing.md).
 - Top-level `includeSubNodeModules` was removed; not used here.
 - `includePdb` now defaults to `false` (previously PDB files could leak into the
-  package unless manually filtered). This is why `*.pdb` files that ship alongside
-  node-pty's prebuilds (`conpty.pdb`, `pty.pdb`, `winpty.pdb`, ...) do not need an
-  explicit `files` exclusion — 26 already drops them.
+  package unless manually filtered). The `*.pdb` files that ship alongside node-pty's
+  prebuilds (`conpty.pdb`, `pty.pdb`, `winpty.pdb`, ...) are dropped earlier, when
+  `apps/server/scripts/compile.ts` copies the sidecar.
 - New `nativeRebuilder` option (`legacy` | `parallel` | `sequential`, default
   `sequential`) controls how native deps are rebuilt when `npmRebuild: true`. Not
   used here since `npmRebuild` stays `false`.
@@ -92,42 +94,52 @@ All NSIS keys already used in `electron-builder.yml`
 (`oneClick`, `perMachine`, `allowToChangeInstallationDirectory`, `differentialPackage`,
 `artifactName`) are present unchanged in the 26.x schema.
 
-## node-pty native binary
+## Server binary and node-pty sidecar
+
+All operations run in `apps/server`, a standalone Bun WebSocket server that the Electron
+shell spawns (`apps/desktop/src/main/serverProcess.ts`). `bun run compile` in `apps/server`
+(`scripts/compile.ts`) writes `apps/server/dist/`:
+
+- `cw-code-server.exe`, from `bun build src/index.ts --compile --external node-pty`.
+  node-pty is kept external and ships next to the executable as the sidecar below.
+- `node_modules/node-pty/`, the sidecar: `package.json`, `LICENSE`, `lib/` without
+  `*.test.js` and `*.js.map`, and `prebuilds/win32-x64/` without `*.pdb`. The build fails
+  if `pty.node`, `conpty.node`, `conpty/conpty.dll` or `conpty/OpenConsole.exe` is missing.
 
 `node-pty`'s own loader (`lib/utils.js`) looks for a native module first in
-`build/Release`, then `build/Debug`, then `prebuilds/<platform>-<arch>`. On a
-`npmRebuild: false` install there is no compiled `build/Release/*.node`, so the
-module that actually loads at runtime always comes from
+`build/Release`, then `build/Debug`, then `prebuilds/<platform>-<arch>`. The sidecar has
+no `build/` directory on Windows, so the module that loads at runtime always comes from
 `prebuilds/win32-x64/{pty,conpty,conpty_console_list}.node`.
 
 The native ConPTY backend (`src/win/conpty.cc`) resolves `conpty.dll` relative to
 the *loaded* native module's own directory (`GetModuleFileNameW` on the addon,
 then `conpty\conpty.dll`), so `prebuilds/win32-x64/conpty/{conpty.dll,
-OpenConsole.exe}` must ship next to `prebuilds/win32-x64/conpty.node` — they are
-unpacked together.
+OpenConsole.exe}` must ship next to `prebuilds/win32-x64/conpty.node`.
 
 `electron-builder.yml` reflects this:
 
-- `asarUnpack: ["node_modules/node-pty/prebuilds/win32-x64/**"]` forces the
-  Windows x64 native binaries (and their nested `conpty/` folder) out of `app.asar`
-  into `app.asar.unpacked`, since Windows cannot `LoadLibrary`/`CreateProcess` a
-  DLL or EXE living inside an asar archive.
-- Because electron-builder unpacks the *entire* containing package directory once
-  any file under it is asar-unpacked, `files` carries explicit `!` excludes for
-  `node-pty`'s `deps/`, `src/`, `third_party/`, `scripts/`, `binding.gyp`, `typings/`,
-  the leftover `build/` directory (a stale, unused copy of the ConPTY DLL — the real
-  one node-pty loads is under `prebuilds/win32-x64/`), `lib/**/*.test.js` (node-pty's
-  own unit tests, never imported at runtime), `lib/**/*.js.map` (source maps, not
-  needed to run), and the non-Windows (`darwin-arm64`, `darwin-x64`, `win32-arm64`)
-  prebuilds. Without these, the unpacked package ships winpty/conpty source, build
-  scripts, test files, and other-platform binaries that Windows never uses. The
-  packaged startup probe (below) is what confirms none of these excludes broke
-  node-pty's actual `require("node-pty")` / spawn path.
+- `extraResources` copies `apps/server/dist` to `resources/server/` in the installed app,
+  with the sidecar at `resources/server/node_modules/node-pty`. Both are plain files
+  outside `app.asar`, so Windows can `LoadLibrary`/`CreateProcess` the DLLs and the
+  EXE. node-pty is no longer inside `app.asar`, and the `files`
+  list is only `out/**` and `package.json`.
+- The shell starts `resources/server/cw-code-server.exe` and sets `CW_NODE_PTY` to
+  `resources/server/node_modules/node-pty/lib/index.js`, which is where the server's
+  `PtyPool` loads node-pty from.
+- `apps/desktop/build/afterPack.cjs` fails the build if `cw-code-server.exe` or
+  `node_modules/node-pty/prebuilds/win32-x64/pty.node` is missing from the packed
+  `resources/server/`.
+
+The `dist` and `dist:dir` scripts of `apps/desktop` build the server first, so
+`apps/server/dist` always exists when electron-builder runs. Running electron-builder
+alone on a clean checkout fails in `afterPack`.
+
+The packaged startup probe (below) confirms that the sidecar loads and spawns a PTY.
 
 ## Packaging locally
 
 ```sh
-bun --filter @cw-code/desktop dist       # electron-vite build + NSIS installer, --publish never
+bun --filter @cw-code/desktop dist       # server compile + electron-vite build + NSIS installer, --publish never
 bun --filter @cw-code/desktop dist:dir   # same, but --dir (unpacked win-unpacked/ only, for diagnostics)
 ```
 
@@ -157,10 +169,12 @@ summary (also written to `<dist>/verify-windows-package.json`):
   works whether the build used the default version or a CI override such as
   `-c.extraMetadata.version=...` (see the upgrade tests below);
 - `win-unpacked/cw-code.exe` exists;
-- `app.asar` exists and contains `out/main/index.js` (via `@electron/asar` if it
-  can be resolved from the installed toolchain; otherwise this check is skipped
-  with a warning, never a hard failure);
-- node-pty's `win32-x64` native binary is present under `app.asar.unpacked`;
+- `app.asar` exists and contains `out/main/index.js`, and does not contain node-pty (via
+  `@electron/asar` if it can be resolved from the installed toolchain; otherwise this check
+  is skipped with a warning, never a hard failure);
+- `win-unpacked/resources/server/cw-code-server.exe` exists;
+- node-pty's `win32-x64` `pty.node` is present under
+  `win-unpacked/resources/server/node_modules/node-pty/prebuilds/win32-x64/`;
 - installer and asar sizes;
 - a packaged startup probe (see below) run against `win-unpacked/cw-code.exe`
   with an isolated `CW_CODE_HOME`/`--user-data-dir` (a fresh temp directory per
@@ -173,10 +187,13 @@ summary (also written to `<dist>/verify-windows-package.json`):
 
 `apps/desktop/src/main/debug/packageProbe.ts` runs inside the packaged app only
 when `CW_PACKAGE_PROBE_OUT` (an absolute file path) is set. ~3 seconds after the
-main window's first `did-finish-load`, it loads `node-pty` (the same lazy dynamic
-import `PtyPool` uses), spawns `cmd.exe /c exit 0`, waits up to 10s for it to
-exit, and runs `checkCliVersions` (missing CLIs are reported in the result, never
-thrown). It writes a JSON result — `{ appVersion, electron, platform, arch,
+renderer load, the shell calls `debug.packageProbe` on the server
+(`apps/server/src/debug/packageProbe.ts`). The server loads `node-pty` (the same lazy
+loader `PtyPool` uses, so it is measured from the sidecar the packaged app actually
+uses), spawns `cmd.exe /c exit 0`, waits up to 10s for it to exit, and runs
+`checkCliVersions` (missing CLIs are reported in the result, never thrown). If the server
+did not start or the call fails, `nodePty` is reported as not loaded, with the reason in `error`. The shell writes
+a JSON result — `{ appVersion, electron, platform, arch,
 nodePty: { loaded, spawned, exitCode, error }, rendererLoaded, cliChecks,
 durationMs }` — to `CW_PACKAGE_PROBE_OUT` and exits the process (`0` if the
 renderer loaded, `1` otherwise). The result shape is pure and covered by

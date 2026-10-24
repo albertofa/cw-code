@@ -26,6 +26,7 @@ import { parseAppUpdateYaml } from "./upgrade-builds.mjs";
 import {
   cleanupInstallation,
   defaultInstallDir,
+  installDiagnostics,
   isProcessAlive,
   killProcessTreeIfImage,
   nsisGuid,
@@ -38,7 +39,7 @@ import { safePathWithoutClis } from "./package-probe.mjs";
 const libDir = dirname(fileURLToPath(import.meta.url));
 const scriptsDir = resolve(libDir, "..");
 const repoRoot = resolve(scriptsDir, "..");
-const FIXTURES_DIR = join(repoRoot, "apps", "desktop", "src", "main", "storage", "__fixtures__");
+const FIXTURES_DIR = join(repoRoot, "apps", "server", "src", "storage", "__fixtures__");
 const FAKE_CLAUDE = join(scriptsDir, "fixtures", "fake-claude.mjs");
 
 export const TEST_GUID = nsisGuid(UPDATE_TEST_APP_ID);
@@ -516,6 +517,7 @@ export async function runScenario(entry, context) {
     } catch (err) {
       record.problems.push(`feed server did not close: ${err.message}`);
     }
+    if (record.problems.length > 0) record.notes.push(`diagnostics before cleanup:\n${installDiagnostics(keys)}`);
     const stopped = [];
     for (const pid of knownPids) stopped.push(killProcessTreeIfImage(pid, isUpdateTestImage));
     for (const fake of readJsonLines(paths.fakeLog)) {

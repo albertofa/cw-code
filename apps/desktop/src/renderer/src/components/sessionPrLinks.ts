@@ -1,6 +1,6 @@
 import type { GitPullRequest, PrDetail, PrLinkSnapshot, PrRef, PrSummary, SessionPrLink } from "../cw.js";
 import { prChip, type PrChip, type PrChipTone } from "./prChip.js";
-import { prKey, prRefFromUrl } from "../../../shared/prRef.js";
+import { prKey, prRefFromUrl } from "@cw-code/shared/prRef";
 import { hasUnseen } from "./prUpdates.js";
 
 interface LinkedSession {

@@ -1,5 +1,5 @@
 import type { AppSettings, PrDetail, PrRef, PrSummary, PrUpdate, PrWorkflow, SessionMeta, SessionPrLink } from "@cw-code/contracts";
-import { autoFollowUpWorkflow, runsContinuously, withAutomatedWorkflowNote } from "../../../shared/autoFollowUp.js";
+import { autoFollowUpWorkflow, runsContinuously, withAutomatedWorkflowNote } from "@cw-code/shared/autoFollowUp";
 import { prKey } from "./prInbox.js";
 import { detailNeedsRefresh, seenThrough, updatesSince } from "./prUpdates.js";
 

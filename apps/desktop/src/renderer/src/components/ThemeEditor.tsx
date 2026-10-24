@@ -7,7 +7,7 @@ import {
   UNTITLED_THEME_NAME,
   deriveThemeTokens,
   isHexColor
-} from "../../../shared/themes.js";
+} from "@cw-code/shared/themes";
 import type { CustomTheme, ThemeBase } from "../cw.js";
 import { BUILTIN_THEME_NAMES, tokenLabel, withoutColor } from "./themeChoices.js";
 

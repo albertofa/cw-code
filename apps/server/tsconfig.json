@@ -1,0 +1,16 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "types": ["node", "bun-types/test", "bun-types/bun", "bun-types/serve"],
+    "noEmit": true,
+    "baseUrl": ".",
+    "paths": {
+      "@cw-code/client": ["../../packages/client/src/index.ts"],
+      "@cw-code/contracts": ["../../packages/contracts/src/index.ts"],
+      "@cw-code/shared/*": ["../../packages/shared/src/*"]
+    }
+  },
+  "include": ["src", "tests", "scripts"]
+}

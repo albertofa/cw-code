@@ -1,4 +1,4 @@
-import { resolveActiveTheme } from "../../shared/themes.js";
+import { resolveActiveTheme } from "@cw-code/shared/themes";
 import type { CustomTheme, ThemeBase } from "./cw.js";
 
 export const THEME_STORAGE_KEY = "cw-code:theme";

@@ -1,4 +1,4 @@
-import { THEME_NAME_MAX_LENGTH, UNTITLED_THEME_NAME, bundledTheme, resolveActiveTheme } from "../../../shared/themes.js";
+import { THEME_NAME_MAX_LENGTH, UNTITLED_THEME_NAME, bundledTheme, resolveActiveTheme } from "@cw-code/shared/themes";
 import type { CustomTheme, ThemeBase } from "../cw.js";
 
 export const BUILTIN_THEME_NAMES: Readonly<Record<ThemeBase, string>> = { dark: "Dark", light: "Light" };

@@ -1,5 +1,11 @@
 export type ShutdownReason = "quit" | "update";
 
+export interface ShutdownStatus {
+  idle: boolean;
+  committed: boolean;
+  reason: ShutdownReason | null;
+}
+
 export interface ShutdownActiveTurn {
   sessionId: string;
   turnId: string;

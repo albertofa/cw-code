@@ -1,4 +1,4 @@
-import { PROJECT_HUES } from "../../../shared/themes.js";
+import { PROJECT_HUES } from "@cw-code/shared/themes";
 
 export interface ProjectIdentity {
   monogram: string;

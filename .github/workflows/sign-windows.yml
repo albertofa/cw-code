@@ -166,6 +166,7 @@ jobs:
             echo "::error::CW_UPDATE_TEST_BUILD is set; a production package must never contain the update autotest mode"
             exit 1
           fi
+      - run: bun --filter @cw-code/server compile
       - run: bun --filter @cw-code/desktop build
       - name: Package win-unpacked (NSIS target writes app-update.yml; the installer built here is discarded)
         env:
@@ -179,7 +180,7 @@ jobs:
           bun --bun --cwd apps/desktop electron-builder "${args[@]}"
       - name: Check the packaged app layout
         run: |
-          for file in cw-code.exe resources/app-update.yml resources/elevate.exe; do
+          for file in cw-code.exe resources/app-update.yml resources/elevate.exe resources/server/cw-code-server.exe; do
             [ -f "apps/desktop/dist/win-unpacked/$file" ] || { echo "::error::win-unpacked/$file is missing"; exit 1; }
           done
       - name: Check out the gate tooling from the signing workflow's commit

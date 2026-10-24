@@ -1,5 +1,5 @@
 import { appendFileSync } from "node:fs";
-import { rotateIfOversize } from "../debug/logRotation.js";
+import { rotateIfOversize } from "@cw-code/server/debug/logRotation";
 import type { UpdateFailure } from "./updateState.js";
 
 const LOG_MAX_CHARS = 2_000;

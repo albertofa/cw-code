@@ -13069,3 +13069,44 @@ button.gitbar-checkout:hover {
     display: none;
   }
 }
+
+.server-gate {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  height: 100vh;
+  background: var(--bg);
+  color: var(--muted);
+  font-size: var(--t-sm);
+}
+
+.server-gate-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+}
+
+.server-banner {
+  position: fixed;
+  top: 8px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 1000;
+  padding: 6px 14px;
+  border-radius: var(--r-sm);
+  background: var(--card);
+  border: 1px solid var(--border);
+  color: var(--warning);
+  font-size: var(--t-xs);
+  box-shadow: var(--shadow-float);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.server-banner .btn {
+  padding: 2px 8px;
+  font-size: var(--t-xs);
+}

@@ -135,7 +135,7 @@ function fakeHost(io: MemoryIo, options: FakeOptions = {}) {
       }
     },
     shutdown: {
-      assess: () => ({
+      assess: async () => ({
         activeTurns: (options.activeTurns ?? false) || turnStarted ? [{ sessionId: "sess_busy", turnId: "turn-1", title: "t", startedAt: 1 }] : [],
         backgroundTasks: 0,
         terminals: []
@@ -151,11 +151,11 @@ function fakeHost(io: MemoryIo, options: FakeOptions = {}) {
         calls.push(`force:${token}`);
         return { ok: true, token, stoppedTurnIds: [] };
       },
-      cancel: (token) => {
+      cancel: async (token) => {
         calls.push(`cancel:${token}`);
         idle = true;
       },
-      isIdle: () => idle
+      isIdle: async () => idle
     },
     install: async (request) => {
       calls.push(`install:handoff=${io.exists(HANDOFF)}`);

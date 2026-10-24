@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import type { ITheme } from "@xterm/xterm";
-import { THEME_PALETTES } from "../../../shared/themes.js";
+import { THEME_PALETTES } from "@cw-code/shared/themes";
 import type { ThemeBase } from "../cw.js";
 
 export interface TerminalColors {

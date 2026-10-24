@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { buildProbeResult, probeSandbox, readApparmorLabel, RendererProbeTracker, shapeNodePtyResult } from "./packageProbe.js";
+import { buildProbeResult, failedServerProbe, probeSandbox, readApparmorLabel, RendererProbeTracker, shapeNodePtyResult } from "./packageProbe.js";
 
 describe("shapeNodePtyResult", () => {
   it("reports a successful load and spawn", () => {
@@ -36,6 +36,14 @@ describe("shapeNodePtyResult", () => {
       exitCode: null,
       error: "ENOENT"
     });
+  });
+});
+
+describe("failedServerProbe", () => {
+  it("reports node-pty as not loaded with the server failure and no CLI checks", () => {
+    const probe = failedServerProbe("server did not start: exited with code 1");
+    expect(probe).toEqual({ nodePty: { status: "load-failed", error: "server did not start: exited with code 1" }, cliChecks: [] });
+    expect(shapeNodePtyResult(probe.nodePty)).toEqual({ loaded: false, spawned: false, exitCode: null, error: "server did not start: exited with code 1" });
   });
 });
 

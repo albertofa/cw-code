@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { findSkillMentions, findSkillReferences } from "../../../shared/skillMentions.js";
+import { findSkillMentions, findSkillReferences } from "@cw-code/shared/skillMentions";
 import { skillSegments } from "./skillSegments.js";
 
 const KNOWN = new Set(["plan", "debug"]);

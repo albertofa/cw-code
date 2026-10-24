@@ -32,26 +32,38 @@ lists them.
 
 ```sh
 bun install
-bun --filter @cw-code/desktop dist:linux   # electron-vite build + AppImage and deb, --publish never
+bun --filter @cw-code/desktop dist:linux   # server compile + electron-vite build + AppImage and deb, --publish never
 ```
 
-Build on Linux x64. `dist:linux` is `electron-vite build && electron-builder --linux
-AppImage deb --x64 --publish never`; output goes to `apps/desktop/dist/`, the unpacked
-tree to `apps/desktop/dist/linux-unpacked/`.
+Build on Linux x64. `dist:linux` is `bun --filter @cw-code/server compile && electron-vite
+build && electron-builder --linux AppImage deb --x64 --publish never`; output goes to
+`apps/desktop/dist/`, the unpacked tree to `apps/desktop/dist/linux-unpacked/`.
+
+The server compile step runs `apps/server/scripts/compile.ts`; the server's plain `build`
+script only bundles `src/index.ts` into `apps/server/out/` as a quick check. All operations
+run in that server, a Bun executable compiled with `bun build --compile --external node-pty`,
+and the Electron shell spawns it. The compile step writes `apps/server/dist/cw-code-server` plus
+the node-pty sidecar `apps/server/dist/node_modules/node-pty` (`package.json`,
+`LICENSE`, `lib/` without `*.test.js` and `*.js.map`, and `build/Release/pty.node`).
+electron-builder ships both through `extraResources` to `resources/server/`, outside
+`app.asar`; node-pty is no longer inside `app.asar`. The shell
+starts `resources/server/cw-code-server` and sets `CW_NODE_PTY` to
+`resources/server/node_modules/node-pty/lib/index.js`.
 
 **Prerequisites for contributors.** `node-pty` 1.1.0 ships prebuilds for Windows and
 macOS only, so on Linux `bun install` compiles it from source with `node-gyp`. You need
 a C++ toolchain and Python 3 (`sudo apt-get install build-essential python3` on Debian
 and Ubuntu) and Bun 1.4.4. This is the only place a native compile
 happens: installs on Windows and macOS are unaffected. `electron-builder.yml` sets
-`npmRebuild: false`, so packaging never recompiles; it packs the `build/Release/pty.node`
-that the install produced and unpacks it from the asar (`asarUnpack`), and the `files`
-excludes keep the rest of the `node-pty` sources out of the package.
+`npmRebuild: false`, so packaging never recompiles; the server compile step copies the
+`build/Release/pty.node` that the install produced, and it fails if that file is missing.
 
 `apps/desktop/build/afterPack.cjs` runs for the Linux targets only and does two things.
-It fails the build with "node-pty native module missing from the Linux package" if
-`pty.node` is absent, so a package without a terminal backend can never be produced. It
-also installs the launcher described under [Launcher and sandbox](#launcher-and-sandbox).
+It fails the build with "cw-code server file missing from the package" if
+`resources/server/cw-code-server` or `resources/server/node_modules/node-pty/build/Release/pty.node`
+is absent, so a package without a server or a terminal backend can never be produced, and it
+makes the server binary executable (`chmod 755`). It also installs the launcher described
+under [Launcher and sandbox](#launcher-and-sandbox).
 
 **glibc baseline.** The release builds on `ubuntu-22.04`, so both packages need glibc 2.35
 or newer, and `pty.node` is linked against it. A distribution older than Ubuntu 22.04 or
@@ -148,18 +160,20 @@ the window itself loads `icon.png` on Linux.
 
 - **Login-shell capture.** An app started from a desktop launcher has the session's
   environment, not the user's shell profile, so `PATH` and the CLIs the user installed
-  there are missing. On Linux and macOS, when the app was not started from a terminal
-  (neither stdout nor stdin is a TTY), `shellEnvironment.ts` runs `$SHELL -ilc env` once,
-  in its own process group, with a 5 second timeout (SIGTERM, then SIGKILL after 1
-  second). It starts before `app.whenReady()` and `startApp` awaits it, so it overlaps
-  Electron's startup. It tries the account shell and `/bin/bash` next only when `$SHELL`
+  there are missing. The capture runs in the server, not in Electron. On Linux and macOS,
+  when the server was not started from a terminal (neither its stdout nor its stdin is a
+  TTY; the shell starts it with piped output, so this holds for every launch from the
+  shell), `shellEnvironment.ts` runs `$SHELL -ilc env` once, in its own process group,
+  with a 5 second timeout (SIGTERM, then SIGKILL after 1 second). The server awaits it
+  before it starts listening. It tries the account shell and `/bin/bash` next only when `$SHELL`
   cannot be spawned; a shell that starts and fails is not retried. The login `PATH` is
   merged in front of the current one (de-duplicated); `SSH_AUTH_SOCK`,
   `DBUS_SESSION_BUS_ADDRESS`, `WAYLAND_DISPLAY`, `XDG_*`, `SSL_CERT_FILE`, `SSL_CERT_DIR`,
   `NODE_EXTRA_CA_CERTS` and the proxy variables (`HTTP_PROXY`, `HTTPS_PROXY`, `NO_PROXY`,
   `ALL_PROXY`, upper and lower case) are copied only when they are missing. A failure is
-  reported in the crash log with the tail of the shell's stderr, never silently.
-- **AppImage sanitizing.** Every child the app starts (the CLIs, git, terminal PTYs, the
+  reported in the crash log (prefix `[shell-env]`) with the tail of the shell's stderr,
+  never silently.
+- **AppImage sanitizing.** Every child the server starts (the CLIs, git, terminal PTYs, the
   login shell, `ps`) gets `sanitizedChildEnv(process.env, platform)`: on Linux it drops
   `APPIMAGE`, `APPDIR`, `ARGV0`, `OWD` and `CHROME_DESKTOP`, and, when both `APPIMAGE`
   and `APPDIR` were set, removes every `PATH`, `LD_LIBRARY_PATH`, `XDG_DATA_DIRS` and
@@ -175,15 +189,17 @@ the window itself loads `icon.png` on Linux.
   3 seconds later if anything in the group is still alive. A child that already exited
   (exit code or signal recorded) is never signalled, so a reused pid is never hit.
   Windows keeps `taskkill /T /F`.
-- **Orphaned servers.** OpenCode and Codex run as managed servers (`opencode serve`,
-  `codex app-server`). Every one the app starts gets `CW_CODE_OWNER_PID=<app pid>` in its
-  environment. At startup the app lists processes with `ps -eo pid=,ppid=,args=`, reads
-  `/proc/<pid>/environ` for the matching servers, and kills a server that has an owner pid
-  and does not descend from it: the owner is gone, so the server is an orphan of a
-  crashed or killed instance. A server owned by another running cw-code instance
-  descends from that instance and is left alone, and a server with no owner pid (one the
-  user started by hand) is never touched. Windows still reaps by missing parent.
-- **Signals.** SIGINT and SIGTERM quit the app through the existing no-dialog path.
+- **Orphaned CLI servers.** OpenCode and Codex run as managed servers (`opencode serve`,
+  `codex app-server`). Every one the cw-code server starts gets
+  `CW_CODE_OWNER_PID=<cw-code server pid>` in its environment. When the cw-code server
+  starts it lists processes with `ps -eo pid=,ppid=,args=`, reads `/proc/<pid>/environ`
+  for the matching CLI servers, and kills one that has an owner pid and does not descend
+  from it: the owner is gone, so it is an orphan of a crashed or killed instance. A CLI
+  server owned by another running instance descends from that instance and is left alone,
+  and one with no owner pid (started by hand) is never touched. Windows still reaps by
+  missing parent.
+- **Signals.** SIGINT and SIGTERM quit the shell through the existing no-dialog path, which
+  stops the server; the server also stops itself on either signal.
 
 ## How CI verifies the packages
 
@@ -198,8 +214,9 @@ sandbox on; `--install-deb` also needs passwordless `sudo`), needs `xvfb-run` an
 `xauth`, and refuses to run without `--disposable-environment`. With `--install-deb` it
 also refuses when a `cw-code` deb is already installed. It:
 
-1. checks that the AppImage, the deb and `latest-linux.yml` exist and that the feed's
-   version matches `apps/desktop/package.json`;
+1. checks that the AppImage, the deb and `latest-linux.yml` exist, that the feed's
+   version matches `apps/desktop/package.json`, and that `linux-unpacked/resources/server/`
+   holds an executable `cw-code-server` and `node_modules/node-pty/build/Release/pty.node`;
 2. starts the AppImage under `xvfb-run` (FUSE mount, or extract-and-run when FUSE is not
    usable) with the packaged startup probe;
 3. with `--install-deb`: `apt-get install`s the deb, checks the dpkg version, the
@@ -209,7 +226,7 @@ also refuses when a `cw-code` deb is already installed. It:
 
 A launch passes when the app exits 0, the probe reports platform `linux`, the expected
 `appVersion`, a loaded renderer, `startupMode: ready` and a node-pty that spawned and
-exited 0, and every process in the app's process group is gone after the run (the
+exited 0 (measured by the server through `debug.packageProbe`), and every process in the app's process group is gone after the run (the
 harness SIGKILLs the group).
 
 The sandbox check compares what the app reported with what the host implies. The evidence

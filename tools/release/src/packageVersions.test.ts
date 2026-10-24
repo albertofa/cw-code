@@ -1,10 +1,24 @@
-import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { applyVersion, checkSync, readPackageVersions, setBase } from "./packageVersions.ts";
+import { applyVersion, checkSync, DEFAULT_PACKAGE_RELATIVE_PATHS, readPackageVersions, setBase } from "./packageVersions.ts";
 
 const FILE_NAMES = ["root.json", "desktop.json", "contracts.json"];
+const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
+
+describe("DEFAULT_PACKAGE_RELATIVE_PATHS", () => {
+  it("covers the root and every app and package workspace", async () => {
+    const workspaces: string[] = [];
+    for (const group of ["apps", "packages"]) {
+      for (const entry of await readdir(join(REPO_ROOT, group), { withFileTypes: true })) {
+        if (entry.isDirectory()) workspaces.push(`${group}/${entry.name}/package.json`);
+      }
+    }
+    expect([...DEFAULT_PACKAGE_RELATIVE_PATHS].sort()).toEqual(["package.json", ...workspaces].sort());
+  });
+});
 
 describe("packageVersions", () => {
   let dir: string;

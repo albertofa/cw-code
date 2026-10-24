@@ -28,7 +28,7 @@ The application is a visual desktop shell over the user's installed CLI binaries
 ## Capabilities and Constraints
 
 - Preserve project-grouped sessions, session status, active-turn isolation, provider choice, resumable CLI context, file editor, git diff, agents, usage/cost information, and embedded interactive terminals.
-- The Electron main/preload/renderer boundary remains typed; the renderer does not spawn processes or access the filesystem directly.
+- Every operation runs in the cw-code server; the UI talks to it over a typed WebSocket protocol and to the Electron shell through a typed preload bridge. The UI does not spawn processes or access the filesystem directly.
 - CLI behavior stays behind the `CliDriver` seam.
 - The application persists its own project, title, layout, and resume metadata; it does not treat parsed CLI-internal files as authoritative.
 - Native-backed features must load lazily and degrade visibly.

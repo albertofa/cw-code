@@ -12,7 +12,7 @@ import {
   selectScenarios
 } from "../tools/release/src/upgradeScenarios.ts";
 import { assertProductionBundle } from "./lib/production-bundle.mjs";
-import { buildMainBundle, describeUpdateTestBuild, packageUpdateTestBuild } from "./lib/upgrade-builds.mjs";
+import { buildMainBundle, buildServer, describeUpdateTestBuild, packageUpdateTestBuild } from "./lib/upgrade-builds.mjs";
 import { dryRunFeed, runScenario, runUnpackedAutotestSmoke, stageFeed, updateTestIdentity } from "./lib/upgrade-run.mjs";
 import { runProductionBytes } from "./lib/production-bytes.mjs";
 import { requireDisposableEnvironment } from "./lib/package-probe.mjs";
@@ -116,6 +116,7 @@ async function prepareBuilds(args, versions, keys) {
   if (args.build) {
     buildMainBundle(args.desktopDir, false);
     if (keys.length > 0) {
+      buildServer(args.desktopDir);
       buildMainBundle(args.desktopDir, true);
       const feedUrl = args.feedPort === DEFAULT_FEED_PORT ? null : `http://127.0.0.1:${args.feedPort}/`;
       for (const key of keys) packageUpdateTestBuild(args.desktopDir, versions[key], join(args.buildsDir, versions[key]), feedUrl);

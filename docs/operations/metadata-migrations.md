@@ -151,8 +151,8 @@ without a window.
 ## Adding a migration
 
 1. Bump the store's schema constant (`SESSION_SCHEMA_VERSION` in
-   `apps/desktop/src/main/sessions/SessionStore.ts` or `SETTINGS_SCHEMA_VERSION`
-   in `apps/desktop/src/main/settings/SettingsStore.ts`) and its `empty()`
+   `apps/server/src/sessions/SessionStore.ts` or `SETTINGS_SCHEMA_VERSION`
+   in `apps/server/src/settings/SettingsStore.ts`) and its `empty()`
    document if the shape changed.
 2. Add a step keyed by the previous version to `SESSION_MIGRATIONS` or
    `SETTINGS_MIGRATIONS`. A step receives a deep copy of the validated
@@ -161,8 +161,8 @@ without a window.
 3. If the shape changes, update the store's `validate` function so it accepts
    every version that can still be migrated, and the result of the migration.
 4. Add a sanitized fixture of the previous schema under
-   `apps/desktop/src/main/storage/__fixtures__/` and tests for the new step:
+   `apps/server/src/storage/__fixtures__/` and tests for the new step:
    identifiers preserved, no rewrite on the second load, unknown fields kept.
 
-The loader (`apps/desktop/src/main/storage/versionedJson.ts`) handles backups,
+The loader (`apps/server/src/storage/versionedJson.ts`) handles backups,
 atomic writes, the last-good copy and the refusal paths for every store.

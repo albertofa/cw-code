@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { BUNDLED_THEMES } from "../../../shared/themes.js";
+import { BUNDLED_THEMES } from "@cw-code/shared/themes";
 import type { CustomTheme } from "../cw.js";
 import { activeThemeName, newCustomTheme, tokenLabel, withoutColor } from "./themeChoices.js";
 

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type ReactNode } from "react";
 import { History, Minus, Palette as PaletteIcon, Plus } from "lucide-react";
-import { BUNDLED_THEMES, MAX_CUSTOM_THEMES, THEME_PALETTES, deriveThemeTokens } from "../../../shared/themes.js";
+import { BUNDLED_THEMES, MAX_CUSTOM_THEMES, THEME_PALETTES, deriveThemeTokens } from "@cw-code/shared/themes";
 import type { AppSettings, CustomTheme, ThemeBase } from "../cw.js";
 import { useAppStore } from "../stores/appStore.js";
 import { SYSTEM_LIGHT_QUERY } from "../theme.js";
