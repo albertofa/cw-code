@@ -12,6 +12,7 @@ export interface PtyAttachments {
 export function createPtyAttachments(sendDetach: (ptyId: string) => void): PtyAttachments {
   const counts = new Map<string, number>();
   const opening = new Set<Promise<PtyOpenResult>>();
+  const deferred = new Set<string>();
 
   const openingSettled = async (): Promise<void> => {
     while (opening.size > 0) await Promise.allSettled([...opening]);
@@ -35,7 +36,15 @@ export function createPtyAttachments(sendDetach: (ptyId: string) => void): PtyAt
         return;
       }
       counts.delete(ptyId);
+      if (opening.size === 0) {
+        deferred.delete(ptyId);
+        sendDetach(ptyId);
+        return;
+      }
+      if (deferred.has(ptyId)) return;
+      deferred.add(ptyId);
       void openingSettled().then(() => {
+        if (!deferred.delete(ptyId)) return;
         if (!counts.has(ptyId)) sendDetach(ptyId);
       });
     }
