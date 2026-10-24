@@ -38,7 +38,7 @@ import { safePathWithoutClis } from "./package-probe.mjs";
 const libDir = dirname(fileURLToPath(import.meta.url));
 const scriptsDir = resolve(libDir, "..");
 const repoRoot = resolve(scriptsDir, "..");
-const FIXTURES_DIR = join(repoRoot, "apps", "desktop", "src", "main", "storage", "__fixtures__");
+const FIXTURES_DIR = join(repoRoot, "apps", "server", "src", "storage", "__fixtures__");
 const FAKE_CLAUDE = join(scriptsDir, "fixtures", "fake-claude.mjs");
 
 export const TEST_GUID = nsisGuid(UPDATE_TEST_APP_ID);

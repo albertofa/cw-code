@@ -32,6 +32,7 @@ describe("upgrade-test.yml policy", () => {
       "scripts/verify-installed-upgrade.mjs",
       "scripts/lib/**",
       "scripts/fixtures/**",
+      "apps/server/src/storage/__fixtures__/**",
       "tools/release/src/feed*.ts",
       "tools/release/src/rehash.ts",
       "tools/release/src/updateInfoYaml.ts",
