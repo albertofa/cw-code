@@ -19,6 +19,7 @@ const SETTINGS: AppSettings = {
   claudeEnabledModels: [],
   claudeCustomModel: { id: "", name: "" },
   claudeReasoningExpanded: false,
+  claudeChromeEnabled: false,
   opencodeReasoningExpanded: false,
   codexReasoningExpanded: false,
   opencodeGoUsage: false,

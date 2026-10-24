@@ -63,6 +63,8 @@ export interface AppSettings {
   claudeEnabledModels: string[];
   claudeCustomModel: CustomModel;
   claudeReasoningExpanded: boolean;
+  /** Launch Claude turns with `--chrome`; seeded once from the CLI's own Chrome default. */
+  claudeChromeEnabled: boolean;
   opencodeReasoningExpanded: boolean;
   codexReasoningExpanded: boolean;
   gitBinaryPath: string;

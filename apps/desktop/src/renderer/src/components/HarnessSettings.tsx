@@ -426,6 +426,15 @@ export function HarnessSettings({ driver, onPickBinary, onOpenUsage }: { driver:
               label={`Expand ${name} reasoning by default`}
             />
           </SettingsRow>
+          {driver === "claude" && (
+            <SettingsRow
+              label="Claude in Chrome"
+              htmlFor="sp-claude-chrome"
+              hint="Lets Claude drive your Chrome through the Claude in Chrome extension. Applies from the next turn."
+            >
+              <SettingsSwitch id="sp-claude-chrome" checked={draft.claudeChromeEnabled} onChange={(next) => set({ claudeChromeEnabled: next })} label="Enable Claude in Chrome" />
+            </SettingsRow>
+          )}
           {driver === "opencode" && (
             <SettingsRow
               label="Show OpenCode Go plan limits"
