@@ -94,7 +94,11 @@ Core behaviors:
 - View-driven data (git status, file changes, GitHub runs) is subscribe-while-visible: the
   client subscribes while the view is shown and the window visible, and the server watches
   only what has subscribers. Session topics stay subscribed for every open session, because
-  the renderer derives notifications from their turn events.
+  the renderer derives notifications from their turn events. `sessions.create` and
+  `sessions.import` subscribe the caller to `session/<id>` server-side.
+- `fs.setWatchedPaths` and `github.watchRuns` inputs are per client: they count only while
+  that client is subscribed to `files/<id>` / `github/runs` and are cleared on unsubscribe or
+  disconnect.
 - Never parse CLI-internal file formats as truth; use them for display only and
   degrade gracefully when shapes drift.
 - Normalize filesystem paths at storage boundaries; resolve executables through
