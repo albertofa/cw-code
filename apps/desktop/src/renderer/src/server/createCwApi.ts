@@ -42,6 +42,7 @@ import type {
 import { assertPasteImageSize } from "@cw-code/shared/protocol";
 import type {
   ActiveTurn,
+  ComposerChangedEvent,
   ComposerPrefs,
   CwApi,
   HistoryMessage,
@@ -235,6 +236,9 @@ export function createCwApi(client: ServerClient, desktop: DesktopApi, shutdownH
     onSessionTitle: (cb) => subscribe("session.title", cb),
     onSessionUpdated: (cb) => subscribe("session.updated", cb),
     onProjectChanged: (cb) => subscribe("projects.changed", cb),
+    onSettingsChanged: (cb) => subscribe("settings.changed", cb),
+    onSkillsChanged: (cb) => subscribe("skills.changed", cb),
+    onComposerChanged: (cb) => subscribe("composer.changed", cb),
     readFile: (sessionId, path) => call<string>("fs.readFile", { sessionId, path }),
     readOutsideFile: (path) => call<string>("fs.readOutsideFile", { path }),
     listFiles: (sessionId) => call<string[]>("fs.listFiles", { sessionId }),

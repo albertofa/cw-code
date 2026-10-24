@@ -482,6 +482,11 @@ export interface ComposerPrefs {
   permissionMode?: PermissionMode;
 }
 
+export interface ComposerChangedEvent {
+  sessionId: string;
+  prefs: ComposerPrefs;
+}
+
 export interface ModelMeta {
   costInputPerM?: number;
   costOutputPerM?: number;
@@ -696,6 +701,9 @@ export interface CwApi {
   onSessionTitle(cb: (msg: { sessionId: string; title: string }) => void): () => void;
   onSessionUpdated(cb: (session: Session) => void): () => void;
   onProjectChanged(cb: (project: Project) => void): () => void;
+  onSettingsChanged(cb: (settings: AppSettings) => void): () => void;
+  onSkillsChanged(cb: (result: SkillsListResult) => void): () => void;
+  onComposerChanged(cb: (event: ComposerChangedEvent) => void): () => void;
   readFile(sessionId: string, path: string): Promise<string>;
   readOutsideFile(path: string): Promise<string>;
   listFiles(sessionId: string): Promise<string[]>;

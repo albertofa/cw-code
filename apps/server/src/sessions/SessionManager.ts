@@ -1541,6 +1541,7 @@ export class SessionManager {
     const session = this.store.getSession(sessionId);
     if (!session) throw new Error(`unknown session ${sessionId}`);
     this.store.updateComposer(sessionId, prefs);
+    this.emitSession(sessionId);
     return this.getComposer(sessionId);
   }
 

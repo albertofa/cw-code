@@ -62,6 +62,7 @@ export interface GitHubStore {
   renameView(id: string, name: string): Promise<void>;
   deleteView(id: string): Promise<void>;
   loadSavedViews(): Promise<void>;
+  applySavedViews(views: SavedGitHubView[]): void;
   setActive(active: boolean, force?: boolean): void;
   setWatchedRuns(refs: RunRef[]): void;
   syncContext(): void;
@@ -688,6 +689,10 @@ export const useGitHubStore = create<GitHubStore>((set, get) => {
           if (get().tabs[kind].viewId === id) updateTab(kind, { viewId: null });
         }
       });
+    },
+
+    applySavedViews(views: SavedGitHubView[]) {
+      if (savedViewsLoaded) set({ savedViews: views });
     },
 
     async loadSavedViews() {

@@ -10,6 +10,7 @@ export type {
   PermissionOption,
   EffortLevel,
   ComposerPrefs,
+  ComposerChangedEvent,
   ModelOption,
   ModelMeta,
   GitStatus,

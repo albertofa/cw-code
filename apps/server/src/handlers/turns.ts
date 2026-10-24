@@ -66,5 +66,9 @@ export function registerTurnHandlers(router: Router, app: ServerApp): void {
   handle<DriverTarget>(router, "permissions.listFor", (args) => sessions().listPermissionModesFor(args.projectId, args.driver));
   handle<{ driver: DriverKind }>(router, "permissions.listForHarness", (args) => sessions().listPermissionModesForHarness(args.driver));
   handle<{ sessionId: string }>(router, "composer.get", (args) => sessions().getComposer(args.sessionId));
-  handle<{ sessionId: string; prefs: TurnPrefs }>(router, "composer.set", (args) => sessions().setComposer(args.sessionId, args.prefs));
+  handle<{ sessionId: string; prefs: TurnPrefs }>(router, "composer.set", (args) => {
+    const prefs = sessions().setComposer(args.sessionId, args.prefs);
+    app.emit("composer.changed", { sessionId: args.sessionId, prefs });
+    return prefs;
+  });
 }

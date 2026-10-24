@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import type { HarnessId, SkillDetail, SkillMeta, SkillSaveInput } from "@cw-code/contracts";
+import type { HarnessId, SkillDetail, SkillMeta, SkillSaveInput, SkillsListResult } from "@cw-code/contracts";
 import { useNotifs } from "../components/Notifications.js";
 
 export type SkillsStatus = "idle" | "loading" | "ready" | "error";
@@ -59,6 +59,7 @@ interface SkillsState {
   createNew(): void;
   importAll(): Promise<void>;
   clearError(): void;
+  applyList(result: SkillsListResult): void;
 }
 
 export const useSkillsStore = create<SkillsState>((set, get) => ({
@@ -82,6 +83,16 @@ export const useSkillsStore = create<SkillsState>((set, get) => ({
       set({ status: "error", error: message });
       useNotifs.getState().push({ kind: "error", title: "Could not load skills", message });
     }
+  },
+
+  applyList(result) {
+    const { selectedName, dirty } = get();
+    const selectionGone = selectedName !== null && !dirty && !result.skills.some((item) => item.name === selectedName);
+    set({
+      items: result.skills,
+      status: "ready",
+      ...(selectionGone ? { selectedName: null, detail: null, draft: null } : {})
+    });
   },
 
   async select(name) {

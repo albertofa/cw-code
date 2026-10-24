@@ -37,7 +37,9 @@ import { ipcErrorMessage } from "./components/ipcError.js";
 import { useAppStore } from "./stores/appStore.js";
 import { rightOpenTabs } from "./stores/panelLayout.js";
 import { selectSessionPanel, usePanelStore } from "./stores/panelStore.js";
+import { useGitHubStore } from "./stores/githubStore.js";
 import { usePrStore } from "./stores/prStore.js";
+import { useSkillsStore } from "./stores/skillsStore.js";
 import { projectDirty, useSettingsDraftStore } from "./stores/settingsDraftStore.js";
 import { prKey } from "./components/prInbox.js";
 import type { TurnEvent } from "./cw.js";
@@ -189,6 +191,12 @@ export function App() {
     const offTitle = window.cw.onSessionTitle(({ sessionId, title }) => useAppStore.getState().applySessionTitle(sessionId, title));
     const offSession = window.cw.onSessionUpdated((session) => useAppStore.getState().applySession(session));
     const offProject = window.cw.onProjectChanged((project) => useAppStore.getState().applyProject(project));
+    const offSettings = window.cw.onSettingsChanged((settings) => {
+      useAppStore.getState().applySettings(settings);
+      useGitHubStore.getState().applySavedViews(settings.githubSavedViews ?? []);
+    });
+    const offSkills = window.cw.onSkillsChanged((result) => useSkillsStore.getState().applyList(result));
+    const offComposer = window.cw.onComposerChanged(({ sessionId, prefs }) => useAppStore.getState().applyComposer(sessionId, prefs));
     const offGitStatus = window.cw.onGitStatus(({ sessionId, status }) => useAppStore.getState().applyGitStatus(sessionId, status));
     const offTrackedPrs = window.cw.onTrackedPrs((items) => usePrStore.getState().applyTracked(items));
     void usePrStore.getState().loadTracked();
@@ -227,6 +235,9 @@ export function App() {
       offTitle();
       offSession();
       offProject();
+      offSettings();
+      offSkills();
+      offComposer();
       offGitStatus();
       offTrackedPrs();
       offUpdates();

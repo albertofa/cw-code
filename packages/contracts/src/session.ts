@@ -159,6 +159,11 @@ export interface ComposerPrefs {
   permissionMode?: PermissionMode;
 }
 
+export interface ComposerChangedEvent {
+  sessionId: string;
+  prefs: ComposerPrefs;
+}
+
 export interface ModelMeta {
   costInputPerM?: number;
   costOutputPerM?: number;

@@ -276,6 +276,8 @@ interface AppState {
   importSession(request: ImportSessionRequest): Promise<Session>;
   applySession(session: Session): void;
   applyProject(project: Project): void;
+  applySettings(saved: AppSettings): void;
+  applyComposer(sessionId: string, prefs: ComposerPrefs): void;
   sendPrompt(prompt: string, attachments?: string[], opts?: ComposerSendOptions): Promise<void>;
   sendPromptTo(sessionId: string, prompt: string, attachments?: string[], opts?: SendPromptOptions): Promise<void>;
   interrupt(): Promise<void>;
@@ -1054,8 +1056,13 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   async saveSettings(patch: SettingsPatch) {
     const saved = await window.cw.setSettings(patch);
+    get().applySettings(saved);
+    set({ settingsVersion: get().settingsVersion + 1 });
+    return saved;
+  },
+
+  applySettings(saved: AppSettings) {
     set({
-      settingsVersion: get().settingsVersion + 1,
       sourceControlRefreshIntervalSeconds: saved.sourceControlRefreshIntervalSeconds,
       prRefreshIntervalSeconds: saved.prRefreshIntervalSeconds,
       holdingAutoExpireEnabled: saved.holdingAutoExpireEnabled,
@@ -1067,7 +1074,10 @@ export const useAppStore = create<AppState>((set, get) => ({
       reasoningExpandedByDriver: reasoningExpandedFrom(saved),
       defaultModelByDriver: defaultModelsFrom(saved)
     });
-    return saved;
+  },
+
+  applyComposer(sessionId: string, prefs: ComposerPrefs) {
+    set({ composerBySession: { ...get().composerBySession, [sessionId]: { ...DEFAULT_COMPOSER, ...prefs } } });
   },
 
   async saveDefaultModel(driver: DriverName, id: string) {
