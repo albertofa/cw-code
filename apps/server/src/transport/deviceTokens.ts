@@ -19,6 +19,7 @@ interface DevicesFile {
 const DEVICES_FILE = "devices.json";
 const OWNER_ONLY = 0o600;
 const MAX_NAME_LENGTH = 64;
+const TOUCH_PERSIST_INTERVAL_MS = 60_000;
 const TOKEN_HASH_PATTERN = /^[0-9a-f]{64}$/;
 
 function hashToken(token: string): Buffer {
@@ -41,6 +42,8 @@ function isRecord(value: unknown): value is DeviceRecord {
 export class DeviceTokens {
   private devices: DeviceRecord[];
   private readonly path: string;
+  private loadFailed = false;
+  private readonly persistedSeenAt = new Map<string, number>();
 
   constructor(private readonly dir: string) {
     this.path = join(dir, DEVICES_FILE);
@@ -68,16 +71,14 @@ export class DeviceTokens {
       createdAt: Date.now(),
       lastSeenAt: null
     };
-    this.devices = [...this.devices, record];
-    this.save();
+    this.save([...this.devices, record]);
     return { record: { ...record }, token };
   }
 
   revoke(id: string): boolean {
     const remaining = this.devices.filter((device) => device.id !== id);
     if (remaining.length === this.devices.length) return false;
-    this.devices = remaining;
-    this.save();
+    this.save(remaining);
     return true;
   }
 
@@ -93,9 +94,12 @@ export class DeviceTokens {
   touch(id: string, at: number): void {
     const device = this.devices.find((candidate) => candidate.id === id);
     if (!device) return;
+    const persisted = this.persistedSeenAt.get(id) ?? device.lastSeenAt;
     device.lastSeenAt = at;
+    if (persisted !== null && at - persisted < TOUCH_PERSIST_INTERVAL_MS) return;
     try {
-      this.save();
+      this.save(this.devices);
+      this.persistedSeenAt.set(id, at);
     } catch (error) {
       console.warn(`could not record device activity: ${(error as Error).message}`);
     }
@@ -107,7 +111,7 @@ export class DeviceTokens {
       raw = readFileSync(this.path, "utf8");
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
-      return this.corrupt((error as Error).message);
+      return this.unreadable((error as Error).message);
     }
     try {
       const parsed = JSON.parse(raw) as Partial<DevicesFile> | null;
@@ -118,17 +122,32 @@ export class DeviceTokens {
     }
   }
 
-  private corrupt(reason: string): DeviceRecord[] {
-    const message = `${this.path} is unreadable (${reason}); treating it as having no devices`;
+  private unreadable(reason: string): DeviceRecord[] {
+    this.loadFailed = true;
+    const message = `${this.path} could not be read (${reason}); treating it as having no devices and refusing to overwrite it`;
     console.warn(message);
     appendCrashLog(message);
     return [];
   }
 
-  private save(): void {
+  private corrupt(reason: string): DeviceRecord[] {
+    const aside = `${this.path}.corrupt-${Date.now()}`;
+    try {
+      renameSync(this.path, aside);
+    } catch (error) {
+      return this.unreadable(`${reason}; could not move it aside: ${(error as Error).message}`);
+    }
+    const message = `${this.path} is corrupt (${reason}); moved to ${aside} and treating it as having no devices`;
+    console.warn(message);
+    appendCrashLog(message);
+    return [];
+  }
+
+  private save(devices: DeviceRecord[]): void {
+    if (this.loadFailed) throw new Error(`${this.path} could not be read at startup; refusing to overwrite it`);
     mkdirSync(this.dir, { recursive: true });
     const temp = `${this.path}.${process.pid}.tmp`;
-    const file: DevicesFile = { version: 1, devices: this.devices };
+    const file: DevicesFile = { version: 1, devices };
     writeFileSync(temp, JSON.stringify(file, null, 2), { mode: OWNER_ONLY });
     try {
       chmodSync(temp, OWNER_ONLY);
@@ -136,5 +155,6 @@ export class DeviceTokens {
       if (process.platform !== "win32") console.warn(`could not restrict ${temp} to its owner: ${(error as Error).message}`);
     }
     renameSync(temp, this.path);
+    this.devices = devices;
   }
 }

@@ -241,13 +241,44 @@ describe("WsServer", () => {
     });
     router.handle("whoami", (_params, ctx) => ctx.auth);
     const owner = newClient(url);
-    const device = newClient(url, "device-token");
+    const device = newClient(url, "device-token", "web");
     await owner.connect();
     await device.connect();
     auths.push(await owner.call("whoami"), await device.call("whoami"));
     expect(auths).toEqual([{ kind: "owner" }, { kind: "device", deviceId: "dev_1" }]);
     const error = await newClient(url, "unknown").connect().catch((e: unknown) => e);
     expect((error as ServerCallError).code).toBe("unauthorized");
+  });
+
+  test("rejects a device token that claims a desktop client kind", async () => {
+    const { url } = startServer({ authorize: (token) => (token === "device-token" ? { kind: "device", deviceId: "dev_1" } : null) });
+    for (const kind of ["desktop-ui", "desktop-shell"] as const) {
+      const socket = rawSocket(url);
+      await socket.opened;
+      socket.send({ t: "hello", token: "device-token", protocol: PROTOCOL_VERSION, client: kind });
+      expect(await socket.closed).toBe(CLOSE_UNAUTHORIZED);
+    }
+    const web = newClient(url, "device-token", "web");
+    await web.connect();
+  });
+
+  test("checks the protocol version before authorizing and bounds the token length", async () => {
+    const seen: string[] = [];
+    const { url } = startServer({
+      authorize: (token) => {
+        seen.push(token);
+        return OWNER;
+      }
+    });
+    const mismatch = rawSocket(url);
+    await mismatch.opened;
+    mismatch.send({ t: "hello", token: TOKEN, protocol: 999, client: "web" });
+    expect(await mismatch.closed).toBe(CLOSE_PROTOCOL_MISMATCH);
+    const oversize = rawSocket(url);
+    await oversize.opened;
+    oversize.send({ t: "hello", token: "x".repeat(257), protocol: PROTOCOL_VERSION, client: "web" });
+    expect(await oversize.closed).toBe(CLOSE_UNAUTHORIZED);
+    expect(seen).toEqual([]);
   });
 
   test("rejects a token of a different length without throwing", async () => {

@@ -34,6 +34,8 @@ const MAX_PAYLOAD_BYTES = 64 * 1024 * 1024;
 const DEFAULT_HELLO_TIMEOUT_MS = 5000;
 const SOCKET_OPEN = 1;
 const SEND_DROPPED = 0;
+const MAX_TOKEN_LENGTH = 256;
+const DESKTOP_CLIENT_KINDS = new Set<string>(["desktop-ui", "desktop-shell"] satisfies ClientKind[]);
 const CLIENT_KINDS = new Set<string>(["desktop-ui", "desktop-shell", "web"] satisfies ClientKind[]);
 
 function parseJsonObject(raw: string | Buffer): Record<string, unknown> | null {
@@ -198,13 +200,17 @@ export class WsServer {
 
   private authenticate(ws: Socket, message: Record<string, unknown> | null): void {
     const hello = asHello(message);
-    const auth = hello ? this.options.authorize(hello.token) : null;
-    if (!hello || !auth) {
+    if (!hello || hello.token.length > MAX_TOKEN_LENGTH) {
       ws.close(CLOSE_UNAUTHORIZED, "unauthorized");
       return;
     }
     if (hello.protocol !== PROTOCOL_VERSION) {
       ws.close(CLOSE_PROTOCOL_MISMATCH, "protocol mismatch");
+      return;
+    }
+    const auth = this.options.authorize(hello.token);
+    if (!auth || (auth.kind === "device" && DESKTOP_CLIENT_KINDS.has(hello.client))) {
+      ws.close(CLOSE_UNAUTHORIZED, "unauthorized");
       return;
     }
     if (ws.data.helloTimer) clearTimeout(ws.data.helloTimer);
