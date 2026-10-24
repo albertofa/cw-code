@@ -196,7 +196,14 @@ export class ServerClient {
     if (this.disposed) return Promise.reject(new ServerCallError("client closed", "connect-failed"));
     const Impl = this.options.WebSocketImpl ?? globalThis.WebSocket;
     return new Promise<Welcome>((resolve, reject) => {
-      const socket = new Impl(endpoint.url);
+      let socket: WebSocket;
+      try {
+        socket = new Impl(endpoint.url);
+      } catch (error) {
+        reject(new ServerCallError(`could not open ${endpoint.url}: ${describe(error)}`, "connect-failed"));
+        if (this.currentState === "reconnecting" && !this.disposed) this.scheduleReconnect();
+        return;
+      }
       this.socket = socket;
       this.abortConnect = reject;
       let welcomed = false;
