@@ -1,9 +1,5 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import type { StartupState } from "@cw-code/contracts";
-import { checkCliVersions, type CliVersionCheck } from "@cw-code/server/cliVersions";
-import { defaultCliBinaryPath } from "@cw-code/server/settings/settingsUtils";
-import type { PtyModule } from "@cw-code/server/pty/PtyPool";
-import { sanitizedChildEnv } from "@cw-code/server/shellEnvironment";
 
 export interface PackageProbeNodePtyResult {
   loaded: boolean;
@@ -12,11 +8,28 @@ export interface PackageProbeNodePtyResult {
   error: string | null;
 }
 
+export interface CliVersionCheck {
+  binary: "claude" | "opencode" | "codex";
+  binaryPath: string;
+  minimum: string;
+  actual: string | null;
+  configured: boolean;
+  found: boolean;
+  available: boolean;
+  error: string | null;
+  ok: boolean;
+}
+
 export type NodePtyProbeOutcome =
   | { status: "loaded-spawned"; exitCode: number }
   | { status: "loaded-timeout" }
   | { status: "load-failed"; error: string }
   | { status: "spawn-failed"; error: string };
+
+export interface ServerPackageProbe {
+  nodePty: NodePtyProbeOutcome;
+  cliChecks: CliVersionCheck[];
+}
 
 export type PackageProbeStartupMode = StartupState["mode"];
 
@@ -122,37 +135,8 @@ export function buildProbeResult(opts: {
   };
 }
 
-const NODE_PTY_SPAWN_TIMEOUT_MS = 10_000;
-
-async function probeNodePty(): Promise<NodePtyProbeOutcome> {
-  let pty: PtyModule;
-  try {
-    pty = (await import("node-pty")) as unknown as PtyModule;
-  } catch (err) {
-    return { status: "load-failed", error: (err as Error).message };
-  }
-  try {
-    const [file, args] = process.platform === "win32" ? ["cmd.exe", ["/c", "exit 0"]] : ["/bin/sh", ["-c", "exit 0"]];
-    const proc = pty.spawn(file, args, {
-      name: "xterm-color",
-      cols: 80,
-      rows: 24,
-      cwd: process.cwd(),
-      env: sanitizedChildEnv(process.env, process.platform)
-    });
-    return await new Promise<NodePtyProbeOutcome>((resolvePromise) => {
-      const timer = setTimeout(() => {
-        proc.kill();
-        resolvePromise({ status: "loaded-timeout" });
-      }, NODE_PTY_SPAWN_TIMEOUT_MS);
-      proc.onExit((e) => {
-        clearTimeout(timer);
-        resolvePromise({ status: "loaded-spawned", exitCode: e.exitCode });
-      });
-    });
-  } catch (err) {
-    return { status: "spawn-failed", error: (err as Error).message };
-  }
+export function failedServerProbe(error: string): ServerPackageProbe {
+  return { nodePty: { status: "load-failed", error }, cliChecks: [] };
 }
 
 export async function runPackageProbe(opts: {
@@ -162,14 +146,10 @@ export async function runPackageProbe(opts: {
   electronVersion: string;
   noSandboxSwitch: boolean;
   renderer: RendererProbeTracker;
+  probeServer: () => Promise<ServerPackageProbe>;
 }): Promise<PackageProbeResult> {
   const start = Date.now();
-  const nodePty = await probeNodePty();
-  const cliChecks = await checkCliVersions({
-    claudeBinary: defaultCliBinaryPath("claude"),
-    opencodeBinary: defaultCliBinaryPath("opencode"),
-    codexBinary: defaultCliBinaryPath("codex")
-  });
+  const { nodePty, cliChecks } = await opts.probeServer();
   const result = buildProbeResult({
     appVersion: opts.appVersion,
     startupMode: opts.startupMode,

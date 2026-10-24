@@ -1,6 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import type { ShutdownActiveTurn, ShutdownReason, ShutdownTerminal, UpdateChannel, UpdateProgress } from "@cw-code/contracts";
-import { ShutdownCoordinator, type ShutdownClock, type ShutdownPtys, type ShutdownSessions } from "@cw-code/server/shutdown/ShutdownCoordinator";
+import type { ShutdownCommitResult, ShutdownReason, UpdateChannel, UpdateProgress } from "@cw-code/contracts";
 import type { UpdaterAdapter, UpdaterCheckOutcome, UpdaterDownloadedInfo, UpdaterDownloadHandle } from "./ElectronUpdaterAdapter.js";
 import {
   INSTALLER_MISSING_MESSAGE,
@@ -59,52 +58,7 @@ class InstallAdapter implements UpdaterAdapter {
   dispose(): void {}
 }
 
-class Sessions implements ShutdownSessions {
-  calls: string[] = [];
-  reserved = false;
-  listShutdownTurns(): ShutdownActiveTurn[] {
-    return [];
-  }
-  backgroundTaskCount(): number {
-    return 0;
-  }
-  beginShutdownReservation(): void {
-    this.reserved = true;
-  }
-  clearShutdownReservation(): void {
-    this.reserved = false;
-  }
-  interrupt(): void {}
-  cancelBackgroundWork(): void {}
-  flush(): void {
-    this.calls.push("flush");
-  }
-  async shutdownDrivers(): Promise<{ timedOut: string[] }> {
-    this.calls.push("shutdownDrivers");
-    return { timedOut: [] };
-  }
-  forceStopDrivers(): void {}
-  reinitializeDrivers(): void {
-    this.calls.push("reinitialize");
-  }
-}
-
-class Ptys implements ShutdownPtys {
-  reserved = false;
-  list(): ShutdownTerminal[] {
-    return [];
-  }
-  beginShutdownReservation(): void {
-    this.reserved = true;
-  }
-  clearShutdownReservation(): void {
-    this.reserved = false;
-  }
-  dispose(): void {}
-  reopen(): void {}
-}
-
-class ManualClock implements ShutdownClock {
+class ManualClock {
   private waiters: Array<{ ms: number; resolve: () => void }> = [];
 
   sleep(ms: number): Promise<void> {
@@ -114,6 +68,63 @@ class ManualClock implements ShutdownClock {
   fire(ms: number): void {
     for (const waiter of this.waiters.filter((entry) => entry.ms === ms)) waiter.resolve();
     this.waiters = this.waiters.filter((entry) => entry.ms !== ms);
+  }
+}
+
+class FakeCoordinator {
+  recoveries = 0;
+  private phase: "idle" | "prepared" | "committing" = "idle";
+  private token: string | null = null;
+  private reason: ShutdownReason | null = null;
+  private tokens = 0;
+
+  constructor(private readonly clock: ManualClock) {}
+
+  async prepare(reason: ShutdownReason): Promise<string> {
+    if (this.phase !== "idle") throw new Error("a restart is already being prepared");
+    this.phase = "prepared";
+    this.reason = reason;
+    this.token = `token-${++this.tokens}`;
+    return this.token;
+  }
+
+  currentReason(): ShutdownReason | null {
+    return this.reason;
+  }
+
+  isIdle(): boolean {
+    return this.phase === "idle";
+  }
+
+  isCommitted(): boolean {
+    return this.phase === "committing";
+  }
+
+  cancel(token: string): void {
+    if (this.phase === "idle") return;
+    if (this.phase !== "prepared" || token !== this.token) throw new Error("this restart request is no longer valid");
+    this.recover();
+  }
+
+  async commit(token: string, action: () => void): Promise<ShutdownCommitResult> {
+    if (this.phase !== "prepared" || token !== this.token) return { ok: false, message: "this restart request is no longer valid; start it again" };
+    this.phase = "committing";
+    try {
+      action();
+    } catch (err) {
+      this.recover();
+      return { ok: false, message: `cw-code could not finish the restart: ${(err as Error).message}. Normal use has been restored.` };
+    }
+    await this.clock.sleep(COMMIT_EXIT_TIMEOUT_MS);
+    this.recover();
+    return { ok: false, message: "cw-code did not exit within 30s. Normal use has been restored." };
+  }
+
+  private recover(): void {
+    this.phase = "idle";
+    this.token = null;
+    this.reason = null;
+    this.recoveries += 1;
   }
 }
 
@@ -128,18 +139,8 @@ function available(version: string): UpdaterCheckOutcome {
 function setup(overrides: Partial<UpdateServiceOptions> = {}) {
   const adapter = new InstallAdapter();
   const disk = new Map<string, InstallerFileFacts>([[INSTALLER_FILE, { isFile: true, size: INSTALLER_SIZE }]]);
-  const sessions = new Sessions();
-  const ptys = new Ptys();
   const clock = new ManualClock();
-  let tokens = 0;
-  const coordinator = new ShutdownCoordinator({
-    sessions,
-    ptys,
-    clock,
-    createToken: () => `token-${++tokens}`,
-    commitExitTimeoutMs: COMMIT_EXIT_TIMEOUT_MS,
-    log: () => {}
-  });
+  const coordinator = new FakeCoordinator(clock);
   const service = new UpdateService({
     runningVersion: "1.0.0",
     environment: { isPackaged: true, resourcesPath: "C:\\cw\\resources", execPath: "C:\\cw\\cw-code.exe", platform: "win32", appImagePath: null, appDir: null },
@@ -167,17 +168,13 @@ function setup(overrides: Partial<UpdateServiceOptions> = {}) {
       }
     }
   });
-  const prepare = async (reason: ShutdownReason = "update"): Promise<string> => {
-    const result = await coordinator.prepare({ reason, stopActiveTurns: true, timeoutMs: 1000 });
-    if (!result.ok) throw new Error(`prepare failed: ${JSON.stringify(result)}`);
-    return result.token;
-  };
+  const prepare = (reason: ShutdownReason = "update"): Promise<string> => coordinator.prepare(reason);
   const ready = async (version = "1.1.0"): Promise<void> => {
     adapter.checkResults.push(available(version));
     await service.check();
     await service.download();
   };
-  return { adapter, disk, sessions, ptys, clock, coordinator, service, released, committed, sessionFor, prepare, ready };
+  return { adapter, disk, clock, coordinator, service, released, committed, sessionFor, prepare, ready };
 }
 
 describe("UpdateService.install", () => {
@@ -191,7 +188,6 @@ describe("UpdateService.install", () => {
     expect(h.committed).toEqual([]);
     expect(h.released.length).toBeGreaterThan(0);
     expect(h.coordinator.isIdle()).toBe(true);
-    expect(h.sessions.reserved).toBe(false);
   });
 
   it("answers not-ready before anything is downloaded", async () => {
@@ -260,8 +256,7 @@ describe("UpdateService.install", () => {
       error: { context: "install", retryable: false, message: INSTALLER_STARTED_MESSAGE }
     });
     expect(h.coordinator.isIdle()).toBe(true);
-    expect(h.sessions.calls).toContain("reinitialize");
-    expect(h.sessions.reserved).toBe(false);
+    expect(h.coordinator.recoveries).toBe(1);
   });
 
   it("stays alive but refuses further installs and checks once the installer was started and cw-code did not exit", async () => {

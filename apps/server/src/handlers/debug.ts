@@ -1,5 +1,6 @@
 import { appendFileSync } from "node:fs";
 import { getHarnessTracePath } from "../debug/harnessTrace.js";
+import { runServerPackageProbe } from "../debug/packageProbe.js";
 import type { Router } from "../transport/Router.js";
 import { handle } from "./shared.js";
 
@@ -14,4 +15,5 @@ export function registerDebugHandlers(router: Router): void {
     }
     return { ok: true, path: tracePath };
   });
+  handle(router, "debug.packageProbe", () => runServerPackageProbe());
 }

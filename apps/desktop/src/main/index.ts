@@ -1,240 +1,96 @@
-import { app, BrowserWindow, dialog, ipcMain, nativeImage, nativeTheme, powerMonitor, shell, type WebContents } from "electron";
-import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { app, BrowserWindow, dialog, ipcMain, nativeImage, nativeTheme, powerMonitor, shell, type MessageBoxOptions, type WebContents } from "electron";
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { dirname, isAbsolute, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-
-const __dirname = dirname(fileURLToPath(import.meta.url));
-
-function resolvePreload(): string {
-  const candidates = ["index.js", "index.mjs", "index.cjs"].map((f) =>
-    join(__dirname, "..", "preload", f)
-  );
-  const found = candidates.find((p) => existsSync(p));
-  if (!found) console.warn(`preload not found (tried ${candidates.join(", ")})`);
-  return found ?? candidates[0];
-}
-import { resolveAppImageRelaunch } from "./appImage.js";
-import { attentionDescription, parseAttentionState, resetsAttention, shouldFlash } from "./attention.js";
-import { checkCliVersion, checkCliVersions, type CliVersionCheck } from "@cw-code/server/cliVersions";
-import { discoverBinaries, verifyBinaryPath } from "@cw-code/server/cli/binaryDiscovery";
-import { getHarnessTracePath, initHarnessTrace } from "@cw-code/server/debug/harnessTrace";
-import { initSessionStatusTrace, type SessionStatusReason } from "@cw-code/server/debug/sessionStatusTrace";
+import type {
+  AppSettings,
+  ServerEndpoint,
+  ShutdownAssessment,
+  ShutdownCommitResult,
+  ShutdownPrepareRequest,
+  ShutdownPrepareResult,
+  ShutdownRequestedEvent,
+  UpdateActionResult,
+  UpdateState
+} from "@cw-code/contracts";
 import { appendCrashLog, initCrashLog } from "@cw-code/server/debug/crashLog";
-import { RendererProbeTracker, runPackageProbe } from "./debug/packageProbe.js";
-import { claudeCommandsCachePath, cwCodeHome, ensureAppDirs, attachmentsDir, logsDir, migrateFromUserData, opencodeModelsCachePath, sessionDbPath, settingsFilePath, userdataDir } from "@cw-code/server/paths/appPaths";
-import { reapOrphanedServers } from "@cw-code/server/orphanServers";
-import { loadLoginShellEnvironment } from "@cw-code/server/shellEnvironment";
-import type { AppSettings, ApprovalDecision, CliBinary, CommandInvocation, CreateSessionOptions, GitDiffMode, ImportSessionRequest, ProjectGitHubRepo, PrRef, RepoRef, RunRef, RunSources, SessionPrLink, MetadataIssue, SessionStatus, SettingsPatch, ShutdownCommitResult, ShutdownExpiredEvent, ShutdownPrepareRequest, ShutdownReason, ShutdownRequestedEvent, StartupState, UpdateActionResult, UpdateState, UsageLedgerQuery } from "@cw-code/contracts";
-import type { DriverKind, HarnessId, ProjectSettings, SkillSaveInput, TextSearchQuery } from "@cw-code/contracts";
-import type { PtyKind } from "@cw-code/server/pty/PtyPool";
-import { SessionManager } from "@cw-code/server/sessions/SessionManager";
-import { AccountUsageService } from "@cw-code/server/usage/AccountUsageService";
-import { SkillsStore } from "@cw-code/server/skills/SkillsStore";
-import { FileService, IMAGE_MAX_BYTES, imageExtMime, resolveFileTarget } from "@cw-code/server/fs/FileService";
-import { FileWatcher } from "@cw-code/server/fs/FileWatcher";
-import { defaultBinary, GitService, sweepStaleSnapshotIndexes } from "@cw-code/server/fs/GitService";
-import { gitBaseline, gitDecorations, listWorkspaceFiles, searchText } from "@cw-code/server/fs/workspaceQueries";
-import { assertOpenablePath } from "@cw-code/server/fs/openPathPolicy";
-import { assertPrRef, PullRequestService } from "@cw-code/server/github/PullRequestService";
-import { configureGitHubAccounts, defaultGitHubAccounts } from "@cw-code/server/github/GitHubAccounts";
-import { PrTracker } from "@cw-code/server/github/PrTracker";
-import { snapshotOf } from "@cw-code/server/github/prTracking";
-import { githubCliBinary } from "@cw-code/server/github/githubAccount";
-import { assertCountBase, assertSearchKind, assertSearchQuery, GitHubSearchService } from "@cw-code/server/github/GitHubSearchService";
-import { assertIssueRef, assertOwnerLogin, assertRepoRef, assertRunRef } from "@cw-code/server/github/githubRefs";
-import { MAX_COUNT_QUERIES } from "@cw-code/server/github/issueQueries";
-import { isValidIssueLink, isValidRunLink } from "@cw-code/server/github/prLinks";
-import { MAX_RUN_ORGS, MAX_RUN_REPOS } from "@cw-code/server/github/runQueries";
-import { RunsService } from "@cw-code/server/github/RunsService";
-import { MAX_WATCHED_RUNS, RunWatcher } from "@cw-code/server/github/RunWatcher";
-import { PtyPool } from "@cw-code/server/pty/PtyPool";
-import { SourceControlService } from "@cw-code/server/sourceControl/SourceControlService";
-import { defaultPrWorkflows } from "@cw-code/server/settings/prWorkflowDefaults";
-import { configuredCliBinaryPath } from "@cw-code/server/settings/settingsUtils";
-import { initOpencodeModelsCache } from "@cw-code/server/providers/opencode/opencodeModels";
-import { initClaudeCommandsCache } from "@cw-code/server/providers/claude/claudeCommands";
-import { metadataSchemaFor, openMetadataStores } from "@cw-code/server/storage/metadataStores";
-import { restoreBackup, startFresh } from "@cw-code/server/storage/recovery";
-import { ShutdownCoordinator } from "@cw-code/server/shutdown/ShutdownCoordinator";
-import type { SessionStore } from "@cw-code/server/sessions/SessionStore";
-import type { SettingsStore } from "@cw-code/server/settings/SettingsStore";
+import { attachmentsDir, cwCodeHome, logsDir } from "@cw-code/server/paths/appPaths";
+import { windowBackgroundColor } from "@cw-code/shared/themes";
+import { attentionDescription, parseAttentionState, resetsAttention, shouldFlash } from "./attention.js";
+import { failedServerProbe, RendererProbeTracker, runPackageProbe, type ServerPackageProbe } from "./debug/packageProbe.js";
+import { assertOpenablePath } from "./openPathPolicy.js";
+import { ServerLink, type AppNotice, type ServerLinkChange, type ShutdownStatus } from "./serverLink.js";
+import { ServerProcess } from "./serverProcess.js";
 import { ElectronUpdaterAdapter } from "./updates/ElectronUpdaterAdapter.js";
 import { UpdateService } from "./updates/UpdateService.js";
 import { createUpdateLogFile } from "./updates/updateLog.js";
-import { firstRunChannelPatch, touchesUpdatePreferences, updatePreferences } from "./updates/updatePreferences.js";
-import { isUpdateChannel } from "./updates/updateState.js";
-import { prKey } from "@cw-code/shared/prRef";
-import { isSkillMentionList } from "@cw-code/shared/skillMentions";
-import { windowBackgroundColor } from "@cw-code/shared/themes";
+import { firstRunChannelPatch, updatePreferences, type UpdatePreferences } from "./updates/updatePreferences.js";
+import { channelOfVersion, initialUpdateState, isUpdateChannel } from "./updates/updateState.js";
 
-type DriverName = DriverKind;
+const __dirname = dirname(fileURLToPath(import.meta.url));
 
-const DRIVER_KINDS: DriverKind[] = ["claude", "opencode", "codex"];
-const DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
-const SHUTDOWN_REASONS: ShutdownReason[] = ["quit", "update"];
-const SHUTDOWN_TIMEOUT_MAX_MS = 120_000;
 const RENDERER_SHUTDOWN_ACK_MS = 5_000;
-const SESSION_SETTLE_INTERVAL_MS = 60_000;
-const SESSION_SETTLE_INITIAL_DELAY_MS = 5_000;
-const MAX_WATCHED_PATHS = 2_000;
-const MAX_WATCHED_GIT_SESSIONS = 500;
+const UPDATES_PENDING_MESSAGE = "Updates are unavailable until the cw-code server is ready";
 
-function parseShutdownPrepare(args: unknown): ShutdownPrepareRequest {
-  const request = (args && typeof args === "object" ? args : {}) as Record<string, unknown>;
-  const reason = request.reason;
-  const timeoutMs = request.timeoutMs;
-  if (typeof reason !== "string" || !SHUTDOWN_REASONS.includes(reason as ShutdownReason)) {
-    throw new Error("shutdown.prepare requires reason 'quit' or 'update'");
-  }
-  if (typeof request.stopActiveTurns !== "boolean") throw new Error("shutdown.prepare requires a boolean stopActiveTurns");
-  if (typeof timeoutMs !== "number" || !Number.isFinite(timeoutMs) || timeoutMs <= 0 || timeoutMs > SHUTDOWN_TIMEOUT_MAX_MS) {
-    throw new Error(`shutdown.prepare requires timeoutMs between 1 and ${SHUTDOWN_TIMEOUT_MAX_MS}`);
-  }
-  const approved = request.approvedTurnIds;
-  if (approved !== undefined && (!Array.isArray(approved) || !approved.every((id) => typeof id === "string"))) {
-    throw new Error("shutdown.prepare approvedTurnIds must be an array of turn ids");
-  }
-  return {
-    reason: reason as ShutdownReason,
-    stopActiveTurns: request.stopActiveTurns,
-    timeoutMs,
-    ...(approved !== undefined ? { approvedTurnIds: approved as string[] } : {})
-  };
+if (process.platform === "linux") {
+  app.commandLine.appendSwitch("class", "cw-code");
 }
 
-function parseShutdownToken(args: unknown, channel: string): string {
-  const token = args && typeof args === "object" ? (args as Record<string, unknown>).token : undefined;
-  if (typeof token !== "string" || token.length === 0) throw new Error(`${channel} requires { token }`);
-  return token;
+if (process.platform === "win32") {
+  const disabledFeatures = app.commandLine.getSwitchValue("disable-features");
+  app.commandLine.appendSwitch(
+    "disable-features",
+    disabledFeatures ? `${disabledFeatures},CalculateNativeWinOcclusion` : "CalculateNativeWinOcclusion"
+  );
 }
 
-function isValidUsageLedgerQuery(query: unknown): query is UsageLedgerQuery | undefined {
-  if (query === undefined) return true;
-  if (!query || typeof query !== "object") return false;
-  const q = query as Record<string, unknown>;
-  if (q.sinceDay !== undefined && (typeof q.sinceDay !== "string" || !DAY_RE.test(q.sinceDay))) return false;
-  if (q.sessionId !== undefined && typeof q.sessionId !== "string") return false;
-  return true;
-}
-
-function parseArgs(args: unknown, channel: string): Record<string, unknown> {
-  if (!args || typeof args !== "object") throw new Error(`${channel} requires an argument object`);
-  return args as Record<string, unknown>;
-}
-
-function parseOptionalBoolean(value: unknown, name: string): boolean | undefined {
-  if (value !== undefined && typeof value !== "boolean") throw new Error(`${name} must be a boolean`);
-  return value;
-}
-
-function assertString(value: unknown): asserts value is string {
-  if (typeof value !== "string") throw new Error("expected a string");
-}
-
-function parseString(value: unknown, name: string): string {
-  if (typeof value !== "string") throw new Error(`${name} must be a string`);
-  return value;
-}
-
-function parseOptionalString(value: unknown, name: string): string | undefined {
-  return value === undefined ? undefined : parseString(value, name);
-}
-
-function parseOptionalNumber(value: unknown, name: string): number | undefined {
-  if (value !== undefined && (typeof value !== "number" || !Number.isFinite(value))) throw new Error(`${name} must be a finite number`);
-  return value;
-}
-
-function parseBoolean(value: unknown, name: string): boolean {
-  if (typeof value !== "boolean") throw new Error(`${name} must be a boolean`);
-  return value;
-}
-
-function parseTextSearchQuery(value: unknown): TextSearchQuery {
-  const query = parseArgs(value, "fs.searchText query");
-  const include = parseOptionalString(query.include, "include");
-  const exclude = parseOptionalString(query.exclude, "exclude");
-  const maxResults = parseOptionalNumber(query.maxResults, "maxResults");
-  return {
-    query: parseString(query.query, "query"),
-    isRegex: parseBoolean(query.isRegex, "isRegex"),
-    matchCase: parseBoolean(query.matchCase, "matchCase"),
-    wholeWord: parseBoolean(query.wholeWord, "wholeWord"),
-    ...(include !== undefined ? { include } : {}),
-    ...(exclude !== undefined ? { exclude } : {}),
-    ...(maxResults !== undefined ? { maxResults } : {})
-  };
-}
-
-function parseList<T>(value: unknown, max: number, name: string, assertItem: (item: unknown) => asserts item is T): T[] {
-  if (!Array.isArray(value) || value.length > max) throw new Error(`${name} must be an array of at most ${max} items`);
-  const items: T[] = [];
-  for (const item of value) {
-    assertItem(item);
-    items.push(item);
-  }
-  return items;
-}
-
-function parseRunSources(value: unknown): RunSources {
-  const { prSearchQuery, repos, orgs } = parseArgs(value, "github.runs sources");
-  let query: string | null = null;
-  if (prSearchQuery !== null) {
-    assertSearchQuery(prSearchQuery);
-    query = prSearchQuery;
-  }
-  return {
-    prSearchQuery: query,
-    repos: parseList<RepoRef>(repos, MAX_RUN_REPOS, "repos", assertRepoRef),
-    orgs: parseList<string>(orgs, MAX_RUN_ORGS, "orgs", assertOwnerLogin)
-  };
-}
-
-async function sessionDiffBase(sessions: SessionManager, git: GitService, sessionId: string): Promise<string | undefined> {
-  const { root, baseRef } = await sessions.sessionStatusContext(sessionId);
-  if (!baseRef) return undefined;
-  try {
-    const branches = await git.branches(root);
-    return branches.some((branch) => branch.name === baseRef) ? baseRef : undefined;
-  } catch (error) {
-    console.warn(`[source-control] could not list branches for ${root}: ${(error as Error).message}`);
-    return undefined;
-  }
-}
-
-function sendToMainWindow(channel: string, payload?: unknown): void {
-  if (!mainWindow || mainWindow.isDestroyed()) return;
-  mainWindow.webContents.send(channel, payload);
-}
-
-interface Services {
-  sessions: SessionManager;
-  skills: SkillsStore;
-  files: FileService;
-  fileWatcher: FileWatcher;
-  git: GitService;
-  pullRequests: PullRequestService;
-  prTracker: PrTracker;
-  sourceControl: SourceControlService;
-  githubSearch: GitHubSearchService;
-  runs: RunsService;
-  runWatcher: RunWatcher;
-  ptys: PtyPool;
-  accountUsage: AccountUsageService;
-  updates: UpdateService;
-  shutdown: ShutdownCoordinator;
+if (!app.isPackaged && !app.commandLine.hasSwitch("user-data-dir")) {
+  app.setPath("userData", join(app.getPath("appData"), "@cw-code", "desktop-dev"));
 }
 
 let mainWindow: BrowserWindow | null = null;
 let attentionCount: number | null = null;
-let services: Services | null = null;
-let startupState: StartupState = { mode: "ready" };
 let quitApproved = false;
-let servicesDisposed = false;
 let shutdownAckTimer: NodeJS.Timeout | null = null;
-let sessionSettleTimer: NodeJS.Timeout | null = null;
-let sessionSettleInitialTimer: NodeJS.Timeout | null = null;
+let updates: UpdateService | null = null;
+let appliedPreferences: UpdatePreferences | null = null;
+let serverFailure: string | null = null;
+let restartAfterFailedInstall = false;
+let serverStop: Promise<void> | null = null;
+let serverStopped = false;
+
+const serverProcess: ServerProcess = new ServerProcess({
+  launch: {
+    isPackaged: app.isPackaged,
+    resourcesPath: process.resourcesPath,
+    appPath: app.getAppPath(),
+    legacyUserData: app.getPath("userData")
+  },
+  isQuitting: (): boolean => quitApproved || (link.shutdown.committed && !restartAfterFailedInstall),
+  onFatal: (message) => reportFatalError("cw-code server stopped", new Error(message))
+});
+
+const link: ServerLink = new ServerLink(() => serverProcess.endpoint());
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function resolvePreload(): string {
+  const candidates = ["index.js", "index.mjs", "index.cjs"].map((f) => join(__dirname, "..", "preload", f));
+  const found = candidates.find((p) => existsSync(p));
+  if (!found) console.warn(`preload not found (tried ${candidates.join(", ")})`);
+  return found ?? candidates[0];
+}
+
+function liveMainWindow(): BrowserWindow | null {
+  return mainWindow && !mainWindow.isDestroyed() ? mainWindow : null;
+}
+
+function sendToMainWindow(channel: string, payload?: unknown): void {
+  liveMainWindow()?.webContents.send(channel, payload);
+}
 
 function readTextOrNull(path: string): string | null {
   try {
@@ -266,118 +122,61 @@ function createUpdateService(settings: AppSettings): UpdateService {
     createAdapter: (kind) => new ElectronUpdaterAdapter({ kind, homeDir: homedir(), sink: logger }),
     logger,
     homeDir: homedir(),
-    canRunScheduledCheck: () => services?.shutdown.isIdle() !== false
+    canRunScheduledCheck: () => link.shutdown.idle
   });
 }
 
-const PR_STATE_REUSE_MS = 60_000;
-
-function createServices(stores: { sessionStore: SessionStore; settingsStore: SettingsStore }): Services {
-  let pullRequests: PullRequestService;
-  const fileWatcher = new FileWatcher((event) => sendToMainWindow("fs.changed", event));
-  configureGitHubAccounts(() => githubCliBinary(() => sessions.getSettings()));
-  const git: GitService = new GitService(() => sessions.getSettings(), defaultGitHubAccounts);
-  const sessions: SessionManager = new SessionManager({
-    sessionStore: stores.sessionStore,
-    settingsStore: stores.settingsStore,
-    gitService: git,
-    prHead: (ref) => prTracker.snapshot(ref)?.headRefOid || pullRequests.knownHead(ref),
-    prHeadRefresh: async (ref) => {
-      await prTracker.refresh([ref]);
-      return prTracker.snapshot(ref)?.headRefOid || pullRequests.refreshHead(ref);
-    },
-    prState: (ref) => prTracker.snapshot(ref)?.state ?? pullRequests.knownState(ref),
-    prStateRefresh: async (ref) => {
-      const syncedAt = prTracker.snapshot(ref)?.syncedAt ?? 0;
-      if (Date.now() - syncedAt >= PR_STATE_REUSE_MS) await prTracker.refresh([ref]);
-      return prTracker.snapshot(ref)?.state ?? pullRequests.refreshState(ref);
-    },
-    prUpdatedAt: (ref) => prTracker.snapshot(ref)?.updatedAt ?? pullRequests.knownUpdatedAt(ref),
-    onResolved: (sessionId) => {
-      ptys.killSession(sessionId);
-      void fileWatcher.unwatch(sessionId);
-    },
-    legacyAppRoots: [app.getPath("userData")]
-  });
-  pullRequests = new PullRequestService(git, () => sessions.getSettings(), (rootPath) => sessions.addProject(rootPath));
-  const prTracker: PrTracker = new PrTracker(
-    () => sessions.getSettings(),
-    (changed) => {
-      const syncedAt = Date.now();
-      sessions.applyPrSnapshots(new Map(changed.map((summary) => [prKey(summary.ref), snapshotOf(summary, syncedAt)])));
-      sendToMainWindow("prs.tracked", prTracker.summaries());
-    }
-  );
-  prTracker.setTracked(sessions.trackedPrRefs());
-  const sourceControl = new SourceControlService({
-    git,
-    sessions,
-    tracker: prTracker,
-    settings: () => sessions.getSettings(),
-    emit: (update) => sendToMainWindow("git.statusChanged", update)
-  });
-  const githubSearch = new GitHubSearchService(() => sessions.getSettings());
-  const runs = new RunsService(() => sessions.getSettings());
-  const runWatcher = new RunWatcher(() => sessions.getSettings());
-  const ptys = new PtyPool(() => sessions.getSettings());
-  const settings = stores.settingsStore.get();
-  const updates = createUpdateService(settings);
-  const firstRunChannel = firstRunChannelPatch(settings, app.getVersion(), updates.getState().phase !== "disabled");
+function ensureUpdateService(): void {
+  const settings = link.settings;
+  if (updates || link.startup?.mode !== "ready" || !settings) return;
+  const service = createUpdateService(settings);
+  updates = service;
+  appliedPreferences = updatePreferences(settings, app.getVersion());
+  service.subscribe((state) => sendToMainWindow("updates.changed", state));
+  sendToMainWindow("updates.changed", service.getState());
+  service.start();
+  const firstRunChannel = firstRunChannelPatch(settings, app.getVersion(), service.getState().phase !== "disabled");
   if (firstRunChannel) {
-    try {
-      stores.settingsStore.set(firstRunChannel);
-    } catch (err) {
-      console.warn(`could not save the default update channel: ${(err as Error).message}`);
-    }
+    link.call("settings.set", firstRunChannel).catch((error: unknown) => {
+      console.warn(`could not save the default update channel: ${errorMessage(error)}`);
+    });
   }
-  return {
-    sessions,
-    skills: new SkillsStore(),
-    files: new FileService(),
-    fileWatcher,
-    git,
-    pullRequests,
-    prTracker,
-    sourceControl,
-    githubSearch,
-    runs,
-    runWatcher,
-    ptys,
-    accountUsage: new AccountUsageService(() => sessions.driversForProbe()),
-    shutdown: new ShutdownCoordinator({ sessions, ptys, onRecovered: handleShutdownRecovered, onExpired: handleShutdownExpired }),
-    updates
-  };
 }
 
-function applyUpdatePreferences(updates: UpdateService, settings: AppSettings): void {
-  const preferences = updatePreferences(settings, app.getVersion());
-  updates.setAutoDownload(preferences.autoDownload);
-  void updates.setChannel(preferences.channel).then((result) => {
+function applyUpdatePreferences(): void {
+  const settings = link.settings;
+  if (!updates || !settings) return;
+  const next = updatePreferences(settings, app.getVersion());
+  if (appliedPreferences?.channel === next.channel && appliedPreferences.autoDownload === next.autoDownload) return;
+  appliedPreferences = next;
+  updates.setAutoDownload(next.autoDownload);
+  void updates.setChannel(next.channel).then((result) => {
     if (!result.ok && result.code !== "disabled") console.warn(`[updates] could not apply the saved channel: ${result.message}`);
   });
 }
 
-function handleShutdownRecovered(failure: string | null): void {
-  servicesDisposed = false;
-  startSessionSweeps();
-  if (!mainWindow || mainWindow.isDestroyed()) {
-    createWindow().catch((err: Error) => appendCrashLog(`could not reopen the window after shutdown recovery: ${err.message}`));
+function handleLinkChange(change: ServerLinkChange): void {
+  if (change === "shutdown" && !link.shutdown.committed) restartAfterFailedInstall = false;
+  if (change === "settings") syncWindowBackground();
+  if (change === "settings" || change === "startup") {
+    ensureUpdateService();
+    applyUpdatePreferences();
   }
-  if (!failure) return;
-  appendCrashLog(`shutdown recovery could not restart CLI drivers: ${failure}`);
-  const options = { type: "error" as const, title: "cw-code", message: "cw-code could not restart its CLI drivers", detail: failure };
-  const window = mainWindow && !mainWindow.isDestroyed() ? mainWindow : null;
+}
+
+function showNotice(notice: AppNotice): void {
+  const options: MessageBoxOptions = {
+    type: notice.level,
+    title: notice.title,
+    message: notice.message,
+    ...(notice.detail ? { detail: notice.detail } : {})
+  };
+  const window = liveMainWindow();
   void (window ? dialog.showMessageBox(window, options) : dialog.showMessageBox(options));
 }
 
-function handleShutdownExpired(reason: ShutdownReason): void {
-  if (!mainWindow || mainWindow.isDestroyed()) return;
-  const event: ShutdownExpiredEvent = { reason };
-  mainWindow.webContents.send("shutdown.expired", event);
-}
-
 function isQuitApproved(): boolean {
-  return quitApproved || services?.shutdown.isCommitted() === true;
+  return quitApproved || link.shutdown.committed;
 }
 
 function clearShutdownAck(): void {
@@ -386,65 +185,28 @@ function clearShutdownAck(): void {
   shutdownAckTimer = null;
 }
 
-function runSessionSweeps(): void {
-  const running = services;
-  if (!running || !running.shutdown.isIdle()) return;
-  void running.sessions.settleFinishedPrSessions();
-  void running.sessions.resolveExpiredIdleSessions();
-}
-
-function startSessionSweeps(): void {
-  stopSessionSweeps();
-  sessionSettleInitialTimer = setTimeout(() => {
-    sessionSettleInitialTimer = null;
-    runSessionSweeps();
-  }, SESSION_SETTLE_INITIAL_DELAY_MS);
-  sessionSettleInitialTimer.unref?.();
-  sessionSettleTimer = setInterval(runSessionSweeps, SESSION_SETTLE_INTERVAL_MS);
-  sessionSettleTimer.unref?.();
-  services?.prTracker.start();
-  services?.sourceControl.start();
-}
-
-function stopSessionSweeps(): void {
-  if (sessionSettleInitialTimer) {
-    clearTimeout(sessionSettleInitialTimer);
-    sessionSettleInitialTimer = null;
-  }
-  if (sessionSettleTimer) {
-    clearInterval(sessionSettleTimer);
-    sessionSettleTimer = null;
-  }
-  services?.prTracker.stop();
-}
-
-function disposeServices(): void {
-  if (!services || servicesDisposed) return;
-  servicesDisposed = true;
-  stopSessionSweeps();
-  try {
-    services.sessions.flush();
-  } catch (err) {
-    console.warn(`flush before exit failed: ${(err as Error).message}`);
-  }
-  void services.sourceControl.dispose();
-  services.runWatcher.dispose();
-  void services.fileWatcher.dispose();
-  services.updates.dispose();
-  services.sessions.dispose();
-  services.ptys.dispose();
+function stopServer(): Promise<void> {
+  if (serverStop) return serverStop;
+  const stopping = serverProcess
+    .stop(link.isOpen ? link : undefined)
+    .catch((error: unknown) => console.warn(`[server] stop failed: ${errorMessage(error)}`))
+    .finally(() => {
+      serverStopped = true;
+      link.close();
+    });
+  serverStop = stopping;
+  return stopping;
 }
 
 function quitWithoutDialog(): void {
   clearShutdownAck();
   quitApproved = true;
-  disposeServices();
-  app.quit();
+  void stopServer().then(() => app.quit());
 }
 
 function requestShutdown(): void {
-  const window = mainWindow;
-  if (!services || !window || window.isDestroyed() || window.webContents.isCrashed()) {
+  const window = liveMainWindow();
+  if (!link.isOpen || !window || window.webContents.isCrashed()) {
     quitWithoutDialog();
     return;
   }
@@ -462,29 +224,15 @@ function requestShutdown(): void {
 function endOfSession(): void {
   clearShutdownAck();
   quitApproved = true;
-  disposeServices();
-}
-
-async function commitShutdown(token: string, action: () => Promise<void> | void): Promise<ShutdownCommitResult> {
-  if (!services) return { ok: false, message: "cw-code services are not running" };
-  const result = await services.shutdown.commit(token, action);
-  if (!result.ok && !services.shutdown.isCommitted()) {
-    quitApproved = false;
-    servicesDisposed = false;
-  }
-  return result;
-}
-
-function recoverAbandonedShutdown(): void {
-  if (!services || services.shutdown.isIdle() || services.shutdown.isCommitted()) return;
-  services.shutdown.recover();
+  void stopServer();
 }
 
 function focusMainWindow(): void {
-  if (!mainWindow || mainWindow.isDestroyed()) return;
-  if (mainWindow.isMinimized()) mainWindow.restore();
-  mainWindow.show();
-  mainWindow.focus();
+  const window = liveMainWindow();
+  if (!window) return;
+  if (window.isMinimized()) window.restore();
+  window.show();
+  window.focus();
 }
 
 function windowIconFile(): string {
@@ -492,13 +240,12 @@ function windowIconFile(): string {
 }
 
 function currentWindowBackground(): string {
-  const settings = services?.sessions.getSettings();
+  const settings = link.settings;
   return windowBackgroundColor(settings?.themeId ?? "dark", settings?.customThemes ?? [], !nativeTheme.shouldUseDarkColors);
 }
 
 function syncWindowBackground(): void {
-  if (!mainWindow || mainWindow.isDestroyed()) return;
-  mainWindow.setBackgroundColor(currentWindowBackground());
+  liveMainWindow()?.setBackgroundColor(currentWindowBackground());
 }
 
 async function createWindow(): Promise<void> {
@@ -525,7 +272,7 @@ async function createWindow(): Promise<void> {
   mainWindow.on("unmaximize", () => mainWindow?.webContents.send("win.maximized", false));
   mainWindow.on("unresponsive", () => appendCrashLog("window unresponsive"));
   mainWindow.on("close", (event) => {
-    if (process.platform === "darwin" || !services || isQuitApproved()) return;
+    if (process.platform === "darwin" || isQuitApproved()) return;
     event.preventDefault();
     requestShutdown();
   });
@@ -533,19 +280,13 @@ async function createWindow(): Promise<void> {
 
   const webContents = mainWindow.webContents;
   webContents.on("render-process-gone", (_e, details) => {
-    appendCrashLog(
-      `render-process-gone: reason=${details.reason} exitCode=${details.exitCode}`
-    );
-    services?.ptys.detachAll();
-    recoverAbandonedShutdown();
+    appendCrashLog(`render-process-gone: reason=${details.reason} exitCode=${details.exitCode}`);
     if (mainWindow) resetAttention(mainWindow);
     void webContents.reload();
   });
   webContents.on("did-start-navigation", (navigation) => {
     if (mainWindow && resetsAttention(navigation)) resetAttention(mainWindow);
   });
-  webContents.on("did-navigate", () => recoverAbandonedShutdown());
-  webContents.on("did-finish-load", () => recoverAbandonedShutdown());
   webContents.on("console-message", (event) => {
     if (event.level === "error") {
       appendCrashLog(`renderer error: ${event.message} (${event.sourceId}:${event.lineNumber})`);
@@ -561,13 +302,26 @@ async function createWindow(): Promise<void> {
     if (/^https?:/i.test(url)) void shell.openExternal(url);
   });
 
-  const probeOutPath = app.isPackaged ? process.env["CW_PACKAGE_PROBE_OUT"] : undefined;
+  const probeOutPath = packageProbeOutPath();
   if (probeOutPath) {
     await startPackageProbe(mainWindow, probeOutPath);
     return;
   }
 
   await loadRenderer(mainWindow);
+}
+
+function packageProbeOutPath(): string | undefined {
+  return app.isPackaged ? process.env["CW_PACKAGE_PROBE_OUT"] : undefined;
+}
+
+async function probeServer(): Promise<ServerPackageProbe> {
+  if (serverFailure !== null) return failedServerProbe(`server did not start: ${serverFailure}`);
+  try {
+    return await link.call<ServerPackageProbe>("debug.packageProbe");
+  } catch (error) {
+    return failedServerProbe(`server package probe failed: ${errorMessage(error)}`);
+  }
 }
 
 async function startPackageProbe(window: BrowserWindow, outPath: string): Promise<void> {
@@ -590,14 +344,15 @@ async function startPackageProbe(window: BrowserWindow, outPath: string): Promis
     runPackageProbe({
       outPath,
       appVersion: app.getVersion(),
-      startupMode: startupState.mode,
+      startupMode: link.startup?.mode ?? "ready",
       electronVersion: process.versions.electron,
       noSandboxSwitch: app.commandLine.hasSwitch("no-sandbox"),
-      renderer
+      renderer,
+      probeServer
     }).then(
       (result) => app.exit(result.rendererLoaded ? 0 : 1),
       (err: unknown) => {
-        appendCrashLog(`package probe failed: ${err instanceof Error ? err.message : String(err)}`);
+        appendCrashLog(`package probe failed: ${errorMessage(err)}`);
         app.exit(1);
       }
     );
@@ -639,26 +394,6 @@ function bumpZoom(sender: WebContents, delta: number): void {
   if (!w) return;
   const next = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, w.webContents.getZoomLevel() + delta));
   w.webContents.setZoomLevel(next);
-}
-
-function isInsideAttachmentsDir(target: string): boolean {
-  let base = resolve(attachmentsDir());
-  let abs = resolve(target);
-  if (process.platform === "win32") {
-    base = base.toLowerCase();
-    abs = abs.toLowerCase();
-  }
-  const rel = relative(base, abs);
-  if (rel === "" || rel === ".") return true;
-  if (rel === ".." || rel.startsWith(`..${sep}`) || isAbsolute(rel)) return false;
-  return true;
-}
-
-function relaunch(): void {
-  const appImage = resolveAppImageRelaunch(process.env, process.execPath, process.argv);
-  if (appImage) app.relaunch(appImage);
-  else app.relaunch();
-  app.exit(0);
 }
 
 function setAttentionIndicators(win: BrowserWindow, count: number, badgeDataUrl: string | null): void {
@@ -704,689 +439,8 @@ function registerWindowIpc(): void {
   ipcMain.on("app.attention", (e, payload: unknown) => applyAttention(e.sender, payload));
 }
 
-function recoveryIssueFor(args: { file?: unknown } | undefined): MetadataIssue {
-  if (startupState.mode !== "recovery") throw new Error("cw-code is not in recovery mode");
-  if (!args || typeof args.file !== "string") throw new Error("a recovery action requires { file }");
-  const file = args.file;
-  const issue = startupState.issues.find((candidate) => candidate.file === file);
-  if (!issue) throw new Error(`${file} is not a file that needs recovery`);
-  return issue;
-}
-
-function registerStartupIpc(): void {
-  ipcMain.handle("startup.state", (): StartupState => startupState);
-  ipcMain.handle("recovery.openDataDir", async (): Promise<void> => {
-    const failure = await shell.openPath(userdataDir());
-    if (failure) throw new Error(`could not open ${userdataDir()}: ${failure}`);
-  });
-  ipcMain.handle("recovery.restore", (_e, args: { file: string; backupPath: string }): void => {
-    if (!args || typeof args.backupPath !== "string") throw new Error("recovery.restore requires { file, backupPath }");
-    const issue = recoveryIssueFor(args);
-    const result = restoreBackup(issue.file, args.backupPath, metadataSchemaFor(issue.store));
-    console.warn(
-      `restored ${result.file} from ${result.restoredFrom}${result.brokenPath ? `; previous file kept at ${result.brokenPath}` : ""}${result.archivedLastGood ? `; last good backup kept at ${result.archivedLastGood}` : ""}`
-    );
-    relaunch();
-  });
-  ipcMain.handle("recovery.startFresh", (_e, args: { file: string }): void => {
-    const issue = recoveryIssueFor(args);
-    if (issue.kind === "io") throw new Error(`${issue.file} may be intact behind a lock; retry instead of starting fresh`);
-    const result = startFresh(issue.file, metadataSchemaFor(issue.store));
-    console.warn(
-      `started ${result.file} fresh${result.brokenPath ? `; previous file kept at ${result.brokenPath}` : ""}${result.archivedLastGood ? `; last good backup kept at ${result.archivedLastGood}` : ""}`
-    );
-    relaunch();
-  });
-  ipcMain.handle("recovery.retry", (): void => {
-    if (startupState.mode !== "recovery") throw new Error("cw-code is not in recovery mode");
-    relaunch();
-  });
-}
-
-function releaseShutdownToken(shutdown: ShutdownCoordinator, token: string): void {
-  try {
-    shutdown.cancel(token);
-  } catch (err) {
-    console.warn(`[updates] could not release the restart request: ${(err as Error).message}`);
-  }
-}
-
-function installUpdate({ updates, shutdown }: Services, args: unknown): Promise<UpdateActionResult> {
-  const token = parseShutdownToken(args, "updates.install");
-  return updates.install(args, {
-    commit: (action) => commitShutdown(token, action),
-    reason: () => shutdown.currentReason(),
-    release: () => releaseShutdownToken(shutdown, token)
-  });
-}
-
-function registerUpdateIpc(services: Services): void {
-  const { updates, sessions } = services;
-  ipcMain.handle("updates.install", (_e, args: unknown): Promise<UpdateActionResult> => installUpdate(services, args));
-  updates.subscribe((state) => {
-    if (!mainWindow || mainWindow.isDestroyed()) return;
-    mainWindow.webContents.send("updates.changed", state);
-  });
-  ipcMain.handle("updates.state", (): UpdateState => updates.getState());
-  ipcMain.handle("updates.check", (): Promise<UpdateActionResult> => updates.check());
-  ipcMain.handle("updates.download", (): Promise<UpdateActionResult> => updates.download());
-  ipcMain.handle("updates.setChannel", async (_e, args: unknown): Promise<UpdateActionResult> => {
-    const channel = args && typeof args === "object" ? (args as { channel?: unknown }).channel : undefined;
-    const result = await updates.setChannel(channel);
-    if (result.ok && isUpdateChannel(channel)) sessions.setSettings({ updateChannel: channel });
-    return result;
-  });
-}
-
-function registerGitHubIpc({ sessions, pullRequests, githubSearch, runs, runWatcher }: Services): void {
-  runWatcher.onRunsChanged = (changed) => sendToMainWindow("github.runsChanged", changed);
-  runWatcher.onCiActivity = () => sendToMainWindow("github.ciActivity");
-  ipcMain.handle("github.search", (_e, args: unknown) => {
-    const { kind, query, countBase, force } = parseArgs(args, "github.search");
-    assertSearchKind(kind);
-    assertSearchQuery(query);
-    assertCountBase(countBase);
-    const forced = parseOptionalBoolean(force, "force");
-    return kind === "pr" ? githubSearch.search("pr", query, countBase, forced) : githubSearch.search("issue", query, countBase, forced);
-  });
-  ipcMain.handle("github.counts", (_e, args: unknown) => {
-    const { kind, queries } = parseArgs(args, "github.counts");
-    assertSearchKind(kind);
-    return githubSearch.counts(kind, parseList<string>(queries, MAX_COUNT_QUERIES, "queries", assertSearchQuery));
-  });
-  ipcMain.handle("github.issueDetail", (_e, args: unknown) => {
-    const { ref } = parseArgs(args, "github.issueDetail");
-    assertIssueRef(ref);
-    return githubSearch.issueDetail(ref);
-  });
-  ipcMain.handle("github.runs", (_e, args: unknown) => {
-    const { sources, force } = parseArgs(args, "github.runs");
-    return runs.runs(parseRunSources(sources), parseOptionalBoolean(force, "force"));
-  });
-  ipcMain.handle("github.runLog", (_e, args: unknown) => {
-    const { ref } = parseArgs(args, "github.runLog");
-    assertRunRef(ref);
-    return runs.runLog(ref);
-  });
-  ipcMain.handle("github.watchRuns", (_e, args: unknown) => {
-    const { refs } = parseArgs(args, "github.watchRuns");
-    runWatcher.watch(parseList<RunRef>(refs, MAX_WATCHED_RUNS, "refs", assertRunRef));
-  });
-  ipcMain.handle("github.setActive", (_e, args: unknown) => {
-    const { active } = parseArgs(args, "github.setActive");
-    if (typeof active !== "boolean") throw new Error("active must be a boolean");
-    runWatcher.setActive(active);
-  });
-  ipcMain.handle("github.clone", (_e, args: unknown) => {
-    const { repo } = parseArgs(args, "github.clone");
-    assertRepoRef(repo);
-    return pullRequests.clone(repo);
-  });
-  ipcMain.handle("sessions.linkIssue", (_e, args: unknown) => {
-    const { sessionId, link } = parseArgs(args, "sessions.linkIssue");
-    if (typeof sessionId !== "string" || !isValidIssueLink(link)) throw new Error("invalid issue link");
-    assertIssueRef(link.ref);
-    const { host, owner, repo, number } = link.ref;
-    return sessions.linkIssue(sessionId, {
-      ref: { host, owner, repo, number },
-      origin: link.origin,
-      ...(link.workflowId !== undefined ? { workflowId: link.workflowId } : {}),
-      lastSeenAt: link.lastSeenAt
-    });
-  });
-  ipcMain.handle("sessions.unlinkIssue", (_e, args: unknown) => {
-    const { sessionId, ref } = parseArgs(args, "sessions.unlinkIssue");
-    if (typeof sessionId !== "string") throw new Error("invalid sessionId");
-    assertIssueRef(ref);
-    return sessions.unlinkIssue(sessionId, ref);
-  });
-  ipcMain.handle("sessions.markIssueSeen", (_e, args: unknown) => {
-    const { sessionId, ref, seenAt } = parseArgs(args, "sessions.markIssueSeen");
-    if (typeof sessionId !== "string") throw new Error("invalid sessionId");
-    assertIssueRef(ref);
-    if (typeof seenAt !== "number" || !Number.isFinite(seenAt)) throw new Error("invalid seenAt");
-    return sessions.markIssueSeen(sessionId, ref, seenAt);
-  });
-  ipcMain.handle("sessions.linkRun", (_e, args: unknown) => {
-    const { sessionId, link } = parseArgs(args, "sessions.linkRun");
-    if (typeof sessionId !== "string" || !isValidRunLink(link)) throw new Error("invalid run link");
-    assertRunRef(link.ref);
-    const { host, owner, repo, runId } = link.ref;
-    return sessions.linkRun(sessionId, {
-      ref: { host, owner, repo, runId },
-      origin: link.origin,
-      ...(link.workflowId !== undefined ? { workflowId: link.workflowId } : {}),
-      lastSeenAt: link.lastSeenAt
-    });
-  });
-  ipcMain.handle("sessions.unlinkRun", (_e, args: unknown) => {
-    const { sessionId, ref } = parseArgs(args, "sessions.unlinkRun");
-    if (typeof sessionId !== "string") throw new Error("invalid sessionId");
-    assertRunRef(ref);
-    return sessions.unlinkRun(sessionId, ref);
-  });
-  ipcMain.handle("sessions.markRunSeen", (_e, args: unknown) => {
-    const { sessionId, ref, seenAt } = parseArgs(args, "sessions.markRunSeen");
-    if (typeof sessionId !== "string") throw new Error("invalid sessionId");
-    assertRunRef(ref);
-    if (typeof seenAt !== "number" || !Number.isFinite(seenAt)) throw new Error("invalid seenAt");
-    return sessions.markRunSeen(sessionId, ref, seenAt);
-  });
-}
-
-function registerShutdownIpc({ shutdown }: Services): void {
-  ipcMain.handle("shutdown.assess", () => {
-    clearShutdownAck();
-    return shutdown.assess();
-  });
-  ipcMain.handle("shutdown.prepare", (_e, args: unknown) => {
-    clearShutdownAck();
-    return shutdown.prepare(parseShutdownPrepare(args));
-  });
-  ipcMain.handle("shutdown.force", (_e, args: unknown) => shutdown.force(parseShutdownToken(args, "shutdown.force")));
-  ipcMain.handle("shutdown.cancel", (_e, args: unknown): void => {
-    shutdown.cancel(parseShutdownToken(args, "shutdown.cancel"));
-  });
-  ipcMain.handle("shutdown.quit", (_e, args: unknown) =>
-    commitShutdown(parseShutdownToken(args, "shutdown.quit"), () => {
-      app.quit();
-    })
-  );
-}
-
-function registerIpc(services: Services): void {
-  const { sessions, skills, files, fileWatcher, git, pullRequests, prTracker, sourceControl, ptys, accountUsage, updates } = services;
-  registerUpdateIpc(services);
-  registerGitHubIpc(services);
-  sessions.setEmitter((sessionId, event) => {
-    mainWindow?.webContents.send("turn.event", { sessionId, event });
-    sourceControl.onThreadEvent(sessionId, event);
-  });
-  sessions.setTitleEmitter((sessionId, title) => {
-    mainWindow?.webContents.send("session.title", { sessionId, title });
-  });
-  sessions.setSessionEmitter((session) => {
-    mainWindow?.webContents.send("session.updated", session);
-    prTracker.setTracked(sessions.trackedPrRefs());
-  });
-  ptys.setExitEmitter((ptyId, token, exitCode) => {
-    if (!mainWindow || mainWindow.isDestroyed()) return;
-    mainWindow.webContents.send("pty.exit", { ptyId, token, exitCode });
-  });
-  ipcMain.handle("cli.checkVersions", () => {
-    const s = sessions.getSettings();
-    return checkCliVersions({
-      claudeBinary: s.claudeBinaryPath,
-      opencodeBinary: s.opencodeBinaryPath,
-      codexBinary: s.codexBinaryPath
-    });
-  });
-  ipcMain.handle("cli.discover", (_e, args: { binaries?: CliBinary[] }) => discoverBinaries(args?.binaries));
-  ipcMain.handle("cli.verifyPath", (_e, args: { binary: CliBinary; path: string }) => {
-    if (!args || typeof args.binary !== "string" || typeof args.path !== "string") {
-      throw new Error("cli.verifyPath requires { binary, path }");
-    }
-    return verifyBinaryPath(args.binary, args.path);
-  });
-  ipcMain.handle("settings.get", () => sessions.getSettings());
-  ipcMain.handle("settings.prWorkflowDefaults", () => defaultPrWorkflows());
-  ipcMain.handle("skills.list", () => skills.listSkills());
-  ipcMain.handle("skills.get", (_e, name: string) => skills.getSkill(name));
-  ipcMain.handle("skills.save", (_e, input: SkillSaveInput) => skills.saveSkill(input));
-  ipcMain.handle("skills.remove", (_e, name: string) => skills.removeSkill(name));
-  ipcMain.handle(
-    "skills.setEnabled",
-    (_e, args: { name: string; harness: HarnessId; on: boolean }) =>
-      skills.setSkillEnabled(args.name, args.harness, args.on)
-  );
-  ipcMain.handle("skills.importAll", () => skills.importSkills());
-  ipcMain.handle("settings.set", async (_e, patch: SettingsPatch) => {
-    const current = sessions.getSettings();
-    const normalized = { ...patch };
-    const checks: Array<Promise<CliVersionCheck>> = [];
-    if (patch.claudeBinaryPath !== undefined) {
-      normalized.claudeBinaryPath = configuredCliBinaryPath("claude", patch.claudeBinaryPath);
-      if (normalized.claudeBinaryPath !== current.claudeBinaryPath) {
-        checks.push(checkCliVersion("claude", normalized.claudeBinaryPath));
-      }
-    }
-    if (patch.opencodeBinaryPath !== undefined) {
-      normalized.opencodeBinaryPath = configuredCliBinaryPath("opencode", patch.opencodeBinaryPath);
-      if (normalized.opencodeBinaryPath !== current.opencodeBinaryPath) {
-        checks.push(checkCliVersion("opencode", normalized.opencodeBinaryPath));
-      }
-    }
-    if (patch.codexBinaryPath !== undefined) {
-      normalized.codexBinaryPath = configuredCliBinaryPath("codex", patch.codexBinaryPath);
-      if (normalized.codexBinaryPath !== current.codexBinaryPath) {
-        checks.push(checkCliVersion("codex", normalized.codexBinaryPath));
-      }
-    }
-    const failed = (await Promise.all(checks)).find(
-      (check) => (check.configured || check.found) && (check.error !== null || !check.ok)
-    );
-    if (failed) {
-      const name = failed.binary === "claude" ? "Claude" : failed.binary === "codex" ? "Codex" : "OpenCode";
-      const reason = !failed.available
-        ? "Choose a valid executable name or full path."
-        : failed.error !== null
-          ? "The executable did not complete '--version' successfully."
-          : `It reported version ${failed.actual ?? "unknown"} but needs >= ${failed.minimum}. Update the CLI to use it.`;
-      throw new Error(`${name} CLI could not be verified at '${failed.binaryPath}'. ${reason}`);
-    }
-    if (patch.opencodeGoUsage !== undefined) accountUsage.invalidate("opencode");
-    const saved = sessions.setSettings(normalized);
-    if (patch.themeId !== undefined || patch.customThemes !== undefined) syncWindowBackground();
-    if (touchesUpdatePreferences(patch)) applyUpdatePreferences(updates, saved);
-    return saved;
-  });
-  ipcMain.handle(
-    "approvals.respond",
-    (_e, args: { sessionId: string; requestId: string; decision: ApprovalDecision }) =>
-      sessions.respondApproval(args.requestId, args.decision)
-  );
-  ipcMain.handle(
-    "questions.respond",
-    (_e, args: { sessionId: string; requestId: string; answers: Record<string, string> }) =>
-      sessions.respondQuestion(args.requestId, args.answers)
-  );
-  ipcMain.handle("projects.list", () => sessions.listProjects());
-  ipcMain.handle("projects.add", (_e, rootPath: string) => sessions.addProject(rootPath));
-  ipcMain.handle("projects.updateSettings", (_e, args: { projectId: string; settings: ProjectSettings }) =>
-    sessions.updateProjectSettings(args.projectId, args.settings)
-  );
-  ipcMain.handle("os.homeDir", () => homedir());
-  ipcMain.handle("sessions.list", (_e, projectId: string) => sessions.listSessions(projectId));
-  ipcMain.handle("sessions.create", (_e, args: { projectId: string; driver: DriverName; options?: CreateSessionOptions }) =>
-    sessions.createSession(args.projectId, args.driver, args.options)
-  );
-  ipcMain.handle("sessions.importable", (_e, driver: DriverName) => sessions.listImportableSessions(driver));
-  ipcMain.handle("sessions.import", (_e, request: ImportSessionRequest) => sessions.importSession(request));
-  ipcMain.handle("sessions.rename", (_e, args: { sessionId: string; title: string }) =>
-    sessions.renameSession(args.sessionId, args.title)
-  );
-  ipcMain.handle("sessions.regenerateTitle", (_e, args: { sessionId: string }) =>
-    sessions.regenerateTitle(args.sessionId)
-  );
-  ipcMain.handle(
-    "sessions.setStatus",
-    (_e, args: { sessionId: string; status: SessionStatus; reason?: SessionStatusReason }) => {
-      const updated = sessions.setSessionStatus(args.sessionId, args.status, args.reason);
-      if (updated.status === "resolved" || updated.status === "archived") {
-        ptys.killSession(args.sessionId);
-        void fileWatcher.unwatch(args.sessionId);
-      }
-      return updated;
-    }
-  );
-  ipcMain.handle("sessions.expireHolding", (_e, sessionIds: string[]) =>
-    sessions.expireHoldingSessions(sessionIds)
-  );
-  ipcMain.handle(
-    "sessions.resolve",
-    async (_e, args: { sessionId: string; status: SessionStatus; removeWorktree?: boolean; forceBranch?: boolean }) => {
-      await fileWatcher.unwatch(args.sessionId);
-      const result = await sessions.resolveSession(args.sessionId, args.status, { removeWorktree: args.removeWorktree, forceBranch: args.forceBranch });
-      if (result.status === "resolved" || result.status === "archived") ptys.killSession(args.sessionId);
-      return result;
-    }
-  );
-  ipcMain.handle("worktrees.prune", async () => {
-    const perProject = await Promise.all(sessions.listProjects().map((project) => sessions.listSessions(project.id)));
-    const unpinned = perProject
-      .flat()
-      .filter((session) => session.status === "resolved" || session.status === "archived");
-    await Promise.all(unpinned.map((session) => fileWatcher.unwatch(session.id)));
-    return sessions.pruneStaleWorktrees();
-  });
-  ipcMain.handle("sessions.history", (_e, args: { sessionId: string }) =>
-    sessions.getHistory(args.sessionId)
-  );
-  ipcMain.handle("sessions.subagentTools", (_e, args: { sessionId: string; agentId: string }) =>
-    sessions.getSubagentTools(args.sessionId, args.agentId)
-  );
-  ipcMain.handle("sessions.activeTurns", () => sessions.listActiveTurns());
-  ipcMain.handle("sessions.retryConnection", (_e, args: { sessionId: string }) =>
-    sessions.retryConnection(args.sessionId)
-  );
-  ipcMain.handle(
-    "turns.start",
-    (
-      _e,
-      args: {
-        sessionId: string;
-        prompt: string;
-        prefs?: { model?: string; effort?: "minimal" | "low" | "medium" | "high" | "xhigh" | "max"; variant?: string; permissionMode?: "auto" | "acceptEdits" | "bypassPermissions" | "manual" };
-        attachments?: string[];
-        command?: CommandInvocation;
-        skills?: string[];
-        prRefs?: PrRef[];
-        finalReview?: { ref: PrRef; sha: string };
-        acceptFolderHead?: string;
-      }
-    ) => {
-      if (args.skills !== undefined && !isSkillMentionList(args.skills)) throw new Error("invalid skills");
-      if (args.prRefs !== undefined && !Array.isArray(args.prRefs)) throw new Error("invalid prRefs");
-      if (args.acceptFolderHead !== undefined && typeof args.acceptFolderHead !== "string") throw new Error("invalid acceptFolderHead");
-      for (const ref of args.prRefs ?? []) assertPrRef(ref);
-      if (args.finalReview !== undefined) {
-        assertPrRef(args.finalReview.ref);
-        if (typeof args.finalReview.sha !== "string" || args.finalReview.sha === "") throw new Error("invalid finalReview sha");
-      }
-      return sessions.startTurn(args.sessionId, args.prompt, {
-        prefs: args.prefs,
-        attachments: args.attachments,
-        ...(args.command ? { command: args.command } : {}),
-        ...(args.skills?.length ? { skills: args.skills } : {}),
-        prRefs: args.prRefs,
-        ...(args.finalReview ? { finalReview: args.finalReview } : {}),
-        ...(args.acceptFolderHead !== undefined ? { acceptFolderHead: args.acceptFolderHead } : {})
-      });
-    }
-  );
-  ipcMain.handle("turns.interrupt", (_e, args: { turnId: string }) => sessions.interrupt(args.turnId));
-  ipcMain.handle("commands.list", (_e, args: { sessionId: string }) => sessions.listCommands(args.sessionId));
-  ipcMain.handle("commands.listFor", (_e, args: { projectId: string; driver: DriverName }) =>
-    sessions.listCommandsFor(args.projectId, args.driver)
-  );
-  ipcMain.handle("models.list", (_e, args: { sessionId: string }) => sessions.listModels(args.sessionId));
-  ipcMain.handle(
-    "models.listFor",
-    (_e, args: { projectId: string; driver: DriverName }) =>
-      sessions.listModelsFor(args.projectId, args.driver)
-  );
-  ipcMain.handle("models.listForHarness", (_e, args: { driver: DriverName }) =>
-    sessions.listModelsForHarness(args.driver)
-  );
-  ipcMain.handle("permissions.list", (_e, args: { sessionId: string }) =>
-    sessions.listPermissionModes(args.sessionId)
-  );
-  ipcMain.handle(
-    "permissions.listFor",
-    (_e, args: { projectId: string; driver: DriverName }) =>
-      sessions.listPermissionModesFor(args.projectId, args.driver)
-  );
-  ipcMain.handle("permissions.listForHarness", (_e, args: { driver: DriverName }) =>
-    sessions.listPermissionModesForHarness(args.driver)
-  );
-  ipcMain.handle("composer.get", (_e, args: { sessionId: string }) => sessions.getComposer(args.sessionId));
-  ipcMain.handle(
-    "composer.set",
-    (_e, args: { sessionId: string; prefs: { model?: string; effort?: "minimal" | "low" | "medium" | "high" | "xhigh" | "max"; variant?: string; permissionMode?: "auto" | "acceptEdits" | "bypassPermissions" | "manual" } }) =>
-      sessions.setComposer(args.sessionId, args.prefs)
-  );
-  ipcMain.handle("git.status", async (_e, raw: unknown) => {
-    const sessionId = parseString(parseArgs(raw, "git.status").sessionId, "sessionId");
-    await sourceControl.refresh(sessionId, { forcePullRequest: false });
-    const status = sourceControl.status(sessionId);
-    if (!status) throw new Error(sourceControl.failure(sessionId) ?? `git status is not available for session ${sessionId}`);
-    return status;
-  });
-  ipcMain.handle("git.watch", (_e, raw: unknown) => {
-    const { sessionIds } = parseArgs(raw, "git.watch");
-    sourceControl.setWatched(parseList<string>(sessionIds, MAX_WATCHED_GIT_SESSIONS, "sessionIds", assertString));
-  });
-  ipcMain.handle("git.setActive", (_e, raw: unknown) => {
-    sourceControl.setActive(parseBoolean(parseArgs(raw, "git.setActive").active, "active"));
-  });
-  ipcMain.handle("prs.tracked", () => prTracker.summaries());
-  ipcMain.handle("sessions.linkPr", (_e, args: { sessionId: string; link: SessionPrLink }) => {
-    const link = args.link;
-    assertPrRef(link.ref);
-    if (link.origin !== "opened" && link.origin !== "workflow" && link.origin !== "linked") {
-      throw new Error(`invalid pull request link origin '${String(link.origin)}'`);
-    }
-    if (link.workflowId !== undefined && typeof link.workflowId !== "string") {
-      throw new Error("invalid workflowId");
-    }
-    if (typeof link.lastSeenSha !== "string") throw new Error("invalid lastSeenSha");
-    if (typeof link.lastSeenAt !== "number" || !Number.isFinite(link.lastSeenAt)) throw new Error("invalid lastSeenAt");
-    return sessions.linkPr(args.sessionId, {
-      ref: link.ref,
-      origin: link.origin,
-      ...(link.workflowId !== undefined ? { workflowId: link.workflowId } : {}),
-      lastSeenSha: link.lastSeenSha,
-      lastSeenAt: link.lastSeenAt
-    });
-  });
-  ipcMain.handle("sessions.unlinkPr", (_e, args: { sessionId: string; ref: PrRef }) => {
-    assertPrRef(args.ref);
-    return sessions.unlinkPr(args.sessionId, args.ref);
-  });
-  ipcMain.handle("sessions.markPrSeen", (_e, args: { sessionId: string; ref: PrRef; headSha: string | null; seenAt: number | null }) => {
-    assertPrRef(args.ref);
-    if (args.headSha !== null && typeof args.headSha !== "string") throw new Error("invalid headSha");
-    if (args.seenAt !== null && !Number.isFinite(args.seenAt)) throw new Error("invalid seenAt");
-    return sessions.markPrSeen(args.sessionId, args.ref, args.headSha, args.seenAt);
-  });
-  ipcMain.handle("git.branches", (_e, args: { sessionId: string }) =>
-    sessions.ensureWorktree(args.sessionId).then((root) => git.branches(root))
-  );
-  ipcMain.handle("git.projectBranches", (_e, args: { projectId: string }) =>
-    git.branches(sessions.rootForProject(args.projectId))
-  );
-  ipcMain.handle("git.switchBranch", (_e, args: { sessionId: string; branch: string }) =>
-    sessions.switchBranch(args.sessionId, args.branch)
-  );
-  ipcMain.handle("git.diff", async (_e, args: { sessionId: string; mode: GitDiffMode; baseRef?: string }) => {
-    const root = await sessions.ensureWorktree(args.sessionId);
-    if (args.mode === "branch" && !args.baseRef) return git.diff(root, "branch", await sessionDiffBase(sessions, git, args.sessionId));
-    if (args.mode !== "turn") return git.diff(root, args.mode, args.baseRef);
-    const range = await sessions.turnDiffRange(args.sessionId);
-    return git.diff(root, "turn", range.base, range.head);
-  });
-  ipcMain.handle("git.turnChanges", (_e, args: { sessionId: string }) => sessions.turnChanges(args.sessionId));
-  ipcMain.handle("git.undoTurn", (_e, args: { sessionId: string; turnId: string; expectedEndSha: string }) => {
-    if (typeof args.turnId !== "string" || !args.turnId) throw new Error("invalid turnId");
-    if (typeof args.expectedEndSha !== "string" || !args.expectedEndSha) throw new Error("invalid expectedEndSha");
-    return sessions.undoTurn(args.sessionId, args.turnId, args.expectedEndSha);
-  });
-  ipcMain.handle("git.health", (_e, args: { projectId?: string }) => {
-    if (!args.projectId) return git.health();
-    const project = sessions.getProject(args.projectId);
-    return git.health(project.rootPath, project);
-  });
-  ipcMain.handle("git.setProjectAccount", (_e, args: { projectId: string; account: { host: string; login: string } | null }) =>
-    sessions.setProjectGitHubAccount(args.projectId, args.account)
-  );
-  ipcMain.handle("git.setIdentity", (_e, args: { projectId: string; name: string; email: string }) =>
-    git.setRepositoryIdentity(sessions.rootForProject(args.projectId), args.name, args.email)
-  );
-
-  ipcMain.handle("usage.ledger", (_e, query: UsageLedgerQuery) => {
-    if (!isValidUsageLedgerQuery(query)) {
-      throw new Error("usage.ledger requires { sinceDay?: string (YYYY-MM-DD), sessionId?: string }");
-    }
-    return sessions.queryUsageLedger(query ?? {});
-  });
-  ipcMain.handle("usage.account", (_e, args: { drivers: DriverKind[]; force?: boolean }) => {
-    if (!args || !Array.isArray(args.drivers) || !args.drivers.every((driver) => DRIVER_KINDS.includes(driver))) {
-      throw new Error("usage.account requires { drivers: DriverKind[] }");
-    }
-    return accountUsage.get(args.drivers, args.force ?? false);
-  });
-
-  ipcMain.handle("prs.inbox", (_e, args: { force?: boolean }) => pullRequests.inbox(args?.force));
-  ipcMain.handle("prs.detail", (_e, args: { ref: PrRef }) => pullRequests.detail(args.ref));
-  ipcMain.handle("prs.diff", (_e, args: { ref: PrRef }) => pullRequests.diff(args.ref));
-  ipcMain.handle("prs.checkLog", (_e, args: { ref: PrRef; runId: number }) => pullRequests.failedCheckLog(args.ref, args.runId));
-  ipcMain.handle("prs.projectRepos", async (): Promise<ProjectGitHubRepo[]> => {
-    const repos = await Promise.all(
-      sessions.listProjects().map(async (project) => {
-        const remote = await git.githubRemote(project.rootPath).catch(() => null);
-        return remote ? { projectId: project.id, host: remote.host, owner: remote.owner, repo: remote.repository } : null;
-      })
-    );
-    return repos.filter((repo): repo is ProjectGitHubRepo => repo !== null);
-  });
-
-  ipcMain.handle("fs.readFile", (_e, args: { sessionId: string; path: string }) =>
-    sessions.ensureWorktree(args.sessionId).then((root) => files.readFile(root, args.path))
-  );
-  ipcMain.handle("fs.readOutsideFile", (_e, args: { path: string }) => files.readOutsideFile(args.path));
-  ipcMain.handle("fs.listFiles", (_e, args: { sessionId: string }) =>
-    sessions.ensureWorktree(args.sessionId).then((root) => files.listFiles(root))
-  );
-  ipcMain.handle("fs.listProjectFiles", (_e, args: { projectId: string }) =>
-    files.listFiles(sessions.rootForProject(args.projectId))
-  );
-  ipcMain.handle("fs.listDir", (_e, args: { sessionId: string; dir?: string }) =>
-    sessions.ensureWorktree(args.sessionId).then((root) => files.listDir(root, args.dir ?? ""))
-  );
-  const gitBinary = (): string => sessions.getSettings().gitBinaryPath?.trim() || defaultBinary("git");
-  const fsRoot = (args: Record<string, unknown>): Promise<string> =>
-    sessions.ensureWorktree(parseString(args.sessionId, "sessionId"));
-  ipcMain.handle("fs.readFileInfo", async (_e, raw: unknown) => {
-    const args = parseArgs(raw, "fs.readFileInfo");
-    const path = parseString(args.path, "path");
-    return files.readFileInfo(await fsRoot(args), path);
-  });
-  ipcMain.handle("fs.writeFileGuarded", async (_e, raw: unknown) => {
-    const args = parseArgs(raw, "fs.writeFileGuarded");
-    const path = parseString(args.path, "path");
-    const content = parseString(args.content, "content");
-    const expectedMtimeMs = parseOptionalNumber(args.expectedMtimeMs, "expectedMtimeMs");
-    return files.writeFileGuarded(await fsRoot(args), path, content, expectedMtimeMs);
-  });
-  ipcMain.handle("fs.createFile", async (_e, raw: unknown) => {
-    const args = parseArgs(raw, "fs.createFile");
-    const path = parseString(args.path, "path");
-    await files.createFile(await fsRoot(args), path);
-  });
-  ipcMain.handle("fs.createDir", async (_e, raw: unknown) => {
-    const args = parseArgs(raw, "fs.createDir");
-    const path = parseString(args.path, "path");
-    await files.createDir(await fsRoot(args), path);
-  });
-  ipcMain.handle("fs.renamePath", async (_e, raw: unknown) => {
-    const args = parseArgs(raw, "fs.renamePath");
-    const from = parseString(args.from, "from");
-    const to = parseString(args.to, "to");
-    await files.renamePath(await fsRoot(args), from, to);
-  });
-  ipcMain.handle("fs.trashPath", async (_e, raw: unknown) => {
-    const args = parseArgs(raw, "fs.trashPath");
-    const path = parseString(args.path, "path");
-    await shell.trashItem(files.resolveEntry(await fsRoot(args), path));
-  });
-  ipcMain.handle("fs.revealPath", async (_e, raw: unknown) => {
-    const args = parseArgs(raw, "fs.revealPath");
-    const path = parseString(args.path, "path");
-    shell.showItemInFolder(resolveFileTarget(await fsRoot(args), path));
-  });
-  ipcMain.handle("fs.workspaceRoot", (_e, raw: unknown) => fsRoot(parseArgs(raw, "fs.workspaceRoot")));
-  ipcMain.handle("fs.listWorkspaceFiles", async (_e, raw: unknown) => {
-    const root = await fsRoot(parseArgs(raw, "fs.listWorkspaceFiles"));
-    return listWorkspaceFiles(gitBinary(), root, () => files.listFiles(root));
-  });
-  ipcMain.handle("fs.gitBaseline", async (_e, raw: unknown) => {
-    const args = parseArgs(raw, "fs.gitBaseline");
-    const root = await fsRoot(args);
-    const abs = files.resolveEntry(root, parseString(args.path, "path"));
-    return gitBaseline(gitBinary(), root, relative(root, abs).split(sep).join("/"));
-  });
-  ipcMain.handle("fs.gitDecorations", async (_e, raw: unknown) =>
-    gitDecorations(gitBinary(), await fsRoot(parseArgs(raw, "fs.gitDecorations")))
-  );
-  ipcMain.handle("fs.searchText", async (_e, raw: unknown) => {
-    const args = parseArgs(raw, "fs.searchText");
-    const query = parseTextSearchQuery(args.query);
-    return searchText(gitBinary(), await fsRoot(args), query);
-  });
-  ipcMain.handle("fs.setWatchedPaths", async (_e, raw: unknown) => {
-    const args = parseArgs(raw, "fs.setWatchedPaths");
-    const sessionId = parseString(args.sessionId, "sessionId");
-    const paths = parseList<string>(args.paths, MAX_WATCHED_PATHS, "paths", assertString);
-    fileWatcher.setWatched(sessionId, await sessions.ensureWorktree(sessionId), paths);
-  });
-  ipcMain.handle("fs.unwatchPaths", (_e, raw: unknown) =>
-    fileWatcher.unwatch(parseString(parseArgs(raw, "fs.unwatchPaths").sessionId, "sessionId"))
-  );
-  ipcMain.handle(
-    "fs.savePasteImage",
-    (_e, args: { projectId: string; mime: string; data: Uint8Array }) =>
-      files.savePasteImage(sessions.rootForProject(args.projectId), args.mime, args.data)
-  );
-  ipcMain.handle(
-    "fs.readImage",
-    async (_e, args: { sessionId?: string; projectId?: string; path: string }) => {
-      if (typeof args.path === "string" && isAbsolute(args.path) && isInsideAttachmentsDir(args.path)) {
-        const ext = args.path.split(".").pop() ?? "";
-        const mime = imageExtMime(ext);
-        if (!mime) throw new Error(`not an image: ${args.path}`);
-        let status: ReturnType<typeof statSync>;
-        try {
-          status = statSync(args.path);
-        } catch {
-          throw new Error(`file not found: ${args.path}`);
-        }
-        if (!status.isFile()) throw new Error(`not a file: ${args.path}`);
-        if (status.size > IMAGE_MAX_BYTES) throw new Error(`image too large to preview: ${args.path}`);
-        try {
-          return { mime, base64: readFileSync(args.path).toString("base64") };
-        } catch {
-          throw new Error(`file not found: ${args.path}`);
-        }
-      }
-      const roots: string[] = [];
-      if (args.sessionId) {
-        try {
-          roots.push(await sessions.ensureWorktree(args.sessionId));
-        } catch (err) {
-          const message = (err as Error).message;
-          if (message.includes("unknown session")) {
-            console.warn(`readImage: unknown session ${args.sessionId}`);
-          } else {
-            console.warn(`readImage: worktree recovery failed for ${args.sessionId}: ${message}`);
-          }
-        }
-      }
-      if (args.projectId) roots.push(sessions.rootForProject(args.projectId));
-      let lastError: Error | null = null;
-      for (const root of roots) {
-        try {
-          return files.readImage(root, args.path);
-        } catch (err) {
-          lastError = err as Error;
-        }
-      }
-      throw lastError ?? new Error("no root available to read image");
-    }
-  );
-  ipcMain.handle("pty.open", (_e, args: { sessionId: string; kind: PtyKind }) =>
-    sessions.ensureWorktree(args.sessionId).then(async (root) =>
-      ptys.open(
-        args.sessionId,
-        root,
-        args.kind,
-        sessions.resumeCursorFor(args.sessionId),
-        await sessions.terminalEnv(args.sessionId, root),
-        (id, data) => {
-          mainWindow?.webContents.send("pty.data", { ptyId: id, data });
-        },
-        () => sessions.terminalLaunch(args.sessionId, args.kind, root)
-      )
-    )
-  );
-  ipcMain.on("pty.write", (_e, args: { ptyId: string; data: string }) => ptys.write(args.ptyId, args.data));
-  ipcMain.on("pty.resize", (_e, args: { ptyId: string; cols: number; rows: number }) =>
-    ptys.resize(args.ptyId, args.cols, args.rows)
-  );
-  ipcMain.on("pty.detach", (_e, args: { ptyId: string; token: string }) => ptys.detach(args.ptyId, args.token));
-  ipcMain.on("pty.kill", (_e, args: { ptyId: string }) => ptys.kill(args.ptyId));
-
-  ipcMain.handle("debug.openTrace", async (): Promise<{ ok: boolean; path?: string; error?: string }> => {
-    const tracePath = getHarnessTracePath();
-    if (!tracePath) return { ok: false, error: "harness trace is not initialized" };
-    try {
-      appendFileSync(tracePath, "", "utf8");
-    } catch (err) {
-      return { ok: false, path: tracePath, error: (err as Error).message };
-    }
-    const failure = await shell.openPath(tracePath);
-    if (failure) return { ok: false, path: tracePath, error: failure };
-    return { ok: true, path: tracePath };
-  });
+function registerShellIpc(): void {
+  ipcMain.handle("desktop.endpoint", (): Promise<ServerEndpoint> => serverProcess.endpoint());
 
   ipcMain.handle("projects.pick", async (e): Promise<string | null> => {
     const w = windowFromSender(e.sender);
@@ -1415,17 +469,100 @@ function registerIpc(services: Services): void {
     writeFileSync(file, args.html, "utf8");
     return shell.openExternal(pathToFileURL(file).href).then(() => undefined);
   });
+
+  ipcMain.handle("shell.showItemInFolder", (_e, args: { path?: unknown } | undefined): void => {
+    const target = args?.path;
+    if (typeof target !== "string" || !isAbsolute(target)) throw new Error("shell.showItemInFolder requires an absolute path");
+    shell.showItemInFolder(target);
+  });
+}
+
+function parseShutdownToken(args: unknown, channel: string): string {
+  const token = args && typeof args === "object" ? (args as Record<string, unknown>).token : undefined;
+  if (typeof token !== "string" || token.length === 0) throw new Error(`${channel} requires { token }`);
+  return token;
+}
+
+function pendingUpdateState(): UpdateState {
+  return initialUpdateState({
+    runningVersion: app.getVersion(),
+    channel: channelOfVersion(app.getVersion()),
+    autoDownload: false,
+    disabledReason: UPDATES_PENDING_MESSAGE
+  });
+}
+
+function pendingUpdateResult(): Promise<UpdateActionResult> {
+  return Promise.resolve({ ok: false, code: "disabled", message: UPDATES_PENDING_MESSAGE, state: pendingUpdateState() });
+}
+
+async function commitInstall(token: string, action: () => void): Promise<ShutdownCommitResult> {
+  const result = await link.call<ShutdownCommitResult>("shutdown.quit", { token });
+  if (!result.ok) return result;
+  clearShutdownAck();
+  quitApproved = true;
+  try {
+    action();
+  } catch (error) {
+    quitApproved = false;
+    restartAfterFailedInstall = true;
+    throw error;
+  }
+  return result;
+}
+
+async function installUpdate(service: UpdateService, args: unknown): Promise<UpdateActionResult> {
+  const token = parseShutdownToken(args, "updates.install");
+  const status = await link.call<ShutdownStatus>("shutdown.status").catch(() => link.shutdown);
+  return service.install(args, {
+    commit: (action) => commitInstall(token, action),
+    reason: () => status.reason,
+    release: () => {
+      link.call("shutdown.cancel", { token }).catch((error: unknown) => {
+        console.warn(`[updates] could not release the restart request: ${errorMessage(error)}`);
+      });
+    }
+  });
+}
+
+function registerUpdateIpc(): void {
+  ipcMain.handle("updates.state", (): UpdateState => updates?.getState() ?? pendingUpdateState());
+  ipcMain.handle("updates.check", (): Promise<UpdateActionResult> => updates?.check() ?? pendingUpdateResult());
+  ipcMain.handle("updates.download", (): Promise<UpdateActionResult> => updates?.download() ?? pendingUpdateResult());
+  ipcMain.handle("updates.install", (_e, args: unknown): Promise<UpdateActionResult> =>
+    updates ? installUpdate(updates, args) : pendingUpdateResult()
+  );
+  ipcMain.handle("updates.setChannel", async (_e, args: unknown): Promise<UpdateActionResult> => {
+    if (!updates) return pendingUpdateResult();
+    const channel = args && typeof args === "object" ? (args as { channel?: unknown }).channel : undefined;
+    const result = await updates.setChannel(channel);
+    if (result.ok && isUpdateChannel(channel)) await link.call("settings.set", { updateChannel: channel });
+    return result;
+  });
+}
+
+function registerShutdownIpc(): void {
+  ipcMain.on("shutdown.ack", () => clearShutdownAck());
+  ipcMain.on("app.quit", () => {
+    clearShutdownAck();
+    quitApproved = true;
+    app.quit();
+  });
+}
+
+function reportFatalError(title: string, error: unknown): void {
+  const detail = error instanceof Error ? (error.stack ?? error.message) : String(error);
+  appendCrashLog(`fatal error: ${detail}`);
+  console.error(`fatal error: ${detail}`);
+  dialog.showErrorBox(
+    title,
+    `${errorMessage(error)}\n\nDetails were written to ${join(logsDir(), "crash.log")}. Nothing in your data folder was deleted.`
+  );
+  app.exit(1);
 }
 
 function reportFatalStartupError(error: unknown): void {
-  const detail = error instanceof Error ? (error.stack ?? error.message) : String(error);
-  appendCrashLog(`fatal startup error: ${detail}`);
-  console.error(`fatal startup error: ${detail}`);
-  dialog.showErrorBox(
-    "cw-code could not start",
-    `${error instanceof Error ? error.message : String(error)}\n\nDetails were written to ${join(logsDir(), "crash.log")}. Nothing in your data folder was deleted.`
-  );
-  app.exit(1);
+  reportFatalError("cw-code could not start", error);
 }
 
 interface PendingUpdateAutotest {
@@ -1445,93 +582,73 @@ async function prepareUpdateAutotest(): Promise<PendingUpdateAutotest | null> {
 
 function startUpdateAutotest(pending: PendingUpdateAutotest | null): void {
   if (__CW_UPDATE_TEST_BUILD__ && pending) {
-    const running = services;
+    const service = updates;
+    const startupMode = link.startup?.mode ?? "recovery";
     void pending.autotest.runUpdateAutotest(pending.config, {
       version: app.getVersion(),
       pid: process.pid,
       launchedByInstaller: process.argv.includes("--updated"),
-      startupMode: startupState.mode,
+      startupMode,
       userDataDir: app.getPath("userData"),
       cwCodeHome: cwCodeHome(),
-      updates: running?.updates ?? null,
-      shutdown: running?.shutdown ?? null,
-      install: (request) => (running ? installUpdate(running, request) : Promise.reject(new Error("cw-code services are not running"))),
-      startTurn: (sessionId, prompt) => (running ? running.sessions.startTurn(sessionId, prompt) : Promise.reject(new Error("cw-code services are not running"))),
+      updates: service,
+      shutdown:
+        startupMode === "ready"
+          ? {
+              assess: () => link.call<ShutdownAssessment>("shutdown.assess"),
+              prepare: (request: ShutdownPrepareRequest) => link.call<ShutdownPrepareResult>("shutdown.prepare", request),
+              force: (token) => link.call<ShutdownPrepareResult>("shutdown.force", { token }),
+              cancel: async (token) => {
+                await link.call("shutdown.cancel", { token });
+              },
+              isIdle: async () => (await link.call<ShutdownStatus>("shutdown.status")).idle
+            }
+          : null,
+      install: (request) => (service ? installUpdate(service, request) : Promise.reject(new Error("cw-code services are not running"))),
+      startTurn: (sessionId, prompt) => link.call<string>("turns.start", { sessionId, prompt }),
       quit: quitWithoutDialog
     });
   }
 }
 
-let loginShellEnvironment: Promise<string[]> = Promise.resolve([]);
+async function connectServer(): Promise<void> {
+  try {
+    await serverProcess.start();
+    await link.connect();
+  } catch (error) {
+    if (!packageProbeOutPath()) throw error;
+    serverFailure = errorMessage(error);
+    appendCrashLog(`server did not start: ${serverFailure}`);
+  }
+}
 
 async function startApp(): Promise<void> {
-  const loginShellWarnings = await loginShellEnvironment;
   const updateAutotest = await prepareUpdateAutotest();
-  ensureAppDirs();
-  migrateFromUserData(app.getPath("userData"));
-  try {
-    const tracePath = initHarnessTrace({ logDir: logsDir() });
-    console.warn(`harness trace: ${tracePath}`);
-  } catch (err) {
-    console.warn(`harness trace init failed: ${(err as Error).message}`);
-  }
-  try {
-    const statusTracePath = initSessionStatusTrace({ logDir: logsDir() });
-    console.warn(`session status trace: ${statusTracePath}`);
-  } catch (err) {
-    console.warn(`session status trace init failed: ${(err as Error).message}`);
-  }
+  mkdirSync(logsDir(), { recursive: true });
   initCrashLog(logsDir());
-  for (const warning of loginShellWarnings) {
-    console.warn(`[shell-env] ${warning}`);
-    appendCrashLog(`[shell-env] ${warning}`);
-  }
   process.on("uncaughtException", (err) => {
     appendCrashLog(`uncaughtException: ${err.stack ?? err.message}`);
   });
   process.on("unhandledRejection", (reason) => {
     appendCrashLog(`unhandledRejection: ${String(reason)}`);
   });
-  const stores = openMetadataStores({ dbPath: sessionDbPath(), settingsPath: settingsFilePath() });
-  if (stores.ok) {
-    initOpencodeModelsCache(opencodeModelsCachePath());
-    initClaudeCommandsCache(claudeCommandsCachePath());
-    services = createServices(stores);
-    services.sessions.warmOpencodeModels();
-    reapOrphanedServers()
-      .then((reaped) => {
-        if (reaped.length > 0) console.warn(`reaped ${reaped.length} orphaned CLI server(s) from a previous run`);
-      })
-      .catch((err) => {
-        console.warn(`orphan server sweep failed: ${(err as Error).message}`);
-      });
-    sweepStaleSnapshotIndexes()
-      .then((removed) => {
-        if (removed > 0) console.warn(`removed ${removed} stale turn snapshot index file(s)`);
-      })
-      .catch((err) => {
-        console.warn(`turn snapshot index sweep failed: ${(err as Error).message}`);
-      });
-    registerIpc(services);
-    services.updates.start();
-    registerShutdownIpc(services);
-    startSessionSweeps();
-  } else {
-    startupState = { mode: "recovery", issues: stores.issues, dataDir: userdataDir() };
-    for (const issue of stores.issues) {
-      appendCrashLog(`metadata recovery required: ${issue.store} ${issue.file} (${issue.kind}): ${issue.message}`);
-    }
-  }
   registerWindowIpc();
-  registerStartupIpc();
+  registerShellIpc();
+  registerUpdateIpc();
+  registerShutdownIpc();
+  link.onChange(handleLinkChange);
+  link.on("app.notice", (payload) => showNotice(payload as AppNotice));
+  serverProcess.onExit((expected) => {
+    if (expected && !quitApproved) quitWithoutDialog();
+  });
+  await connectServer();
+  ensureUpdateService();
   process.once("SIGINT", quitWithoutDialog);
   process.once("SIGTERM", quitWithoutDialog);
   powerMonitor.on("shutdown", endOfSession);
   nativeTheme.on("updated", syncWindowBackground);
   app.on("child-process-gone", (_e, details) => {
-    appendCrashLog(
-      `child-process-gone: type=${details.type} reason=${details.reason} exitCode=${details.exitCode}`
-    );
+    appendCrashLog(`child-process-gone: type=${details.type} reason=${details.reason} exitCode=${details.exitCode}`);
   });
   await createWindow();
   app.on("activate", () => {
@@ -1540,30 +657,11 @@ async function startApp(): Promise<void> {
   startUpdateAutotest(updateAutotest);
 }
 
-if (process.platform === "linux") {
-  app.commandLine.appendSwitch("class", "cw-code");
-}
-
-if (process.platform === "win32") {
-  const disabledFeatures = app.commandLine.getSwitchValue("disable-features");
-  app.commandLine.appendSwitch(
-    "disable-features",
-    disabledFeatures ? `${disabledFeatures},CalculateNativeWinOcclusion` : "CalculateNativeWinOcclusion"
-  );
-}
-
-if (!app.isPackaged && !app.commandLine.hasSwitch("user-data-dir")) {
-  app.setPath("userData", join(app.getPath("appData"), "@cw-code", "desktop-dev"));
-}
-
 if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
   app.on("second-instance", focusMainWindow);
 
-  loginShellEnvironment = loadLoginShellEnvironment(process.platform).catch((err) => [
-    `login shell capture failed: ${(err as Error).message}`
-  ]);
   app.whenReady().then(startApp).catch(reportFatalStartupError);
 
   app.on("window-all-closed", () => {
@@ -1571,13 +669,15 @@ if (!app.requestSingleInstanceLock()) {
   });
 
   app.on("before-quit", (event) => {
-    if (!isQuitApproved() && services && mainWindow && !mainWindow.isDestroyed()) {
+    if (!isQuitApproved() && link.isOpen && liveMainWindow()) {
       event.preventDefault();
       requestShutdown();
       return;
     }
     clearShutdownAck();
     quitApproved = true;
-    disposeServices();
+    if (serverStopped) return;
+    event.preventDefault();
+    void stopServer().then(() => app.quit());
   });
 }

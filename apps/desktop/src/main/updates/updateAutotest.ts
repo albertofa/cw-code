@@ -68,11 +68,11 @@ export interface UpdateAutotestHost {
     download(): Promise<UpdateActionResult>;
   } | null;
   shutdown: {
-    assess(): ShutdownAssessment;
+    assess(): Promise<ShutdownAssessment>;
     prepare(request: ShutdownPrepareRequest): Promise<ShutdownPrepareResult>;
     force(token: string): Promise<ShutdownPrepareResult>;
-    cancel(token: string): void;
-    isIdle(): boolean;
+    cancel(token: string): Promise<void>;
+    isIdle(): Promise<boolean>;
   } | null;
   install(request: { version: string; channel: UpdateChannel; token: string }): Promise<UpdateActionResult>;
   startTurn(sessionId: string, prompt: string): Promise<string>;
@@ -258,7 +258,7 @@ async function runRelaunched(config: UpdateAutotestConfig, host: UpdateAutotestH
 }
 
 async function prepareShutdown(host: UpdateAutotestHost, shutdown: NonNullable<UpdateAutotestHost["shutdown"]>, log: AutotestLog): Promise<string | null> {
-  const assessment = shutdown.assess();
+  const assessment = await shutdown.assess();
   log.write("assessment", summarizeAssessment(assessment));
   let prepared = await shutdown.prepare({
     reason: "update",
@@ -280,26 +280,28 @@ async function runMode(mode: UpdateAutotestMode, config: UpdateAutotestConfig, h
     log.write("result", { outcome: "recovery-mode", startupMode: host.startupMode });
     return;
   }
-  const finish = (outcome: string, data: EventData = {}): void => log.write("result", { outcome, coordinatorIdle: shutdown.isIdle(), ...data });
+  const finish = async (outcome: string, data: EventData = {}): Promise<void> => {
+    log.write("result", { outcome, coordinatorIdle: await shutdown.isIdle(), ...data });
+  };
   const initial = updates.getState();
   log.write("state", summarizeState(initial));
   if (initial.phase === "disabled") {
-    finish("disabled", { state: summarizeState(initial) });
+    await finish("disabled", { state: summarizeState(initial) });
     return;
   }
 
   const check = await updates.check();
   log.write("check", summarizeAction(check));
   if (!check.ok) {
-    finish("check-failed", { state: summarizeState(updates.getState()) });
+    await finish("check-failed", { state: summarizeState(updates.getState()) });
     return;
   }
   if (check.state.phase !== "available" && check.state.phase !== "ready") {
-    finish("up-to-date", { state: summarizeState(check.state) });
+    await finish("up-to-date", { state: summarizeState(check.state) });
     return;
   }
   if (mode === "check-only") {
-    finish("available", { state: summarizeState(check.state) });
+    await finish("available", { state: summarizeState(check.state) });
     return;
   }
 
@@ -307,11 +309,11 @@ async function runMode(mode: UpdateAutotestMode, config: UpdateAutotestConfig, h
   log.write("download", summarizeAction(download));
   const ready = updates.getState();
   if (!download.ok || ready.phase !== "ready" || ready.downloadedVersion === null) {
-    finish("download-failed", { state: summarizeState(ready) });
+    await finish("download-failed", { state: summarizeState(ready) });
     return;
   }
   if (mode === "download-only") {
-    finish("ready", { state: summarizeState(ready) });
+    await finish("ready", { state: summarizeState(ready) });
     return;
   }
 
@@ -320,7 +322,7 @@ async function runMode(mode: UpdateAutotestMode, config: UpdateAutotestConfig, h
     const resumed = await waitForFile(config.pauseFile, io);
     log.write(resumed ? "resumed" : "pause-timeout");
     if (!resumed) {
-      finish("pause-timeout", { state: summarizeState(updates.getState()) });
+      await finish("pause-timeout", { state: summarizeState(updates.getState()) });
       return;
     }
   }
@@ -333,14 +335,14 @@ async function runMode(mode: UpdateAutotestMode, config: UpdateAutotestConfig, h
 
   const token = await prepareShutdown(host, shutdown, log);
   if (token === null) {
-    finish("prepare-failed", { state: summarizeState(updates.getState()) });
+    await finish("prepare-failed", { state: summarizeState(updates.getState()) });
     return;
   }
 
   if (mode === "cancel") {
-    shutdown.cancel(token);
-    log.write("cancelled", { coordinatorIdle: shutdown.isIdle(), assessment: summarizeAssessment(shutdown.assess()) });
-    finish("cancelled", { state: summarizeState(updates.getState()) });
+    await shutdown.cancel(token);
+    log.write("cancelled", { coordinatorIdle: await shutdown.isIdle(), assessment: summarizeAssessment(await shutdown.assess()) });
+    await finish("cancelled", { state: summarizeState(updates.getState()) });
     return;
   }
 
@@ -351,7 +353,7 @@ async function runMode(mode: UpdateAutotestMode, config: UpdateAutotestConfig, h
   const installed = await host.install({ version: ready.downloadedVersion, channel: ready.channel, token });
   io.remove(handoffPath);
   log.write("install", summarizeAction(installed));
-  finish(installed.ok ? "install-returned" : "install-failed", { state: summarizeState(updates.getState()) });
+  await finish(installed.ok ? "install-returned" : "install-failed", { state: summarizeState(updates.getState()) });
 }
 
 export async function runUpdateAutotest(config: UpdateAutotestConfig, host: UpdateAutotestHost, io: UpdateAutotestIo = nodeAutotestIo): Promise<void> {

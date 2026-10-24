@@ -64,7 +64,7 @@ async function importPty(): Promise<PtyModule> {
   return (await import("node-pty")) as unknown as PtyModule;
 }
 
-async function loadPty(): Promise<PtyModule> {
+export async function loadPty(): Promise<PtyModule> {
   if (cachedPty) return cachedPty;
   if (loadError) throw new Error(loadError);
   try {

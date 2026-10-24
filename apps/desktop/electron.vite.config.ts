@@ -10,10 +10,7 @@ export default defineConfig({
     define: { __CW_UPDATE_TEST_BUILD__: JSON.stringify(updateTestBuild) },
     build: {
       outDir: resolve(__dirname, outRoot, "main"),
-      emptyOutDir: true,
-      rollupOptions: {
-        external: ["node-pty"]
-      }
+      emptyOutDir: true
     }
   },
   preload: {
