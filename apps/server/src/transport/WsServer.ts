@@ -1,0 +1,188 @@
+import type { ClientKind, ClientMessage, ServerMessage } from "@cw-code/contracts";
+import { CLOSE_HELLO_TIMEOUT, CLOSE_PROTOCOL_MISMATCH, CLOSE_SERVER_STOPPING, CLOSE_UNAUTHORIZED, PROTOCOL_VERSION } from "@cw-code/shared/protocol";
+import { randomUUID, timingSafeEqual } from "node:crypto";
+import { toRpcError, type CallContext, type Router } from "./Router.js";
+
+export interface WsServerOptions {
+  host: string;
+  port: number;
+  token: string;
+  version: string;
+  router: Router;
+  helloTimeoutMs?: number;
+}
+
+interface SocketData {
+  ctx: CallContext | null;
+  helloTimer: ReturnType<typeof setTimeout> | null;
+}
+
+type Socket = Bun.ServerWebSocket<SocketData>;
+type HelloMessage = Extract<ClientMessage, { t: "hello" }>;
+type CallMessage = Extract<ClientMessage, { t: "call" }>;
+
+const WS_PATH = "/ws";
+const MAX_PAYLOAD_BYTES = 64 * 1024 * 1024;
+const DEFAULT_HELLO_TIMEOUT_MS = 5000;
+const SOCKET_OPEN = 1;
+const CLIENT_KINDS = new Set<string>(["desktop-ui", "desktop-shell", "web"] satisfies ClientKind[]);
+
+function parseJsonObject(raw: string | Buffer): Record<string, unknown> | null {
+  if (typeof raw !== "string") return null;
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    return typeof parsed === "object" && parsed !== null ? (parsed as Record<string, unknown>) : null;
+  } catch {
+    return null;
+  }
+}
+
+function asHello(message: Record<string, unknown> | null): HelloMessage | null {
+  if (message?.t !== "hello") return null;
+  if (typeof message.token !== "string" || typeof message.protocol !== "number") return null;
+  if (typeof message.client !== "string" || !CLIENT_KINDS.has(message.client)) return null;
+  return message as HelloMessage;
+}
+
+function asCall(message: Record<string, unknown>): CallMessage | null {
+  if (message.t !== "call" || typeof message.method !== "string") return null;
+  if (message.id !== undefined && typeof message.id !== "number") return null;
+  return message as CallMessage;
+}
+
+function tokensEqual(expected: string, received: string): boolean {
+  const a = Buffer.from(expected);
+  const b = Buffer.from(received);
+  return a.length === b.length && timingSafeEqual(a, b);
+}
+
+function sendRaw(ws: Socket, data: string): void {
+  if (ws.readyState !== SOCKET_OPEN) return;
+  try {
+    ws.send(data);
+  } catch (error) {
+    console.warn(`could not send to client: ${(error as Error).message}`);
+  }
+}
+
+export class WsServer {
+  private server: Bun.Server<SocketData> | null = null;
+  private sockets = new Set<Socket>();
+  private closedListeners = new Set<(ctx: CallContext) => void>();
+  private readonly helloTimeoutMs: number;
+
+  constructor(private readonly options: WsServerOptions) {
+    this.helloTimeoutMs = options.helloTimeoutMs ?? DEFAULT_HELLO_TIMEOUT_MS;
+  }
+
+  start(): { port: number; url: string } {
+    if (this.server) throw new Error("server already started");
+    const server = Bun.serve<SocketData>({
+      hostname: this.options.host,
+      port: this.options.port,
+      fetch: (req, srv) => {
+        if (new URL(req.url).pathname !== WS_PATH) return new Response("not found", { status: 404 });
+        if (srv.upgrade(req, { data: { ctx: null, helloTimer: null } })) return undefined;
+        return new Response("upgrade required", { status: 426 });
+      },
+      websocket: {
+        maxPayloadLength: MAX_PAYLOAD_BYTES,
+        open: (ws) => this.onOpen(ws),
+        message: (ws, raw) => this.onMessage(ws, raw),
+        close: (ws) => this.onClose(ws),
+      },
+    });
+    this.server = server;
+    const port = server.port ?? this.options.port;
+    return { port, url: `ws://${this.options.host}:${port}${WS_PATH}` };
+  }
+
+  broadcast(channel: string, payload: unknown): void {
+    const data = JSON.stringify({ t: "event", channel, payload } satisfies ServerMessage);
+    for (const ws of this.sockets) if (ws.data.ctx) sendRaw(ws, data);
+  }
+
+  onClientClosed(cb: (ctx: CallContext) => void): () => void {
+    this.closedListeners.add(cb);
+    return () => {
+      this.closedListeners.delete(cb);
+    };
+  }
+
+  clients(): CallContext[] {
+    return [...this.sockets].flatMap((ws) => (ws.data.ctx ? [ws.data.ctx] : []));
+  }
+
+  async stop(): Promise<void> {
+    const server = this.server;
+    if (!server) return;
+    this.server = null;
+    for (const ws of [...this.sockets]) ws.close(CLOSE_SERVER_STOPPING, "server stopping");
+    await server.stop();
+  }
+
+  private onOpen(ws: Socket): void {
+    this.sockets.add(ws);
+    ws.data.helloTimer = setTimeout(() => {
+      ws.data.helloTimer = null;
+      if (!ws.data.ctx) ws.close(CLOSE_HELLO_TIMEOUT, "hello timeout");
+    }, this.helloTimeoutMs);
+  }
+
+  private onClose(ws: Socket): void {
+    this.sockets.delete(ws);
+    if (ws.data.helloTimer) clearTimeout(ws.data.helloTimer);
+    ws.data.helloTimer = null;
+    const ctx = ws.data.ctx;
+    if (!ctx) return;
+    for (const cb of [...this.closedListeners]) {
+      try {
+        cb(ctx);
+      } catch (error) {
+        console.warn(`client-closed listener failed: ${(error as Error).message}`);
+      }
+    }
+  }
+
+  private onMessage(ws: Socket, raw: string | Buffer): void {
+    const message = parseJsonObject(raw);
+    if (!ws.data.ctx) {
+      this.authenticate(ws, message);
+      return;
+    }
+    const call = message ? asCall(message) : null;
+    if (!call) {
+      console.warn("ignoring malformed client message");
+      return;
+    }
+    void this.runCall(ws, ws.data.ctx, call);
+  }
+
+  private authenticate(ws: Socket, message: Record<string, unknown> | null): void {
+    const hello = asHello(message);
+    if (!hello || !tokensEqual(this.options.token, hello.token)) {
+      ws.close(CLOSE_UNAUTHORIZED, "unauthorized");
+      return;
+    }
+    if (hello.protocol !== PROTOCOL_VERSION) {
+      ws.close(CLOSE_PROTOCOL_MISMATCH, "protocol mismatch");
+      return;
+    }
+    if (ws.data.helloTimer) clearTimeout(ws.data.helloTimer);
+    ws.data.helloTimer = null;
+    ws.data.ctx = { clientId: randomUUID(), client: hello.client };
+    const welcome: ServerMessage = { t: "welcome", protocol: PROTOCOL_VERSION, serverVersion: this.options.version, clientId: ws.data.ctx.clientId };
+    sendRaw(ws, JSON.stringify(welcome));
+  }
+
+  private async runCall(ws: Socket, ctx: CallContext, call: CallMessage): Promise<void> {
+    const { id, method, params } = call;
+    try {
+      const value = await this.options.router.dispatch(method, params, ctx);
+      if (id !== undefined) sendRaw(ws, JSON.stringify({ t: "result", id, ok: true, value: value ?? null } satisfies ServerMessage));
+    } catch (error) {
+      if (id === undefined) console.warn(`fire-and-forget call '${method}' failed: ${toRpcError(error).message}`);
+      else sendRaw(ws, JSON.stringify({ t: "result", id, ok: false, error: toRpcError(error) } satisfies ServerMessage));
+    }
+  }
+}
