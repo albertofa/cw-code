@@ -15,7 +15,7 @@ on:
       - "bun.lock"
       - "apps/desktop/package.json"
       - "apps/desktop/src/main/updates/**"
-      - "apps/desktop/src/main/shutdown/**"
+      - "apps/server/src/shutdown/**"
       - "apps/desktop/src/main/index.ts"
       - "apps/desktop/electron-builder*.yml"
       - "apps/desktop/electron.vite.config.ts"

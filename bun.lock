@@ -70,6 +70,18 @@
         "typescript": "^5.6.3",
       },
     },
+    "packages/client": {
+      "name": "@cw-code/client",
+      "version": "0.0.1-alpha.21",
+      "dependencies": {
+        "@cw-code/contracts": "workspace:*",
+        "@cw-code/shared": "workspace:*",
+      },
+      "devDependencies": {
+        "bun-types": "1.4.3",
+        "typescript": "^5.6.3",
+      },
+    },
     "packages/contracts": {
       "name": "@cw-code/contracts",
       "version": "0.0.1-alpha.21",
@@ -210,6 +222,8 @@
     "@codemirror/streamparser": ["@codemirror/streamparser@6.0.0", "", {}, "sha512-JTFPF6xrfjt0mnfGPgzcLiMwYmvIyNaoizp8BYzv8FE8KrT6GBGDZ190rtt+O7Wke3gG/MFHyiY9YGNeimof4w=="],
 
     "@codemirror/view": ["@codemirror/view@6.43.15", "", { "dependencies": { "@codemirror/state": "6.7.6", "crelt": "1.0.7", "style-mod": "4.1.4", "w3c-keyname": "2.2.8" } }, "sha512-HHsfpqFeHyXLs983pSRe38Xajs0vFWZQ2BuX0m7Ki8w3jZ5iD8cuR3lBz2/5/X53Dhf32SBHKh6rtSTB6tKeGw=="],
+
+    "@cw-code/client": ["@cw-code/client@workspace:packages/client"],
 
     "@cw-code/contracts": ["@cw-code/contracts@workspace:packages/contracts"],
 
