@@ -3,7 +3,7 @@ import { parseServerArgs } from "./args.js";
 
 describe("parseServerArgs", () => {
   test("applies defaults", () => {
-    expect(parseServerArgs([])).toEqual({ host: "127.0.0.1", port: 0, parentPid: null, legacyUserData: [] });
+    expect(parseServerArgs([])).toEqual({ host: null, port: 0, parentPid: null, legacyUserData: [], allowOrigins: [] });
   });
 
   test("parses each flag", () => {
@@ -12,6 +12,7 @@ describe("parseServerArgs", () => {
       port: 8080,
       parentPid: 4321,
       legacyUserData: ["/old"],
+      allowOrigins: [],
     });
   });
 
@@ -21,11 +22,19 @@ describe("parseServerArgs", () => {
       port: 65535,
       parentPid: 7,
       legacyUserData: ["/a=b"],
+      allowOrigins: [],
     });
   });
 
   test("collects repeated legacy directories in order", () => {
     expect(parseServerArgs(["--legacy-user-data", "/one", "--legacy-user-data=/two"]).legacyUserData).toEqual(["/one", "/two"]);
+  });
+
+  test("collects repeated allowed origins in order", () => {
+    expect(parseServerArgs(["--allow-origin", "http://localhost:5173", "--allow-origin=https://cw.example"]).allowOrigins).toEqual([
+      "http://localhost:5173",
+      "https://cw.example",
+    ]);
   });
 
   test("rejects unknown flags", () => {

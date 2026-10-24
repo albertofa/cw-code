@@ -287,6 +287,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   panelAnimationMs: 0,
   themeId: "dark",
   customThemes: [],
+  serverBindHost: "",
   notificationSounds: {
     done: { enabled: true, sound: "felt-chord", volume: 60 },
     question: { enabled: true, sound: "triple-tap", volume: 60 },
@@ -295,6 +296,13 @@ export const DEFAULT_SETTINGS: AppSettings = {
 };
 
 const FONT_FAMILY_MAX_LENGTH = 200;
+const BIND_HOST_PATTERN = /^[A-Za-z0-9.:\-\[\]]{0,255}$/;
+
+function bindHostOr(value: unknown, fallback: string): string {
+  if (typeof value !== "string") return fallback;
+  const host = value.trim();
+  return BIND_HOST_PATTERN.test(host) ? host : fallback;
+}
 
 function fontFamilyOr(value: unknown, fallback: string): string {
   return typeof value === "string" ? value.trim().slice(0, FONT_FAMILY_MAX_LENGTH).trim() : fallback;
@@ -453,6 +461,7 @@ function sanitize(patch: SettingsPatch): SettingsPatch {
   if (patch.panelAnimationMs !== undefined) out.panelAnimationMs = steppedIntegerOr(patch.panelAnimationMs, DEFAULT_SETTINGS.panelAnimationMs, 0, 400, 25);
   if (patch.themeId !== undefined) out.themeId = sanitizeThemeId(patch.themeId);
   if (patch.customThemes !== undefined) out.customThemes = sanitizeCustomThemes(patch.customThemes);
+  if (patch.serverBindHost !== undefined) out.serverBindHost = bindHostOr(patch.serverBindHost, DEFAULT_SETTINGS.serverBindHost);
   if (patch.notificationSounds !== undefined) out.notificationSounds = sanitizeNotificationSounds(patch.notificationSounds);
   return out;
 }

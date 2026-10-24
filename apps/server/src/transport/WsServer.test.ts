@@ -426,6 +426,19 @@ describe("WsServer", () => {
     }
   });
 
+  test("onClientAccepted fires only for fully accepted hellos", async () => {
+    const { server, url } = startServer({ authorize: (token) => (token === "device-token" ? { kind: "device", deviceId: "dev_1" } : null) });
+    const accepted: CallContext[] = [];
+    server.onClientAccepted((ctx) => accepted.push(ctx));
+    const desktop = rawSocket(url);
+    await desktop.opened;
+    desktop.send({ t: "hello", token: "device-token", protocol: PROTOCOL_VERSION, client: "desktop-ui" });
+    expect(await desktop.closed).toBe(CLOSE_UNAUTHORIZED);
+    expect(accepted).toEqual([]);
+    const welcome = await newClient(url, "device-token", "web").connect();
+    expect(accepted).toEqual([{ clientId: welcome.clientId, client: "web", auth: { kind: "device", deviceId: "dev_1" } }]);
+  });
+
   test("onClientClosed fires with the context of an authenticated client", async () => {
     const { server, url } = startServer();
     const closed = new Promise<CallContext>((resolve) => server.onClientClosed(resolve));
@@ -485,6 +498,29 @@ describe("WsServer", () => {
     const base = url.replace("ws://", "http://");
     expect((await fetch(base.replace(/\/ws$/, "/other"))).status).toBe(404);
     expect((await fetch(base)).status).toBe(426);
+  });
+
+  test("answers 403 to a rejected Origin before upgrading and passes origin and host to the policy", async () => {
+    const seen: Array<[string | null, string | null]> = [];
+    const warn = spyOn(console, "warn").mockImplementation(() => undefined);
+    const { url } = startServer({
+      isOriginAllowed: (origin, host) => {
+        seen.push([origin, host]);
+        return origin !== "https://evil.example";
+      }
+    });
+    const base = url.replace("ws://", "http://");
+    const host = new URL(base).host;
+    expect((await fetch(base, { headers: { Origin: "https://evil.example" } })).status).toBe(403);
+    expect((await fetch(base, { headers: { Origin: "file://" } })).status).toBe(426);
+    expect((await fetch(base)).status).toBe(426);
+    expect(seen).toEqual([
+      ["https://evil.example", host],
+      ["file://", host],
+      [null, host]
+    ]);
+    expect(warn.mock.calls.some(([message]) => String(message).includes("https://evil.example"))).toBe(true);
+    warn.mockRestore();
   });
 
   test("start reports the bound port and url, and refuses a second start", () => {

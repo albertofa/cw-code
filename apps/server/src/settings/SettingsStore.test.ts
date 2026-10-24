@@ -751,6 +751,18 @@ describe("SettingsStore", () => {
     expect(store.set({ typographyAdvanced: "yes" as unknown as boolean }).typographyAdvanced).toBe(false);
   });
 
+  it("defaults the server bind host to unset and normalizes it", () => {
+    const store = new SettingsStore(tempFilePath());
+    expect(store.get().serverBindHost).toBe("");
+    expect(store.set({ serverBindHost: "  0.0.0.0  " }).serverBindHost).toBe("0.0.0.0");
+    expect(store.set({ serverBindHost: "[::1]" }).serverBindHost).toBe("[::1]");
+    expect(store.set({ serverBindHost: "my-host.local" }).serverBindHost).toBe("my-host.local");
+    expect(store.set({ serverBindHost: "bad host" }).serverBindHost).toBe("");
+    expect(store.set({ serverBindHost: "h/x" }).serverBindHost).toBe("");
+    expect(store.set({ serverBindHost: "a".repeat(256) }).serverBindHost).toBe("");
+    expect(store.set({ serverBindHost: 42 as unknown as string }).serverBindHost).toBe("");
+  });
+
   it("defaults panel animation to off", () => {
     expect(new SettingsStore(tempFilePath()).get().panelAnimationMs).toBe(0);
   });

@@ -1,11 +1,12 @@
 export interface ServerArgs {
-  host: string;
+  host: string | null;
   port: number;
   parentPid: number | null;
   legacyUserData: string[];
+  allowOrigins: string[];
 }
 
-const VALUE_FLAGS = new Set(["--host", "--port", "--parent-pid", "--legacy-user-data"]);
+const VALUE_FLAGS = new Set(["--host", "--port", "--parent-pid", "--legacy-user-data", "--allow-origin"]);
 const MAX_PORT = 65535;
 
 function parseInteger(flag: string, value: string, min: number, max: number): number {
@@ -22,7 +23,7 @@ function splitFlag(arg: string): { flag: string; inline: string | null } {
 }
 
 export function parseServerArgs(argv: string[]): ServerArgs {
-  const args: ServerArgs = { host: "127.0.0.1", port: 0, parentPid: null, legacyUserData: [] };
+  const args: ServerArgs = { host: null, port: 0, parentPid: null, legacyUserData: [], allowOrigins: [] };
   for (let index = 0; index < argv.length; index += 1) {
     const { flag, inline } = splitFlag(argv[index]!);
     if (!VALUE_FLAGS.has(flag)) throw new Error(`unknown flag: ${argv[index]}`);
@@ -31,6 +32,7 @@ export function parseServerArgs(argv: string[]): ServerArgs {
     if (flag === "--host") args.host = value;
     else if (flag === "--port") args.port = parseInteger(flag, value, 0, MAX_PORT);
     else if (flag === "--parent-pid") args.parentPid = parseInteger(flag, value, 1, Number.MAX_SAFE_INTEGER);
+    else if (flag === "--allow-origin") args.allowOrigins.push(value);
     else args.legacyUserData.push(value);
   }
   return args;

@@ -9,10 +9,12 @@ import { reapOrphanedServers } from "../orphanServers.js";
 import { claudeCommandsCachePath, logsDir, opencodeModelsCachePath, sessionDbPath, settingsFilePath, userdataDir } from "../paths/appPaths.js";
 import { initClaudeCommandsCache } from "../providers/claude/claudeCommands.js";
 import { initOpencodeModelsCache } from "../providers/opencode/opencodeModels.js";
-import { openMetadataStores } from "../storage/metadataStores.js";
+import { openMetadataStores, type OpenedMetadataStores } from "../storage/metadataStores.js";
 import type { ServerArgs } from "../transport/args.js";
+import { bindRefusal, resolveBindHost } from "../transport/bindPolicy.js";
 import { removeEndpoint, writeEndpoint } from "../transport/endpointFile.js";
 import { DeviceTokens } from "../transport/deviceTokens.js";
+import { createOriginPolicy } from "../transport/originPolicy.js";
 import { loadOrCreateOwnerToken, tokensEqual } from "../transport/ownerToken.js";
 import { Router, type ClientAuth } from "../transport/Router.js";
 import { TopicRegistry } from "../transport/TopicRegistry.js";
@@ -146,14 +148,24 @@ export class ServerApp {
     const authorize = (token: string): ClientAuth | null => {
       const device = devices.verify(token);
       if (tokensEqual(ownerToken, token)) return { kind: "owner" };
-      if (!device) return null;
-      devices.touch(device.id, Date.now());
-      return { kind: "device", deviceId: device.id };
+      return device ? { kind: "device", deviceId: device.id } : null;
     };
-    const ws = new WsServer({ host: this.args.host, port: this.args.port, authorize, version: this.version, router: this.router });
-    const { url, port } = this.bind(ws);
+    const stores = this.loadStores();
+    const host = resolveBindHost(this.args.host, stores.ok ? stores.settingsStore.get().serverBindHost : undefined);
+    const refusal = bindRefusal(host, devices.count());
+    if (refusal) {
+      appendCrashLog(refusal);
+      console.error(refusal);
+      process.exit(1);
+    }
+    const isOriginAllowed = createOriginPolicy(this.args.allowOrigins);
+    const ws = new WsServer({ host, port: this.args.port, authorize, isOriginAllowed, version: this.version, router: this.router });
+    const { url, port } = this.bind(ws, host);
     this.ws = ws;
-    this.openStores();
+    this.applyStores(stores);
+    ws.onClientAccepted((ctx) => {
+      if (ctx.auth.kind === "device") devices.touch(ctx.auth.deviceId, Date.now());
+    });
     ws.onClientClosed((ctx) => {
       this.topics.dropClient(ctx.clientId);
       this.clientInputs.dropClient(ctx.clientId);
@@ -191,11 +203,11 @@ export class ServerApp {
     this.emit("shutdown.changed", status);
   }
 
-  private bind(ws: WsServer): { url: string; port: number } {
+  private bind(ws: WsServer, host: string): { url: string; port: number } {
     try {
       return ws.start();
     } catch (err) {
-      const message = `could not listen on ${this.args.host}:${this.args.port}: ${(err as Error).message}`;
+      const message = `could not listen on ${host}:${this.args.port}: ${err instanceof Error ? err.message : String(err)}`;
       appendCrashLog(message);
       console.error(message);
       process.exit(1);
@@ -257,7 +269,14 @@ export class ServerApp {
   }
 
   private openStores(): void {
-    const stores = openMetadataStores({ dbPath: sessionDbPath(), settingsPath: settingsFilePath() });
+    this.applyStores(this.loadStores());
+  }
+
+  private loadStores(): OpenedMetadataStores {
+    return openMetadataStores({ dbPath: sessionDbPath(), settingsPath: settingsFilePath() });
+  }
+
+  private applyStores(stores: OpenedMetadataStores): void {
     if (!stores.ok) {
       this.state = { mode: "recovery", issues: stores.issues, dataDir: userdataDir() };
       for (const issue of stores.issues) {

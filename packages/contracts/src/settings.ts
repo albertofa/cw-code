@@ -107,6 +107,8 @@ export interface AppSettings {
   notificationSounds: NotificationSoundSettings;
   themeId: string;
   customThemes: CustomTheme[];
+  /** Address the server binds at its next start; empty means 127.0.0.1. `--host` overrides it. */
+  serverBindHost: string;
 }
 
 export type SettingsPatch = Partial<AppSettings>;

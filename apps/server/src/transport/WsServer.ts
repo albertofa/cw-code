@@ -8,12 +8,14 @@ import {
   PROTOCOL_VERSION
 } from "@cw-code/shared/protocol";
 import { randomUUID } from "node:crypto";
+import { connectHost } from "./bindPolicy.js";
 import { toRpcError, type CallContext, type ClientAuth, type Router } from "./Router.js";
 
 export interface WsServerOptions {
   host: string;
   port: number;
   authorize(token: string): ClientAuth | null;
+  isOriginAllowed?(origin: string | null, hostHeader: string | null): boolean;
   version: string;
   router: Router;
   helloTimeoutMs?: number;
@@ -84,6 +86,7 @@ export class WsServer {
   private server: Bun.Server<SocketData> | null = null;
   private sockets = new Set<Socket>();
   private socketsByClient = new Map<string, Socket>();
+  private acceptedListeners = new Set<(ctx: CallContext) => void>();
   private closedListeners = new Set<(ctx: CallContext) => void>();
   private readonly helloTimeoutMs: number;
 
@@ -98,6 +101,11 @@ export class WsServer {
       port: this.options.port,
       fetch: (req, srv) => {
         if (new URL(req.url).pathname !== WS_PATH) return new Response("not found", { status: 404 });
+        const origin = req.headers.get("origin");
+        if (this.options.isOriginAllowed && !this.options.isOriginAllowed(origin, req.headers.get("host"))) {
+          console.warn(`rejected websocket upgrade from origin ${JSON.stringify(origin)}`);
+          return new Response("forbidden", { status: 403 });
+        }
         if (srv.upgrade(req, { data: { ctx: null, helloTimer: null } })) return undefined;
         return new Response("upgrade required", { status: 426 });
       },
@@ -111,7 +119,7 @@ export class WsServer {
     });
     this.server = server;
     const port = server.port ?? this.options.port;
-    return { port, url: wsUrl(this.options.host, port) };
+    return { port, url: wsUrl(connectHost(this.options.host), port) };
   }
 
   broadcast(channel: string, payload: unknown, accept?: (ctx: CallContext) => boolean): void {
@@ -139,6 +147,13 @@ export class WsServer {
       closed += 1;
     }
     return closed;
+  }
+
+  onClientAccepted(cb: (ctx: CallContext) => void): () => void {
+    this.acceptedListeners.add(cb);
+    return () => {
+      this.acceptedListeners.delete(cb);
+    };
   }
 
   onClientClosed(cb: (ctx: CallContext) => void): () => void {
@@ -174,12 +189,15 @@ export class WsServer {
     if (ws.data.helloTimer) clearTimeout(ws.data.helloTimer);
     ws.data.helloTimer = null;
     const ctx = ws.data.ctx;
-    if (!ctx) return;
-    for (const cb of [...this.closedListeners]) {
+    if (ctx) this.notify(this.closedListeners, ctx, "client-closed");
+  }
+
+  private notify(listeners: Set<(ctx: CallContext) => void>, ctx: CallContext, label: string): void {
+    for (const cb of [...listeners]) {
       try {
         cb(ctx);
       } catch (error) {
-        console.warn(`client-closed listener failed: ${(error as Error).message}`);
+        console.warn(`${label} listener failed: ${error instanceof Error ? error.message : String(error)}`);
       }
     }
   }
@@ -215,10 +233,12 @@ export class WsServer {
     }
     if (ws.data.helloTimer) clearTimeout(ws.data.helloTimer);
     ws.data.helloTimer = null;
-    ws.data.ctx = { clientId: randomUUID(), client: hello.client, auth };
-    this.socketsByClient.set(ws.data.ctx.clientId, ws);
-    const welcome: ServerMessage = { t: "welcome", protocol: PROTOCOL_VERSION, serverVersion: this.options.version, clientId: ws.data.ctx.clientId };
+    const ctx: CallContext = { clientId: randomUUID(), client: hello.client, auth };
+    ws.data.ctx = ctx;
+    this.socketsByClient.set(ctx.clientId, ws);
+    const welcome: ServerMessage = { t: "welcome", protocol: PROTOCOL_VERSION, serverVersion: this.options.version, clientId: ctx.clientId };
     sendRaw(ws, JSON.stringify(welcome));
+    this.notify(this.acceptedListeners, ctx, "client-accepted");
   }
 
   private async runCall(ws: Socket, ctx: CallContext, call: CallMessage): Promise<void> {
