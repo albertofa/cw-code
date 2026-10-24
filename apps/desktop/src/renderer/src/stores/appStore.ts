@@ -1360,6 +1360,47 @@ export const useAppStore = create<AppState>((set, get) => ({
       });
       return;
     }
+    if (event.type === "turn.started") {
+      const current = get().busyTurns[sessionId];
+      if (isPendingTurn(current) || current === event.turnId) return;
+      const userId = `${event.turnId}-u`;
+      set({
+        busyTurns: { ...get().busyTurns, [sessionId]: event.turnId },
+        turnStartedAt: { ...get().turnStartedAt, [sessionId]: event.startedAt },
+        todosBySession: { ...get().todosBySession, [sessionId]: [] },
+        sessionsByProject: withSessionStatus(get().sessionsByProject, sessionId, "working"),
+        ...(messages.some((m) => m.id === userId)
+          ? {}
+          : {
+              messagesBySession: {
+                ...get().messagesBySession,
+                [sessionId]: [...messages, { id: userId, role: "user", text: event.prompt, turnId: event.turnId, timestamp: event.startedAt }]
+              }
+            })
+      });
+      return;
+    }
+    if (event.type === "turn.interrupted") {
+      if (get().busyTurns[sessionId] !== event.turnId) return;
+      const book = closeTurn(
+        { busyTurns: get().busyTurns, turnStartedAt: get().turnStartedAt, turnDurations: get().turnDurations },
+        sessionId,
+        event.turnId
+      );
+      const approvals = { ...get().pendingApprovals };
+      delete approvals[sessionId];
+      const questions = { ...get().pendingQuestions };
+      delete questions[sessionId];
+      set({
+        busyTurns: book.busyTurns,
+        turnStartedAt: book.turnStartedAt,
+        turnDurations: book.turnDurations,
+        pendingApprovals: approvals,
+        pendingQuestions: questions,
+        sessionsByProject: patchSession(get().sessionsByProject, sessionId, { status: "holding", updatedAt: Date.now() })
+      });
+      return;
+    }
     if (event.type !== "turn.retry" && event.type !== "turn.done" && event.type !== "turn.error" && "turnId" in event) {
       const stripped = withoutRetryNotice(messages, event.turnId);
       if (stripped !== messages) {

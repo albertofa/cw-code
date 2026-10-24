@@ -2200,6 +2200,22 @@ describe("SessionManager", () => {
     manager.dispose();
   });
 
+  it("emits turn.started with the returned turn id and turn.interrupted on interrupt", async () => {
+    const { manager, received } = makeManager();
+    const project = manager.addProject("C:\\proj-turn-lifecycle");
+    const session = await manager.createSession(project.id, "claude");
+    const turnId = await manager.startTurn(session.id, "hello there");
+    const started = received.find((r) => r.event.type === "turn.started");
+    expect(started?.sessionId).toBe(session.id);
+    expect(started?.event).toMatchObject({ type: "turn.started", turnId, sessionId: session.id, prompt: "hello there" });
+    expect(received.some((r) => r.event.type === "turn.interrupted")).toBe(false);
+    manager.interrupt(turnId);
+    const interrupted = received.find((r) => r.event.type === "turn.interrupted");
+    expect(interrupted?.sessionId).toBe(session.id);
+    expect(interrupted?.event).toEqual({ type: "turn.interrupted", turnId, sessionId: session.id });
+    manager.dispose();
+  });
+
   it("keeps the active turn while background tasks run", async () => {
     const { manager, fake } = makeManager();
     const project = manager.addProject("C:\\proj-active-bg");

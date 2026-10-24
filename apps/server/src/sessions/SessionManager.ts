@@ -1974,7 +1974,9 @@ export class SessionManager {
         ...(!opts?.command && opts?.skills?.length ? { skills: opts.skills } : {}),
         env: buildTurnEnv(process.env, this.sessionEnvVars(session.id, session, project, cwd, session.driver === "claude"))
       });
-      this.activeTurns.set(handle.turnId, { sessionId, startedAt: Date.now() });
+      const startedAt = Date.now();
+      this.activeTurns.set(handle.turnId, { sessionId, startedAt });
+      this.onEvent(sessionId, { type: "turn.started", turnId: handle.turnId, sessionId, startedAt, prompt });
       if (opts?.prRefs && opts.prRefs.length > 0) this.turnPrRefs.set(handle.turnId, opts.prRefs);
       if (opts?.finalReview) this.turnFinalReviews.set(handle.turnId, opts.finalReview);
       const lastTurnSnapshot = snapshot ? { turnId: handle.turnId, ...snapshot } : undefined;
@@ -2239,6 +2241,7 @@ export class SessionManager {
     this.turnFinalReviews.delete(turnId);
     this.captureEndSnapshot(sessionId, turnId, driver ? () => this.driverSettled(driver, sessionId) : undefined);
     this.store.updateSession(sessionId, { status: "holding" }, "turn-interrupted");
+    this.onEvent(sessionId, { type: "turn.interrupted", turnId, sessionId });
     if (!session) return;
     if (this.shutdownReserved) this.interruptedForShutdown.add(sessionId);
     this.emitSession(sessionId);
