@@ -76,6 +76,7 @@ function historyAheadOfLive(history: ChatMessage[], current: ChatMessage[]): Cha
 let pendingSeq = 0;
 let lastUpdateAppliedAt = 0;
 let pendingPromptInFlight = false;
+let appliedSettingsJson: string | null = null;
 
 function nextPendingTurnId(): string {
   pendingSeq += 1;
@@ -624,6 +625,7 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   async loadProjects() {
     const [projects, settings] = await Promise.all([window.cw.listProjects(), window.cw.getSettings()]);
+    appliedSettingsJson = JSON.stringify(settings);
     void get().ensureHomeDir().catch(() => {});
     set({
       projects,
@@ -1082,13 +1084,18 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   async saveSettings(patch: SettingsPatch) {
     const saved = await window.cw.setSettings(patch);
+    const version = get().settingsVersion;
     get().applySettings(saved);
-    set({ settingsVersion: get().settingsVersion + 1 });
+    if (get().settingsVersion === version) set({ settingsVersion: version + 1 });
     return saved;
   },
 
   applySettings(saved: AppSettings) {
+    const json = JSON.stringify(saved);
+    const changed = json !== appliedSettingsJson;
+    appliedSettingsJson = json;
     set({
+      ...(changed ? { settingsVersion: get().settingsVersion + 1 } : {}),
       sourceControlRefreshIntervalSeconds: saved.sourceControlRefreshIntervalSeconds,
       prRefreshIntervalSeconds: saved.prRefreshIntervalSeconds,
       holdingAutoExpireEnabled: saved.holdingAutoExpireEnabled,
