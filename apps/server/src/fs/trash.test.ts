@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { moveToTrash, trashCommands, type TrashCommand } from "./trash.js";
+import { moveToTrash, trashCommands, trashFailureMessage, type TrashCommand } from "./trash.js";
 
 const TARGET = "/work/repo/it's $(rm -rf) `x`.txt";
 
@@ -79,5 +79,16 @@ describe("moveToTrash", () => {
   it("reports an unsupported system when no command is installed", async () => {
     const failure = moveToTrash(TARGET, async (command) => Promise.reject(missing(command.file)), "linux");
     await expect(failure).rejects.toThrow("moving files to the trash is not supported on this system (install gio or trash-cli)");
+  });
+});
+
+describe("trashFailureMessage", () => {
+  it("starts with a one-line summary and keeps the full stderr after it", () => {
+    const message = trashFailureMessage("/work/a.txt", "\n  Operation not supported  \nsecond line\n", "fallback");
+    expect(message).toBe("could not move /work/a.txt to the trash: Operation not supported\nOperation not supported  \nsecond line");
+  });
+
+  it("uses the fallback when stderr is empty", () => {
+    expect(trashFailureMessage("/work/a.txt", "  ", "timed out")).toBe("could not move /work/a.txt to the trash: timed out");
   });
 });

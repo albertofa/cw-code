@@ -4,6 +4,8 @@ import { join } from "node:path";
 import { writeFileAtomic } from "../storage/atomicFile.js";
 
 const ENDPOINT_FILE = "server.json";
+const PROBE_TIMEOUT_MS = 1000;
+const UPGRADE_REQUIRED = 426;
 
 export function endpointFilePath(dir: string): string {
   return join(dir, ENDPOINT_FILE);
@@ -43,6 +45,19 @@ export function readLiveEndpoint(dir: string, isAlive: (pid: number) => boolean 
   const ready = readEndpointFile(dir);
   if (!ready || ready.pid === process.pid || !isAlive(ready.pid)) return null;
   return ready;
+}
+
+async function probeServer(url: string): Promise<boolean> {
+  try {
+    const response = await fetch(url.replace(/^ws/, "http"), { signal: AbortSignal.timeout(PROBE_TIMEOUT_MS), redirect: "manual" });
+    return response.status === UPGRADE_REQUIRED;
+  } catch {
+    return false;
+  }
+}
+
+export function confirmLiveEndpoint(ready: ServerReady, probe: (url: string) => Promise<boolean> = probeServer): Promise<boolean> {
+  return probe(ready.url).catch(() => false);
 }
 
 export function writeEndpoint(dir: string, ready: ServerReady): void {

@@ -4,7 +4,7 @@ import { appendCrashLog } from "./debug/crashLog.js";
 import { ensureAppDirs, migrateFromUserData, userdataDir } from "./paths/appPaths.js";
 import { loadLoginShellEnvironment } from "./shellEnvironment.js";
 import { parseServerArgs } from "./transport/args.js";
-import { readLiveEndpoint } from "./transport/endpointFile.js";
+import { confirmLiveEndpoint, readLiveEndpoint, removeEndpoint } from "./transport/endpointFile.js";
 
 const EXIT_ALREADY_RUNNING = 3;
 
@@ -17,16 +17,19 @@ function reportFatalStartupError(error: unknown): void {
 
 async function main(): Promise<void> {
   const args = parseServerArgs(process.argv.slice(2));
+  const running = readLiveEndpoint(userdataDir());
+  if (running) {
+    if (await confirmLiveEndpoint(running)) {
+      process.stdout.write(`CW_SERVER_RUNNING ${JSON.stringify(running)}\n`, () => process.exit(EXIT_ALREADY_RUNNING));
+      return;
+    }
+    removeEndpoint(userdataDir(), running.pid);
+  }
   const loginShellWarnings = await loadLoginShellEnvironment(process.platform).catch((err) => [
     `login shell capture failed: ${(err as Error).message}`
   ]);
   ensureAppDirs();
   for (const dir of args.legacyUserData) migrateFromUserData(dir);
-  const running = readLiveEndpoint(userdataDir());
-  if (running) {
-    process.stdout.write(`CW_SERVER_RUNNING ${JSON.stringify(running)}\n`, () => process.exit(EXIT_ALREADY_RUNNING));
-    return;
-  }
   new ServerApp(args, pkg.version).start(loginShellWarnings);
 }
 

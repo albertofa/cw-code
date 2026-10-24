@@ -6,6 +6,7 @@ export interface TrashCommand {
   env?: Record<string, string>;
 }
 
+const TRASH_TIMEOUT_MS = 60_000;
 const WINDOWS_TARGET_ENV = "CW_TRASH_TARGET";
 
 const WINDOWS_TRASH_SCRIPT = [
@@ -46,9 +47,16 @@ function isMissingExecutable(error: unknown): boolean {
   return (error as NodeJS.ErrnoException | null)?.code === "ENOENT";
 }
 
-function runCommand(command: TrashCommand): Promise<void> {
+export function trashFailureMessage(target: string, stderr: string, fallback: string): string {
+  const full = stderr.trim() || fallback;
+  const summary = full.split("\n").map((line) => line.trim()).find((line) => line.length > 0) ?? full;
+  return `could not move ${target} to the trash: ${summary}${full === summary ? "" : `\n${full}`}`;
+}
+
+function runCommand(command: TrashCommand, target: string): Promise<void> {
   return new Promise((resolve, reject) => {
-    execFile(command.file, command.args, { windowsHide: true, env: { ...process.env, ...command.env } }, (error, _stdout, stderr) => {
+    const options = { windowsHide: true, timeout: TRASH_TIMEOUT_MS, killSignal: "SIGKILL" as const, env: { ...process.env, ...command.env } };
+    execFile(command.file, command.args, options, (error, _stdout, stderr) => {
       if (!error) {
         resolve();
         return;
@@ -57,15 +65,14 @@ function runCommand(command: TrashCommand): Promise<void> {
         reject(error);
         return;
       }
-      const detail = String(stderr).trim() || error.message;
-      reject(new Error(`${command.file} could not move the item to the trash: ${detail}`));
+      reject(new Error(trashFailureMessage(target, String(stderr), error.message)));
     });
   });
 }
 
 export async function moveToTrash(
   target: string,
-  run: (command: TrashCommand) => Promise<void> = runCommand,
+  run: (command: TrashCommand) => Promise<void> = (command) => runCommand(command, target),
   platform: NodeJS.Platform = process.platform
 ): Promise<void> {
   for (const command of trashCommands(platform, target)) {

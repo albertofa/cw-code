@@ -3,7 +3,9 @@ import type { ServerReady } from "@cw-code/contracts";
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { endpointFilePath, readLiveEndpoint, removeEndpoint, writeEndpoint } from "./endpointFile.js";
+import { confirmLiveEndpoint, endpointFilePath, readLiveEndpoint, removeEndpoint, writeEndpoint } from "./endpointFile.js";
+import { Router } from "./Router.js";
+import { WsServer } from "./WsServer.js";
 
 const OTHER_PID = process.pid + 100_000;
 const UNUSED_PID = 2_147_483_000;
@@ -84,5 +86,60 @@ describe("endpoint file", () => {
 
   test("removeEndpoint tolerates a missing file", () => {
     expect(() => removeEndpoint(root, OTHER_PID)).not.toThrow();
+  });
+});
+
+describe("confirmLiveEndpoint", () => {
+  test("passes the recorded url to the probe and returns its answer", async () => {
+    const seen: string[] = [];
+    const probe = async (url: string) => {
+      seen.push(url);
+      return true;
+    };
+    expect(await confirmLiveEndpoint(ready(OTHER_PID), probe)).toBe(true);
+    expect(seen).toEqual([ready(OTHER_PID).url]);
+  });
+
+  test("treats a live foreign pid that fails the probe as stale", async () => {
+    writeEndpoint(root, ready(process.ppid));
+    const candidate = readLiveEndpoint(root);
+    expect(candidate).not.toBeNull();
+    expect(await confirmLiveEndpoint(candidate!, async () => false)).toBe(false);
+    removeEndpoint(root, candidate!.pid);
+    expect(existsSync(endpointFilePath(root))).toBe(false);
+  });
+
+  test("treats a throwing probe as stale", async () => {
+    const probe = async () => {
+      throw new Error("boom");
+    };
+    expect(await confirmLiveEndpoint(ready(OTHER_PID), probe)).toBe(false);
+  });
+
+  test("confirms a real websocket server", async () => {
+    const server = new WsServer({ host: "127.0.0.1", port: 0, token: "t".repeat(64), version: "1.0.0", router: new Router() });
+    try {
+      const { url, port } = server.start();
+      expect(await confirmLiveEndpoint({ ...ready(OTHER_PID), url, port })).toBe(true);
+    } finally {
+      await server.stop();
+    }
+  });
+
+  test("rejects a closed port", async () => {
+    const server = new WsServer({ host: "127.0.0.1", port: 0, token: "t".repeat(64), version: "1.0.0", router: new Router() });
+    const { url, port } = server.start();
+    await server.stop();
+    expect(await confirmLiveEndpoint({ ...ready(OTHER_PID), url, port })).toBe(false);
+  });
+
+  test("rejects a foreign http server", async () => {
+    const foreign = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: () => new Response("hi") });
+    try {
+      const url = `ws://127.0.0.1:${foreign.port}/ws`;
+      expect(await confirmLiveEndpoint({ ...ready(OTHER_PID), url, port: foreign.port! })).toBe(false);
+    } finally {
+      await foreign.stop(true);
+    }
   });
 });

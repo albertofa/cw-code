@@ -54,6 +54,7 @@ export class ServerApp {
   private sessionSettleInitialTimer: ReturnType<typeof setTimeout> | null = null;
   private parentTimer: ReturnType<typeof setInterval> | null = null;
   private stopping = false;
+  private lastShutdownStatus: ShutdownStatus = { idle: true, committed: false, reason: null };
 
   constructor(
     private readonly args: ServerArgs,
@@ -98,13 +99,13 @@ export class ServerApp {
       appendCrashLog(`unhandledRejection: ${String(reason)}`);
     });
     const token = loadOrCreateOwnerToken(userdataDir());
-    this.openStores();
     registerHandlers(this.router, this);
     const ws = new WsServer({ host: this.args.host, port: this.args.port, token, version: this.version, router: this.router });
+    const { url, port } = this.bind(ws);
     this.ws = ws;
-    const { url, port } = ws.start();
+    this.openStores();
     ws.onClientClosed((ctx) => {
-      if (ctx.client === "desktop-ui" && !this.stopping) this.recoverAbandonedShutdown();
+      if (ctx.client === "desktop-ui" && !this.stopping) this.handleUiDisconnected(ws);
     });
     const ready: ServerReady = { url, port, pid: process.pid, protocol: PROTOCOL_VERSION, version: this.version };
     writeEndpoint(userdataDir(), ready);
@@ -131,7 +132,22 @@ export class ServerApp {
   }
 
   emitShutdownChanged(): void {
-    this.emit("shutdown.changed", this.shutdownStatus());
+    const status = this.shutdownStatus();
+    const last = this.lastShutdownStatus;
+    if (last.idle === status.idle && last.committed === status.committed && last.reason === status.reason) return;
+    this.lastShutdownStatus = status;
+    this.emit("shutdown.changed", status);
+  }
+
+  private bind(ws: WsServer): { url: string; port: number } {
+    try {
+      return ws.start();
+    } catch (err) {
+      const message = `could not listen on ${this.args.host}:${this.args.port}: ${(err as Error).message}`;
+      appendCrashLog(message);
+      console.error(message);
+      process.exit(1);
+    }
   }
 
   private async commitShutdown(token: string, action: () => Promise<void> | void): Promise<ShutdownCommitResult> {
@@ -165,8 +181,12 @@ export class ServerApp {
     this.stopping = true;
     if (this.parentTimer) clearInterval(this.parentTimer);
     this.parentTimer = null;
-    this.stopSessionSweeps();
-    this.disposeServices();
+    try {
+      this.stopSessionSweeps();
+      this.disposeServices();
+    } catch (err) {
+      console.warn(`service disposal failed: ${(err as Error).message}`);
+    }
     try {
       await this.ws?.stop();
     } catch (err) {
@@ -232,6 +252,12 @@ export class ServerApp {
     const event: ShutdownExpiredEvent = { reason };
     this.emit("shutdown.expired", event);
     this.emitShutdownChanged();
+  }
+
+  private handleUiDisconnected(ws: WsServer): void {
+    this.recoverAbandonedShutdown();
+    if (ws.clients().some((client) => client.client === "desktop-ui")) return;
+    this.services?.ptys.detachAll();
   }
 
   private recoverAbandonedShutdown(): void {
