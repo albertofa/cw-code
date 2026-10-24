@@ -1,6 +1,6 @@
 import "../../../tests/dom.js";
 import { afterEach, describe, expect, it } from "bun:test";
-import { deriveThemeTokens } from "../../shared/themes.js";
+import { deriveThemeTokens } from "@cw-code/shared/themes";
 import type { CustomTheme } from "./cw.js";
 import { applyTheme, cacheTheme, THEME_STORAGE_KEY, THEME_VARS_ATTRIBUTE, type StoredTheme } from "./theme.js";
 

@@ -64,9 +64,9 @@ import { UpdateService } from "./updates/UpdateService.js";
 import { createUpdateLogFile } from "./updates/updateLog.js";
 import { firstRunChannelPatch, touchesUpdatePreferences, updatePreferences } from "./updates/updatePreferences.js";
 import { isUpdateChannel } from "./updates/updateState.js";
-import { prKey } from "../shared/prRef.js";
-import { isSkillMentionList } from "../shared/skillMentions.js";
-import { windowBackgroundColor } from "../shared/themes.js";
+import { prKey } from "@cw-code/shared/prRef";
+import { isSkillMentionList } from "@cw-code/shared/skillMentions";
+import { windowBackgroundColor } from "@cw-code/shared/themes";
 
 type DriverName = DriverKind;
 

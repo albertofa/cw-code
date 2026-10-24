@@ -33,7 +33,7 @@ import {
   THEME_COLOR_TOKENS,
   THEME_NAME_MAX_LENGTH,
   UNTITLED_THEME_NAME
-} from "../../shared/themes.js";
+} from "@cw-code/shared/themes";
 import { defaultPrWorkflows, RETIRED_BUILT_IN_PROMPTS } from "./prWorkflowDefaults.js";
 import {
   configuredCliBinaryPath,

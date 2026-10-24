@@ -1,4 +1,4 @@
-import type { SkillMention } from "../../../shared/skillMentions.js";
+import type { SkillMention } from "@cw-code/shared/skillMentions";
 
 export type SkillSegment = { kind: "text"; value: string } | { kind: "skill"; name: string; raw: string };
 

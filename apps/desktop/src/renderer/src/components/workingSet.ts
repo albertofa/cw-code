@@ -1,4 +1,4 @@
-import { isWorkingSetStatus, WORKING_SET_STATUSES } from "../../../shared/workingSet.js";
+import { isWorkingSetStatus, WORKING_SET_STATUSES } from "@cw-code/shared/workingSet";
 import type { Session, SessionStatus } from "../cw.js";
 
 const WORKING_SET_RANK: Partial<Record<SessionStatus, number>> = {

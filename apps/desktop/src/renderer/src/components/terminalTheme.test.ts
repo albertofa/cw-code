@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { THEME_PALETTES } from "../../../shared/themes.js";
+import { THEME_PALETTES } from "@cw-code/shared/themes";
 import type { ThemeBase } from "../cw.js";
 import { terminalTheme } from "./terminalTheme.js";
 

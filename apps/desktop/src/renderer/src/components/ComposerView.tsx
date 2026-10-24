@@ -54,7 +54,7 @@ import {
   insertSkillMention,
   insertSkillTrigger,
   skillMentionNames
-} from "../../../shared/skillMentions.js";
+} from "@cw-code/shared/skillMentions";
 import { skillSegments } from "./skillSegments.js";
 import { parseBranchMismatchError, type BranchMismatch } from "./sessionBranch.js";
 import { harnessLabel } from "./toolTabs.js";

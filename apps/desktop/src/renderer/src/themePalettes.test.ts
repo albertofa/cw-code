@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "bun:test";
-import { THEME_PALETTES } from "../../shared/themes.js";
+import { THEME_PALETTES } from "@cw-code/shared/themes";
 
 const NAMED_COLORS = [
   "aqua",

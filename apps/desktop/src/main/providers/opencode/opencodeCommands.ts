@@ -1,5 +1,5 @@
 import type { CommandInvocation, CommandOption } from "@cw-code/contracts";
-import { skillInvocation } from "../../../shared/skillMentions.js";
+import { skillInvocation } from "@cw-code/shared/skillMentions";
 
 export type OpencodeBuiltinCommand = "compact" | "undo" | "redo";
 

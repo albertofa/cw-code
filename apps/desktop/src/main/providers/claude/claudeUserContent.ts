@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
 import type { TurnRequest } from "@cw-code/contracts";
 import { imageExtMime } from "../../fs/FileService.js";
-import { skillInvocation } from "../../../shared/skillMentions.js";
+import { skillInvocation } from "@cw-code/shared/skillMentions";
 
 export function claudePromptText(request: Pick<TurnRequest, "prompt" | "command" | "skills">): string {
   if (request.command || !request.skills?.length) return request.prompt;

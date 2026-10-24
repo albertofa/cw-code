@@ -16,7 +16,7 @@ import type {
   SessionPrLink,
   WorkflowRunSummary
 } from "@cw-code/contracts";
-import { autoFollowUpWorkflow } from "../../../shared/autoFollowUp.js";
+import { autoFollowUpWorkflow } from "@cw-code/shared/autoFollowUp";
 import { linkFor, pickMainSession } from "./sessionPrLinks.js";
 
 export const TEMPLATE_VARS = [

@@ -1,5 +1,5 @@
 import type { AppSettings, GitStatus, GitStatusUpdate, PrRef, SessionMeta, ThreadEvent } from "@cw-code/contracts";
-import { prKey } from "../../shared/prRef.js";
+import { prKey } from "@cw-code/shared/prRef";
 import type { GitService } from "../fs/GitService.js";
 import type { PrTracker } from "../github/PrTracker.js";
 import type { SessionManager } from "../sessions/SessionManager.js";

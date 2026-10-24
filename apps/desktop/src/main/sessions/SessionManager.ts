@@ -47,8 +47,8 @@ import type {
   WorktreePruneSummary
 } from "@cw-code/contracts";
 import { type SessionStatusReason } from "../debug/sessionStatusTrace.js";
-import { isWorkingSetStatus } from "../../shared/workingSet.js";
-import { autoFollowUpWorkflow, babysitsOpenPr } from "../../shared/autoFollowUp.js";
+import { isWorkingSetStatus } from "@cw-code/shared/workingSet";
+import { autoFollowUpWorkflow, babysitsOpenPr } from "@cw-code/shared/autoFollowUp";
 import { SessionStore } from "./SessionStore.js";
 import {
   addUnlinkedKey,

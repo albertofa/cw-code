@@ -20,7 +20,7 @@ import {
   type BabysitControl,
   type BabysitState
 } from "./prSessionModel.js";
-import { AUTOMATED_WORKFLOW_NOTE, babysitsOpenPr } from "../../../shared/autoFollowUp.js";
+import { AUTOMATED_WORKFLOW_NOTE, babysitsOpenPr } from "@cw-code/shared/autoFollowUp";
 
 function link(overrides: Partial<SessionPrLink> = {}): SessionPrLink {
   return {

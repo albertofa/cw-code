@@ -1,6 +1,6 @@
 import { homedir } from "node:os";
 import type { AppSettings, PrLinkSnapshot, PrRef, PrSummary } from "@cw-code/contracts";
-import { prKey } from "../../shared/prRef.js";
+import { prKey } from "@cw-code/shared/prRef";
 import { authenticatedEnvironment, execWithStatus } from "../fs/GitService.js";
 import { RefreshScheduler } from "../sourceControl/RefreshScheduler.js";
 import { defaultGitHubAccounts, isGitHubAuthError } from "./GitHubAccounts.js";

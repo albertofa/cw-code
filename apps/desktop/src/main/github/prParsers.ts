@@ -16,7 +16,7 @@ import type {
   PrThreadComment,
   PrTimelineItem
 } from "@cw-code/contracts";
-import { prKey, prRefFromUrl } from "../../shared/prRef.js";
+import { prKey, prRefFromUrl } from "@cw-code/shared/prRef";
 import { INBOX_SEARCH_LIMIT } from "./prQueries.js";
 
 export { prKey, prRefFromUrl };

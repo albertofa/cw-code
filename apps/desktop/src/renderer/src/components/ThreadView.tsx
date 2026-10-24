@@ -41,7 +41,7 @@ import { ThreadVisibleContext } from "./threadVisibility.js";
 import { toolAvailability } from "./toolTabs.js";
 import { SkillChip } from "./SkillChip.js";
 import { skillSegments } from "./skillSegments.js";
-import { findSkillReferences } from "../../../shared/skillMentions.js";
+import { findSkillReferences } from "@cw-code/shared/skillMentions";
 import { useSessionSkillNames } from "../stores/sessionSkillsStore.js";
 import { PromptRail, type PromptMark } from "./PromptRail.js";
 import { ThreadFindBar } from "./ThreadFindBar.js";
