@@ -254,8 +254,8 @@ function syncWindowBackground(): void {
   liveMainWindow()?.setBackgroundColor(currentWindowBackground());
 }
 
-async function createWindow(): Promise<void> {
-  mainWindow = new BrowserWindow({
+function createBrowserWindow(): BrowserWindow {
+  return new BrowserWindow({
     width: 1440,
     height: 900,
     frame: false,
@@ -272,26 +272,22 @@ async function createWindow(): Promise<void> {
       ...(process.env["ELECTRON_RENDERER_URL"] ? { partition: "dev" } : {})
     }
   });
+}
 
-  mainWindow.on("focus", () => mainWindow?.flashFrame(false));
-  mainWindow.on("maximize", () => mainWindow?.webContents.send("win.maximized", true));
-  mainWindow.on("unmaximize", () => mainWindow?.webContents.send("win.maximized", false));
-  mainWindow.on("unresponsive", () => appendCrashLog("window unresponsive"));
-  mainWindow.on("close", (event) => {
-    if (process.platform === "darwin" || isQuitApproved()) return;
-    event.preventDefault();
-    requestShutdown();
-  });
-  mainWindow.on("session-end", endOfSession);
+function wireWindow(window: BrowserWindow): void {
+  window.on("focus", () => window.flashFrame(false));
+  window.on("maximize", () => window.webContents.send("win.maximized", true));
+  window.on("unmaximize", () => window.webContents.send("win.maximized", false));
+  window.on("unresponsive", () => appendCrashLog("window unresponsive"));
 
-  const webContents = mainWindow.webContents;
+  const webContents = window.webContents;
   webContents.on("render-process-gone", (_e, details) => {
     appendCrashLog(`render-process-gone: reason=${details.reason} exitCode=${details.exitCode}`);
-    if (mainWindow) resetAttention(mainWindow);
+    resetAttention(window);
     void webContents.reload();
   });
   webContents.on("did-start-navigation", (navigation) => {
-    if (mainWindow && resetsAttention(navigation)) resetAttention(mainWindow);
+    if (resetsAttention(navigation)) resetAttention(window);
   });
   webContents.on("console-message", (event) => {
     if (event.level === "error") {
@@ -307,14 +303,42 @@ async function createWindow(): Promise<void> {
     event.preventDefault();
     if (/^https?:/i.test(url)) void shell.openExternal(url);
   });
+}
+
+function devWindowCount(): number {
+  if (app.isPackaged) return 0;
+  const count = Number(process.env["CW_DEV_WINDOWS"]);
+  return Number.isInteger(count) && count >= 2 && count <= 4 ? count : 0;
+}
+
+async function openDevWindows(): Promise<void> {
+  const extraCount = devWindowCount() - 1;
+  for (let index = 0; index < extraCount; index += 1) {
+    const window = createBrowserWindow();
+    wireWindow(window);
+    await loadRenderer(window);
+  }
+}
+
+async function createWindow(): Promise<void> {
+  const window = createBrowserWindow();
+  mainWindow = window;
+  wireWindow(window);
+  window.on("close", (event) => {
+    if (process.platform === "darwin" || isQuitApproved()) return;
+    event.preventDefault();
+    requestShutdown();
+  });
+  window.on("session-end", endOfSession);
 
   const probeOutPath = packageProbeOutPath();
   if (probeOutPath) {
-    await startPackageProbe(mainWindow, probeOutPath);
+    await startPackageProbe(window, probeOutPath);
     return;
   }
 
-  await loadRenderer(mainWindow);
+  await loadRenderer(window);
+  await openDevWindows();
 }
 
 function packageProbeOutPath(): string | undefined {
