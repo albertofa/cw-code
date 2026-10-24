@@ -1,0 +1,47 @@
+export const APP_TOPIC = "app";
+export const SIDEBAR_TOPIC = "sidebar";
+export const PRS_TOPIC = "prs";
+export const USAGE_TOPIC = "usage";
+export const GITHUB_RUNS_TOPIC = "github/runs";
+export const MAX_TOPICS_PER_CALL = 1000;
+export const MAX_TOPICS_PER_CLIENT = 5000;
+
+export type TopicPrefix = "session/" | "git/" | "files/" | "pty/" | "github/";
+
+const EXACT_TOPICS: ReadonlySet<string> = new Set([APP_TOPIC, SIDEBAR_TOPIC, PRS_TOPIC, USAGE_TOPIC]);
+const PREFIXES: readonly TopicPrefix[] = ["session/", "git/", "files/", "pty/", "github/"];
+const ID_PATTERN = /^[A-Za-z0-9_.:-]{1,200}$/;
+const GITHUB_VIEW_PATTERN = /^[a-z0-9-]{1,64}$/;
+
+export function sessionTopic(sessionId: string): string {
+  return `session/${sessionId}`;
+}
+
+export function gitTopic(sessionId: string): string {
+  return `git/${sessionId}`;
+}
+
+export function filesTopic(sessionId: string): string {
+  return `files/${sessionId}`;
+}
+
+export function ptyTopic(ptyId: string): string {
+  return `pty/${ptyId}`;
+}
+
+export function topicId(topic: string, prefix: TopicPrefix): string | null {
+  if (!topic.startsWith(prefix)) return null;
+  const id = topic.slice(prefix.length);
+  return id.length > 0 ? id : null;
+}
+
+export function isValidTopic(topic: unknown): topic is string {
+  if (typeof topic !== "string") return false;
+  if (EXACT_TOPICS.has(topic)) return true;
+  for (const prefix of PREFIXES) {
+    const id = topicId(topic, prefix);
+    if (id === null) continue;
+    return (prefix === "github/" ? GITHUB_VIEW_PATTERN : ID_PATTERN).test(id);
+  }
+  return false;
+}

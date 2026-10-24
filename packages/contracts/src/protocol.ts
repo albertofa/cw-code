@@ -27,3 +27,9 @@ export interface ServerReady {
   protocol: number;
   version: string;
 }
+
+export interface TopicsParams {
+  topics: string[];
+}
+
+export type TopicSubscribeResult = Record<string, { rev: number; data: unknown }>;
