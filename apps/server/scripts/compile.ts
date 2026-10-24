@@ -71,7 +71,7 @@ function copyNodePty(ptyDir: string, layout: NativeLayout): string {
   mkdirSync(outDir, { recursive: true });
   for (const file of ["package.json", "LICENSE"]) cpSync(join(ptyDir, file), join(outDir, file));
   cpSync(join(ptyDir, "lib"), join(outDir, "lib"), { recursive: true, filter: isRuntimeLibFile });
-  cpSync(join(ptyDir, layout.dir), join(outDir, layout.dir), { recursive: true });
+  cpSync(join(ptyDir, layout.dir), join(outDir, layout.dir), { recursive: true, filter: (source) => !source.endsWith(".pdb") });
   return outDir;
 }
 
