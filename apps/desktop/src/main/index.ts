@@ -1545,7 +1545,11 @@ if (process.platform === "linux") {
 }
 
 if (process.platform === "win32") {
-  app.commandLine.appendSwitch("disable-features", "CalculateNativeWinOcclusion");
+  const disabledFeatures = app.commandLine.getSwitchValue("disable-features");
+  app.commandLine.appendSwitch(
+    "disable-features",
+    disabledFeatures ? `${disabledFeatures},CalculateNativeWinOcclusion` : "CalculateNativeWinOcclusion"
+  );
 }
 
 if (!app.isPackaged && !app.commandLine.hasSwitch("user-data-dir")) {
