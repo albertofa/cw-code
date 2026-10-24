@@ -5,13 +5,14 @@ import { checkCliVersion } from "../cliVersions.js";
 import { defaultPrWorkflows } from "../settings/prWorkflowDefaults.js";
 import { configuredCliBinaryPath } from "../settings/settingsUtils.js";
 import type { Router } from "../transport/Router.js";
-import { handle } from "./shared.js";
+import { handle, requireOwner } from "./shared.js";
 
 export function registerSettingsHandlers(router: Router, app: ServerApp): void {
   const services = () => app.requireServices();
   handle(router, "settings.get", () => services().sessions.getSettings());
   handle(router, "settings.prWorkflowDefaults", () => defaultPrWorkflows());
-  handle<SettingsPatch>(router, "settings.set", async (patch) => {
+  handle<SettingsPatch>(router, "settings.set", async (patch, ctx) => {
+    if (patch.serverBindHost !== undefined) requireOwner(ctx, "changing serverBindHost");
     const { sessions, accountUsage } = services();
     const current = sessions.getSettings();
     const normalized = { ...patch };

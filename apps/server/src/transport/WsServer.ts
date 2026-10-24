@@ -16,6 +16,7 @@ export interface WsServerOptions {
   port: number;
   authorize(token: string): ClientAuth | null;
   isOriginAllowed?(origin: string | null, hostHeader: string | null): boolean;
+  onOriginRejected?(origin: string | null): void;
   version: string;
   router: Router;
   helloTimeoutMs?: number;
@@ -104,6 +105,7 @@ export class WsServer {
         const origin = req.headers.get("origin");
         if (this.options.isOriginAllowed && !this.options.isOriginAllowed(origin, req.headers.get("host"))) {
           console.warn(`rejected websocket upgrade from origin ${JSON.stringify(origin)}`);
+          this.options.onOriginRejected?.(origin);
           return new Response("forbidden", { status: 403 });
         }
         if (srv.upgrade(req, { data: { ctx: null, helloTimer: null } })) return undefined;

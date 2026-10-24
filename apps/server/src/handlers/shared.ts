@@ -9,6 +9,10 @@ export function handle<T = unknown>(router: Router, method: string, handler: (ar
   router.handle(method, (params, ctx) => handler(params as T, ctx));
 }
 
+export function requireOwner(ctx: CallContext, action: string): void {
+  if (ctx.auth.kind !== "owner") throw Object.assign(new Error(`${action} requires the owner token`), { code: "forbidden" });
+}
+
 export function subscribeIfConnected(app: Pick<ServerApp, "isConnected" | "topics">, clientId: string, topics: string[]): void {
   if (app.isConnected(clientId)) app.topics.subscribe(clientId, topics);
 }

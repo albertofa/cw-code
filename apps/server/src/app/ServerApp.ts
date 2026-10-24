@@ -11,10 +11,10 @@ import { initClaudeCommandsCache } from "../providers/claude/claudeCommands.js";
 import { initOpencodeModelsCache } from "../providers/opencode/opencodeModels.js";
 import { openMetadataStores, type OpenedMetadataStores } from "../storage/metadataStores.js";
 import type { ServerArgs } from "../transport/args.js";
-import { bindRefusal, resolveBindHost } from "../transport/bindPolicy.js";
+import { decideBindHost } from "../transport/bindPolicy.js";
 import { removeEndpoint, writeEndpoint } from "../transport/endpointFile.js";
 import { DeviceTokens } from "../transport/deviceTokens.js";
-import { createOriginPolicy } from "../transport/originPolicy.js";
+import { createOriginPolicy, createRejectedOriginLogger } from "../transport/originPolicy.js";
 import { loadOrCreateOwnerToken, tokensEqual } from "../transport/ownerToken.js";
 import { Router, type ClientAuth } from "../transport/Router.js";
 import { TopicRegistry } from "../transport/TopicRegistry.js";
@@ -55,6 +55,7 @@ export class ServerApp {
   private parentTimer: ReturnType<typeof setInterval> | null = null;
   private stopping = false;
   private lastShutdownStatus: ShutdownStatus = { idle: true, committed: false, reason: null };
+  private pendingShellNotices: AppNotice[] = [];
 
   constructor(
     private readonly args: ServerArgs,
@@ -156,24 +157,39 @@ export class ServerApp {
       return device ? { kind: "device", deviceId: device.id } : null;
     };
     const stores = this.loadStores();
-    const host = resolveBindHost(this.args.host, stores.ok ? stores.settingsStore.get().serverBindHost : undefined);
-    const refusal = bindRefusal(host, devices.count());
-    if (refusal) {
-      appendCrashLog(refusal);
-      console.error(refusal);
+    const decision = decideBindHost(this.args.host, stores.ok ? stores.settingsStore.get().serverBindHost : undefined, devices.count());
+    if (decision.kind === "refuse") {
+      appendCrashLog(decision.reason);
+      console.error(decision.reason);
       process.exit(1);
     }
+    if (decision.kind === "fallback") {
+      appendCrashLog(decision.reason);
+      console.warn(decision.reason);
+      this.pendingShellNotices.push({
+        level: "warning",
+        title: "cw-code",
+        message: `cw-code is listening on ${decision.host} only`,
+        detail: `The server bind host setting asks for ${decision.ignoredHost}, but no device tokens exist. Create a device token first, then restart cw-code.`
+      });
+    }
+    const host = decision.host;
     const isOriginAllowed = createOriginPolicy(this.args.allowOrigins);
-    const ws = new WsServer({ host, port: this.args.port, authorize, isOriginAllowed, version: this.version, router: this.router });
+    const onOriginRejected = createRejectedOriginLogger(appendCrashLog);
+    const ws = new WsServer({ host, port: this.args.port, authorize, isOriginAllowed, onOriginRejected, version: this.version, router: this.router });
     const { url, port } = this.bind(ws, host);
     this.ws = ws;
     this.applyStores(stores);
     ws.onClientAccepted((ctx) => {
-      if (ctx.auth.kind === "device") devices.touch(ctx.auth.deviceId, Date.now());
+      if (ctx.client === "desktop-shell") this.flushShellNotices(ctx.clientId);
+      if (ctx.auth.kind !== "device") return;
+      devices.touch(ctx.auth.deviceId, Date.now());
+      this.emitDevicesChanged();
     });
     ws.onClientClosed((ctx) => {
       this.topics.dropClient(ctx.clientId);
       this.clientInputs.dropClient(ctx.clientId);
+      if (ctx.auth.kind === "device" && !this.stopping) this.emitDevicesChanged();
       if (ctx.client === "desktop-ui" && !this.stopping) this.handleUiDisconnected();
     });
     const ready: ServerReady = { url, port, pid: process.pid, protocol: PROTOCOL_VERSION, version: this.version };
@@ -328,6 +344,12 @@ export class ServerApp {
     appendCrashLog(`shutdown recovery could not restart CLI drivers: ${failure}`);
     const notice: AppNotice = { level: "error", title: "cw-code", message: "cw-code could not restart its CLI drivers", detail: failure };
     this.emit("app.notice", notice);
+  }
+
+  private flushShellNotices(clientId: string): void {
+    const notices = this.pendingShellNotices;
+    this.pendingShellNotices = [];
+    for (const notice of notices) this.sendTo(clientId, "app.notice", notice);
   }
 
   private handleShutdownExpired(reason: ShutdownReason): void {

@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { ServerClient } from "@cw-code/client";
-import type { AppSettings, ClientKind, DeviceCreateResult, DeviceInfo, PrSummary, Project, ServerReady, SessionMeta, StartupState } from "@cw-code/contracts";
+import type { AppNotice, AppSettings, ClientKind, DeviceCreateResult, DeviceInfo, PrSummary, Project, ServerReady, SessionMeta, StartupState } from "@cw-code/contracts";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -18,9 +18,9 @@ let server: ServerProcess;
 let ready: ServerReady;
 let token = "";
 
-function spawnServer(): ServerProcess {
-  const proc = Bun.spawn([process.execPath, ENTRY, "--port", "0"], {
-    env: { ...process.env, CW_CODE_HOME: home },
+function spawnServer(serverHome = home, extraArgs: string[] = []): ServerProcess {
+  const proc = Bun.spawn([process.execPath, ENTRY, "--port", "0", ...extraArgs], {
+    env: { ...process.env, CW_CODE_HOME: serverHome },
     stdin: "ignore",
     stdout: "pipe",
     stderr: "pipe"
@@ -55,8 +55,8 @@ async function readTaggedLine(proc: ServerProcess, tag: string): Promise<string>
   }
 }
 
-async function connect(clientToken = token, kind: ClientKind = "desktop-ui"): Promise<ServerClient> {
-  const client = new ServerClient({ endpoint: { url: ready.url, token: clientToken }, client: kind });
+async function connect(clientToken = token, kind: ClientKind = "desktop-ui", url = ready.url): Promise<ServerClient> {
+  const client = new ServerClient({ endpoint: { url, token: clientToken }, client: kind });
   clients.push(client);
   await client.connect();
   return client;
@@ -181,12 +181,22 @@ describe("server process", () => {
     expect(created.device).toMatchObject({ name: "Phone", connected: false });
     expect(readFileSync(join(home, "userdata", "devices.json"), "utf8")).not.toContain(created.token);
 
+    await owner.call("topics.subscribe", { topics: ["app"] });
+    const deviceSeen = new Promise<DeviceInfo[]>((resolve) => {
+      const off = owner.on("devices.changed", (payload) => {
+        const infos = payload as DeviceInfo[];
+        if (!infos.some((info) => info.id === created.device.id && info.connected)) return;
+        off();
+        resolve(infos);
+      });
+    });
     const device = await connect(created.token, "web");
+    expect((await deviceSeen).find((info) => info.id === created.device.id)?.lastSeenAt).not.toBeNull();
+    await expect(device.call("settings.set", { serverBindHost: "0.0.0.0" })).rejects.toMatchObject({ code: "forbidden" });
     await expect(device.call("devices.create", { name: "Rogue" })).rejects.toMatchObject({ code: "forbidden" });
     await expect(device.call("devices.revoke", { id: created.device.id })).rejects.toMatchObject({ code: "forbidden" });
     expect((await device.call<DeviceInfo[]>("devices.list")).map((info) => info.id)).toContain(created.device.id);
 
-    await owner.call("topics.subscribe", { topics: ["app"] });
     const changed = new Promise<DeviceInfo[]>((resolve) => {
       owner.on("devices.changed", (payload) => resolve(payload as DeviceInfo[]));
     });
@@ -215,4 +225,49 @@ describe("server process", () => {
     expect(await exitWithin(server, 15_000)).toBe(0);
     expect(existsSync(join(home, "userdata", "server.json"))).toBe(false);
   }, 20_000);
+});
+
+describe("bind host policy", () => {
+  const homes: string[] = [];
+
+  function freshHome(): string {
+    const dir = mkdtempSync(join(tmpdir(), "cw-server-bind-"));
+    homes.push(dir);
+    return dir;
+  }
+
+  afterAll(async () => {
+    await Bun.sleep(200);
+    for (const dir of homes) rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("exits 1 when the --host flag asks for a non-loopback host without device tokens", async () => {
+    const proc = spawnServer(freshHome(), ["--host", "0.0.0.0"]);
+    expect(await exitWithin(proc, STARTUP_TIMEOUT_MS)).toBe(1);
+  }, STARTUP_TIMEOUT_MS + 5_000);
+
+  it("falls back to loopback and notifies the shell when the setting asks for a non-loopback host without device tokens", async () => {
+    const dir = freshHome();
+    const first = spawnServer(dir);
+    const firstReady = JSON.parse(await readTaggedLine(first, "CW_SERVER_READY")) as ServerReady;
+    const ownerToken = readFileSync(join(dir, "userdata", "server-token"), "utf8").trim();
+    const owner = await connect(ownerToken, "desktop-ui", firstReady.url);
+    expect((await owner.call<AppSettings>("settings.set", { serverBindHost: "0.0.0.0" })).serverBindHost).toBe("0.0.0.0");
+    await owner.call("server.stop");
+    expect(await exitWithin(first, 15_000)).toBe(0);
+
+    const second = spawnServer(dir);
+    const secondReady = JSON.parse(await readTaggedLine(second, "CW_SERVER_READY")) as ServerReady;
+    expect(secondReady.url).toBe(`ws://127.0.0.1:${secondReady.port}/ws`);
+    const shell = new ServerClient({ endpoint: { url: secondReady.url, token: ownerToken }, client: "desktop-shell" });
+    clients.push(shell);
+    const notice = new Promise<AppNotice>((resolve) => {
+      shell.on("app.notice", (payload) => resolve(payload as AppNotice));
+    });
+    await shell.connect();
+    expect(await notice).toMatchObject({ level: "warning", message: "cw-code is listening on 127.0.0.1 only" });
+    expect(readFileSync(join(dir, "logs", "crash.log"), "utf8")).toContain("ignoring the serverBindHost setting 0.0.0.0");
+    await shell.call("server.stop");
+    expect(await exitWithin(second, 15_000)).toBe(0);
+  }, 3 * STARTUP_TIMEOUT_MS);
 });

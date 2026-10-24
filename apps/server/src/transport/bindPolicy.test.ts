@@ -1,16 +1,32 @@
 import { describe, expect, test } from "bun:test";
-import { bindRefusal, connectHost, isLoopbackHost, resolveBindHost } from "./bindPolicy.js";
+import { bindRefusal, connectHost, decideBindHost, isLoopbackHost } from "./bindPolicy.js";
 
-describe("resolveBindHost", () => {
+describe("decideBindHost", () => {
   test.each([
-    [null, undefined, "127.0.0.1"],
-    [null, "", "127.0.0.1"],
-    [null, "   ", "127.0.0.1"],
-    [null, " 0.0.0.0 ", "0.0.0.0"],
-    ["::1", "0.0.0.0", "::1"],
-    ["192.168.1.5", undefined, "192.168.1.5"],
-  ])("flag %p and setting %p resolve to %p", (flag, setting, expected) => {
-    expect(resolveBindHost(flag, setting)).toBe(expected);
+    [null, undefined, 0, "127.0.0.1"],
+    [null, "", 0, "127.0.0.1"],
+    [null, "   ", 0, "127.0.0.1"],
+    [null, " ::1 ", 0, "::1"],
+    [null, " 0.0.0.0 ", 1, "0.0.0.0"],
+    ["::1", "0.0.0.0", 0, "::1"],
+    ["192.168.1.5", undefined, 2, "192.168.1.5"],
+  ])("flag %p and setting %p with %p devices listen on %p", (flag, setting, devices, host) => {
+    expect(decideBindHost(flag, setting, devices)).toEqual({ kind: "listen", host });
+  });
+
+  test("refuses a non-loopback --host flag without device tokens", () => {
+    const decision = decideBindHost("0.0.0.0", undefined, 0);
+    expect(decision.kind).toBe("refuse");
+    expect(decision.host).toBe("0.0.0.0");
+  });
+
+  test("falls back to loopback when the setting asks for a non-loopback host without device tokens", () => {
+    expect(decideBindHost(null, " 0.0.0.0 ", 0)).toEqual({
+      kind: "fallback",
+      host: "127.0.0.1",
+      ignoredHost: "0.0.0.0",
+      reason: expect.stringContaining("listening on 127.0.0.1 instead"),
+    });
   });
 });
 

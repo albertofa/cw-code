@@ -1,11 +1,7 @@
 import type { DeviceCreateResult, DeviceInfo } from "@cw-code/contracts";
 import type { ServerApp } from "../app/ServerApp.js";
-import type { CallContext, Router } from "../transport/Router.js";
-import { handle, parseArgs, parseString } from "./shared.js";
-
-function requireOwner(ctx: CallContext, method: string): void {
-  if (ctx.auth.kind !== "owner") throw Object.assign(new Error(`${method} requires the owner token`), { code: "forbidden" });
-}
+import type { Router } from "../transport/Router.js";
+import { handle, parseArgs, parseString, requireOwner } from "./shared.js";
 
 export function registerDeviceHandlers(router: Router, app: ServerApp): void {
   handle(router, "devices.list", (): DeviceInfo[] => app.deviceInfos());
