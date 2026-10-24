@@ -666,6 +666,26 @@ describe("SettingsStore", () => {
     ).toMatchObject({ claudeReasoningExpanded: true, opencodeReasoningExpanded: false, codexReasoningExpanded: true });
   });
 
+  it("seeds a missing setting once and keeps the user's later choice", () => {
+    const filePath = tempFilePath();
+    const seed = vi.fn(() => true);
+    expect(new SettingsStore(filePath, { claudeChromeEnabled: seed }).get().claudeChromeEnabled).toBe(true);
+    expect(JSON.parse(readFileSync(filePath, "utf8"))).toMatchObject({ claudeChromeEnabled: true });
+
+    new SettingsStore(filePath, { claudeChromeEnabled: seed }).set({ claudeChromeEnabled: false });
+    expect(new SettingsStore(filePath, { claudeChromeEnabled: seed }).get().claudeChromeEnabled).toBe(false);
+    expect(seed).toHaveBeenCalledTimes(1);
+  });
+
+  it("seeds a setting missing from an existing file without a repair backup", () => {
+    const filePath = tempFilePath();
+    writeFileSync(filePath, JSON.stringify({ schemaVersion: SETTINGS_SCHEMA_VERSION, holdingHours: 3 }), "utf8");
+
+    expect(new SettingsStore(filePath, { claudeChromeEnabled: () => true }).get()).toMatchObject({ holdingHours: 3, claudeChromeEnabled: true });
+    expect(JSON.parse(readFileSync(filePath, "utf8"))).toMatchObject({ holdingHours: 3, claudeChromeEnabled: true });
+    expect(existsSync(`${filePath}.before-repair.bak`)).toBe(false);
+  });
+
   it("defaults typography to the built-in stacks and sizes", () => {
     expect(new SettingsStore(tempFilePath()).get()).toMatchObject({
       fontFamilySans: "",

@@ -1,6 +1,7 @@
 import type { MetadataIssue, MetadataStore } from "@cw-code/contracts";
 import { SESSION_METADATA, SessionStore, sessionStoreFile } from "../sessions/SessionStore.js";
 import { SETTINGS_METADATA, SettingsStore } from "../settings/SettingsStore.js";
+import { readClaudeChromeDefault } from "../providers/claude/claudeChrome.js";
 import { listBackups, type BackupInfo } from "./backups.js";
 import { describeError, MetadataError, type MetadataSchema } from "./metadataDocument.js";
 
@@ -55,7 +56,7 @@ function open<T>(store: MetadataStore, file: string, create: () => T, issues: Me
 
 export function openMetadataStores(paths: { dbPath: string; settingsPath: string }): OpenedMetadataStores {
   const issues: MetadataIssue[] = [];
-  const settingsStore = open("settings", paths.settingsPath, () => new SettingsStore(paths.settingsPath), issues);
+  const settingsStore = open("settings", paths.settingsPath, () => new SettingsStore(paths.settingsPath, { claudeChromeEnabled: () => readClaudeChromeDefault() }), issues);
   const sessionStore = open("sessions", sessionStoreFile(paths.dbPath), () => new SessionStore(paths.dbPath), issues);
   if (!sessionStore || !settingsStore) return { ok: false, issues };
   return { ok: true, sessionStore, settingsStore };

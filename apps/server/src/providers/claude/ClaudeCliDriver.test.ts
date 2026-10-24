@@ -24,6 +24,7 @@ const SETTINGS: AppSettings = {
   claudeEnabledModels: [],
   claudeCustomModel: { id: "", name: "" },
   claudeReasoningExpanded: false,
+  claudeChromeEnabled: false,
   opencodeReasoningExpanded: false,
   codexReasoningExpanded: false,
   opencodeGoUsage: false,
@@ -232,7 +233,7 @@ class FakeChild extends EventEmitter {
 
 type ClaudeSpawnFn = ConstructorParameters<typeof ClaudeCliDriver>[2];
 
-function makeDriver(isInWorkingSet: (sessionId: string) => boolean = () => false) {
+function makeDriver(isInWorkingSet: (sessionId: string) => boolean = () => false, getSettings: () => AppSettings = () => SETTINGS) {
   const events: ThreadEvent[] = [];
   const children: FakeChild[] = [];
   const spawnCalls: Array<{ command: string; args: string[] }> = [];
@@ -245,7 +246,7 @@ function makeDriver(isInWorkingSet: (sessionId: string) => boolean = () => false
   }) as unknown as ClaudeSpawnFn;
   const driver = new ClaudeCliDriver(
     (event) => events.push(event),
-    () => SETTINGS,
+    getSettings,
     spawnFn,
     (proc) => killed.push(proc),
     isInWorkingSet
@@ -399,6 +400,31 @@ describe("ClaudeCliDriver persistent process", () => {
     const deltas = events.filter((event) => event.type === "assistant.delta");
     expect(deltas).toHaveLength(1);
     expect(deltas[0]?.turnId).toBe(second.turnId);
+    driver.dispose();
+  });
+
+  it("launches with --chrome only while Claude in Chrome is enabled, respawning when it changes", async () => {
+    let settings: AppSettings = { ...SETTINGS, claudeChromeEnabled: true };
+    const { driver, children, spawnCalls } = makeDriver(() => false, () => settings);
+    driver.startTurn({ sessionId: "s1", cwd: "C:\\proj", prompt: "first" });
+    await settle();
+    children[0].stdout.write(`${resultLine()}\n`);
+    await settle();
+    expect(spawnCalls[0]?.args).toContain("--chrome");
+
+    settings = { ...SETTINGS, claudeChromeEnabled: false };
+    driver.startTurn({ sessionId: "s1", cwd: "C:\\proj", prompt: "second" });
+    await settle();
+    expect(spawnCalls).toHaveLength(2);
+    expect(spawnCalls[1]?.args).not.toContain("--chrome");
+    driver.dispose();
+  });
+
+  it("never launches auto-title turns with --chrome", async () => {
+    const { driver, spawnCalls } = makeDriver(() => false, () => ({ ...SETTINGS, claudeChromeEnabled: true }));
+    driver.startTurn({ sessionId: "title:s1", cwd: "C:\\proj", prompt: "title this", maxTurns: 1 });
+    await settle();
+    expect(spawnCalls[0]?.args).not.toContain("--chrome");
     driver.dispose();
   });
 

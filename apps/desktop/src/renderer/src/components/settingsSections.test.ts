@@ -30,6 +30,7 @@ function settingsFixture(overrides: Partial<AppSettings> = {}): AppSettings {
     claudeEnabledModels: ["claude-opus-5-5", "claude-sonnet-5-5"],
     claudeCustomModel: { id: "", name: "" },
     claudeReasoningExpanded: false,
+    claudeChromeEnabled: false,
     opencodeReasoningExpanded: false,
     codexReasoningExpanded: false,
     gitBinaryPath: "git",

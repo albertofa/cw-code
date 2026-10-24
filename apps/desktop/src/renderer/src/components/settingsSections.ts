@@ -44,6 +44,7 @@ const SETTING_OWNER: Record<DraftSettingKey, SettingsNavId> = {
   claudeEnabledModels: "claude",
   claudeCustomModel: "claude",
   claudeReasoningExpanded: "claude",
+  claudeChromeEnabled: "claude",
   opencodeReasoningExpanded: "opencode",
   codexReasoningExpanded: "codex",
   gitBinaryPath: "sourceControl",

@@ -522,6 +522,7 @@ export interface AppSettings {
   claudeEnabledModels: string[];
   claudeCustomModel: CustomModel;
   claudeReasoningExpanded: boolean;
+  claudeChromeEnabled: boolean;
   opencodeReasoningExpanded: boolean;
   codexReasoningExpanded: boolean;
   gitBinaryPath: string;

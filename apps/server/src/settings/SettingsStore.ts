@@ -250,6 +250,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   claudeEnabledModels: ["claude-opus-5-5", "claude-sonnet-5-5", "fable", "claude-haiku-5-5"],
   claudeCustomModel: { id: "", name: "" },
   claudeReasoningExpanded: false,
+  claudeChromeEnabled: false,
   opencodeReasoningExpanded: false,
   codexReasoningExpanded: false,
   gitBinaryPath: defaultCliBinaryPath("git"),
@@ -379,6 +380,7 @@ function sanitize(patch: SettingsPatch): SettingsPatch {
       : [...DEFAULT_SETTINGS.claudeEnabledModels];
   }
   if (patch.claudeReasoningExpanded !== undefined) out.claudeReasoningExpanded = patch.claudeReasoningExpanded === true;
+  if (patch.claudeChromeEnabled !== undefined) out.claudeChromeEnabled = patch.claudeChromeEnabled === true;
   if (patch.opencodeReasoningExpanded !== undefined) out.opencodeReasoningExpanded = patch.opencodeReasoningExpanded === true;
   if (patch.codexReasoningExpanded !== undefined) out.codexReasoningExpanded = patch.codexReasoningExpanded === true;
   if (patch.gitBinaryPath !== undefined) out.gitBinaryPath = binaryPathOr(patch.gitBinaryPath, DEFAULT_SETTINGS.gitBinaryPath);
@@ -498,6 +500,16 @@ function repairedKeys(document: MetadataDocument, data: AppSettings): string[] {
   );
 }
 
+export type SettingsSeeds = { [K in keyof AppSettings]?: () => AppSettings[K] };
+
+function seededValues(seeds: SettingsSeeds, stored: MetadataDocument): SettingsPatch {
+  const patch: Record<string, unknown> = {};
+  for (const [key, seed] of Object.entries(seeds)) {
+    if (seed && !(key in stored)) patch[key] = seed();
+  }
+  return sanitize(patch as SettingsPatch);
+}
+
 function serialize(data: AppSettings, extras: MetadataDocument): string {
   return JSON.stringify({ schemaVersion: SETTINGS_SCHEMA_VERSION, ...data, ...extras });
 }
@@ -508,17 +520,18 @@ export class SettingsStore {
   private extras: MetadataDocument = {};
   private lastGood: LastGoodRefresher;
 
-  constructor(filePath: string) {
+  constructor(filePath: string, seeds: SettingsSeeds = {}) {
     this.filePath = filePath;
     mkdirSync(dirname(this.filePath), { recursive: true });
     const loaded = loadVersionedJson({ filePath: this.filePath, ...SETTINGS_METADATA, migrations: SETTINGS_MIGRATIONS });
     this.lastGood = new LastGoodRefresher(this.filePath);
     this.data = defaults();
     if (loaded.status !== "ok") {
+      this.data = { ...this.data, ...seededValues(seeds, {}) };
       this.persist();
       return;
     }
-    this.data = { ...this.data, ...sanitize(loaded.data as SettingsPatch) };
+    this.data = { ...this.data, ...sanitize(loaded.data as SettingsPatch), ...seededValues(seeds, loaded.data) };
     this.extras = unknownKeys(loaded.data);
     if (serialize(this.data, this.extras) === JSON.stringify(loaded.data)) return;
     const repaired = repairedKeys(loaded.data, this.data);
