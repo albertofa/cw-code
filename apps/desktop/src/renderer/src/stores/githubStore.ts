@@ -307,6 +307,7 @@ export const useGitHubStore = create<GitHubStore>((set, get) => {
   let refreshTimer: ReturnType<typeof setTimeout> | null = null;
   let unsubscribers: Array<() => void> = [];
   let watchedSignature: string | null = null;
+  let requestedRuns: RunRef[] = [];
   const touched = new Map<string, number>();
   let touchClock = 0;
   let persistFailure: string | null = null;
@@ -708,6 +709,7 @@ export const useGitHubStore = create<GitHubStore>((set, get) => {
         return;
       }
       holdRunsTopic();
+      if (requestedRuns.length > 0) get().setWatchedRuns(requestedRuns);
       subscribe();
       scheduleRefresh();
       if (!savedViewsLoaded) void get().loadSavedViews();
@@ -716,6 +718,7 @@ export const useGitHubStore = create<GitHubStore>((set, get) => {
     },
 
     setWatchedRuns(refs: RunRef[]) {
+      requestedRuns = refs;
       const known = knownRuns();
       const rank = (ref: RunRef): number => {
         const status = known.get(runKeyOf(ref))?.status;

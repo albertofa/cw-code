@@ -14,7 +14,8 @@ export interface TopicWiring {
 }
 
 export function wireTopics(app: ServerApp): TopicWiring {
-  const filesGeneration = new Map<string, number>();
+  let filesGeneration = 0;
+  const latestFilesGeneration = new Map<string, number>();
 
   const pushTrackedPrs = (clientId: string): void => {
     const services = app.currentServices();
@@ -43,23 +44,23 @@ export function wireTopics(app: ServerApp): TopicWiring {
   const applyFiles = (sessionId: string): void => {
     const services = app.currentServices();
     if (!services) return;
-    const generation = (filesGeneration.get(sessionId) ?? 0) + 1;
-    filesGeneration.set(sessionId, generation);
+    const generation = ++filesGeneration;
     const topic = filesTopic(sessionId);
     if (app.topics.subscribers(topic).size === 0) {
-      filesGeneration.delete(sessionId);
-      services.fileWatcher.unwatch(sessionId);
+      latestFilesGeneration.delete(sessionId);
+      void services.fileWatcher.unwatch(sessionId);
       return;
     }
+    latestFilesGeneration.set(sessionId, generation);
     services.sessions
       .ensureWorktree(sessionId)
       .then((root) => {
-        if (filesGeneration.get(sessionId) !== generation) return;
+        if (latestFilesGeneration.get(sessionId) !== generation) return;
         const paths = app.clientInputs.pathsUnion(sessionId, [...app.topics.subscribers(topic)]);
         services.fileWatcher.setWatched(sessionId, root, paths);
       })
       .catch((err: unknown) => {
-        console.warn(`[files] cannot watch ${sessionId}: ${(err as Error).message}`);
+        console.warn(`[files] cannot watch ${sessionId}: ${err instanceof Error ? err.message : String(err)}`);
       });
   };
 
