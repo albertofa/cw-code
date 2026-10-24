@@ -49,6 +49,15 @@ describe("assertOpenablePath", () => {
     expect(() => assertOpenablePath(join(dir, "missing.html"))).toThrow(/path not found/);
   });
 
+  it("opens any file inside a trusted directory but nothing outside it", () => {
+    const dir = seed();
+    const trusted = join(dir, "logs");
+    const fileStat = () => ({ isDirectory: () => false, isFile: () => true });
+    expect(assertOpenablePath(join(trusted, "harness-trace.jsonl"), fileStat, [trusted])).toBe(join(trusted, "harness-trace.jsonl"));
+    expect(() => assertOpenablePath(join(dir, "harness-trace.jsonl"), fileStat, [trusted])).toThrow(/only folders/);
+    expect(() => assertOpenablePath(join(trusted, "..", "run.exe"), fileStat, [trusted])).toThrow(/only folders/);
+  });
+
   it("uses the injected stat to classify the target", () => {
     const abs = join(tmpdir(), "virtual.html");
     const dirStat = () => ({ isDirectory: () => true, isFile: () => false });

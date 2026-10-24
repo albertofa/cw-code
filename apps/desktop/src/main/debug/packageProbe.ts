@@ -1,34 +1,11 @@
 import { readFileSync, writeFileSync } from "node:fs";
-import type { StartupState } from "@cw-code/contracts";
+import type { CliVersionCheck, NodePtyProbeOutcome, ServerPackageProbe, StartupState } from "@cw-code/contracts";
 
 export interface PackageProbeNodePtyResult {
   loaded: boolean;
   spawned: boolean;
   exitCode: number | null;
   error: string | null;
-}
-
-export interface CliVersionCheck {
-  binary: "claude" | "opencode" | "codex";
-  binaryPath: string;
-  minimum: string;
-  actual: string | null;
-  configured: boolean;
-  found: boolean;
-  available: boolean;
-  error: string | null;
-  ok: boolean;
-}
-
-export type NodePtyProbeOutcome =
-  | { status: "loaded-spawned"; exitCode: number }
-  | { status: "loaded-timeout" }
-  | { status: "load-failed"; error: string }
-  | { status: "spawn-failed"; error: string };
-
-export interface ServerPackageProbe {
-  nodePty: NodePtyProbeOutcome;
-  cliChecks: CliVersionCheck[];
 }
 
 export type PackageProbeStartupMode = StartupState["mode"];

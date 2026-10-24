@@ -1,6 +1,7 @@
 import type { SettingsPatch } from "@cw-code/contracts";
 import type { ServerApp } from "../app/ServerApp.js";
-import { checkCliVersion, type CliVersionCheck } from "../cliVersions.js";
+import type { CliVersionCheck } from "@cw-code/contracts";
+import { checkCliVersion } from "../cliVersions.js";
 import { defaultPrWorkflows } from "../settings/prWorkflowDefaults.js";
 import { configuredCliBinaryPath } from "../settings/settingsUtils.js";
 import type { Router } from "../transport/Router.js";

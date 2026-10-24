@@ -1,18 +1,8 @@
-import { checkCliVersions, type CliVersionCheck } from "../cliVersions.js";
+import type { CliVersionCheck, NodePtyProbeOutcome, ServerPackageProbe } from "@cw-code/contracts";
+import { checkCliVersions } from "../cliVersions.js";
 import { loadPty, type PtyModule } from "../pty/PtyPool.js";
 import { defaultCliBinaryPath } from "../settings/settingsUtils.js";
 import { sanitizedChildEnv } from "../shellEnvironment.js";
-
-export type NodePtyProbeOutcome =
-  | { status: "loaded-spawned"; exitCode: number }
-  | { status: "loaded-timeout" }
-  | { status: "load-failed"; error: string }
-  | { status: "spawn-failed"; error: string };
-
-export interface ServerPackageProbe {
-  nodePty: NodePtyProbeOutcome;
-  cliChecks: CliVersionCheck[];
-}
 
 const NODE_PTY_SPAWN_TIMEOUT_MS = 10_000;
 

@@ -6,6 +6,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import type {
   AppSettings,
   ServerEndpoint,
+  ServerPackageProbe,
   ShutdownAssessment,
   ShutdownCommitResult,
   ShutdownPrepareRequest,
@@ -18,7 +19,7 @@ import { appendCrashLog, initCrashLog } from "@cw-code/server/debug/crashLog";
 import { attachmentsDir, cwCodeHome, logsDir } from "@cw-code/server/paths/appPaths";
 import { windowBackgroundColor } from "@cw-code/shared/themes";
 import { attentionDescription, parseAttentionState, resetsAttention, shouldFlash } from "./attention.js";
-import { failedServerProbe, RendererProbeTracker, runPackageProbe, type ServerPackageProbe } from "./debug/packageProbe.js";
+import { failedServerProbe, RendererProbeTracker, runPackageProbe } from "./debug/packageProbe.js";
 import { assertOpenablePath } from "./openPathPolicy.js";
 import { ServerLink, type AppNotice, type ServerLinkChange, type ShutdownStatus } from "./serverLink.js";
 import { ServerProcess } from "./serverProcess.js";
@@ -452,7 +453,7 @@ function registerShellIpc(): void {
   });
 
   ipcMain.handle("shell.openPath", (_e, args: { path: string }): Promise<void> =>
-    shell.openExternal(pathToFileURL(assertOpenablePath(args.path)).href).then(() => undefined)
+    shell.openExternal(pathToFileURL(assertOpenablePath(args.path, undefined, [logsDir()])).href).then(() => undefined)
   );
 
   ipcMain.handle("shell.openExternal", (_e, args: { url: string }): Promise<void> => {

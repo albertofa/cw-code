@@ -1,3 +1,4 @@
+import type { CliVersionCheck } from "@cw-code/contracts";
 import { execCliFile } from "./cli/spawnCli.js";
 import { traceHarnessCall } from "./debug/harnessTrace.js";
 import { isDefaultCliBinaryPath } from "./settings/settingsUtils.js";
@@ -14,18 +15,6 @@ export function minimumVersionFor(binary: keyof typeof MINIMUM_VERSIONS, actual:
   if (binary !== "opencode") return MINIMUM_VERSIONS[binary];
   const major = Number(actual?.match(SEMVER_RE)?.[1] ?? 0);
   return major >= 2 ? OPENCODE_V2_MINIMUM : MINIMUM_VERSIONS.opencode;
-}
-
-export interface CliVersionCheck {
-  binary: "claude" | "opencode" | "codex";
-  binaryPath: string;
-  minimum: string;
-  actual: string | null;
-  configured: boolean;
-  found: boolean;
-  available: boolean;
-  error: string | null;
-  ok: boolean;
 }
 
 const SEMVER_RE = /(\d+)\.(\d+)\.(\d+)/;
