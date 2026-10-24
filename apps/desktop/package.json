@@ -10,9 +10,9 @@
     "build": "bun --bun electron-vite build",
     "typecheck": "bun --bun tsc --noEmit -p tsconfig.json",
     "test": "bun test --parallel --timeout 20000",
-    "dist": "bun --bun electron-vite build && bun --bun electron-builder --win nsis --x64 --publish never",
-    "dist:dir": "bun --bun electron-vite build && bun --bun electron-builder --win nsis --x64 --dir --publish never",
-    "dist:linux": "bun --bun electron-vite build && bun --bun electron-builder --linux AppImage deb --x64 --publish never"
+    "dist": "bun --filter @cw-code/server build && bun --bun electron-vite build && bun --bun electron-builder --win nsis --x64 --publish never",
+    "dist:dir": "bun --filter @cw-code/server build && bun --bun electron-vite build && bun --bun electron-builder --win nsis --x64 --dir --publish never",
+    "dist:linux": "bun --filter @cw-code/server build && bun --bun electron-vite build && bun --bun electron-builder --linux AppImage deb --x64 --publish never"
   },
   "author": "cw-code",
   "dependencies": {
@@ -25,7 +25,6 @@
     "@codemirror/view": "^6.43.15",
     "@cw-code/client": "workspace:*",
     "@cw-code/contracts": "workspace:*",
-    "@cw-code/server": "workspace:*",
     "@cw-code/shared": "workspace:*",
     "@fontsource-variable/jetbrains-mono": "^5.3.0",
     "@lezer/highlight": "^1.2.5",
@@ -44,6 +43,7 @@
     "zustand": "^5.0.5"
   },
   "devDependencies": {
+    "@cw-code/server": "workspace:*",
     "@electron/rebuild": "^4.2.0",
     "@happy-dom/global-registrator": "^21.0.4",
     "@types/node": "^22.10.2",

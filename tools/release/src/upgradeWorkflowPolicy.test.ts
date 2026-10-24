@@ -16,6 +16,8 @@ describe("upgrade-test.yml policy", () => {
       "apps/desktop/package.json",
       "apps/desktop/src/main/updates/**",
       "apps/server/src/shutdown/**",
+      "apps/server/package.json",
+      "apps/server/scripts/**",
       "apps/desktop/src/main/index.ts",
       "apps/desktop/electron-builder*.yml",
       "apps/desktop/electron.vite.config.ts",

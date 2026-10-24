@@ -9,24 +9,6 @@ asar: true
 files:
   - "out/**"
   - "package.json"
-  - "!node_modules/node-pty/deps/**"
-  - "!node_modules/node-pty/src/**"
-  - "!node_modules/node-pty/third_party/**"
-  - "!node_modules/node-pty/scripts/**"
-  - "!node_modules/node-pty/binding.gyp"
-  - "!node_modules/node-pty/build/!(Release)"
-  - "!node_modules/node-pty/build/!(Release)/**"
-  - "!node_modules/node-pty/build/Release/!(pty.node)"
-  - "!node_modules/node-pty/build/Release/!(pty.node)/**"
-  - "!node_modules/node-pty/typings/**"
-  - "!node_modules/node-pty/lib/**/*.test.js"
-  - "!node_modules/node-pty/lib/**/*.js.map"
-  - "!node_modules/node-pty/prebuilds/darwin-arm64/**"
-  - "!node_modules/node-pty/prebuilds/darwin-x64/**"
-  - "!node_modules/node-pty/prebuilds/win32-arm64/**"
-asarUnpack:
-  - "node_modules/node-pty/prebuilds/win32-x64/**"
-  - "node_modules/node-pty/build/Release/pty.node"
 afterPack: build/afterPack.cjs
 toolsets:
   appimage: "1.0.3"
@@ -37,6 +19,14 @@ publish:
     releaseType: draft
 generateUpdatesFilesForAllChannels: true
 extraResources:
+  - from: ../server/dist
+    to: server
+    filter:
+      - "**/*"
+  - from: ../server/dist/node_modules
+    to: server/node_modules
+    filter:
+      - "**/*"
   - from: resources
     to: branding
     filter:
@@ -61,8 +51,6 @@ nsis:
   differentialPackage: true
   artifactName: "${productName}-Setup-${version}-${arch}.${ext}"
 linux:
-  files:
-    - "!node_modules/node-pty/prebuilds/win32-x64/**"
   executableName: cw-code
   category: Development
   icon: resources/icons

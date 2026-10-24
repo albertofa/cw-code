@@ -12,5 +12,5 @@
       "@cw-code/shared/*": ["../../packages/shared/src/*"]
     }
   },
-  "include": ["src", "tests"]
+  "include": ["src", "tests", "scripts"]
 }

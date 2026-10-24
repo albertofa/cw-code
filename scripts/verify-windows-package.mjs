@@ -105,8 +105,9 @@ async function checkPackage(distDir) {
   const blockmapPath = `${installerPath}.blockmap`;
   const unpackedExePath = join(distDir, "win-unpacked", "cw-code.exe");
   const asarPath = join(distDir, "win-unpacked", "resources", "app.asar");
-  const asarUnpackedDir = join(distDir, "win-unpacked", "resources", "app.asar.unpacked");
-  const ptyNativePath = join(asarUnpackedDir, "node_modules", "node-pty", "prebuilds", "win32-x64", "pty.node");
+  const serverDir = join(distDir, "win-unpacked", "resources", "server");
+  const serverExePath = join(serverDir, "cw-code-server.exe");
+  const ptyNativePath = join(serverDir, "node_modules", "node-pty", "prebuilds", "win32-x64", "pty.node");
 
   const report = {
     version,
@@ -114,7 +115,8 @@ async function checkPackage(distDir) {
     installer: { path: installerPath, exists: existsSync(installerPath), sizeBytes: fileSize(installerPath) },
     blockmap: { path: blockmapPath, exists: existsSync(blockmapPath) },
     unpackedExe: { path: unpackedExePath, exists: existsSync(unpackedExePath) },
-    asar: { path: asarPath, exists: existsSync(asarPath), sizeBytes: fileSize(asarPath), containsMainEntry: null },
+    asar: { path: asarPath, exists: existsSync(asarPath), sizeBytes: fileSize(asarPath), containsMainEntry: null, containsNodePty: null },
+    serverExe: { path: serverExePath, exists: existsSync(serverExePath), sizeBytes: fileSize(serverExePath) },
     nodePtyNative: { path: ptyNativePath, exists: existsSync(ptyNativePath) },
     probe: null
   };
@@ -124,14 +126,17 @@ async function checkPackage(distDir) {
   if (!report.blockmap.exists) problems.push(`blockmap not found: ${blockmapPath}`);
   if (!report.unpackedExe.exists) problems.push(`unpacked exe not found: ${unpackedExePath}`);
   if (!report.asar.exists) problems.push(`app.asar not found: ${asarPath}`);
+  if (!report.serverExe.exists) problems.push(`server binary not found: ${serverExePath}`);
   if (!report.nodePtyNative.exists) problems.push(`node-pty win32-x64 native binary not found: ${ptyNativePath}`);
 
   if (report.asar.exists) {
     const asarLib = await resolveAsarLib(desktopDir);
     if (asarLib) {
-      const entries = asarLib.listPackage(asarPath);
-      report.asar.containsMainEntry = entries.some((entry) => entry.replace(/\\/g, "/").endsWith("out/main/index.js"));
+      const entries = asarLib.listPackage(asarPath).map((entry) => entry.replace(/\\/g, "/"));
+      report.asar.containsMainEntry = entries.some((entry) => entry.endsWith("out/main/index.js"));
+      report.asar.containsNodePty = entries.some((entry) => entry.includes("/node_modules/node-pty/"));
       if (!report.asar.containsMainEntry) problems.push("app.asar does not contain out/main/index.js");
+      if (report.asar.containsNodePty) problems.push("app.asar still contains node-pty; it ships only with the server under resources/server");
     }
   }
 
@@ -347,10 +352,11 @@ async function main() {
   console.log(jsonText);
   console.log("");
   console.log(`cw-code Windows package verification (${report.version})`);
-  console.log(`  installer: ${report.installer.exists ? "OK" : "MISSING"} (${installerSummary(report)})`);
+  console.log(`  installer: ${report.installer.exists ? "OK" : "MISSING"} (${megabytes(report.installer.sizeBytes)})`);
   console.log(`  blockmap: ${report.blockmap.exists ? "OK" : "MISSING"}`);
   console.log(`  win-unpacked exe: ${report.unpackedExe.exists ? "OK" : "MISSING"}`);
-  console.log(`  app.asar: ${report.asar.exists ? "OK" : "MISSING"} (${asarSummary(report)})`);
+  console.log(`  app.asar: ${report.asar.exists ? "OK" : "MISSING"} (${megabytes(report.asar.sizeBytes)})`);
+  console.log(`  server binary: ${report.serverExe.exists ? "OK" : "MISSING"} (${megabytes(report.serverExe.sizeBytes)})`);
   console.log(`  node-pty win32-x64 native binary: ${report.nodePtyNative.exists ? "OK" : "MISSING"}`);
   if (report.probe) {
     console.log(`  probe: rendererLoaded=${report.probe.rendererLoaded} nodePty.spawned=${report.probe.nodePty.spawned} durationMs=${report.probe.durationMs}`);
@@ -364,12 +370,8 @@ async function main() {
   }
 }
 
-function installerSummary(report) {
-  return report.installer.sizeBytes !== null ? `${(report.installer.sizeBytes / 1024 / 1024).toFixed(1)} MB` : "n/a";
-}
-
-function asarSummary(report) {
-  return report.asar.sizeBytes !== null ? `${(report.asar.sizeBytes / 1024 / 1024).toFixed(1)} MB` : "n/a";
+function megabytes(sizeBytes) {
+  return sizeBytes !== null ? `${(sizeBytes / 1024 / 1024).toFixed(1)} MB` : "n/a";
 }
 
 main().catch((err) => {

@@ -7,6 +7,7 @@
     "./*": "./src/*.ts"
   },
   "scripts": {
+    "build": "bun scripts/compile.ts",
     "test": "bun test --parallel --timeout 20000",
     "typecheck": "bun --bun tsc --noEmit -p tsconfig.json"
   },

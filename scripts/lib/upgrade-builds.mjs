@@ -36,6 +36,11 @@ export function buildMainBundle(desktopDir, testBuild) {
   runNodeScript(desktopBin(desktopDir, "electron-vite", "electron-vite"), ["build"], desktopDir, buildEnv(testBuild));
 }
 
+export function buildServer(desktopDir) {
+  const serverDir = join(desktopDir, "..", "server");
+  runNodeScript(join(serverDir, "scripts", "compile.ts"), [], serverDir, buildEnv(false));
+}
+
 export function packageUpdateTestBuild(desktopDir, version, outputDir, feedUrl) {
   const args = [
     "--config",

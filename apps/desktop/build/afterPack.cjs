@@ -1,7 +1,11 @@
 const fs = require("node:fs/promises");
 const path = require("node:path");
 
-const PTY_NATIVE_MODULE = path.join("resources", "app.asar.unpacked", "node_modules", "node-pty", "build", "Release", "pty.node");
+const SERVER_DIR = path.join("resources", "server");
+const SERVER_FILES = {
+  win32: [path.join(SERVER_DIR, "cw-code-server.exe"), path.join(SERVER_DIR, "node_modules", "node-pty", "prebuilds", "win32-x64", "pty.node")],
+  linux: [path.join(SERVER_DIR, "cw-code-server"), path.join(SERVER_DIR, "node_modules", "node-pty", "build", "Release", "pty.node")]
+};
 
 const sandboxWrapper = (executableName, binaryName) => `#!/bin/sh
 here=$(dirname "$(readlink -f "$0")")
@@ -24,14 +28,22 @@ const exists = (target) =>
     () => false,
   );
 
+async function requireServerFiles(context) {
+  const required = SERVER_FILES[context.electronPlatformName] ?? [];
+  for (const file of required) {
+    const target = path.join(context.appOutDir, file);
+    if (!(await exists(target))) {
+      throw new Error(`cw-code server file missing from the package: ${target}. Run bun --filter @cw-code/server build before electron-builder.`);
+    }
+  }
+}
+
 exports.default = async function afterPack(context) {
+  await requireServerFiles(context);
   if (context.electronPlatformName !== "linux") {
     return;
   }
-  const ptyNativeModule = path.join(context.appOutDir, PTY_NATIVE_MODULE);
-  if (!(await exists(ptyNativeModule))) {
-    throw new Error(`node-pty native module missing from the Linux package: ${ptyNativeModule}. Run bun install on Linux so node-pty compiles build/Release/pty.node.`);
-  }
+  await fs.chmod(path.join(context.appOutDir, SERVER_FILES.linux[0]), 0o755);
   const executableName = context.packager.executableName;
   const binaryName = `${executableName}-bin`;
   const executablePath = path.join(context.appOutDir, executableName);
