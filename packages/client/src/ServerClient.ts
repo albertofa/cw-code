@@ -102,13 +102,32 @@ export class ServerClient {
   connect(): Promise<Welcome> {
     if (this.connecting) return this.connecting;
     if (this.currentState === "open" && this.welcome) return Promise.resolve(this.welcome);
+    if (this.currentState === "reconnecting") return this.reconnectNow();
     this.disposed = false;
     this.setState("connecting");
-    const attempt = this.establish().finally(() => {
-      if (this.connecting === attempt) this.connecting = null;
+    return this.track(this.establish());
+  }
+
+  private track(attempt: Promise<Welcome>): Promise<Welcome> {
+    const tracked = attempt.finally(() => {
+      if (this.connecting === tracked) this.connecting = null;
     });
-    this.connecting = attempt;
-    return attempt;
+    this.connecting = tracked;
+    return tracked;
+  }
+
+  private reconnectNow(): Promise<Welcome> {
+    if (this.connecting) return this.connecting;
+    this.clearRetryTimer();
+    return this.track(
+      this.resolveEndpoint().then(
+        (endpoint) => this.openSocket(endpoint),
+        (error: unknown) => {
+          if (!this.disposed) this.scheduleReconnect();
+          throw error;
+        }
+      )
+    );
   }
 
   private async establish(): Promise<Welcome> {
@@ -265,12 +284,7 @@ export class ServerClient {
     this.attempt += 1;
     this.retryTimer = setTimeout(() => {
       this.retryTimer = null;
-      this.resolveEndpoint().then(
-        (endpoint) => this.openSocket(endpoint).catch(() => undefined),
-        () => {
-          if (!this.disposed) this.scheduleReconnect();
-        }
-      );
+      this.reconnectNow().catch(() => undefined);
     }, delay);
   }
 

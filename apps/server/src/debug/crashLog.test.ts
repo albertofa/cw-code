@@ -7,14 +7,18 @@ import { rotationPath } from "./logRotation.js";
 
 function initTmp(maxBytes?: number): string {
   const dir = mkdtempSync(join(tmpdir(), "cw-crash-"));
-  return initCrashLog(dir, maxBytes === undefined ? undefined : { maxBytes });
+  return initCrashLog(dir, "server", maxBytes === undefined ? undefined : { maxBytes });
 }
 
-function readEntries(filePath: string): string[] {
+function readTagged(filePath: string): string[] {
   return readFileSync(filePath, "utf8")
     .split("\n")
     .filter(Boolean)
     .map((line) => line.slice(line.indexOf(" ") + 1));
+}
+
+function readEntries(filePath: string): string[] {
+  return readTagged(filePath).map((line) => line.replace(/^\[server\] /, ""));
 }
 
 describe("rotationPath", () => {
@@ -43,7 +47,7 @@ describe("appendCrashLog", () => {
 
   it("does not treat an entry as logged when the write fails", () => {
     const dir = join(mkdtempSync(join(tmpdir(), "cw-crash-")), "missing");
-    const filePath = initCrashLog(dir);
+    const filePath = initCrashLog(dir, "server");
     appendCrashLog("lost");
     mkdirSync(dir);
     appendCrashLog("lost");
@@ -56,6 +60,18 @@ describe("appendCrashLog", () => {
     appendCrashLog("after rotation");
     expect(readFileSync(rotationPath(filePath), "utf8")).toBe("x".repeat(100));
     expect(readEntries(filePath)).toEqual(["after rotation"]);
+  });
+
+  it("tags every line with its source", () => {
+    const filePath = initCrashLog(mkdtempSync(join(tmpdir(), "cw-crash-")), "shell");
+    appendCrashLog("window unresponsive");
+    appendCrashLog("window unresponsive");
+    appendCrashLog("done");
+    expect(readTagged(filePath)).toEqual([
+      "[shell] window unresponsive",
+      "[shell] previous entry repeated 1 more time",
+      "[shell] done"
+    ]);
   });
 
   it("keeps appending while under maxBytes", () => {

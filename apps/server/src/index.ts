@@ -1,3 +1,4 @@
+import { EXIT_ALREADY_RUNNING, SERVER_RUNNING_PREFIX } from "@cw-code/shared/protocol";
 import pkg from "../package.json" with { type: "json" };
 import { ServerApp } from "./app/ServerApp.js";
 import { appendCrashLog } from "./debug/crashLog.js";
@@ -5,8 +6,6 @@ import { ensureAppDirs, migrateFromUserData, userdataDir } from "./paths/appPath
 import { loadLoginShellEnvironment } from "./shellEnvironment.js";
 import { parseServerArgs } from "./transport/args.js";
 import { confirmLiveEndpoint, readLiveEndpoint, removeEndpoint } from "./transport/endpointFile.js";
-
-const EXIT_ALREADY_RUNNING = 3;
 
 function reportFatalStartupError(error: unknown): void {
   const detail = error instanceof Error ? (error.stack ?? error.message) : String(error);

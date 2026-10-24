@@ -5,7 +5,8 @@ import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import type { ServerEndpoint, ServerReady } from "@cw-code/contracts";
 import { appendCrashLog } from "@cw-code/server/debug/crashLog";
-import { userdataDir } from "@cw-code/server/paths/appPaths";
+import { cwCodeHome, userdataDir } from "@cw-code/server/paths/appPaths";
+import { isServerReady, SERVER_READY_PREFIX, SERVER_RUNNING_PREFIX, SERVER_TOKEN_FILE } from "@cw-code/shared/protocol";
 import { resolveBunBinary, type BunLookup } from "./bunBinary.js";
 
 export const READY_TIMEOUT_MS = 60_000;
@@ -13,11 +14,10 @@ export const STOP_CALL_TIMEOUT_MS = 3_000;
 export const STOP_EXIT_TIMEOUT_MS = 3_000;
 export const MAX_RESTARTS = 3;
 export const RESTART_WINDOW_MS = 60_000;
+const ALREADY_RUNNING_RETRY_MS = 6_000;
+const ALREADY_RUNNING_POLL_MS = 500;
 const RESTART_DELAY_MS = 500;
-const ATTACHED_POLL_MS = 2_000;
 const STDERR_TAIL_LINES = 50;
-const EXIT_ALREADY_RUNNING = 3;
-const TOKEN_FILE = "server-token";
 
 export interface ServerLine {
   kind: "ready" | "running";
@@ -48,20 +48,15 @@ export interface ServerProcessOptions {
 }
 
 const LINE_KINDS: ReadonlyArray<readonly [string, ServerLine["kind"]]> = [
-  ["CW_SERVER_READY ", "ready"],
-  ["CW_SERVER_RUNNING ", "running"]
+  [SERVER_READY_PREFIX, "ready"],
+  [SERVER_RUNNING_PREFIX, "running"]
 ];
 
-function isServerReady(value: unknown): value is ServerReady {
-  if (!value || typeof value !== "object") return false;
-  const ready = value as Record<string, unknown>;
-  return (
-    typeof ready.url === "string" &&
-    typeof ready.port === "number" &&
-    typeof ready.pid === "number" &&
-    typeof ready.protocol === "number" &&
-    typeof ready.version === "string"
-  );
+class ServerAlreadyRunningError extends Error {
+  constructor() {
+    super(`Another cw-code instance is already using ${cwCodeHome()}. Close it first, or start this one with a different CW_CODE_HOME.`);
+    this.name = "ServerAlreadyRunningError";
+  }
 }
 
 export function parseServerLine(line: string): ServerLine | null {
@@ -131,13 +126,8 @@ function settlesWithin(promise: Promise<unknown>, ms: number): Promise<boolean> 
   });
 }
 
-function isProcessAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    return (error as NodeJS.ErrnoException).code === "EPERM";
-  }
+function delay(ms: number): Promise<void> {
+  return new Promise((resolvePromise) => setTimeout(resolvePromise, ms));
 }
 
 export class ServerProcess {
@@ -148,7 +138,6 @@ export class ServerProcess {
   private restarts: number[] = [];
   private stopRequested = false;
   private stopping: Promise<void> | null = null;
-  private attachedTimer: ReturnType<typeof setInterval> | null = null;
   private readonly exitListeners = new Set<(expected: boolean) => void>();
 
   constructor(private readonly options: ServerProcessOptions) {}
@@ -158,13 +147,13 @@ export class ServerProcess {
   }
 
   start(): Promise<ServerReady> {
-    return this.launch();
+    return this.launchExclusive();
   }
 
   async endpoint(): Promise<ServerEndpoint> {
     const ready = this.current;
     if (!ready) throw new Error("the cw-code server is not running");
-    const token = (await readFile(join(userdataDir(), TOKEN_FILE), "utf8")).trim();
+    const token = (await readFile(join(userdataDir(), SERVER_TOKEN_FILE), "utf8")).trim();
     return { url: ready.url, token };
   }
 
@@ -177,13 +166,24 @@ export class ServerProcess {
 
   stop(link?: ServerStopLink): Promise<void> {
     this.stopRequested = true;
-    this.clearAttachedWatch();
     this.stopping ??= this.stopChild(link);
     return this.stopping;
   }
 
   private tailText(): string {
     return this.stderrTail.length > 0 ? `\n--- last server stderr ---\n${this.stderrTail.join("\n")}` : "";
+  }
+
+  private async launchExclusive(): Promise<ServerReady> {
+    const deadline = Date.now() + ALREADY_RUNNING_RETRY_MS;
+    for (;;) {
+      try {
+        return await this.launch();
+      } catch (error) {
+        if (!(error instanceof ServerAlreadyRunningError) || Date.now() >= deadline) throw error;
+      }
+      await delay(ALREADY_RUNNING_POLL_MS);
+    }
   }
 
   private launch(): Promise<ServerReady> {
@@ -206,7 +206,6 @@ export class ServerProcess {
       this.child = child;
       let settled = false;
       let started = false;
-      let attached = false;
       const settle = (finish: () => void): void => {
         if (settled) return;
         settled = true;
@@ -231,11 +230,13 @@ export class ServerProcess {
             if (line) console.log(`[server] ${line}`);
             continue;
           }
-          attached = parsed.kind === "running";
+          if (parsed.kind === "running") {
+            settle(() => reject(new ServerAlreadyRunningError()));
+            continue;
+          }
           this.current = parsed.ready;
           this.port = parsed.ready.port;
           started = true;
-          if (attached) this.watchAttached(parsed.ready.pid);
           settle(() => resolvePromise(parsed.ready));
         }
       });
@@ -261,30 +262,10 @@ export class ServerProcess {
           settle(() => reject(new Error(`the cw-code server exited before it was ready (${exit})${this.tailText()}`)));
           return;
         }
-        if (!started || attached) {
-          if (attached && code !== EXIT_ALREADY_RUNNING) console.warn(`[server] attach handshake process ended with ${exit}`);
-          return;
-        }
+        if (!started) return;
         this.handleExit(exit);
       });
     });
-  }
-
-  private watchAttached(pid: number): void {
-    this.clearAttachedWatch();
-    console.warn(`[server] attached to the cw-code server already running as pid ${pid}`);
-    this.attachedTimer = setInterval(() => {
-      if (isProcessAlive(pid)) return;
-      this.clearAttachedWatch();
-      this.handleExit(`the attached server (pid ${pid}) is gone`);
-    }, ATTACHED_POLL_MS);
-    this.attachedTimer.unref?.();
-  }
-
-  private clearAttachedWatch(): void {
-    if (!this.attachedTimer) return;
-    clearInterval(this.attachedTimer);
-    this.attachedTimer = null;
   }
 
   private notifyExit(expected: boolean): void {
@@ -317,10 +298,10 @@ export class ServerProcess {
         return;
       }
       this.restarts = history;
-      await new Promise((resolvePromise) => setTimeout(resolvePromise, RESTART_DELAY_MS));
+      await delay(RESTART_DELAY_MS);
       if (this.abandonRecovery()) return;
       try {
-        const ready = await this.launch();
+        const ready = await this.launchExclusive();
         console.warn(`[server] restarted on ${ready.url}`);
         return;
       } catch (error) {

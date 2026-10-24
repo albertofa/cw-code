@@ -21,6 +21,7 @@ const COPIED_WHEN_MISSING = new Set([
 
 const APPIMAGE_ENV_KEYS = ["APPIMAGE", "APPDIR", "ARGV0", "OWD", "CHROME_DESKTOP"] as const;
 const APPIMAGE_PATH_KEYS = ["PATH", "LD_LIBRARY_PATH", "XDG_DATA_DIRS", "GSETTINGS_SCHEMA_DIR"] as const;
+const CW_INTERNAL_ENV_KEYS = ["CW_NODE_PTY", "CW_LAUNCHED_FROM_TERMINAL"] as const;
 
 const ENV_LINE = /^[A-Za-z_][A-Za-z0-9_]*=/;
 
@@ -87,6 +88,7 @@ function isUnderAppDir(segment: string, appDir: string): boolean {
 
 export function sanitizedChildEnv(env: NodeJS.ProcessEnv, platform: NodeJS.Platform): NodeJS.ProcessEnv {
   const sanitized: NodeJS.ProcessEnv = { ...env };
+  for (const key of CW_INTERNAL_ENV_KEYS) delete sanitized[key];
   if (platform !== "linux") return sanitized;
   const appDir = env["APPIMAGE"] ? env["APPDIR"]?.replace(/\/+$/, "") : undefined;
   for (const key of APPIMAGE_ENV_KEYS) delete sanitized[key];

@@ -27,9 +27,9 @@ Core behaviors:
   CLI drivers, sessions, git, GitHub, files, terminals, settings, shutdown. It serves one
   WebSocket (`/ws`) and is the only place business logic lives. Packaged as a
   `bun build --compile` binary with `node-pty` as a sidecar (`CW_NODE_PTY`).
-- `apps/desktop`: Electron shell only — spawns and supervises the server (or attaches to a
-  running one), owns the window, zoom, attention badge, native dialogs, OS open/reveal and
-  auto-updates, and exposes them to the renderer as `window.cwDesktop` (`DesktopApi`).
+- `apps/desktop`: Electron shell only — spawns and supervises its own server (never attaches
+  to another instance's), owns the window, zoom, attention badge, native dialogs, OS
+  open/reveal and auto-updates, and exposes them to the renderer as `window.cwDesktop` (`DesktopApi`).
 - `apps/desktop/src/renderer`: the UI. Talks to the server only through `@cw-code/client`
   (`window.cw` is built from it in `renderer/src/server/createCwApi.ts`) and to the shell only
   through `window.cwDesktop`. It never spawns processes, touches the filesystem, or imports
@@ -42,7 +42,7 @@ Core behaviors:
   fire-and-forget); the server answers `result`s and broadcasts `event`s. Payloads are JSON —
   no `Map`/`Set`/`Date`/binary (send base64). The server writes `userdata/server.json` and
   prints `CW_SERVER_READY <json>` when listening; a second server on the same home prints
-  `CW_SERVER_RUNNING <json>` and exits 3.
+  `CW_SERVER_RUNNING <json>` and exits 3 (the shell retries for ~6 s, then fails startup).
 
 ## Stack
 

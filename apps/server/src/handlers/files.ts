@@ -1,3 +1,4 @@
+import { assertPasteImageSize } from "@cw-code/shared/protocol";
 import { readFileSync, statSync } from "node:fs";
 import { isAbsolute, relative, resolve, sep } from "node:path";
 import type { ServerApp } from "../app/ServerApp.js";
@@ -133,6 +134,7 @@ export function registerFileHandlers(router: Router, app: ServerApp): void {
   );
   handle<{ projectId: string; mime: string; base64: string }>(router, "fs.savePasteImage", (args) => {
     const data = Buffer.from(parseString(args.base64, "base64"), "base64");
+    assertPasteImageSize(data.byteLength);
     const { sessions, files } = services();
     return files.savePasteImage(sessions.rootForProject(args.projectId), args.mime, data);
   });

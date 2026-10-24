@@ -1,26 +1,14 @@
 import type { ServerReady } from "@cw-code/contracts";
+import { isServerReady, SERVER_ENDPOINT_FILE } from "@cw-code/shared/protocol";
 import { readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { writeFileAtomic } from "../storage/atomicFile.js";
 
-const ENDPOINT_FILE = "server.json";
 const PROBE_TIMEOUT_MS = 1000;
 const UPGRADE_REQUIRED = 426;
 
 export function endpointFilePath(dir: string): string {
-  return join(dir, ENDPOINT_FILE);
-}
-
-function isServerReady(value: unknown): value is ServerReady {
-  if (typeof value !== "object" || value === null) return false;
-  const ready = value as Record<string, unknown>;
-  return (
-    typeof ready.url === "string" &&
-    typeof ready.port === "number" &&
-    typeof ready.pid === "number" &&
-    typeof ready.protocol === "number" &&
-    typeof ready.version === "string"
-  );
+  return join(dir, SERVER_ENDPOINT_FILE);
 }
 
 function readEndpointFile(dir: string): ServerReady | null {

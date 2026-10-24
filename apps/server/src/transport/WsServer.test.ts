@@ -1,14 +1,23 @@
 import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import { ServerCallError, ServerClient } from "@cw-code/client";
-import type { ClientMessage, ServerMessage } from "@cw-code/contracts";
-import { CLOSE_HELLO_TIMEOUT, CLOSE_PROTOCOL_MISMATCH, CLOSE_SERVER_STOPPING, CLOSE_UNAUTHORIZED, PROTOCOL_VERSION } from "@cw-code/shared/protocol";
+import type { ClientKind, ClientMessage, ServerMessage } from "@cw-code/contracts";
+import {
+  CLOSE_CLIENT_TOO_SLOW,
+  CLOSE_HELLO_TIMEOUT,
+  CLOSE_PROTOCOL_MISMATCH,
+  CLOSE_SERVER_STOPPING,
+  CLOSE_UNAUTHORIZED,
+  PROTOCOL_VERSION
+} from "@cw-code/shared/protocol";
+import { connect, type Socket } from "node:net";
 import { Router, type CallContext } from "./Router.js";
-import { WsServer, type WsServerOptions } from "./WsServer.js";
+import { sendRaw, WsServer, wsUrl, type FrameSink, type WsServerOptions } from "./WsServer.js";
 
 const TOKEN = "t".repeat(64);
 const servers: WsServer[] = [];
 const clients: ServerClient[] = [];
 const sockets: WebSocket[] = [];
+const tcpSockets: Socket[] = [];
 
 interface RawSocket {
   ws: WebSocket;
@@ -26,8 +35,8 @@ function startServer(overrides: Partial<WsServerOptions> = {}): { server: WsServ
   return { server, router, url: server.start().url };
 }
 
-function newClient(url: string, token = TOKEN): ServerClient {
-  const client = new ServerClient({ endpoint: { url, token }, client: "desktop-ui" });
+function newClient(url: string, token = TOKEN, kind: ClientKind = "desktop-ui"): ServerClient {
+  const client = new ServerClient({ endpoint: { url, token }, client: kind });
   clients.push(client);
   return client;
 }
@@ -69,6 +78,53 @@ async function authenticatedSocket(url: string): Promise<RawSocket> {
   return socket;
 }
 
+function maskedTextFrame(text: string): Buffer {
+  const payload = Buffer.from(text);
+  const header = payload.length < 126 ? Buffer.from([0x81, 0x80 | payload.length]) : Buffer.from([0x81, 0x80 | 126, payload.length >> 8, payload.length & 0xff]);
+  return Buffer.concat([header, Buffer.alloc(4), payload]);
+}
+
+function stalledClient(url: string): Promise<Socket> {
+  const { hostname, port } = new URL(url);
+  return new Promise((resolve, reject) => {
+    const socket = connect(Number(port), hostname, () => {
+      const headers = [
+        "GET /ws HTTP/1.1",
+        `Host: ${hostname}:${port}`,
+        "Upgrade: websocket",
+        "Connection: Upgrade",
+        "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==",
+        "Sec-WebSocket-Version: 13"
+      ];
+      socket.write(`${headers.join("\r\n")}\r\n\r\n`);
+      socket.write(maskedTextFrame(JSON.stringify({ t: "hello", token: TOKEN, protocol: PROTOCOL_VERSION, client: "web" })));
+    });
+    tcpSockets.push(socket);
+    let received = "";
+    const onData = (chunk: Buffer): void => {
+      received += chunk.toString("latin1");
+      if (!received.includes('"t":"welcome"')) return;
+      socket.off("data", onData);
+      socket.pause();
+      resolve(socket);
+    };
+    socket.on("data", onData);
+    socket.once("error", reject);
+  });
+}
+
+function fakeSink(result: number): FrameSink & { closes: Array<[number | undefined, string | undefined]> } {
+  const closes: Array<[number | undefined, string | undefined]> = [];
+  return {
+    readyState: 1,
+    send: () => result,
+    close: (code?: number, reason?: string) => {
+      closes.push([code, reason]);
+    },
+    closes
+  };
+}
+
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -76,6 +132,7 @@ function sleep(ms: number): Promise<void> {
 afterEach(async () => {
   for (const client of clients.splice(0)) client.close();
   for (const ws of sockets.splice(0)) ws.close();
+  for (const socket of tcpSockets.splice(0)) socket.destroy();
   for (const server of servers.splice(0)) await server.stop();
 });
 
@@ -248,6 +305,53 @@ describe("WsServer", () => {
     expect(silent.messages).toEqual([]);
   });
 
+  test("broadcast skips clients the filter rejects", async () => {
+    const { server, url } = startServer();
+    const ui = newClient(url);
+    const shell = newClient(url, TOKEN, "desktop-shell");
+    const shellSaw: unknown[] = [];
+    shell.on("pty.data", (payload) => shellSaw.push(payload));
+    const uiSaw = new Promise<unknown>((resolve) => ui.on("pty.data", resolve));
+    await Promise.all([ui.connect(), shell.connect()]);
+    server.broadcast("pty.data", "chunk", (ctx) => ctx.client !== "desktop-shell");
+    expect(await uiSaw).toBe("chunk");
+    await sleep(100);
+    expect(shellSaw).toEqual([]);
+  });
+
+  test("closes a client that stops reading instead of silently dropping messages", async () => {
+    const { server, url } = startServer();
+    const closed = new Promise<CallContext>((resolve) => server.onClientClosed(resolve));
+    const warn = spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      await stalledClient(url);
+      expect(server.clients()).toHaveLength(1);
+      const chunk = "x".repeat(1024 * 1024);
+      for (let i = 0; i < 256 && server.clients().length > 0; i++) server.broadcast("pty.data", chunk);
+      expect(server.clients()).toEqual([]);
+      expect((await closed).client).toBe("web");
+      expect(warn.mock.calls.some((call) => String(call[0]).includes("too slow"))).toBe(true);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  test("sendRaw closes a socket whose frame was dropped and keeps a backpressured one", () => {
+    const warn = spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      const dropped = fakeSink(0);
+      sendRaw(dropped, "frame");
+      expect(dropped.closes).toEqual([[CLOSE_CLIENT_TOO_SLOW, "client too slow"]]);
+      for (const result of [-1, 5]) {
+        const sink = fakeSink(result);
+        sendRaw(sink, "frame");
+        expect(sink.closes).toEqual([]);
+      }
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
   test("onClientClosed fires with the context of an authenticated client", async () => {
     const { server, url } = startServer();
     const closed = new Promise<CallContext>((resolve) => server.onClientClosed(resolve));
@@ -315,5 +419,12 @@ describe("WsServer", () => {
     expect(port).toBeGreaterThan(0);
     expect(url).toBe(`ws://127.0.0.1:${port}/ws`);
     expect(() => server.start()).toThrow("already started");
+  });
+
+  test("wsUrl brackets IPv6 hosts", () => {
+    expect(wsUrl("::1", 4000)).toBe("ws://[::1]:4000/ws");
+    expect(wsUrl("[::1]", 4000)).toBe("ws://[::1]:4000/ws");
+    expect(wsUrl("127.0.0.1", 4000)).toBe("ws://127.0.0.1:4000/ws");
+    expect(wsUrl("localhost", 4000)).toBe("ws://localhost:4000/ws");
   });
 });

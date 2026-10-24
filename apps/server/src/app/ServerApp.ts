@@ -1,5 +1,5 @@
 import type { AppNotice, ServerReady, ShutdownCommitResult, ShutdownExpiredEvent, ShutdownReason, ShutdownStatus, StartupState } from "@cw-code/contracts";
-import { PROTOCOL_VERSION } from "@cw-code/shared/protocol";
+import { PROTOCOL_VERSION, SERVER_READY_PREFIX } from "@cw-code/shared/protocol";
 import { appendCrashLog, initCrashLog } from "../debug/crashLog.js";
 import { initHarnessTrace } from "../debug/harnessTrace.js";
 import { initSessionStatusTrace } from "../debug/sessionStatusTrace.js";
@@ -15,6 +15,7 @@ import { removeEndpoint, writeEndpoint } from "../transport/endpointFile.js";
 import { loadOrCreateOwnerToken } from "../transport/ownerToken.js";
 import { Router } from "../transport/Router.js";
 import { WsServer } from "../transport/WsServer.js";
+import { eventAudience } from "./eventAudience.js";
 import { createServices, type Services } from "./services.js";
 
 const SESSION_SETTLE_INTERVAL_MS = 60_000;
@@ -58,7 +59,7 @@ export class ServerApp {
   }
 
   emit(channel: string, payload?: unknown): void {
-    this.ws?.broadcast(channel, payload);
+    this.ws?.broadcast(channel, payload, eventAudience(channel));
   }
 
   start(loginShellWarnings: string[]): ServerReady {
@@ -74,7 +75,7 @@ export class ServerApp {
     } catch (err) {
       console.warn(`session status trace init failed: ${(err as Error).message}`);
     }
-    initCrashLog(logsDir());
+    initCrashLog(logsDir(), "server");
     for (const warning of loginShellWarnings) {
       console.warn(`[shell-env] ${warning}`);
       appendCrashLog(`[shell-env] ${warning}`);

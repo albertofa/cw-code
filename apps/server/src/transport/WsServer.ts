@@ -1,5 +1,12 @@
 import type { ClientKind, ClientMessage, ServerMessage } from "@cw-code/contracts";
-import { CLOSE_HELLO_TIMEOUT, CLOSE_PROTOCOL_MISMATCH, CLOSE_SERVER_STOPPING, CLOSE_UNAUTHORIZED, PROTOCOL_VERSION } from "@cw-code/shared/protocol";
+import {
+  CLOSE_CLIENT_TOO_SLOW,
+  CLOSE_HELLO_TIMEOUT,
+  CLOSE_PROTOCOL_MISMATCH,
+  CLOSE_SERVER_STOPPING,
+  CLOSE_UNAUTHORIZED,
+  PROTOCOL_VERSION
+} from "@cw-code/shared/protocol";
 import { randomUUID, timingSafeEqual } from "node:crypto";
 import { toRpcError, type CallContext, type Router } from "./Router.js";
 
@@ -18,6 +25,7 @@ interface SocketData {
 }
 
 type Socket = Bun.ServerWebSocket<SocketData>;
+export type FrameSink = Pick<Bun.ServerWebSocket<unknown>, "readyState" | "send" | "close">;
 type HelloMessage = Extract<ClientMessage, { t: "hello" }>;
 type CallMessage = Extract<ClientMessage, { t: "call" }>;
 
@@ -25,6 +33,7 @@ const WS_PATH = "/ws";
 const MAX_PAYLOAD_BYTES = 64 * 1024 * 1024;
 const DEFAULT_HELLO_TIMEOUT_MS = 5000;
 const SOCKET_OPEN = 1;
+const SEND_DROPPED = 0;
 const CLIENT_KINDS = new Set<string>(["desktop-ui", "desktop-shell", "web"] satisfies ClientKind[]);
 
 function parseJsonObject(raw: string | Buffer): Record<string, unknown> | null {
@@ -56,13 +65,23 @@ function tokensEqual(expected: string, received: string): boolean {
   return a.length === b.length && timingSafeEqual(a, b);
 }
 
-function sendRaw(ws: Socket, data: string): void {
+export function sendRaw(ws: FrameSink, data: string): void {
   if (ws.readyState !== SOCKET_OPEN) return;
+  let sent: number;
   try {
-    ws.send(data);
+    sent = ws.send(data);
   } catch (error) {
     console.warn(`could not send to client: ${(error as Error).message}`);
+    return;
   }
+  if (sent !== SEND_DROPPED) return;
+  console.warn("closing a client that is too slow to keep up with server messages");
+  ws.close(CLOSE_CLIENT_TOO_SLOW, "client too slow");
+}
+
+export function wsUrl(host: string, port: number): string {
+  const urlHost = host.includes(":") && !host.startsWith("[") ? `[${host}]` : host;
+  return `ws://${urlHost}:${port}${WS_PATH}`;
 }
 
 export class WsServer {
@@ -87,6 +106,7 @@ export class WsServer {
       },
       websocket: {
         maxPayloadLength: MAX_PAYLOAD_BYTES,
+        closeOnBackpressureLimit: true,
         open: (ws) => this.onOpen(ws),
         message: (ws, raw) => this.onMessage(ws, raw),
         close: (ws) => this.onClose(ws),
@@ -94,12 +114,15 @@ export class WsServer {
     });
     this.server = server;
     const port = server.port ?? this.options.port;
-    return { port, url: `ws://${this.options.host}:${port}${WS_PATH}` };
+    return { port, url: wsUrl(this.options.host, port) };
   }
 
-  broadcast(channel: string, payload: unknown): void {
+  broadcast(channel: string, payload: unknown, accept?: (ctx: CallContext) => boolean): void {
     const data = JSON.stringify({ t: "event", channel, payload } satisfies ServerMessage);
-    for (const ws of this.sockets) if (ws.data.ctx) sendRaw(ws, data);
+    for (const ws of [...this.sockets]) {
+      const ctx = ws.data.ctx;
+      if (ctx && (!accept || accept(ctx))) sendRaw(ws, data);
+    }
   }
 
   onClientClosed(cb: (ctx: CallContext) => void): () => void {

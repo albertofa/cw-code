@@ -633,7 +633,7 @@ async function connectServer(): Promise<void> {
 async function startApp(): Promise<void> {
   const updateAutotest = await prepareUpdateAutotest();
   mkdirSync(logsDir(), { recursive: true });
-  initCrashLog(logsDir());
+  initCrashLog(logsDir(), "shell");
   process.on("uncaughtException", (err) => {
     appendCrashLog(`uncaughtException: ${err.stack ?? err.message}`);
   });

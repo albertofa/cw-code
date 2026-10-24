@@ -13,6 +13,7 @@ interface FakeServer {
   emit(channel: string, payload: unknown): void;
   sendRaw(data: string): void;
   closeClients(code: number, reason?: string): void;
+  openSockets(): number;
   stop(): void;
 }
 
@@ -67,6 +68,7 @@ function startServer(): FakeServer {
     closeClients: (code, reason) => {
       for (const ws of [...sockets]) ws.close(code, reason);
     },
+    openSockets: () => sockets.size,
     stop: () => void server.stop(true)
   };
   servers.push(fake);
@@ -339,6 +341,26 @@ describe("ServerClient", () => {
     expect(states).toEqual(["connecting", "open", "reconnecting", "open"]);
     expect(endpointCalls).toBe(2);
     expect(await client.call("echo", "back")).toBe("back");
+  });
+
+  test("connect while reconnecting replaces the pending retry with one immediate attempt", async () => {
+    const server = startServer();
+    const client = makeClient(server, { reconnect: true });
+    const states = trackStates(client);
+    await client.connect();
+
+    server.closeClients(1011);
+    await waitFor(() => client.state === "reconnecting");
+    const first = client.connect();
+    const second = client.connect();
+    expect(second).toBe(first);
+    expect((await first).clientId).toBe("client-2");
+    await Bun.sleep(400);
+
+    expect(server.hellos).toHaveLength(2);
+    expect(server.openSockets()).toBe(1);
+    expect(client.state).toBe("open");
+    expect(states).toEqual(["connecting", "open", "reconnecting", "open"]);
   });
 
   test("close stops reconnecting", async () => {

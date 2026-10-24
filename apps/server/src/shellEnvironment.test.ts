@@ -155,6 +155,13 @@ describe("sanitizedChildEnv", () => {
     expect(sanitizedChildEnv(env, "linux")).toEqual(env);
   });
 
+  it("strips cw-code's own launch variables on every platform", () => {
+    const env = { PATH: "/usr/bin", CW_NODE_PTY: "/opt/cw/node-pty/lib/index.js", CW_LAUNCHED_FROM_TERMINAL: "1", CW_CODE_HOME: "/data" };
+    for (const platform of ["linux", "darwin", "win32"] as const) {
+      expect(sanitizedChildEnv(env, platform)).toEqual({ PATH: "/usr/bin", CW_CODE_HOME: "/data" });
+    }
+  });
+
   it("returns an unchanged copy on other platforms", () => {
     for (const platform of ["darwin", "win32"] as const) {
       const result = sanitizedChildEnv(appImageEnv, platform);

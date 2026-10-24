@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { loadOrCreateOwnerToken } from "./ownerToken.js";
@@ -41,6 +41,17 @@ describe("loadOrCreateOwnerToken", () => {
       expect(token).toMatch(HEX_TOKEN);
       expect(readFileSync(join(root, "server-token"), "utf8")).toBe(token);
       expect(warn).toHaveBeenCalledTimes(1);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  test.skipIf(process.platform === "win32")("keeps a regenerated token readable only by its owner", () => {
+    const warn = spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      writeFileSync(join(root, "server-token"), "garbage", { mode: 0o644 });
+      loadOrCreateOwnerToken(root);
+      expect(statSync(join(root, "server-token")).mode & 0o777).toBe(0o600);
     } finally {
       warn.mockRestore();
     }

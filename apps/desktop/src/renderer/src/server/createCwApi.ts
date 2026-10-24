@@ -39,6 +39,7 @@ import type {
   UsageLedgerRow,
   WorktreePruneSummary
 } from "@cw-code/contracts";
+import { assertPasteImageSize } from "@cw-code/shared/protocol";
 import type {
   ActiveTurn,
   ComposerPrefs,
@@ -257,7 +258,10 @@ export function createCwApi(client: ServerClient, desktop: DesktopApi, shutdownH
     setWatchedPaths: (sessionId, paths) => callVoid("fs.setWatchedPaths", { sessionId, paths }),
     unwatchPaths: (sessionId) => callVoid("fs.unwatchPaths", { sessionId }),
     onFsChanged: (cb) => subscribe("fs.changed", cb),
-    savePasteImage: (projectId, mime, data) => call<string>("fs.savePasteImage", { projectId, mime, base64: toBase64(data) }),
+    savePasteImage: async (projectId, mime, data) => {
+      assertPasteImageSize(data.byteLength);
+      return call<string>("fs.savePasteImage", { projectId, mime, base64: toBase64(data) });
+    },
     readImage: (args) => call<{ mime: string; base64: string }>("fs.readImage", args),
     openPty: (sessionId, kind) => call<{ ptyId: string; token: string; replay: string }>("pty.open", { sessionId, kind }),
     writePty: (ptyId, data) => client.send("pty.write", { ptyId, data }),
