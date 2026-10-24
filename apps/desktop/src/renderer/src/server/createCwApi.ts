@@ -215,7 +215,6 @@ export function createCwApi(client: ServerClient, desktop: DesktopApi, shutdownH
     getGitHubRuns: (sources, force) => call<RunsResult>("github.runs", { sources, force }),
     getRunLog: (ref) => call<string>("github.runLog", { ref }),
     watchGitHubRuns: (refs) => callVoid("github.watchRuns", { refs }),
-    setGitHubActive: (active) => callVoid("github.setActive", { active }),
     onGitHubRunsChanged: (cb) => subscribe("github.runsChanged", cb),
     onGitHubCiActivity: (cb) => client.on("github.ciActivity", () => cb()),
     subscribeTopics: (topics) => client.subscribe(topics),

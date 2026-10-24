@@ -14,6 +14,7 @@ import type {
   SavedGitHubView,
   WorkflowRunSummary
 } from "../cw.js";
+import { GITHUB_RUNS_TOPIC } from "@cw-code/shared/topics";
 import { errorMessage } from "../components/errorMessage.js";
 import { normalizeQuery, kindFromQuery, runSources, sortedRemoteOf, splitQuery, tokenize, type SplitQuery } from "../components/githubQuery.js";
 import { useAppStore } from "./appStore.js";
@@ -281,6 +282,21 @@ function reconcileRuns(incoming: RunsResult, existing: Record<string, Loadable<R
 }
 
 let teardownRuntime: () => void = () => undefined;
+let runsTopicDisposer: (() => void) | null = null;
+
+function holdRunsTopic(): void {
+  if (runsTopicDisposer) return;
+  try {
+    runsTopicDisposer = window.cw.subscribeTopics([GITHUB_RUNS_TOPIC]);
+  } catch (err) {
+    console.warn(`[github] cannot subscribe to ${GITHUB_RUNS_TOPIC}:`, err);
+  }
+}
+
+function releaseRunsTopic(): void {
+  runsTopicDisposer?.();
+  runsTopicDisposer = null;
+}
 
 export const useGitHubStore = create<GitHubStore>((set, get) => {
   const keySequences = new Map<string, number>();
@@ -685,14 +701,13 @@ export const useGitHubStore = create<GitHubStore>((set, get) => {
 
     setActive(active: boolean, force?: boolean) {
       set({ active });
-      void window.cw.setGitHubActive(active).catch((err: unknown) => {
-        fail("setActive failed", err);
-      });
       if (!active) {
+        releaseRunsTopic();
         teardownRuntime();
         watchedSignature = null;
         return;
       }
+      holdRunsTopic();
       subscribe();
       scheduleRefresh();
       if (!savedViewsLoaded) void get().loadSavedViews();
@@ -743,5 +758,5 @@ export const useGitHubStore = create<GitHubStore>((set, get) => {
 
 import.meta.hot?.dispose(() => {
   teardownRuntime();
-  void window.cw?.setGitHubActive(false).catch(() => undefined);
+  releaseRunsTopic();
 });

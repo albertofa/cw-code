@@ -64,7 +64,6 @@ function installBridge(): void {
     getGitHubRuns: async () => ({ account: null, items: [], fetchedAt: 0, error: null }),
     getRunLog: async () => "",
     watchGitHubRuns: async () => {},
-    setGitHubActive: async () => {},
     onGitHubRunsChanged: noop,
     onGitHubCiActivity: noop,
     markSessionRunSeen: async (sessionId: string) => makeSession({ id: sessionId }),

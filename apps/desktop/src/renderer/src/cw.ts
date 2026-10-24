@@ -675,7 +675,6 @@ export interface CwApi {
   getGitHubRuns(sources: RunSources, force?: boolean): Promise<RunsResult>;
   getRunLog(ref: RunRef): Promise<string>;
   watchGitHubRuns(refs: RunRef[]): Promise<void>;
-  setGitHubActive(active: boolean): Promise<void>;
   onGitHubRunsChanged(cb: (runs: WorkflowRunSummary[]) => void): () => void;
   onGitHubCiActivity(cb: () => void): () => void;
   subscribeTopics(topics: readonly string[]): () => void;

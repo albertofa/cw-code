@@ -11,6 +11,8 @@ describe("eventTopic", () => {
     ["session.updated", { id: "sess_a" }, "sidebar"],
     ["projects.changed", { id: "proj_a" }, "sidebar"],
     ["prs.tracked", [], "prs"],
+    ["github.runsChanged", [], "github/runs"],
+    ["github.ciActivity", {}, "github/runs"],
     ["skills.changed", { skills: [] }, "app"],
     ["devices.changed", [], "app"]
   ])("routes %s to its topic", (channel, payload, topic) => {
@@ -24,8 +26,6 @@ describe("eventTopic", () => {
     ["shutdown.changed"],
     ["app.notice"],
     ["fs.changed"],
-    ["github.runsChanged"],
-    ["github.ciActivity"],
     ["pty.data"],
     ["pty.exit"]
   ])("broadcasts %s", (channel) => {

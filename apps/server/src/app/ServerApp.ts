@@ -17,6 +17,7 @@ import { loadOrCreateOwnerToken, tokensEqual } from "../transport/ownerToken.js"
 import { Router, type ClientAuth } from "../transport/Router.js";
 import { TopicRegistry } from "../transport/TopicRegistry.js";
 import { WsServer } from "../transport/WsServer.js";
+import { ClientInputs } from "./clientInputs.js";
 import { eventAudience } from "./eventAudience.js";
 import { eventTopic } from "./eventTopics.js";
 import { createServices, type Services } from "./services.js";
@@ -40,6 +41,7 @@ function isProcessGone(pid: number): boolean {
 export class ServerApp {
   readonly router = new Router();
   readonly topics = new TopicRegistry();
+  readonly clientInputs = new ClientInputs();
   private readonly topicWiring = wireTopics(this);
   private deviceTokens: DeviceTokens | null = null;
   private services: Services | null = null;
@@ -101,6 +103,10 @@ export class ServerApp {
     this.emitDevicesChanged();
   }
 
+  syncWatchedRuns(): void {
+    this.topicWiring.syncWatchedRuns();
+  }
+
   currentServices(): Services | null {
     return this.services;
   }
@@ -146,6 +152,7 @@ export class ServerApp {
     this.openStores();
     ws.onClientClosed((ctx) => {
       this.topics.dropClient(ctx.clientId);
+      this.clientInputs.dropClient(ctx.clientId);
       if (ctx.client === "desktop-ui" && !this.stopping) this.handleUiDisconnected(ws);
     });
     const ready: ServerReady = { url, port, pid: process.pid, protocol: PROTOCOL_VERSION, version: this.version };
