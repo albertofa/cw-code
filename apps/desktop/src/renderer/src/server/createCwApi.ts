@@ -27,6 +27,7 @@ import type {
   ShutdownAssessment,
   ShutdownCommitResult,
   ShutdownPrepareResult,
+  ShutdownRequestedEvent,
   SkillDetail,
   SkillMeta,
   SkillsListResult,
@@ -62,7 +63,9 @@ function toBase64(data: Uint8Array): string {
   return btoa(binary);
 }
 
-export function createCwApi(client: ServerClient, desktop: DesktopApi): CwApi {
+export type ShutdownHandlers = Set<(event: ShutdownRequestedEvent) => void>;
+
+export function createCwApi(client: ServerClient, desktop: DesktopApi, shutdownHandlers: ShutdownHandlers): CwApi {
   const call = <T>(method: string, params?: unknown): Promise<T> => client.call<T>(method, params);
   const callVoid = (method: string, params?: unknown): Promise<void> => client.call(method, params).then(() => undefined);
   const subscribe = <T>(channel: string, cb: (payload: T) => void): (() => void) => client.on(channel, (payload) => cb(payload as T));
@@ -109,7 +112,12 @@ export function createCwApi(client: ServerClient, desktop: DesktopApi): CwApi {
         if (result.ok) desktop.shutdown.quit();
         return result;
       },
-      onRequested: (cb) => desktop.shutdown.onRequested(cb),
+      onRequested: (cb) => {
+        shutdownHandlers.add(cb);
+        return () => {
+          shutdownHandlers.delete(cb);
+        };
+      },
       onExpired: (cb) => subscribe("shutdown.expired", cb)
     },
     checkVersions: () => call("cli.checkVersions"),

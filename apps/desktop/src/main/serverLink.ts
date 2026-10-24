@@ -1,18 +1,5 @@
-import type { AppSettings, ServerEndpoint, ShutdownReason, StartupState } from "@cw-code/contracts";
+import type { AppSettings, ServerEndpoint, ShutdownStatus, StartupState } from "@cw-code/contracts";
 import { ServerClient } from "@cw-code/client";
-
-export interface ShutdownStatus {
-  idle: boolean;
-  committed: boolean;
-  reason: ShutdownReason | null;
-}
-
-export interface AppNotice {
-  level: "error" | "warning";
-  title: string;
-  message: string;
-  detail?: string;
-}
 
 export type ServerLinkChange = "settings" | "shutdown" | "startup";
 

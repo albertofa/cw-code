@@ -78,6 +78,7 @@ export class ServerClient {
   private currentState: ConnectionState = "closed";
   private socket: WebSocket | null = null;
   private welcome: Welcome | null = null;
+  private closeFailure: ServerCallError | null = null;
   private connecting: Promise<Welcome> | null = null;
   private abortConnect: ((error: ServerCallError) => void) | null = null;
   private nextId = 1;
@@ -92,6 +93,10 @@ export class ServerClient {
 
   get state(): ConnectionState {
     return this.currentState;
+  }
+
+  get lastError(): ServerCallError | null {
+    return this.closeFailure;
   }
 
   connect(): Promise<Welcome> {
@@ -223,6 +228,7 @@ export class ServerClient {
           welcomed = true;
           this.attempt = 0;
           this.abortConnect = null;
+          this.closeFailure = null;
           this.welcome = { serverVersion: message.serverVersion, clientId: message.clientId };
           this.setState("open");
           resolve(this.welcome);
@@ -240,8 +246,9 @@ export class ServerClient {
         this.socket = null;
         this.welcome = null;
         this.abortConnect = null;
+        this.closeFailure = closeError(event.code, event.reason);
         this.rejectPending();
-        if (!welcomed) reject(closeError(event.code, event.reason));
+        if (!welcomed) reject(this.closeFailure);
         if (this.currentState === "connecting") return;
         if (FATAL_CLOSE_CODES.has(event.code) || !this.options.reconnect) {
           this.setState("closed");

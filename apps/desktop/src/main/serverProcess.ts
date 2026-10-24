@@ -1,9 +1,12 @@
 import { spawn, type ChildProcess } from "node:child_process";
+import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
+import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import type { ServerEndpoint, ServerReady } from "@cw-code/contracts";
 import { appendCrashLog } from "@cw-code/server/debug/crashLog";
 import { userdataDir } from "@cw-code/server/paths/appPaths";
+import { resolveBunBinary, type BunLookup } from "./bunBinary.js";
 
 export const READY_TIMEOUT_MS = 60_000;
 export const STOP_CALL_TIMEOUT_MS = 3_000;
@@ -85,7 +88,13 @@ export function allowRestart(history: readonly number[], now: number, max = MAX_
   return recent.length >= max ? null : [...recent, now];
 }
 
-export function serverCommand(launch: ServerLaunch, platform: NodeJS.Platform, env: NodeJS.ProcessEnv, args: string[]): ServerCommand {
+export function serverCommand(
+  launch: ServerLaunch,
+  platform: NodeJS.Platform,
+  env: NodeJS.ProcessEnv,
+  args: string[],
+  files: Pick<BunLookup, "homeDir" | "exists">
+): ServerCommand {
   if (launch.isPackaged) {
     const dir = join(launch.resourcesPath, "server");
     return {
@@ -95,8 +104,7 @@ export function serverCommand(launch: ServerLaunch, platform: NodeJS.Platform, e
     };
   }
   const entry = env.CW_SERVER_ENTRY?.trim() || resolve(launch.appPath, "..", "server", "src", "index.ts");
-  const bun = env.CW_BUN?.trim() || (platform === "win32" ? "bun.exe" : "bun");
-  return { file: bun, args: [entry, ...args], env: { ...env } };
+  return { file: resolveBunBinary({ env, platform, ...files }), args: [entry, ...args], env: { ...env } };
 }
 
 function describeExit(code: number | null, signal: NodeJS.Signals | null): string {
@@ -179,14 +187,13 @@ export class ServerProcess {
   }
 
   private launch(): Promise<ServerReady> {
-    const command = serverCommand(this.options.launch, process.platform, process.env, [
-      "--port",
-      String(this.port),
-      "--parent-pid",
-      String(process.pid),
-      "--legacy-user-data",
-      this.options.launch.legacyUserData
-    ]);
+    const command = serverCommand(
+      this.options.launch,
+      process.platform,
+      process.env,
+      ["--port", String(this.port), "--parent-pid", String(process.pid), "--legacy-user-data", this.options.launch.legacyUserData],
+      { homeDir: homedir(), exists: existsSync }
+    );
     this.stderrTail = [];
     return new Promise<ServerReady>((resolvePromise, reject) => {
       let child: ChildProcess;
@@ -280,18 +287,28 @@ export class ServerProcess {
     this.attachedTimer = null;
   }
 
+  private notifyExit(expected: boolean): void {
+    for (const cb of [...this.exitListeners]) cb(expected);
+  }
+
   private handleExit(reason: string): void {
     const expected = this.stopRequested || this.options.isQuitting();
-    for (const cb of [...this.exitListeners]) cb(expected);
+    this.notifyExit(expected);
     if (expected) return;
     appendCrashLog(`cw-code server exited unexpectedly: ${reason}${this.tailText()}`);
     void this.recover(reason);
   }
 
+  private abandonRecovery(): boolean {
+    if (!this.stopRequested && !this.options.isQuitting()) return false;
+    this.notifyExit(true);
+    return true;
+  }
+
   private async recover(reason: string): Promise<void> {
     let lastFailure = reason;
     for (;;) {
-      if (this.stopRequested || this.options.isQuitting()) return;
+      if (this.abandonRecovery()) return;
       const history = allowRestart(this.restarts, Date.now());
       if (!history) {
         this.options.onFatal(
@@ -301,7 +318,7 @@ export class ServerProcess {
       }
       this.restarts = history;
       await new Promise((resolvePromise) => setTimeout(resolvePromise, RESTART_DELAY_MS));
-      if (this.stopRequested || this.options.isQuitting()) return;
+      if (this.abandonRecovery()) return;
       try {
         const ready = await this.launch();
         console.warn(`[server] restarted on ${ready.url}`);

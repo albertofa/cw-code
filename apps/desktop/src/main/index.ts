@@ -1,9 +1,10 @@
 import { app, BrowserWindow, dialog, ipcMain, nativeImage, nativeTheme, powerMonitor, shell, type MessageBoxOptions, type WebContents } from "electron";
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, isAbsolute, join } from "node:path";
+import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import type {
+  AppNotice,
   AppSettings,
   ServerEndpoint,
   ServerPackageProbe,
@@ -12,6 +13,7 @@ import type {
   ShutdownPrepareRequest,
   ShutdownPrepareResult,
   ShutdownRequestedEvent,
+  ShutdownStatus,
   UpdateActionResult,
   UpdateState
 } from "@cw-code/contracts";
@@ -20,8 +22,8 @@ import { attachmentsDir, cwCodeHome, logsDir } from "@cw-code/server/paths/appPa
 import { windowBackgroundColor } from "@cw-code/shared/themes";
 import { attentionDescription, parseAttentionState, resetsAttention, shouldFlash } from "./attention.js";
 import { failedServerProbe, RendererProbeTracker, runPackageProbe } from "./debug/packageProbe.js";
-import { assertOpenablePath } from "./openPathPolicy.js";
-import { ServerLink, type AppNotice, type ServerLinkChange, type ShutdownStatus } from "./serverLink.js";
+import { assertLocalAbsolutePath, resolveOpenTarget } from "./openPathPolicy.js";
+import { ServerLink, type ServerLinkChange } from "./serverLink.js";
 import { ServerProcess } from "./serverProcess.js";
 import { ElectronUpdaterAdapter } from "./updates/ElectronUpdaterAdapter.js";
 import { UpdateService } from "./updates/UpdateService.js";
@@ -207,7 +209,7 @@ function quitWithoutDialog(): void {
 
 function requestShutdown(): void {
   const window = liveMainWindow();
-  if (!link.isOpen || !window || window.webContents.isCrashed()) {
+  if (!link.isOpen || link.startup?.mode !== "ready" || !window || window.webContents.isCrashed()) {
     quitWithoutDialog();
     return;
   }
@@ -452,9 +454,15 @@ function registerShellIpc(): void {
     return res.filePaths[0];
   });
 
-  ipcMain.handle("shell.openPath", (_e, args: { path: string }): Promise<void> =>
-    shell.openExternal(pathToFileURL(assertOpenablePath(args.path, undefined, [logsDir()])).href).then(() => undefined)
-  );
+  ipcMain.handle("shell.openPath", async (_e, args: { path: string }): Promise<void> => {
+    const target = resolveOpenTarget(args.path, logsDir());
+    if (target.kind === "external") {
+      await shell.openExternal(pathToFileURL(target.path).href);
+      return;
+    }
+    const failure = await shell.openPath(target.path);
+    if (failure) throw new Error(failure);
+  });
 
   ipcMain.handle("shell.openExternal", (_e, args: { url: string }): Promise<void> => {
     const target = new URL(args.url);
@@ -472,9 +480,7 @@ function registerShellIpc(): void {
   });
 
   ipcMain.handle("shell.showItemInFolder", (_e, args: { path?: unknown } | undefined): void => {
-    const target = args?.path;
-    if (typeof target !== "string" || !isAbsolute(target)) throw new Error("shell.showItemInFolder requires an absolute path");
-    shell.showItemInFolder(target);
+    shell.showItemInFolder(assertLocalAbsolutePath(args?.path));
   });
 }
 

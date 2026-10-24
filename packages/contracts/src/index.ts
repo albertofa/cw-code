@@ -129,6 +129,7 @@ export type {
 } from "./updates.js";
 export type {
   ShutdownReason,
+  ShutdownStatus,
   ShutdownActiveTurn,
   ShutdownTerminal,
   ShutdownAssessment,
@@ -139,6 +140,7 @@ export type {
   ShutdownExpiredEvent
 } from "./shutdown.js";
 export type { AttentionState } from "./attention.js";
+export type { AppNotice } from "./notices.js";
 export type {
   DirEntry,
   FileStatInfo,

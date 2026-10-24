@@ -1,4 +1,4 @@
-import type { ServerReady, ShutdownCommitResult, ShutdownExpiredEvent, ShutdownReason, StartupState } from "@cw-code/contracts";
+import type { AppNotice, ServerReady, ShutdownCommitResult, ShutdownExpiredEvent, ShutdownReason, ShutdownStatus, StartupState } from "@cw-code/contracts";
 import { PROTOCOL_VERSION } from "@cw-code/shared/protocol";
 import { appendCrashLog, initCrashLog } from "../debug/crashLog.js";
 import { initHarnessTrace } from "../debug/harnessTrace.js";
@@ -16,19 +16,6 @@ import { loadOrCreateOwnerToken } from "../transport/ownerToken.js";
 import { Router } from "../transport/Router.js";
 import { WsServer } from "../transport/WsServer.js";
 import { createServices, type Services } from "./services.js";
-
-export interface ShutdownStatus {
-  idle: boolean;
-  committed: boolean;
-  reason: ShutdownReason | null;
-}
-
-export interface AppNotice {
-  level: "error" | "warning";
-  title: string;
-  message: string;
-  detail?: string;
-}
 
 const SESSION_SETTLE_INTERVAL_MS = 60_000;
 const SESSION_SETTLE_INITIAL_DELAY_MS = 5_000;

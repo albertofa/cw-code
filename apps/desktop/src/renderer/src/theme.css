@@ -13101,4 +13101,12 @@ button.gitbar-checkout:hover {
   color: var(--warning);
   font-size: var(--t-xs);
   box-shadow: var(--shadow-float);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.server-banner .btn {
+  padding: 2px 8px;
+  font-size: var(--t-xs);
 }

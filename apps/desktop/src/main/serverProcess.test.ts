@@ -45,26 +45,31 @@ describe("allowRestart", () => {
 
 describe("serverCommand", () => {
   const args = ["--port", "0"];
+  const noBun = { homeDir: "/home/dev", exists: () => false };
 
   it("runs the bundled server binary with the packaged node-pty in packaged builds", () => {
     const resources = resolve("/opt/cw-code/resources");
-    const command = serverCommand({ isPackaged: true, resourcesPath: resources, appPath: "", legacyUserData: "" }, "linux", { PATH: "/usr/bin" }, args);
+    const launch = { isPackaged: true, resourcesPath: resources, appPath: "", legacyUserData: "" };
+    const command = serverCommand(launch, "linux", { PATH: "/usr/bin" }, args, noBun);
     expect(command).toEqual({
       file: join(resources, "server", "cw-code-server"),
       args,
       env: { PATH: "/usr/bin", CW_NODE_PTY: join(resources, "server", "node_modules", "node-pty", "lib", "index.js") }
     });
-    expect(serverCommand({ isPackaged: true, resourcesPath: resources, appPath: "", legacyUserData: "" }, "win32", {}, args).file).toBe(
-      join(resources, "server", "cw-code-server.exe")
-    );
+    expect(serverCommand(launch, "win32", {}, args, noBun).file).toBe(join(resources, "server", "cw-code-server.exe"));
   });
 
   it("runs the server sources with bun in development", () => {
     const appPath = resolve("/repo/apps/desktop");
     const launch = { isPackaged: false, resourcesPath: "", appPath, legacyUserData: "" };
-    expect(serverCommand(launch, "win32", {}, args)).toEqual({ file: "bun.exe", args: [resolve("/repo/apps/server/src/index.ts"), ...args], env: {} });
-    expect(serverCommand(launch, "linux", {}, args).file).toBe("bun");
-    expect(serverCommand(launch, "linux", { CW_BUN: "/custom/bun", CW_SERVER_ENTRY: "/custom/entry.ts" }, args)).toMatchObject({
+    expect(serverCommand(launch, "win32", {}, args, noBun)).toEqual({
+      file: "bun.exe",
+      args: [resolve("/repo/apps/server/src/index.ts"), ...args],
+      env: {}
+    });
+    expect(serverCommand(launch, "linux", {}, args, noBun).file).toBe("bun");
+    expect(serverCommand(launch, "linux", {}, args, { homeDir: "/home/dev", exists: () => true }).file).toBe("/home/dev/.bun/bin/bun");
+    expect(serverCommand(launch, "linux", { CW_BUN: "/custom/bun", CW_SERVER_ENTRY: "/custom/entry.ts" }, args, noBun)).toMatchObject({
       file: "/custom/bun",
       args: ["/custom/entry.ts", ...args]
     });

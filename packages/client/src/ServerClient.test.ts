@@ -281,6 +281,35 @@ describe("ServerClient", () => {
     expect(states).toEqual(["connecting", "closed"]);
   });
 
+  test("lastError carries the close reason after a 4401 and clears on the next welcome", async () => {
+    const server = startServer();
+    let token = "bad";
+    const client = makeClient(server, { reconnect: true, endpoint: async () => ({ url: server.url, token }) });
+    expect(client.lastError).toBeNull();
+
+    await client.connect().catch(() => undefined);
+    expect(client.lastError).toBeInstanceOf(ServerCallError);
+    expect(client.lastError?.code).toBe("unauthorized");
+    expect(client.lastError?.message).toContain("invalid token");
+
+    token = "good";
+    await client.connect();
+    expect(client.lastError).toBeNull();
+
+    server.closeClients(CLOSE_UNAUTHORIZED, "token rotated");
+    await waitFor(() => client.state === "closed");
+    expect(client.lastError?.code).toBe("unauthorized");
+    expect(client.lastError?.message).toContain("token rotated");
+  });
+
+  test("a client-initiated close leaves lastError empty", async () => {
+    const client = makeClient(startServer(), { reconnect: true });
+    await client.connect();
+    client.close();
+    await Bun.sleep(50);
+    expect(client.lastError).toBeNull();
+  });
+
   test("connect rejects with connect-failed when the server is unreachable", async () => {
     const server = startServer();
     const url = server.url;
