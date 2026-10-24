@@ -742,6 +742,13 @@ function FileWorkspace({ sessionId }: { sessionId: string }) {
     refreshDecorations();
   }, [expanded, loadDir, loadTab, sessionId, refreshDecorations]);
 
+  const wasVisibleRef = useRef(documentVisible);
+  useEffect(() => {
+    const resumed = documentVisible && !wasVisibleRef.current;
+    wasVisibleRef.current = documentVisible;
+    if (resumed) refreshAll();
+  }, [documentVisible, refreshAll]);
+
   const findInFolder = useCallback((path: string) => {
     showSide();
     setSideView("search");
