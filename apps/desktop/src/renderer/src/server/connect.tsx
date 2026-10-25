@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from "react"
 import { ServerClient, TopicCache } from "@cw-code/client";
 import type { DesktopApi } from "@cw-code/contracts";
 import { APP_TOPIC } from "@cw-code/shared/topics";
+import { flushAllComposerDrafts } from "../components/composerDrafts.js";
 import { ipcErrorMessage } from "../components/ipcError.js";
 import { useEditorBuffers } from "../stores/editorBuffers.js";
 import { createCwApi, type ShutdownHandlers } from "./createCwApi.js";
@@ -12,9 +13,37 @@ type Phase = { kind: "connecting" } | { kind: "failed"; message: string } | { ki
 type Link = "up" | "reconnecting" | "stale" | "lost";
 
 const RECONNECTING_BANNER_DELAY_MS = 1_000;
+const APP_SETTLE_TIMEOUT_MS = 15_000;
+
+type AppSettle = { kind: "settled"; status: string | undefined } | { kind: "timeout" } | { kind: "link-down" };
 
 function reload(): void {
+  flushAllComposerDrafts();
   window.location.reload();
+}
+
+async function settleAppTopic(client: ServerClient): Promise<AppSettle> {
+  const abort = new AbortController();
+  let timer: number | null = null;
+  let offState = (): void => undefined;
+  const linkDown = new Promise<AppSettle>((resolve) => {
+    const check = (): void => {
+      if (client.state === "closed" || client.state === "reconnecting") resolve({ kind: "link-down" });
+    };
+    offState = client.onState(check);
+    check();
+  });
+  const timeout = new Promise<AppSettle>((resolve) => {
+    timer = window.setTimeout(() => resolve({ kind: "timeout" }), APP_SETTLE_TIMEOUT_MS);
+  });
+  const settled = waitForTopicSettled(APP_TOPIC, abort.signal).then((state): AppSettle => ({ kind: "settled", status: state?.status }));
+  try {
+    return await Promise.race([settled, linkDown, timeout]);
+  } finally {
+    abort.abort();
+    offState();
+    if (timer !== null) window.clearTimeout(timer);
+  }
 }
 
 export function ServerGate({ desktop, children }: { desktop: DesktopApi; children: ReactNode }) {
@@ -27,14 +56,17 @@ export function ServerGate({ desktop, children }: { desktop: DesktopApi; childre
 
   const connect = useCallback(() => {
     setPhase({ kind: "connecting" });
+    setLink("up");
     const open = async (): Promise<void> => {
       await client.connect();
       topicCache.current ??= new TopicCache(client);
       initTopics(topicCache.current);
       window.cw = createCwApi(client, topicCache.current, desktop, shutdownHandlers);
       appHold.current ??= topicCache.current.acquire(APP_TOPIC);
-      const app = await waitForTopicSettled(APP_TOPIC);
-      if (app?.status === "ready") void migrateLegacyPreferences(window.cw);
+      const settle = await settleAppTopic(client);
+      if (settle.kind === "link-down") throw client.lastError ?? new Error("the connection to the cw-code server was lost");
+      if (settle.kind === "timeout") console.warn("[cw-code] the app topic did not settle in time; continuing without it");
+      if (settle.kind === "settled" && settle.status === "ready") void migrateLegacyPreferences(window.cw);
       setPhase({ kind: "ready" });
     };
     open().catch((err: unknown) => setPhase({ kind: "failed", message: ipcErrorMessage(err) }));
@@ -68,15 +100,36 @@ export function ServerGate({ desktop, children }: { desktop: DesktopApi; childre
       } else if (state === "closed" && previous !== "connecting") setLink("lost");
     });
     const offStartup = client.on("startup.changed", reload);
+    window.addEventListener("pagehide", flushAllComposerDrafts);
+    window.addEventListener("beforeunload", flushAllComposerDrafts);
     connect();
     return () => {
       clearBannerTimer();
       offState();
       offStartup();
+      window.removeEventListener("pagehide", flushAllComposerDrafts);
+      window.removeEventListener("beforeunload", flushAllComposerDrafts);
     };
   }, [client, connect]);
 
-  if (phase.kind === "connecting") return <div className="server-gate">Connecting to the cw-code server…</div>;
+  const lostOverlay = link === "lost" && (
+    <div className="server-gate server-gate-overlay" role="alert">
+      <div className="preload-error">
+        The connection to the cw-code server was closed{client.lastError ? `: ${client.lastError.message}` : "."}
+      </div>
+      <button type="button" className="btn btn-primary" onClick={reload}>
+        Reload
+      </button>
+    </div>
+  );
+  if (phase.kind === "connecting") {
+    return (
+      <>
+        <div className="server-gate">Connecting to the cw-code server…</div>
+        {lostOverlay}
+      </>
+    );
+  }
   if (phase.kind === "failed") {
     return (
       <div className="server-gate">
@@ -98,16 +151,7 @@ export function ServerGate({ desktop, children }: { desktop: DesktopApi; childre
           </button>
         </div>
       )}
-      {link === "lost" && (
-        <div className="server-gate server-gate-overlay" role="alert">
-          <div className="preload-error">
-            The connection to the cw-code server was closed{client.lastError ? `: ${client.lastError.message}` : "."}
-          </div>
-          <button type="button" className="btn btn-primary" onClick={reload}>
-            Reload
-          </button>
-        </div>
-      )}
+      {lostOverlay}
       {children}
     </>
   );

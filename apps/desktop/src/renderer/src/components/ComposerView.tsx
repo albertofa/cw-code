@@ -74,6 +74,7 @@ export interface ComposerBackend {
   imageTarget: ImageTarget;
   branchGuard?: BranchGuard;
   prefs: ComposerPrefs;
+  prefsLoaded: boolean;
   busy: boolean;
   effectivePermissionMode?: string;
   loadModels(): Promise<ModelOption[]>;
@@ -135,7 +136,7 @@ export function ComposerView({
   top?: ReactNode;
   blockedReason?: string;
 }) {
-  const { prefs, busy } = backend;
+  const { prefs, prefsLoaded, busy } = backend;
   const settingsKey = useMemo(() => JSON.stringify(settings), [settings]);
   const backendRef = useRef(backend);
   backendRef.current = backend;
@@ -329,6 +330,7 @@ export function ComposerView({
       .then((list) => {
         if (cancelled) return;
         setModels(list);
+        if (!backendRef.current.prefsLoaded) return;
         const initialModel = () =>
           pickInitialModel(list, useAppStore.getState().defaultModelByDriver[driver], getRecentModels(driver));
         if (!prefs.model) {
@@ -354,7 +356,7 @@ export function ComposerView({
     return () => {
       cancelled = true;
     };
-  }, [resetKey, driver, prefs.model, settingsKey]);
+  }, [resetKey, driver, prefs.model, settingsKey, prefsLoaded]);
 
   useEffect(() => {
     let cancelled = false;
@@ -429,11 +431,11 @@ export function ComposerView({
   const effectiveEffort = prefs.effort ?? "medium";
 
   useEffect(() => {
-    if (driver !== "opencode" || showCustom) return;
+    if (!prefsLoaded || driver !== "opencode" || showCustom) return;
     if (effortOptions.some((o) => o.id === effectiveEffort)) return;
     const next = fallbackEffort(effectiveEffort, effortOptions);
     if (next !== effectiveEffort) backendRef.current.savePrefs({ effort: next });
-  }, [driver, showCustom, models, prefs.model, effectiveEffort, effortOptions]);
+  }, [prefsLoaded, driver, showCustom, models, prefs.model, effectiveEffort, effortOptions]);
   const permissions = permissionOptions ?? FALLBACK_PERMISSIONS;
   const effectivePermission = prefs.permissionMode ?? "auto";
   const permissionDisplay = permissions.find((o) => o.id === effectivePermission)?.label ?? "Auto";
@@ -445,10 +447,10 @@ export function ComposerView({
   );
 
   useEffect(() => {
-    if (!permissionOptions || permissionOptions.length === 0) return;
+    if (!prefsLoaded || !permissionOptions || permissionOptions.length === 0) return;
     if (permissionOptions.some((o) => o.id === effectivePermission)) return;
     backendRef.current.savePrefs({ permissionMode: permissionOptions[0].id });
-  }, [permissionOptions, effectivePermission]);
+  }, [prefsLoaded, permissionOptions, effectivePermission]);
 
   const commandList = useMemo(
     () => mergeCommands(driver, driverCommands ?? [], commandAvailability),

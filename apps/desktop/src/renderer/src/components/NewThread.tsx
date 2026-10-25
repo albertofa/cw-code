@@ -119,6 +119,7 @@ export function NewThread({
   const backend: ComposerBackend = {
     imageTarget: projectKey ? { projectId: projectKey } : {},
     prefs,
+    prefsLoaded: true,
     busy: false,
     loadModels: () => (projectKey ? window.cw.listModelsFor(projectKey, driver) : window.cw.listModelsForHarness(driver)),
     loadPermissions: () =>

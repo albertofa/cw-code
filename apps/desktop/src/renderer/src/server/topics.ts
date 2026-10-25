@@ -90,17 +90,23 @@ export function peekTopic<D = Record<string, unknown>>(topic: string): TopicStat
   return cache?.state<D>(topic);
 }
 
-export function waitForTopicSettled<D = Record<string, unknown>>(topic: string): Promise<TopicState<D> | undefined> {
+export function waitForTopicSettled<D = Record<string, unknown>>(topic: string, signal?: AbortSignal): Promise<TopicState<D> | undefined> {
   const topics = topicCache();
   return new Promise((resolve) => {
     let stopListening = (): void => undefined;
+    const finish = (state: TopicState<D> | undefined): void => {
+      stopListening();
+      signal?.removeEventListener("abort", abort);
+      resolve(state);
+    };
+    const abort = (): void => finish(topics.state<D>(topic));
     const check = (): void => {
       const state = topics.state<D>(topic);
       if (state && state.status === "subscribing") return;
-      stopListening();
-      resolve(state);
+      finish(state);
     };
     stopListening = topics.listen(topic, check);
+    signal?.addEventListener("abort", abort, { once: true });
     check();
   });
 }

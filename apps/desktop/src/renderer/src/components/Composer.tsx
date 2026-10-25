@@ -12,6 +12,7 @@ import { restoreConfirm } from "./sessionLifecycle.js";
 
 export function Composer({ sessionId, driver, top }: { sessionId: string; driver: DriverName; top?: ReactNode }) {
   const prefs = useAppStore((s) => s.composerBySession[sessionId] ?? DEFAULT_COMPOSER);
+  const prefsLoaded = useAppStore((s) => s.composerLoadedBySession[sessionId] === true);
   const busy = useAppStore((s) => s.busyTurns[sessionId] !== undefined);
   const projectId = useAppStore((s) => {
     for (const [pid, list] of Object.entries(s.sessionsByProject)) {
@@ -38,6 +39,7 @@ export function Composer({ sessionId, driver, top }: { sessionId: string; driver
   const backend: ComposerBackend = {
     imageTarget: { sessionId, projectId: projectId ?? undefined },
     prefs,
+    prefsLoaded,
     busy,
     effectivePermissionMode,
     branchGuard: {

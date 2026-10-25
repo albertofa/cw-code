@@ -4,6 +4,8 @@ import type { CwApi, DriverName } from "../cw.js";
 const MIGRATED_KEY = "cw-code:prefs-migrated";
 const ORDER_KEY = "cw:order:all";
 const COMPOSER_KEY_PREFIX = "cw:composer:";
+const MAX_ENTRY_LENGTH = 200;
+const MAX_LIST_ENTRIES = 10_000;
 const DRIVERS: readonly DriverName[] = ["claude", "opencode", "codex"];
 
 function parseJson(raw: string | null): unknown {
@@ -61,11 +63,41 @@ function removeMigratedKeys(storage: Storage): void {
   }
 }
 
+function boundedList(list: readonly string[]): string[] {
+  return list.filter((item) => item.length <= MAX_ENTRY_LENGTH).slice(0, MAX_LIST_ENTRIES);
+}
+
+function sanitizeLegacyPreferences(legacy: LegacyPreferences): LegacyPreferences {
+  const sanitized: LegacyPreferences = {};
+  if (legacy.sidebarOrder) {
+    const { main, resolved, pinned } = legacy.sidebarOrder;
+    sanitized.sidebarOrder = { main: boundedList(main), resolved: boundedList(resolved), pinned: boundedList(pinned) };
+  }
+  if (legacy.recentModels) {
+    const recentModels: NonNullable<LegacyPreferences["recentModels"]> = {};
+    for (const driver of DRIVERS) {
+      const models = boundedList(legacy.recentModels[driver] ?? []);
+      if (models.length > 0) recentModels[driver] = models;
+    }
+    sanitized.recentModels = recentModels;
+  }
+  return sanitized;
+}
+
+async function importWithSanitizedRetry(api: Pick<CwApi, "importLegacyPrefs">, legacy: LegacyPreferences): Promise<void> {
+  try {
+    await api.importLegacyPrefs(legacy);
+  } catch (err) {
+    console.warn("[cw-code] legacy preference import was rejected; retrying with sanitized values", err);
+    await api.importLegacyPrefs(sanitizeLegacyPreferences(legacy));
+  }
+}
+
 export async function migrateLegacyPreferences(api: Pick<CwApi, "importLegacyPrefs">): Promise<void> {
   const storage = window.localStorage;
   try {
     if (storage.getItem(MIGRATED_KEY) !== null) return;
-    await api.importLegacyPrefs(readLegacyPreferences(storage));
+    await importWithSanitizedRetry(api, readLegacyPreferences(storage));
     removeMigratedKeys(storage);
     storage.setItem(MIGRATED_KEY, "1");
   } catch (err) {

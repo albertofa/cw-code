@@ -122,6 +122,8 @@ export const DEFAULT_COMPOSER: Required<Pick<ComposerPrefs, "effort" | "permissi
   permissionMode: "auto"
 };
 
+const composerLoads = new Map<string, Promise<void>>();
+
 function defaultWorkspace(defaultUseWorktree: boolean): CreateSessionOptions {
   return { mode: defaultUseWorktree ? "new" : "current" };
 }
@@ -218,6 +220,7 @@ interface AppState {
   turnStartedAt: Record<string, number>;
   turnDurations: Record<string, Record<string, number>>;
   composerBySession: Record<string, ComposerPrefs>;
+  composerLoadedBySession: Record<string, boolean>;
   pendingDriver: DriverName | null;
   lastDriver: DriverName;
   installedHarnesses: DriverName[] | null;
@@ -455,6 +458,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   turnStartedAt: {},
   turnDurations: {},
   composerBySession: {},
+  composerLoadedBySession: {},
   settingsLoaded: false,
   pendingDriver: null,
   lastDriver: "claude",
@@ -923,18 +927,24 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   async ensureComposer(sessionId: string) {
+    const inflight = composerLoads.get(sessionId);
+    if (inflight) return inflight;
     if (get().composerBySession[sessionId]) return;
     set({ composerBySession: { ...get().composerBySession, [sessionId]: { ...DEFAULT_COMPOSER } } });
-    try {
-      const prefs = await window.cw.getComposer(sessionId);
-      set({
-        composerBySession: { ...get().composerBySession, [sessionId]: { ...DEFAULT_COMPOSER, ...prefs } }
-      });
-    } catch {
-    }
+    const load = (async () => {
+      try {
+        get().applyComposer(sessionId, await window.cw.getComposer(sessionId));
+      } catch {
+      } finally {
+        composerLoads.delete(sessionId);
+      }
+    })();
+    composerLoads.set(sessionId, load);
+    return load;
   },
 
   async setComposerPrefs(sessionId: string, prefs: ComposerPrefs) {
+    await composerLoads.get(sessionId);
     const merged = { ...(get().composerBySession[sessionId] ?? DEFAULT_COMPOSER), ...prefs };
     set({ composerBySession: { ...get().composerBySession, [sessionId]: merged } });
     try {
@@ -968,7 +978,10 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   applyComposer(sessionId: string, prefs: ComposerPrefs) {
-    set({ composerBySession: { ...get().composerBySession, [sessionId]: { ...DEFAULT_COMPOSER, ...prefs } } });
+    set({
+      composerBySession: { ...get().composerBySession, [sessionId]: { ...DEFAULT_COMPOSER, ...prefs } },
+      composerLoadedBySession: { ...get().composerLoadedBySession, [sessionId]: true }
+    });
   },
 
   async saveDefaultModel(driver: DriverName, id: string) {
