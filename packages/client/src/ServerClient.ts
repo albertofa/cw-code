@@ -1,4 +1,4 @@
-import type { ClientKind, ClientMessage, ServerEndpoint, ServerMessage } from "@cw-code/contracts";
+import type { ClientKind, ClientMessage, ServerEndpoint, ServerMessage, TopicPatch } from "@cw-code/contracts";
 import { CLOSE_PROTOCOL_MISMATCH, CLOSE_UNAUTHORIZED, PROTOCOL_VERSION } from "@cw-code/shared/protocol";
 import { isValidTopic, MAX_TOPICS_PER_CALL } from "@cw-code/shared/topics";
 
@@ -76,6 +76,8 @@ function parseServerMessage(data: unknown): ServerMessage | null {
       return typeof message.id === "number" && typeof message.ok === "boolean" ? (parsed as ServerMessage) : null;
     case "event":
       return typeof message.channel === "string" ? (parsed as ServerMessage) : null;
+    case "patch":
+      return typeof message.topic === "string" && typeof message.rev === "number" && Array.isArray(message.ops) ? (parsed as ServerMessage) : null;
     default:
       return null;
   }
@@ -94,6 +96,7 @@ export class ServerClient {
   private disposed = false;
   private pending = new Map<number, PendingCall>();
   private listeners = new Map<string, Set<(payload: unknown) => void>>();
+  private patchListeners = new Set<(patch: TopicPatch) => void>();
   private stateListeners = new Set<(state: ConnectionState, previous: ConnectionState) => void>();
   private topicRefs = new Map<string, number>();
   private sentTopics = new Set<string>();
@@ -175,6 +178,13 @@ export class ServerClient {
     set.add(cb);
     return () => {
       this.listeners.get(channel)?.delete(cb);
+    };
+  }
+
+  onPatch(cb: (patch: TopicPatch) => void): () => void {
+    this.patchListeners.add(cb);
+    return () => {
+      this.patchListeners.delete(cb);
     };
   }
 
@@ -353,6 +363,7 @@ export class ServerClient {
         }
         if (message.t === "result") this.settle(message);
         else if (message.t === "event") this.dispatch(message.channel, message.payload);
+        else if (message.t === "patch") this.dispatchPatch({ topic: message.topic, rev: message.rev, ops: message.ops });
       };
       socket.onclose = (event) => {
         if (this.socket !== socket) return;
@@ -408,6 +419,16 @@ export class ServerClient {
         cb(payload);
       } catch (error) {
         console.error(`[ServerClient] listener for "${channel}" failed`, error);
+      }
+    }
+  }
+
+  private dispatchPatch(patch: TopicPatch): void {
+    for (const cb of [...this.patchListeners]) {
+      try {
+        cb(patch);
+      } catch (error) {
+        console.error(`[ServerClient] patch listener for "${patch.topic}" failed`, error);
       }
     }
   }
