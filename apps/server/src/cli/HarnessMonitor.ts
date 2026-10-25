@@ -24,27 +24,41 @@ function errorMessage(error: unknown): string {
 
 export class HarnessMonitor {
   private latestRun = 0;
+  private newest: Promise<HarnessAvailability> | null = null;
 
   constructor(private readonly deps: HarnessMonitorDeps) {}
 
-  async check(trigger: HarnessCheckTrigger): Promise<void> {
+  async check(trigger: HarnessCheckTrigger): Promise<HarnessAvailability> {
     const run = ++this.latestRun;
+    const own = this.execute(run, trigger);
+    this.newest = own;
+    let current = own;
+    let result = await current;
+    while (this.newest !== null && this.newest !== current) {
+      current = this.newest;
+      result = await current;
+    }
+    return result;
+  }
+
+  private async execute(run: number, trigger: HarnessCheckTrigger): Promise<HarnessAvailability> {
     const probe = this.deps.checkCliVersions ?? checkCliVersions;
     const now = this.deps.now ?? Date.now;
+    let availability: HarnessAvailability;
     try {
       const checks = await probe(this.deps.binaries());
-      if (run !== this.latestRun) return;
-      this.deps.publish({
+      availability = {
         checks: checks.map((check) => ({ ...check, skipped: isHarnessSkipped(check) })),
         installed: installedHarnesses(checks),
         issues: harnessIssues(checks),
         checkedAt: now(),
         trigger,
         error: null
-      });
+      };
     } catch (error) {
-      if (run !== this.latestRun) return;
-      this.deps.publish({ ...this.deps.current(), trigger, error: errorMessage(error) });
+      availability = { ...this.deps.current(), trigger, error: errorMessage(error) };
     }
+    if (run === this.latestRun) this.deps.publish(availability);
+    return availability;
   }
 }

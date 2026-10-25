@@ -31,9 +31,9 @@ function draftEntryKey(key: string): `draft/${string}` {
 }
 
 export class AppTopic implements TopicProvider {
+  readonly exactTopics = [APP_TOPIC];
   private data: AppTopicData;
   private store: AppStore | null = null;
-  readonly exactTopics = [APP_TOPIC];
 
   constructor(
     private readonly hub: TopicHub,

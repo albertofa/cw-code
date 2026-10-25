@@ -73,7 +73,8 @@ describe("HarnessMonitor", () => {
     const second = monitor.check("settings");
     releases[1]?.();
     releases[0]?.();
-    await Promise.all([first, second]);
+    const results = await Promise.all([first, second]);
     expect(published.map((availability) => availability.trigger)).toEqual(["settings"]);
+    expect(results.map((availability) => availability.trigger)).toEqual(["settings", "settings"]);
   });
 });

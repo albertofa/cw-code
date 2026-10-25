@@ -179,6 +179,7 @@ export function WorkflowRunModal({ request }: { request: RunModalState }) {
 
   const settings = useAppSettings();
   const settingsError = useAppSettingsError();
+  const settingsKey = useMemo(() => JSON.stringify(settings), [settings]);
   const [reposReady, setReposReady] = useState(false);
   const [workflowId, setWorkflowId] = useState(request.workflowId);
   const [target, setTarget] = useState(request.continueSessionId ?? "");
@@ -316,7 +317,7 @@ export function WorkflowRunModal({ request }: { request: RunModalState }) {
     return () => {
       active = false;
     };
-  }, [driver, driverMissing, projectId, continueSession?.id, settings]);
+  }, [driver, driverMissing, projectId, continueSession?.id, settingsKey]);
 
   const resolved = useMemo(() => {
     if (!data.vars || !workflow) return null;

@@ -44,6 +44,7 @@ interface SettingsDraftState {
   set(patch: Partial<AppSettings>): void;
   applied(patch: Partial<AppSettings>): void;
   applyStored(stored: AppSettings): void;
+  applyHarnesses(availability: HarnessAvailability): void;
   setRepoBaseline(repo: RepoDraft | null): void;
   setRepo(patch: Partial<RepoDraft>): void;
   setProjectBaseline(project: ProjectDraft | null): void;
@@ -125,10 +126,10 @@ export const useSettingsDraftStore = create<SettingsDraftState>((set, get) => ({
     const request = ++loadSeq;
     set({ loading: true, loadError: null, saveError: null, invalidWorkflowId: null, saved: null, draft: null, repoSaved: null, repoDraft: null, projectSaved: null, projectDraft: null, dirty: false });
     try {
-      const settings = readTopic<Partial<AppTopicData>>(APP_TOPIC)?.data.settings;
-      if (!settings) throw new Error("Settings are not available yet");
+      const state = readTopic<Partial<AppTopicData>>(APP_TOPIC);
+      if (state?.status === "error" && !state.data.settings) throw new Error(state.error ?? "Settings are unavailable");
       if (request !== loadSeq) return;
-      set({ saved: settings, draft: settings, loading: false, dirty: false });
+      if (state?.data.settings) set({ saved: state.data.settings, draft: state.data.settings, loading: false, dirty: false });
     } catch (err) {
       if (request !== loadSeq) return;
       const message = errorMessage(err);
@@ -153,12 +154,24 @@ export const useSettingsDraftStore = create<SettingsDraftState>((set, get) => ({
 
   applyStored(stored: AppSettings) {
     const { saved, draft, saving } = get();
-    if (!saved || !draft || saving) return;
+    if (!saved || !draft) {
+      set({ saved: stored, draft: stored, loading: false, loadError: null, dirty: false });
+      return;
+    }
+    if (saving) return;
     const next = { saved: { ...stored }, draft: { ...stored } };
     for (const key of SETTING_KEYS) {
       if (!sameValue(draft[key], saved[key])) copySetting(next.draft, draft, key);
     }
     set({ saved: next.saved, draft: next.draft, dirty: isDirty({ ...get(), saved: next.saved, draft: next.draft }) });
+  },
+
+  applyHarnesses(availability: HarnessAvailability) {
+    if (availability.checkedAt === null && availability.error === null) return;
+    set({
+      ...(availability.checkedAt !== null ? { harnessChecks: availability.checks } : {}),
+      harnessChecksError: availability.error
+    });
   },
 
   setRepoBaseline(repo: RepoDraft | null) {

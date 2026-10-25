@@ -72,19 +72,27 @@ function syncIssue(notifId: string, issue: HarnessIssue | undefined, show: (issu
   else useNotifs.getState().dismiss(notifId);
 }
 
+function syncNotices(harnesses: HarnessAvailability): void {
+  const find = (id: HarnessIssue["id"]) => harnesses.issues.find((issue) => issue.id === id);
+  if (harnesses.error !== null) showCheckFailure(harnesses.error);
+  else syncIssue(BINARY_NOTIF_ID, find("cli-binaries"), showBinaryIssue);
+  syncIssue(VERSION_NOTIF_ID, find("cli-versions"), showVersionIssue);
+}
+
 export function HarnessNotices(): null {
   const harnesses = useTopicEntry<HarnessAvailability>(APP_TOPIC, "harnesses");
   const lastCheckedAt = useRef<number | null | undefined>(undefined);
+  const syncedKey = useRef<string | null>(null);
 
   useEffect(() => {
     if (!harnesses) return;
     const previous = lastCheckedAt.current;
     lastCheckedAt.current = harnesses.checkedAt;
     if (harnesses.checkedAt === null && harnesses.error === null) return;
-    const find = (id: HarnessIssue["id"]) => harnesses.issues.find((issue) => issue.id === id);
-    if (harnesses.error !== null) showCheckFailure(harnesses.error);
-    else syncIssue(BINARY_NOTIF_ID, find("cli-binaries"), showBinaryIssue);
-    syncIssue(VERSION_NOTIF_ID, find("cli-versions"), showVersionIssue);
+    const key = JSON.stringify({ issues: harnesses.issues, error: harnesses.error });
+    const contentChanged = key !== syncedKey.current;
+    syncedKey.current = key;
+    if (contentChanged) syncNotices(harnesses);
     const isNewSettingsResult = previous !== undefined && harnesses.checkedAt !== previous;
     if (isNewSettingsResult && harnesses.trigger === "settings" && harnesses.error === null && harnesses.issues.length === 0) {
       useNotifs.getState().push({ kind: "success", title: "CLI settings verified" });

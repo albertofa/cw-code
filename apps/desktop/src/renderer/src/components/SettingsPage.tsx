@@ -555,7 +555,6 @@ export function SettingsPage({
       if (key in patch) copySetting(normalized, stored, key);
     }
     applied(normalized);
-    void recheckHarnesses();
   };
 
   const changedLabels = unsavedSectionLabels(saved, draft, projectsDirty);

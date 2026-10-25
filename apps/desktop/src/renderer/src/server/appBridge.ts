@@ -1,4 +1,4 @@
-import type { AppTopicData, DriverKind } from "@cw-code/contracts";
+import type { AppTopicData, DriverKind, HarnessAvailability } from "@cw-code/contracts";
 import { APP_TOPIC } from "@cw-code/shared/topics";
 import type { AppSettings } from "../cw.js";
 import { fallbackHarness } from "../components/harnessAvailability.js";
@@ -24,6 +24,7 @@ export function startAppBridge(): () => void {
   let settingsKey: string | null = null;
   let homeDir: string | undefined;
   let installedKey: string | null = null;
+  let lastHarnesses: HarnessAvailability | undefined;
   return bindTopic<Partial<AppTopicData>>(APP_TOPIC, (state) => {
     const data = state.data;
     const settingsJson = data.settings ? JSON.stringify(data.settings) : null;
@@ -36,6 +37,10 @@ export function startAppBridge(): () => void {
       useAppStore.setState({ homeDir });
     }
     const harnesses = data.harnesses;
+    if (harnesses && harnesses !== lastHarnesses) {
+      lastHarnesses = harnesses;
+      useSettingsDraftStore.getState().applyHarnesses(harnesses);
+    }
     if (harnesses && harnesses.checkedAt !== null && JSON.stringify(harnesses.installed) !== installedKey) {
       installedKey = JSON.stringify(harnesses.installed);
       applyInstalledHarnesses(harnesses.installed);

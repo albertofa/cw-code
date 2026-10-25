@@ -6,14 +6,10 @@ import { handle } from "./shared.js";
 
 export function registerCliHandlers(router: Router, app: ServerApp): void {
   handle(router, "cli.checkVersions", async () => {
-    const { harnessMonitor, appTopic } = app.requireServices();
-    await harnessMonitor.check("recheck");
-    return appTopic.harnesses.checks;
+    return (await app.requireServices().harnessMonitor.check("recheck")).checks;
   });
   handle(router, "cli.recheck", async () => {
-    const { harnessMonitor, appTopic } = app.requireServices();
-    await harnessMonitor.check("recheck");
-    return appTopic.harnesses;
+    return app.requireServices().harnessMonitor.check("recheck");
   });
   handle<{ binaries?: CliBinary[] } | undefined>(router, "cli.discover", (args) => discoverBinaries(args?.binaries));
   handle<{ binary: CliBinary; path: string } | undefined>(router, "cli.verifyPath", (args) => {

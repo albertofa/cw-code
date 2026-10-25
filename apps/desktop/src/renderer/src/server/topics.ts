@@ -29,7 +29,10 @@ function isStaleReusable(live: TopicState | undefined, stale: StaleState | null,
   return live === undefined || (live.status === "subscribing" && live.rev === 0 && stale.state.status === "ready");
 }
 
-export function useTopic<D = Record<string, unknown>>(topic: string | null, opts?: TopicOptions): TopicState<D> | undefined {
+function useTopicSource(topic: string | null, opts?: TopicOptions): {
+  subscribe: (onChange: () => void) => () => void;
+  read: () => TopicState | undefined;
+} {
   const topics = topicCache();
   const visible = useDocumentVisible();
   const held = topic !== null && (visible || opts?.whenHidden === "keep");
@@ -41,7 +44,7 @@ export function useTopic<D = Record<string, unknown>>(topic: string | null, opts
   }, [topics, topic, held]);
 
   const subscribe = useCallback((onChange: () => void) => (topic === null ? () => undefined : topics.listen(topic, onChange)), [topics, topic]);
-  const getSnapshot = useCallback((): TopicState | undefined => {
+  const read = useCallback((): TopicState | undefined => {
     if (topic === null) return undefined;
     const live = topics.state(topic);
     if (isStaleReusable(live, stale.current, topic)) return stale.current?.state;
@@ -49,12 +52,28 @@ export function useTopic<D = Record<string, unknown>>(topic: string | null, opts
     return live;
   }, [topics, topic]);
 
-  return useSyncExternalStore(subscribe, getSnapshot) as TopicState<D> | undefined;
+  return { subscribe, read };
+}
+
+export function useTopic<D = Record<string, unknown>>(topic: string | null, opts?: TopicOptions): TopicState<D> | undefined {
+  const { subscribe, read } = useTopicSource(topic, opts);
+  return useSyncExternalStore(subscribe, read) as TopicState<D> | undefined;
+}
+
+export function useTopicSelect<T, D = Record<string, unknown>>(
+  topic: string | null,
+  select: (state: TopicState<D> | undefined) => T,
+  opts?: TopicOptions
+): T {
+  const { subscribe, read } = useTopicSource(topic, opts);
+  const selectRef = useRef(select);
+  selectRef.current = select;
+  const getSelected = useCallback(() => selectRef.current(read() as TopicState<D> | undefined), [read]);
+  return useSyncExternalStore(subscribe, getSelected);
 }
 
 export function useTopicEntry<T>(topic: string | null, key: string, opts?: TopicOptions): T | undefined {
-  const state = useTopic(topic, opts);
-  return state?.data[key] as T | undefined;
+  return useTopicSelect<T | undefined>(topic, (state) => (state?.data as Record<string, unknown> | undefined)?.[key] as T | undefined, opts);
 }
 
 export function useOrderedEntries<T extends { seq: number }>(topic: string | null, prefix: string): T[] {

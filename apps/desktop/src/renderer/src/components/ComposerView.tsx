@@ -136,6 +136,7 @@ export function ComposerView({
   blockedReason?: string;
 }) {
   const { prefs, busy } = backend;
+  const settingsKey = useMemo(() => JSON.stringify(settings), [settings]);
   const backendRef = useRef(backend);
   backendRef.current = backend;
   const imageTarget = backend.imageTarget;
@@ -344,7 +345,7 @@ export function ComposerView({
     return () => {
       cancelled = true;
     };
-  }, [resetKey, driver, prefs.model, settings]);
+  }, [resetKey, driver, prefs.model, settingsKey]);
 
   useEffect(() => {
     let cancelled = false;
@@ -363,7 +364,7 @@ export function ComposerView({
     return () => {
       cancelled = true;
     };
-  }, [resetKey, driver, settings]);
+  }, [resetKey, driver, settingsKey]);
 
   useEffect(() => {
     if (!pickerOpen) return;
