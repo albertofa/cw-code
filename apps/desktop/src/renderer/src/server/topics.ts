@@ -11,7 +11,7 @@ interface StaleState {
   state: TopicState;
 }
 
-const NO_ENTRIES: never[] = [];
+const NO_ENTRIES: readonly never[] = Object.freeze([]);
 
 let cache: TopicCache | null = null;
 
@@ -26,7 +26,7 @@ function topicCache(): TopicCache {
 
 function isStaleReusable(live: TopicState | undefined, stale: StaleState | null, topic: string): stale is StaleState {
   if (!stale || stale.topic !== topic) return false;
-  return live === undefined || (live.status === "subscribing" && live.rev === 0 && stale.state.rev > 0);
+  return live === undefined || (live.status === "subscribing" && live.rev === 0 && stale.state.status === "ready");
 }
 
 export function useTopic<D = Record<string, unknown>>(topic: string | null, opts?: TopicOptions): TopicState<D> | undefined {
@@ -60,7 +60,7 @@ export function useTopicEntry<T>(topic: string | null, key: string, opts?: Topic
 export function useOrderedEntries<T extends { seq: number }>(topic: string | null, prefix: string): T[] {
   const state = useTopic(topic);
   const data = state?.data;
-  return useMemo(() => (data ? orderedEntries<T>(data, prefix) : (NO_ENTRIES as T[])), [data, prefix]);
+  return useMemo(() => (data ? orderedEntries<T>(data, prefix) : (NO_ENTRIES as readonly T[] as T[])), [data, prefix]);
 }
 
 export function bindTopic<D = Record<string, unknown>>(topic: string, onState: (state: TopicState<D>) => void): () => void {

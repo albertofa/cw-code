@@ -165,6 +165,7 @@ export class TopicCache {
 
   private createEntry(topic: string): Entry {
     const invalid = !isValidTopic(topic) || topic.startsWith(PTY_PREFIX);
+    if (invalid) console.warn(`[TopicCache] invalid topic "${topic}"`);
     return {
       refs: 0,
       subscribed: false,
@@ -287,6 +288,7 @@ export class TopicCache {
     entry.inflight = null;
     entry.buffer = [];
     entry.subscribed = keepSubscribed;
+    console.warn(`[TopicCache] subscribe to "${topic}" failed: ${message}`);
     this.update(topic, entry, { ...entry.state, status: "error", error: message });
   }
 
