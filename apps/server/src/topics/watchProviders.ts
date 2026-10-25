@@ -1,5 +1,5 @@
 import type { GitStatusUpdate, ThreadEvent } from "@cw-code/contracts";
-import { APP_TOPIC, filesTopic, GITHUB_RUNS_TOPIC, PRS_TOPIC, SIDEBAR_TOPIC, topicId, USAGE_TOPIC } from "@cw-code/shared/topics";
+import { APP_TOPIC, filesTopic, GITHUB_RUNS_TOPIC, SIDEBAR_TOPIC, topicId, USAGE_TOPIC } from "@cw-code/shared/topics";
 import type { ClientInputs } from "../app/clientInputs.js";
 import type { Services } from "../app/services.js";
 import { MAX_WATCHED_RUNS } from "../github/RunWatcher.js";
@@ -52,10 +52,6 @@ function emptyStoreProvider(hub: TopicHub, owns: TopicProvider["owns"], hooks: P
 export function createWatchControls(hub: TopicHub, services: Services, { clientInputs, sendTo }: TopicProviderDeps): WatchControls {
   let filesGeneration = 0;
   const latestFilesGeneration = new Map<string, number>();
-
-  const pushTrackedPrs = (clientId: string): void => {
-    sendTo(clientId, "prs.tracked", services.prTracker.summaries());
-  };
 
   const syncWatchedGit = (): void => {
     const sessionIds = hub.activeTopics(GIT_PREFIX).flatMap((topic) => topicId(topic, GIT_PREFIX) ?? []);
@@ -123,12 +119,6 @@ export function createWatchControls(hub: TopicHub, services: Services, { clientI
     emptyStoreProvider(hub, ownsExact(APP_TOPIC)),
     emptyStoreProvider(hub, ownsExact(SIDEBAR_TOPIC)),
     emptyStoreProvider(hub, ownsExact(USAGE_TOPIC)),
-    emptyStoreProvider(hub, ownsExact(PRS_TOPIC), {
-      onSubscribe: pushTrackedPrs,
-      resync: () => {
-        for (const clientId of hub.subscriberIds(PRS_TOPIC)) pushTrackedPrs(clientId);
-      }
-    }),
     emptyStoreProvider(hub, ownsPrefix(GIT_PREFIX), {
       onAcquire: syncWatchedGit,
       onRelease: syncWatchedGit,
@@ -164,7 +154,14 @@ export function createWatchControls(hub: TopicHub, services: Services, { clientI
         syncWatchedRuns();
       }
     }),
-    emptyStoreProvider(hub, ownsPrefix(SESSION_PREFIX), { onSubscribe: pushPendingRequests })
+    emptyStoreProvider(hub, ownsPrefix(SESSION_PREFIX), {
+      onSubscribe: (clientId, topic) => {
+        pushPendingRequests(clientId, topic);
+        services.prStore.reevaluate();
+      },
+      onUnsubscribe: () => services.prStore.reevaluate(),
+      resync: () => services.prStore.reevaluate()
+    })
   ];
 
   return { providers, syncWatchedRuns, applyFiles };

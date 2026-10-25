@@ -151,7 +151,8 @@ describe("server process", () => {
     const leaked: unknown[] = [];
     subscriber.on("prs.tracked", (payload) => pushed.push(payload as PrSummary[]));
     bystander.on("prs.tracked", (payload) => leaked.push(payload));
-    expect(await subscriber.call("topics.subscribe", { topics: ["prs"] })).toEqual({ prs: { rev: 0, data: {} } });
+    const snapshot = await subscriber.call<Record<string, { data: Record<string, unknown> }>>("topics.subscribe", { topics: ["prs"] });
+    expect(Object.keys(snapshot.prs.data).sort()).toEqual(["context", "inbox"]);
     expect(pushed).toEqual([[]]);
 
     const settingsSeen = (client: ServerClient) =>

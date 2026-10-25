@@ -12,6 +12,7 @@ import { snapshotOf } from "../github/prTracking.js";
 import { PullRequestService } from "../github/PullRequestService.js";
 import { RunsService } from "../github/RunsService.js";
 import { RunWatcher } from "../github/RunWatcher.js";
+import { PrStore } from "../prEngine/PrStore.js";
 import { PtyPool } from "../pty/PtyPool.js";
 import { SessionManager } from "../sessions/SessionManager.js";
 import type { SessionStore } from "../sessions/SessionStore.js";
@@ -31,6 +32,7 @@ export interface Services {
   git: GitService;
   pullRequests: PullRequestService;
   prTracker: PrTracker;
+  prStore: PrStore;
   sourceControl: SourceControlService;
   githubSearch: GitHubSearchService;
   runs: RunsService;
@@ -50,7 +52,7 @@ export interface ServiceHooks {
 
 const PR_STATE_REUSE_MS = 60_000;
 
-function wireServiceEvents({ sessions, sourceControl, prTracker, ptys, runWatcher }: Services, { emit, dropTopic }: ServiceHooks): void {
+function wireServiceEvents({ sessions, sourceControl, prTracker, prStore, ptys, runWatcher }: Services, { emit, dropTopic }: ServiceHooks): void {
   sessions.setEmitter((sessionId, event) => {
     emit("turn.event", { sessionId, event });
     sourceControl.onThreadEvent(sessionId, event);
@@ -59,8 +61,12 @@ function wireServiceEvents({ sessions, sourceControl, prTracker, ptys, runWatche
   sessions.setSessionEmitter((session) => {
     emit("session.updated", session);
     prTracker.setTracked(sessions.trackedPrRefs());
+    prStore.onSessionsChanged();
   });
-  sessions.setProjectEmitter((project) => emit("projects.changed", project));
+  sessions.setProjectEmitter((project) => {
+    emit("projects.changed", project);
+    prStore.onProjectsChanged();
+  });
   ptys.setExitEmitter((ptyId, token, exitCode) => {
     emit("pty.exit", { ptyId, token, exitCode });
     if (!ptys.has(ptyId)) dropTopic(ptyTopic(ptyId));
@@ -98,12 +104,21 @@ export function createServices(stores: { sessionStore: SessionStore; settingsSto
     legacyAppRoots: hooks.legacyAppRoots
   });
   pullRequests = new PullRequestService(git, () => sessions.getSettings(), (rootPath) => sessions.addProject(rootPath));
+  const prStore = new PrStore({
+    sessions: () => sessions.listAllSessions(),
+    settings: () => sessions.getSettings(),
+    projects: () => sessions.listProjects(),
+    githubRemote: (rootPath) => git.githubRemote(rootPath),
+    fetchInbox: (force) => pullRequests.inbox(force),
+    fetchDetail: (ref) => pullRequests.detail(ref)
+  });
   const prTracker: PrTracker = new PrTracker(
     () => sessions.getSettings(),
     (changed) => {
       const syncedAt = Date.now();
       sessions.applyPrSnapshots(new Map(changed.map((summary) => [prKey(summary.ref), snapshotOf(summary, syncedAt)])));
       emit("prs.tracked", prTracker.summaries());
+      prStore.onTracked(prTracker.summaries());
     }
   );
   prTracker.setTracked(sessions.trackedPrRefs());
@@ -123,6 +138,7 @@ export function createServices(stores: { sessionStore: SessionStore; settingsSto
     git,
     pullRequests,
     prTracker,
+    prStore,
     sourceControl,
     githubSearch: new GitHubSearchService(() => sessions.getSettings()),
     runs: new RunsService(() => sessions.getSettings()),

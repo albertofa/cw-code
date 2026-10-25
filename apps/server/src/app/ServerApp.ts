@@ -421,6 +421,7 @@ export class ServerApp {
     } catch (err) {
       console.warn(`flush before exit failed: ${(err as Error).message}`);
     }
+    services.prStore.dispose();
     void services.sourceControl.dispose();
     services.runWatcher.dispose();
     void services.fileWatcher.dispose();

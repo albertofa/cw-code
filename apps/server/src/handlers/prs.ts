@@ -1,4 +1,4 @@
-import type { PrRef, ProjectGitHubRepo, SessionPrLink } from "@cw-code/contracts";
+import type { PrRef, SessionPrLink } from "@cw-code/contracts";
 import type { ServerApp } from "../app/ServerApp.js";
 import { assertPrRef } from "../github/PullRequestService.js";
 import type { Router } from "../transport/Router.js";
@@ -8,19 +8,11 @@ export function registerPrHandlers(router: Router, app: ServerApp): void {
   const services = () => app.requireServices();
   handle(router, "prs.tracked", () => services().prTracker.summaries());
   handle<{ force?: boolean } | undefined>(router, "prs.inbox", (args) => services().pullRequests.inbox(args?.force));
-  handle<{ ref: PrRef }>(router, "prs.detail", (args) => services().pullRequests.detail(args.ref));
+  handle<{ force?: boolean } | undefined>(router, "prs.refresh", (args) => services().prStore.refreshInbox(args?.force === true));
+  handle<{ ref: PrRef }>(router, "prs.detail", (args) => services().prStore.loadDetail(args.ref));
   handle<{ ref: PrRef }>(router, "prs.diff", (args) => services().pullRequests.diff(args.ref));
   handle<{ ref: PrRef; runId: number }>(router, "prs.checkLog", (args) => services().pullRequests.failedCheckLog(args.ref, args.runId));
-  handle(router, "prs.projectRepos", async (): Promise<ProjectGitHubRepo[]> => {
-    const { sessions, git } = services();
-    const repos = await Promise.all(
-      sessions.listProjects().map(async (project) => {
-        const remote = await git.githubRemote(project.rootPath).catch(() => null);
-        return remote ? { projectId: project.id, host: remote.host, owner: remote.owner, repo: remote.repository } : null;
-      })
-    );
-    return repos.filter((repo): repo is ProjectGitHubRepo => repo !== null);
-  });
+  handle(router, "prs.projectRepos", () => services().prStore.refreshProjectRepos());
   handle<{ sessionId: string; link: SessionPrLink }>(router, "sessions.linkPr", (args) => {
     const link = args.link;
     assertPrRef(link.ref);

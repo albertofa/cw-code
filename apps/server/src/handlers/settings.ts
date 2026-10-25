@@ -49,6 +49,7 @@ export function registerSettingsHandlers(router: Router, app: ServerApp): void {
     }
     if (patch.opencodeGoUsage !== undefined) accountUsage.invalidate("opencode");
     const saved = sessions.setSettings(normalized);
+    services().prStore.onSettingsChanged();
     app.emit("settings.changed", saved);
     return saved;
   });
