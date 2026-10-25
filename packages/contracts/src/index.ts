@@ -4,6 +4,7 @@ export type {
   Project,
   ProjectSettings,
   SessionMeta,
+  ResolvedCheckout,
   SessionStatus,
   TurnRequest,
   PermissionMode,

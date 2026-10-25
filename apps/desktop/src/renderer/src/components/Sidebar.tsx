@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
-import { Activity, Bell, ChartColumn, Check, ChevronDown, ChevronRight, ChevronUp, CircleHelp, Clock, GitBranch, GitPullRequest, Hash, LoaderCircle, Plus, Search, Settings, ShieldAlert, X, type LucideIcon } from "lucide-react";
+import { Activity, Archive, ArchiveRestore, Bell, ChartColumn, Check, ChevronDown, ChevronRight, ChevronUp, CircleCheck, CircleHelp, Clock, Copy, GitBranch, GitPullRequest, Hash, LoaderCircle, Pause, Pencil, Play, Plus, Search, Settings, ShieldAlert, Sparkles, X, type LucideIcon } from "lucide-react";
 import type { DriverName, PrSummary, Session, SessionStatus } from "../cw.js";
 import { useAppStore } from "../stores/appStore.js";
 import { usePrStore } from "../stores/prStore.js";
@@ -20,6 +20,8 @@ import { matchesQuickFilter, matchesSessionQuery, quickFilterCounts, toggleQuick
 import { needsYouEntries, type Attention, type AttentionKind } from "./needsYou.js";
 import { useNeedsYou } from "./useNeedsYou.js";
 import { useMenuPosition } from "./menuPosition.js";
+import { useConfirm } from "./ConfirmDialog.js";
+import { ARCHIVE_CONFIRM, restoreConfirm } from "./sessionLifecycle.js";
 import appIcon from "../assets/console-c.svg";
 
 const IDLE_LIMIT = 4;
@@ -265,7 +267,7 @@ function DebugMenu() {
 function SessionContextMenu({ x, y, children }: { x: number; y: number; children: ReactNode }) {
   const { ref, style } = useMenuPosition(x, y);
   return (
-    <div ref={ref} className="ctx-menu" style={style} role="menu" onClick={(e) => e.stopPropagation()}>
+    <div ref={ref} className="ctx-menu session-menu" style={style} role="menu" onClick={(e) => e.stopPropagation()}>
       {children}
     </div>
   );
@@ -285,6 +287,9 @@ export function Sidebar({ onOpenSkills, skillsOpen = false, hidden = false }: { 
   const renameSession = useAppStore((s) => s.renameSession);
   const regenerateSessionTitle = useAppStore((s) => s.regenerateSessionTitle);
   const setSessionStatus = useAppStore((s) => s.setSessionStatus);
+  const markSessionWorking = useAppStore((s) => s.markSessionWorking);
+  const restoreSession = useAppStore((s) => s.restoreSession);
+  const { confirm, dialog: confirmDialog } = useConfirm();
   const shortPath = (value: string): string => shortenHome(value, homeDir ?? undefined);
   const inbox = usePrStore((s) => s.inbox);
   const { attentionOf, babysitPhaseOf, summaryByKey } = useNeedsYou();
@@ -596,6 +601,40 @@ export function Sidebar({ onOpenSkills, skillsOpen = false, hidden = false }: { 
     });
   };
 
+  const markWorking = (sessionId: string) => {
+    setMenu(null);
+    void markSessionWorking(sessionId).catch((err: Error) => {
+      useNotifs.getState().push({ kind: "error", title: "Could not mark session as working", message: err.message });
+    });
+  };
+
+  const restore = (sessionId: string) => {
+    setMenu(null);
+    void restoreSession(sessionId).catch((err: Error) => {
+      useNotifs.getState().push({ kind: "error", title: "Could not restore session", message: err.message });
+    });
+  };
+
+  const confirmRestore = (sessionId: string) => {
+    setMenu(null);
+    const target = source.find((s) => s.id === sessionId);
+    const request = target ? restoreConfirm(target) : null;
+    if (!request) {
+      restore(sessionId);
+      return;
+    }
+    void confirm(request).then((ok) => {
+      if (ok) restore(sessionId);
+    });
+  };
+
+  const confirmArchive = (sessionId: string) => {
+    setMenu(null);
+    void confirm(ARCHIVE_CONFIRM).then((ok) => {
+      if (ok) setStatus(sessionId, "archived");
+    });
+  };
+
   const handleDrop = (
     from: { id: string; section: SidebarSection },
     toSection: SidebarSection,
@@ -609,6 +648,18 @@ export function Sidebar({ onOpenSkills, skillsOpen = false, hidden = false }: { 
     slotSnap.current = null;
     setPreview(null);
     if (targetId === fromId && fromSection === toSection) return;
+    const restoring = fromSection === "resolved" && toSection === "main" ? source.find((s) => s.id === fromId) : undefined;
+    const request = restoring?.status === "resolved" ? restoreConfirm(restoring) : null;
+    if (!request) {
+      commitDrop(fromId, fromSection, toSection, targetId, before);
+      return;
+    }
+    void confirm(request).then((ok) => {
+      if (ok) commitDrop(fromId, fromSection, toSection, targetId, before);
+    });
+  };
+
+  const commitDrop = (fromId: string, fromSection: SidebarSection, toSection: SidebarSection, targetId: string | null, before: boolean) => {
     const nextMain = orderedMainAll.filter((s) => s.id !== fromId);
     const nextResolved = orderedResolvedAll.filter((s) => s.id !== fromId);
     const moving = [...orderedMainAll, ...orderedResolvedAll].find((s) => s.id === fromId);
@@ -645,7 +696,8 @@ export function Sidebar({ onOpenSkills, skillsOpen = false, hidden = false }: { 
     };
     writeStoredOrder(ORDER_KEY, nextOrder);
     setStoredOrder(nextOrder);
-    if (cross) setStatus(fromId, toSection === "main" ? "idle" : "resolved");
+    if (cross && toSection === "resolved") setStatus(fromId, "resolved");
+    else if (cross && source.find((s) => s.id === fromId)?.status === "resolved") restore(fromId);
     setLandedId(fromId);
     window.setTimeout(() => setLandedId((id) => (id === fromId ? null : id)), 850);
   };
@@ -932,6 +984,8 @@ export function Sidebar({ onOpenSkills, skillsOpen = false, hidden = false }: { 
     );
   };
 
+  const menuStatus = menu ? source.find((s) => s.id === menu.sessionId)?.status : undefined;
+
   return (
     <div
       className="side"
@@ -1111,6 +1165,7 @@ export function Sidebar({ onOpenSkills, skillsOpen = false, hidden = false }: { 
           <SessionContextMenu x={menu.x} y={menu.y}>
             <button
               className="ctx-item"
+              role="menuitem"
               onClick={() => {
                 const target = source.find((s) => s.id === menu.sessionId);
                 setRenameDraft(target?.title ?? "");
@@ -1118,32 +1173,53 @@ export function Sidebar({ onOpenSkills, skillsOpen = false, hidden = false }: { 
                 setMenu(null);
               }}
             >
-              Rename
+              <Pencil size={14} aria-hidden="true" />
+              <span>Rename</span>
             </button>
-            <button className="ctx-item" onClick={() => regenerateTitle(menu.sessionId)}>
-              Regenerate title
+            <button className="ctx-item" role="menuitem" onClick={() => regenerateTitle(menu.sessionId)}>
+              <Sparkles size={14} aria-hidden="true" />
+              <span>Regenerate title</span>
             </button>
-            <button className="ctx-item" onClick={() => setStatus(menu.sessionId, "idle")}>
-              Mark as Idle
+            {menuStatus === "resolved" ? (
+              <button className="ctx-item" role="menuitem" onClick={() => confirmRestore(menu.sessionId)}>
+                <ArchiveRestore size={14} aria-hidden="true" />
+                <span>Restore</span>
+              </button>
+            ) : (
+              <>
+                {menuStatus === "idle" ? (
+                  <button className="ctx-item" role="menuitem" onClick={() => markWorking(menu.sessionId)}>
+                    <Play size={14} aria-hidden="true" />
+                    <span>Mark as working</span>
+                  </button>
+                ) : (
+                  <button className="ctx-item" role="menuitem" onClick={() => setStatus(menu.sessionId, "idle")}>
+                    <Pause size={14} aria-hidden="true" />
+                    <span>Mark as idle</span>
+                  </button>
+                )}
+                <button className="ctx-item" role="menuitem" onClick={() => setStatus(menu.sessionId, "resolved")}>
+                  <CircleCheck size={14} aria-hidden="true" />
+                  <span>Mark as resolved</span>
+                </button>
+              </>
+            )}
+            <button className="ctx-item danger" role="menuitem" onClick={() => confirmArchive(menu.sessionId)}>
+              <Archive size={14} aria-hidden="true" />
+              <span>Archive</span>
             </button>
-            <button className="ctx-item" onClick={() => setStatus(menu.sessionId, "done")}>
-              Mark as Done
+            <button className="ctx-item" role="menuitem" onClick={() => copySessionId(menu.sessionId)}>
+              <Copy size={14} aria-hidden="true" />
+              <span>Copy session id</span>
             </button>
-            <button className="ctx-item" onClick={() => setStatus(menu.sessionId, "resolved")}>
-              Mark as Resolved
-            </button>
-            <button className="ctx-item" onClick={() => setStatus(menu.sessionId, "archived")}>
-              Archive
-            </button>
-            <button className="ctx-item" onClick={() => copySessionId(menu.sessionId)}>
-              Copy session id
-            </button>
-            <button className="ctx-item" onClick={() => openSessionProjectSettings(menu.sessionId)}>
-              Project settings
+            <button className="ctx-item" role="menuitem" onClick={() => openSessionProjectSettings(menu.sessionId)}>
+              <Settings size={14} aria-hidden="true" />
+              <span>Project settings</span>
             </button>
           </SessionContextMenu>
         </>
       )}
+      {confirmDialog}
       <UpdateIndicator />
       <div className="side-footer">
         <button className="side-footer-btn" title="Settings" aria-label="Settings" onClick={() => openSettings()}>

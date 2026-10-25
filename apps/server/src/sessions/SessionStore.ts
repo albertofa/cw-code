@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
-import type { ComposerPrefs, DriverKind, Project, ProjectSettings, SessionMeta, SessionPrLink, SessionStatus } from "@cw-code/contracts";
+import type { ComposerPrefs, DriverKind, Project, ProjectSettings, ResolvedCheckout, SessionMeta, SessionPrLink, SessionStatus } from "@cw-code/contracts";
 import { traceSessionStatus, type SessionStatusReason } from "../debug/sessionStatusTrace.js";
 import { isValidPrLink, upsertLink } from "../github/prLinks.js";
 import { expandHome } from "../skills/skillPaths.js";
@@ -134,12 +134,23 @@ function resetRuntimeStatuses(sessions: SessionMeta[]): boolean {
       delete session.autoResolved;
       changed = true;
     }
+    if (session.resolvedCheckout !== undefined && !isResolvedCheckout(session.resolvedCheckout)) {
+      delete session.resolvedCheckout;
+      changed = true;
+    }
     if (session.status === "idle" && session.idleSince === undefined && Number.isFinite(session.updatedAt)) {
       session.idleSince = session.updatedAt;
       changed = true;
     }
   }
   return changed;
+}
+
+function isResolvedCheckout(value: unknown): value is ResolvedCheckout {
+  if (!value || typeof value !== "object") return false;
+  const checkout = value as Partial<{ kind: string; path: unknown }>;
+  if (checkout.kind === "root") return true;
+  return checkout.kind === "worktree" && typeof checkout.path === "string" && checkout.path.length > 0;
 }
 
 function copyProject(project: Project): Project {
@@ -177,6 +188,7 @@ type SessionPatch = Partial<
     | "issues"
     | "runs"
     | "autoResolved"
+    | "resolvedCheckout"
     | "lastTurnSnapshot"
   >
 >;
@@ -350,6 +362,8 @@ export class SessionStore {
     else if ("prUnlinked" in patch) delete current.prUnlinked;
     if (patch.autoResolved !== undefined) current.autoResolved = patch.autoResolved;
     else if ("autoResolved" in patch) delete current.autoResolved;
+    if (patch.resolvedCheckout !== undefined) current.resolvedCheckout = patch.resolvedCheckout;
+    else if ("resolvedCheckout" in patch) delete current.resolvedCheckout;
     if (patch.lastTurnSnapshot !== undefined) current.lastTurnSnapshot = patch.lastTurnSnapshot;
     else if ("lastTurnSnapshot" in patch) delete current.lastTurnSnapshot;
     const now = Date.now();
@@ -357,7 +371,10 @@ export class SessionStore {
     if (patch.status !== undefined && patch.status !== previousStatus) {
       if (patch.status === "idle") current.idleSince = now;
       else if (previousStatus === "idle") delete current.idleSince;
-      if (patch.status !== "resolved" && patch.status !== "archived") delete current.autoResolved;
+      if (patch.status !== "resolved" && patch.status !== "archived") {
+        delete current.autoResolved;
+        delete current.resolvedCheckout;
+      }
       traceSessionStatus({
         sessionId: id,
         driver: current.driver,

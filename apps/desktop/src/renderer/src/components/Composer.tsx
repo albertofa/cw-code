@@ -7,6 +7,7 @@ import { useSessionSkillsStore } from "../stores/sessionSkillsStore.js";
 import { ComposerView, type ComposerBackend } from "./ComposerView.js";
 import { useBranchMismatch } from "./useBranchMismatch.js";
 import { ContextRing } from "./ContextRing.js";
+import { restoreConfirm } from "./sessionLifecycle.js";
 
 export function Composer({ sessionId, driver, top }: { sessionId: string; driver: DriverName; top?: ReactNode }) {
   const prefs = useAppStore((s) => s.composerBySession[sessionId] ?? DEFAULT_COMPOSER);
@@ -17,13 +18,14 @@ export function Composer({ sessionId, driver, top }: { sessionId: string; driver
     }
     return null;
   });
-  const effectivePermissionMode = useAppStore((s) => {
+  const session = useAppStore((s) => {
     for (const list of Object.values(s.sessionsByProject)) {
-      const match = list.find((session) => session.id === sessionId);
-      if (match) return match.effectivePermissionMode;
+      const match = list.find((item) => item.id === sessionId);
+      if (match) return match;
     }
     return undefined;
   });
+  const effectivePermissionMode = session?.effectivePermissionMode;
 
   const modelsRefreshKey = useAppStore((s) => s.settingsVersion);
   const { mismatch } = useBranchMismatch(sessionId);
@@ -57,6 +59,9 @@ export function Composer({ sessionId, driver, top }: { sessionId: string; driver
       void useAppStore.getState().setComposerPrefs(sessionId, p);
     },
     send: (body, attachments, opts) => useAppStore.getState().sendPromptTo(sessionId, body, attachments, opts),
+    ...(session?.status === "resolved"
+      ? { restore: { confirm: restoreConfirm(session), run: () => useAppStore.getState().restoreSession(sessionId) } }
+      : {}),
     newSession: () => useAppStore.getState().startNewSession(driver),
     rename: (title) => useAppStore.getState().renameSession(sessionId, title),
     openTerminal: () => usePanelStore.getState().revealTab(sessionId, driver),

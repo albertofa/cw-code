@@ -23,6 +23,7 @@ import { useBabysitStates } from "./useBabysit.js";
 import { BabysitHead } from "./BabysitHead.js";
 import { errorMessage } from "./errorMessage.js";
 import { ipcErrorMessage } from "./ipcError.js";
+import { useRestoreBeforeSend } from "./sessionLifecycle.js";
 
 const EMPTY_UPDATES: PrUpdate[] = [];
 
@@ -111,6 +112,7 @@ export function PrUpdateDock({ sessionId }: { sessionId: string }) {
   const busy = useAppStore((s) => s.busyTurns[sessionId] !== undefined);
   const babysitOf = useBabysitStates();
   const sendPromptTo = useAppStore((s) => s.sendPromptTo);
+  const { ensureOpen, dialog: restoreDialog } = useRestoreBeforeSend();
   const applySession = useAppStore((s) => s.applySession);
   const openRunModal = usePrStore((s) => s.openRunModal);
   const loadDetail = usePrStore((s) => s.loadDetail);
@@ -221,6 +223,10 @@ export function PrUpdateDock({ sessionId }: { sessionId: string }) {
     setWorking("send");
     setActionError(null);
     try {
+      if (!(await ensureOpen(sessionId))) {
+        setWorking(null);
+        return;
+      }
       await sendPromptTo(sessionId, prompt, undefined, { prRefs: covered.map((entry) => entry.item.link.ref) });
     } catch (err) {
       setActionError(`Could not send the update: ${ipcErrorMessage(err)}`);
@@ -409,6 +415,7 @@ export function PrUpdateDock({ sessionId }: { sessionId: string }) {
           {primaryLabel}
         </button>
       </div>
+      {restoreDialog}
     </section>
   );
 }

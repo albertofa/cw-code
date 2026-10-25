@@ -8343,14 +8343,20 @@ button.gitbar-checkout:hover {
   text-align: center;
 }
 
-.ctx-menu.tab-menu .ctx-item {
+.ctx-menu.tab-menu .ctx-item,
+.ctx-menu.session-menu .ctx-item {
   display: flex;
   align-items: center;
   gap: 8px;
 }
 
-.ctx-menu.tab-menu .ctx-item > svg {
+.ctx-menu.tab-menu .ctx-item > svg,
+.ctx-menu.session-menu .ctx-item > svg {
   flex: none;
+}
+
+.ctx-menu.session-menu .ctx-item.danger {
+  color: var(--danger-ink);
 }
 
 .bottom-panel.drop-target-active {

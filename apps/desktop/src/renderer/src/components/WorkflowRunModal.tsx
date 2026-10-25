@@ -47,6 +47,7 @@ import { startsAutoFollowUp, withAutomatedWorkflowNote } from "./prSessionModel.
 import { IssueCard, PrCard, RunCard } from "./WorkflowSubjectCards.js";
 import { SubjectCardSkeleton } from "./GitHubSkeletons.js";
 import { Spinner } from "./Loading.js";
+import { useRestoreBeforeSend } from "./sessionLifecycle.js";
 import { useWorkflowSubjectData } from "./useWorkflowSubjectData.js";
 import {
   baseWorkspaceHint,
@@ -225,6 +226,7 @@ export function WorkflowRunModal({ request }: { request: RunModalState }) {
         .sort((a, b) => b.updatedAt - a.updatedAt),
     [allSessions, key]
   );
+  const { ensureOpen, dialog: restoreDialog } = useRestoreBeforeSend();
   const continueSession: Session | undefined = target ? allSessions.find((s) => s.id === target) : undefined;
   const projectId = useMemo(() => projectIdForRef(repo), [projectIdForRef, projectRepos, key]);
   const continueAlreadyLinked = continueSession ? isLinkedTo(continueSession, subject) : false;
@@ -457,6 +459,7 @@ export function WorkflowRunModal({ request }: { request: RunModalState }) {
       if (continueSession) {
         current = "send";
         setStage(current);
+        if (!(await ensureOpen(continueSession.id))) return;
         await app.ensureComposer(continueSession.id);
         await app.sendPromptTo(continueSession.id, prompt, undefined, sendOptions);
         const sent = findSession(useAppStore.getState().sessionsByProject, continueSession.id) ?? continueSession;
@@ -593,281 +596,284 @@ export function WorkflowRunModal({ request }: { request: RunModalState }) {
     );
 
   return (
-    <div className="settings-backdrop" onClick={close}>
-      <div
-        ref={dialogRef}
-        className="wf-run-modal"
-        role="dialog"
-        aria-modal="true"
-        aria-label={title}
-        tabIndex={-1}
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="wf-run-head">
-          <WorkflowIcon size={16} aria-hidden="true" />
-          <h3 className="wf-run-title">{title}</h3>
-          <button className="icon-btn" aria-label="Close" onClick={close} disabled={working}>
-            <X size={15} aria-hidden="true" />
-          </button>
-        </div>
+    <>
+      <div className="settings-backdrop" onClick={close}>
+        <div
+          ref={dialogRef}
+          className="wf-run-modal"
+          role="dialog"
+          aria-modal="true"
+          aria-label={title}
+          tabIndex={-1}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div className="wf-run-head">
+            <WorkflowIcon size={16} aria-hidden="true" />
+            <h3 className="wf-run-title">{title}</h3>
+            <button className="icon-btn" aria-label="Close" onClick={close} disabled={working}>
+              <X size={15} aria-hidden="true" />
+            </button>
+          </div>
 
-        <div className="wf-run-body">
-          {card || (!data.error && <SubjectCardSkeleton label={`Loading ${noun}`} />)}
-          {data.error && (
-            <div className="wf-run-error" role="alert">
-              Could not load the {noun}: {data.error}
-              <button className="btn" onClick={data.retry}>
-                Retry
-              </button>
-            </div>
-          )}
-          {subject.kind === "run" && !data.run && (
-            <div className="wf-run-status">
-              <AlertTriangle size={12} aria-hidden="true" /> This run isn't in the loaded results, so its details are
-              unavailable. Prompt variables that need them will be empty.
-            </div>
-          )}
-          {settingsError && (
-            <div className="wf-run-error" role="alert">
-              Could not load workflows: {settingsError}
-            </div>
-          )}
+          <div className="wf-run-body">
+            {card || (!data.error && <SubjectCardSkeleton label={`Loading ${noun}`} />)}
+            {data.error && (
+              <div className="wf-run-error" role="alert">
+                Could not load the {noun}: {data.error}
+                <button className="btn" onClick={data.retry}>
+                  Retry
+                </button>
+              </div>
+            )}
+            {subject.kind === "run" && !data.run && (
+              <div className="wf-run-status">
+                <AlertTriangle size={12} aria-hidden="true" /> This run isn't in the loaded results, so its details are
+                unavailable. Prompt variables that need them will be empty.
+              </div>
+            )}
+            {settingsError && (
+              <div className="wf-run-error" role="alert">
+                Could not load workflows: {settingsError}
+              </div>
+            )}
 
-          {needsClone && (
-            <div className="wf-run-clone">
-              <FolderGit2 size={15} aria-hidden="true" />
-              <div className="wf-run-clone-text">
-                <span className="wf-run-clone-title">
-                  Clone {repo.owner}/{repo.repo} and add it as a cw-code project
-                </span>
-                <span className="wf-run-muted">It isn't a project yet, so the session needs a local copy first.</span>
-                {settings && (
-                  <span className="wf-run-path">{shortenHome(clonePathHint(settings.prCloneRoot, repo, settings.prCloneIncludeOwner), homeDir ?? undefined)}</span>
-                )}
-                {stage === "clone" && (
-                  <span className="wf-run-status">
-                    <Spinner size={12} /> Cloning…
+            {needsClone && (
+              <div className="wf-run-clone">
+                <FolderGit2 size={15} aria-hidden="true" />
+                <div className="wf-run-clone-text">
+                  <span className="wf-run-clone-title">
+                    Clone {repo.owner}/{repo.repo} and add it as a cw-code project
                   </span>
+                  <span className="wf-run-muted">It isn't a project yet, so the session needs a local copy first.</span>
+                  {settings && (
+                    <span className="wf-run-path">{shortenHome(clonePathHint(settings.prCloneRoot, repo, settings.prCloneIncludeOwner), homeDir ?? undefined)}</span>
+                  )}
+                  {stage === "clone" && (
+                    <span className="wf-run-status">
+                      <Spinner size={12} /> Cloning…
+                    </span>
+                  )}
+                </div>
+              </div>
+            )}
+
+            <div className="wf-run-grid">
+              <div className="wf-run-field">
+                <span className="wf-run-label">Workflow</span>
+                <MenuSelect
+                  label="Workflow"
+                  direction="down"
+                  value={activeWorkflowId}
+                  display={workflow?.label ?? "Choose workflow"}
+                  icon={<WorkflowIcon size={14} />}
+                  options={pickable.map((w) => {
+                    const Icon = workflowIcon(w.icon);
+                    return {
+                      id: w.id,
+                      label: w.label,
+                      description: w.description,
+                      icon: <Icon size={13} />,
+                      disabled: working || created !== null
+                    };
+                  })}
+                  onPick={pickWorkflow}
+                />
+              </div>
+              <div className="wf-run-field">
+                <span className="wf-run-label">Harness</span>
+                {continueSession ? (
+                  <div className="wf-run-locked" title="The session's harness and model are fixed">
+                    <DriverIcon driver={continueSession.driver} size={14} />
+                    <span className="wf-run-locked-text">
+                      {harnessLabel(continueSession.driver)} · {continueModel ?? "same as session"}
+                    </span>
+                    <Lock size={12} aria-hidden="true" />
+                  </div>
+                ) : (
+                  <div className="wf-run-locked wf-run-summary" title={summary?.title}>
+                    <DriverIcon driver={driver} size={14} />
+                    <span className="wf-run-locked-text">
+                      {summary
+                        ? summary.parts.map((part, index) => (
+                            <span key={part.key} className={part.source === "workflow" ? undefined : "wf-run-inherited"}>
+                              {index > 0 && " · "}
+                              {part.label}
+                            </span>
+                          ))
+                        : driverMissing
+                          ? `${harnessLabel(driver)} · not installed`
+                          : "Loading…"}
+                    </span>
+                    <button type="button" className="wf-run-config" onClick={configure} disabled={working || !workflow || created !== null}>
+                      <Settings2 size={12} aria-hidden="true" /> Configure
+                    </button>
+                  </div>
                 )}
               </div>
             </div>
-          )}
+            {workflow && <div className="wf-run-muted wf-run-desc">{workflow.description}</div>}
+            {startsContinuous && workflow && (
+              <div className="wf-run-status wf-run-continuous">
+                <Activity size={12} aria-hidden="true" />
+                Keeps running after this prompt: {workflow.label} sends its follow-up prompt by itself for failed checks,
+                change requests and comments until the PR is merged or closed. Pause or stop it from the session.
+              </div>
+            )}
+            {options?.error && !continueSession && (
+              <div className="wf-run-error" role="alert">
+                Could not list harness options: {options.error}
+              </div>
+            )}
+            {driverMissing && (
+              <div className="wf-run-error" role="alert">
+                {harnessLabel(driver)} isn't installed. Configure this workflow to use an installed harness.
+              </div>
+            )}
 
-          <div className="wf-run-grid">
-            <div className="wf-run-field">
-              <span className="wf-run-label">Workflow</span>
-              <MenuSelect
-                label="Workflow"
-                direction="down"
-                value={activeWorkflowId}
-                display={workflow?.label ?? "Choose workflow"}
-                icon={<WorkflowIcon size={14} />}
-                options={pickable.map((w) => {
-                  const Icon = workflowIcon(w.icon);
-                  return {
-                    id: w.id,
-                    label: w.label,
-                    description: w.description,
-                    icon: <Icon size={13} />,
-                    disabled: working || created !== null
-                  };
-                })}
-                onPick={pickWorkflow}
+            {(linkedOptions.length > 0 || otherSessions.length > 0) && (
+              <div className="wf-run-field">
+                <span className="wf-run-label">Session</span>
+                <Segment
+                  label="Session"
+                  value={target}
+                  disabled={working || created !== null || babysitWorkflow !== null}
+                  onPick={pickTarget}
+                  options={[
+                    {
+                      id: "",
+                      icon: <Plus size={14} />,
+                      title: "New session",
+                      hint: `linked to ${subjectLabel(subject, data.run?.runNumber)}`
+                    },
+                    ...linkedOptions.map((s) => {
+                      const link = subjectLink(s, subject);
+                      return {
+                        id: s.id,
+                        icon: <DriverIcon driver={s.driver} size={14} />,
+                        title: `Continue “${s.title}”`,
+                        hint: link ? ORIGIN_LABEL[link.origin] : `not linked to this ${noun}`
+                      };
+                    })
+                  ]}
+                />
+              </div>
+            )}
+
+            {otherSessions.length > 0 && (
+              <div className="wf-run-field">
+                <span className="wf-run-label">{otherSessionsLabel}</span>
+                <MenuSelect
+                  label="Other sessions"
+                  direction="down"
+                  value={otherSessions.some((s) => s.id === target) ? target : ""}
+                  display={otherSessions.find((s) => s.id === target)?.title ?? "Continue another session…"}
+                  isSet={otherSessions.some((s) => s.id === target)}
+                  options={otherSessions.map((s) => ({
+                    id: s.id,
+                    label: s.title,
+                    hint: `will be linked to ${subjectLabel(subject, data.run?.runNumber)}${s.projectId === projectId ? "" : ` · ${projectNameOf(s.projectId)}`}`,
+                    icon: <DriverIcon driver={s.driver} size={13} />,
+                    disabled: working || created !== null || babysitWorkflow !== null
+                  }))}
+                  onPick={pickTarget}
+                  searchable={otherSessions.length > 5}
+                  searchPlaceholder="Filter sessions…"
+                />
+              </div>
+            )}
+
+            {!continueSession && (
+              <div className="wf-run-field">
+                <span className="wf-run-label">Workspace</span>
+                <Segment
+                  label="Workspace"
+                  value={workspace}
+                  disabled={working || created !== null}
+                  onPick={setWorkspaceChoice}
+                  options={[
+                    {
+                      id: "checkout" as const,
+                      icon: <GitBranch size={14} />,
+                      title: "Current checkout",
+                      hint: workspaceHint("checkout")
+                    },
+                    {
+                      id: "worktree" as const,
+                      icon: <GitFork size={14} />,
+                      title: "New worktree",
+                      hint: workspaceHint("worktree")
+                    },
+                    ...(linkedWorktree
+                      ? [
+                          {
+                            id: "linked" as const,
+                            icon: <History size={14} />,
+                            title: "Linked worktree",
+                            hint: `reuse “${linkedWorktree.title}”`
+                          }
+                        ]
+                      : [])
+                  ]}
+                />
+                {showPushNote && data.pr && (
+                  <span className="wf-run-muted wf-run-note">
+                    Unless your local {data.pr.headRefName} matches the PR head, the session works on a new cw/ branch. The
+                    prompt will tell it to update the PR with: git push origin HEAD:{data.pr.headRefName}
+                  </span>
+                )}
+              </div>
+            )}
+
+            <label className="wf-run-field">
+              <span className="wf-run-label">
+                {promptLabel}
+              </span>
+              <textarea
+                className="field wf-run-prompt"
+                value={prompt}
+                onChange={(e) => {
+                  setDirty(true);
+                  setPrompt(e.target.value);
+                }}
+                disabled={working}
+                spellCheck={false}
+                placeholder={resolved === null ? "Resolving template…" : undefined}
               />
-            </div>
-            <div className="wf-run-field">
-              <span className="wf-run-label">Harness</span>
-              {continueSession ? (
-                <div className="wf-run-locked" title="The session's harness and model are fixed">
-                  <DriverIcon driver={continueSession.driver} size={14} />
-                  <span className="wf-run-locked-text">
-                    {harnessLabel(continueSession.driver)} · {continueModel ?? "same as session"}
-                  </span>
-                  <Lock size={12} aria-hidden="true" />
-                </div>
-              ) : (
-                <div className="wf-run-locked wf-run-summary" title={summary?.title}>
-                  <DriverIcon driver={driver} size={14} />
-                  <span className="wf-run-locked-text">
-                    {summary
-                      ? summary.parts.map((part, index) => (
-                          <span key={part.key} className={part.source === "workflow" ? undefined : "wf-run-inherited"}>
-                            {index > 0 && " · "}
-                            {part.label}
-                          </span>
-                        ))
-                      : driverMissing
-                        ? `${harnessLabel(driver)} · not installed`
-                        : "Loading…"}
-                  </span>
-                  <button type="button" className="wf-run-config" onClick={configure} disabled={working || !workflow || created !== null}>
-                    <Settings2 size={12} aria-hidden="true" /> Configure
-                  </button>
-                </div>
-              )}
-            </div>
+            </label>
+            {data.logsNeeded && !data.logsReady && !data.logsError && (
+              <div className="wf-run-status">
+                <Spinner size={12} /> Fetching failed {subject.kind === "pr" ? "check" : "run"} logs…
+              </div>
+            )}
+            {data.logsError && (
+              <div className="wf-run-error" role="alert">
+                Could not fetch failed {subject.kind === "pr" ? "check" : "run"} logs: {data.logsError}
+              </div>
+            )}
+            {sessionBusy && <div className="wf-run-status">This session is running a turn. Wait for it to finish before sending.</div>}
+            {error && (
+              <div className="wf-run-error" role="alert">
+                {error}
+              </div>
+            )}
           </div>
-          {workflow && <div className="wf-run-muted wf-run-desc">{workflow.description}</div>}
-          {startsContinuous && workflow && (
-            <div className="wf-run-status wf-run-continuous">
-              <Activity size={12} aria-hidden="true" />
-              Keeps running after this prompt: {workflow.label} sends its follow-up prompt by itself for failed checks,
-              change requests and comments until the PR is merged or closed. Pause or stop it from the session.
-            </div>
-          )}
-          {options?.error && !continueSession && (
-            <div className="wf-run-error" role="alert">
-              Could not list harness options: {options.error}
-            </div>
-          )}
-          {driverMissing && (
-            <div className="wf-run-error" role="alert">
-              {harnessLabel(driver)} isn't installed. Configure this workflow to use an installed harness.
-            </div>
-          )}
 
-          {(linkedOptions.length > 0 || otherSessions.length > 0) && (
-            <div className="wf-run-field">
-              <span className="wf-run-label">Session</span>
-              <Segment
-                label="Session"
-                value={target}
-                disabled={working || created !== null || babysitWorkflow !== null}
-                onPick={pickTarget}
-                options={[
-                  {
-                    id: "",
-                    icon: <Plus size={14} />,
-                    title: "New session",
-                    hint: `linked to ${subjectLabel(subject, data.run?.runNumber)}`
-                  },
-                  ...linkedOptions.map((s) => {
-                    const link = subjectLink(s, subject);
-                    return {
-                      id: s.id,
-                      icon: <DriverIcon driver={s.driver} size={14} />,
-                      title: `Continue “${s.title}”`,
-                      hint: link ? ORIGIN_LABEL[link.origin] : `not linked to this ${noun}`
-                    };
-                  })
-                ]}
-              />
-            </div>
-          )}
-
-          {otherSessions.length > 0 && (
-            <div className="wf-run-field">
-              <span className="wf-run-label">{otherSessionsLabel}</span>
-              <MenuSelect
-                label="Other sessions"
-                direction="down"
-                value={otherSessions.some((s) => s.id === target) ? target : ""}
-                display={otherSessions.find((s) => s.id === target)?.title ?? "Continue another session…"}
-                isSet={otherSessions.some((s) => s.id === target)}
-                options={otherSessions.map((s) => ({
-                  id: s.id,
-                  label: s.title,
-                  hint: `will be linked to ${subjectLabel(subject, data.run?.runNumber)}${s.projectId === projectId ? "" : ` · ${projectNameOf(s.projectId)}`}`,
-                  icon: <DriverIcon driver={s.driver} size={13} />,
-                  disabled: working || created !== null || babysitWorkflow !== null
-                }))}
-                onPick={pickTarget}
-                searchable={otherSessions.length > 5}
-                searchPlaceholder="Filter sessions…"
-              />
-            </div>
-          )}
-
-          {!continueSession && (
-            <div className="wf-run-field">
-              <span className="wf-run-label">Workspace</span>
-              <Segment
-                label="Workspace"
-                value={workspace}
-                disabled={working || created !== null}
-                onPick={setWorkspaceChoice}
-                options={[
-                  {
-                    id: "checkout" as const,
-                    icon: <GitBranch size={14} />,
-                    title: "Current checkout",
-                    hint: workspaceHint("checkout")
-                  },
-                  {
-                    id: "worktree" as const,
-                    icon: <GitFork size={14} />,
-                    title: "New worktree",
-                    hint: workspaceHint("worktree")
-                  },
-                  ...(linkedWorktree
-                    ? [
-                        {
-                          id: "linked" as const,
-                          icon: <History size={14} />,
-                          title: "Linked worktree",
-                          hint: `reuse “${linkedWorktree.title}”`
-                        }
-                      ]
-                    : [])
-                ]}
-              />
-              {showPushNote && data.pr && (
-                <span className="wf-run-muted wf-run-note">
-                  Unless your local {data.pr.headRefName} matches the PR head, the session works on a new cw/ branch. The
-                  prompt will tell it to update the PR with: git push origin HEAD:{data.pr.headRefName}
-                </span>
-              )}
-            </div>
-          )}
-
-          <label className="wf-run-field">
-            <span className="wf-run-label">
-              {promptLabel}
+          <div className="wf-run-foot">
+            <span className="wf-run-notice">
+              <Lock size={12} aria-hidden="true" />
+              {READ_ONLY_NOTICE}
             </span>
-            <textarea
-              className="field wf-run-prompt"
-              value={prompt}
-              onChange={(e) => {
-                setDirty(true);
-                setPrompt(e.target.value);
-              }}
-              disabled={working}
-              spellCheck={false}
-              placeholder={resolved === null ? "Resolving template…" : undefined}
-            />
-          </label>
-          {data.logsNeeded && !data.logsReady && !data.logsError && (
-            <div className="wf-run-status">
-              <Spinner size={12} /> Fetching failed {subject.kind === "pr" ? "check" : "run"} logs…
-            </div>
-          )}
-          {data.logsError && (
-            <div className="wf-run-error" role="alert">
-              Could not fetch failed {subject.kind === "pr" ? "check" : "run"} logs: {data.logsError}
-            </div>
-          )}
-          {sessionBusy && <div className="wf-run-status">This session is running a turn. Wait for it to finish before sending.</div>}
-          {error && (
-            <div className="wf-run-error" role="alert">
-              {error}
-            </div>
-          )}
-        </div>
-
-        <div className="wf-run-foot">
-          <span className="wf-run-notice">
-            <Lock size={12} aria-hidden="true" />
-            {READ_ONLY_NOTICE}
-          </span>
-          <button className="btn" onClick={close} disabled={working}>
-            Cancel
-          </button>
-          <button className="btn btn-primary wf-run-go" onClick={() => void run()} disabled={blocked || working}>
-            {working ? <Spinner size={13} /> : <Play size={13} aria-hidden="true" />}
-            {working && stage ? stageLabel(stage, noun) : actionLabel}
-          </button>
+            <button className="btn" onClick={close} disabled={working}>
+              Cancel
+            </button>
+            <button className="btn btn-primary wf-run-go" onClick={() => void run()} disabled={blocked || working}>
+              {working ? <Spinner size={13} /> : <Play size={13} aria-hidden="true" />}
+              {working && stage ? stageLabel(stage, noun) : actionLabel}
+            </button>
+          </div>
         </div>
       </div>
-    </div>
+      {restoreDialog}
+    </>
   );
 }

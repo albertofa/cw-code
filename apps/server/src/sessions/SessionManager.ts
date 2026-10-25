@@ -25,6 +25,7 @@ import type {
   PrSummary,
   Project,
   ProjectSettings,
+  ResolvedCheckout,
   RetryConnectionResult,
   RunRef,
   SessionCleanupResult,
@@ -236,6 +237,7 @@ export class SessionManager {
   private firstPrompts = new Map<string, string>();
   private pendingTurns = new Set<string>();
   private pendingResolves = new Map<string, { status: SessionStatus; promise: Promise<SessionCleanupResult> }>();
+  private pendingRestores = new Map<string, Promise<SessionMeta>>();
   private folderChains = new Map<string, Promise<void>>();
   private settleSweep: Promise<string[]> | null = null;
   private idleSweep: Promise<string[]> | null = null;
@@ -956,8 +958,101 @@ export class SessionManager {
   setSessionStatus(sessionId: string, status: SessionStatus, reason: SessionStatusReason = "user-set-status"): SessionMeta {
     const session = this.store.getSession(sessionId);
     if (!session) throw new Error(`unknown session ${sessionId}`);
+    if (this.pendingRestores.has(sessionId)) throw new Error("session busy (restore pending)");
     this.store.updateSession(sessionId, { status }, reason);
     return this.emitSession(sessionId);
+  }
+
+  async markWorking(sessionId: string): Promise<SessionMeta> {
+    const session = this.store.getSession(sessionId);
+    if (!session) throw new Error(`unknown session ${sessionId}`);
+    if (session.status !== "idle") throw new Error(`session is ${session.status}; only idle sessions can be marked as working`);
+    await this.dropFinishedPrLinks(sessionId);
+    const current = this.store.getSession(sessionId);
+    if (!current) throw new Error(`unknown session ${sessionId}`);
+    if (current.status !== "idle" || this.sessionBusy(sessionId)) return this.emitSession(sessionId);
+    this.store.updateSession(sessionId, { status: "holding" }, "mark-working");
+    return this.emitSession(sessionId);
+  }
+
+  private async dropFinishedPrLinks(sessionId: string, keep: readonly PrRef[] = []): Promise<void> {
+    const kept = new Set(keep.map(prKey));
+    const links = (this.store.getSession(sessionId)?.prs ?? []).filter((link) => !kept.has(prKey(link.ref)));
+    const finished: PrRef[] = [];
+    for (const link of links) {
+      const known = this.prState(link.ref);
+      const state = isFinishedPrState(known) || !this.prStateRefresh ? known : await this.prStateRefresh(link.ref).catch(() => known);
+      if (isFinishedPrState(state)) finished.push(link.ref);
+    }
+    if (finished.length === 0) return;
+    const current = this.store.getSession(sessionId);
+    if (!current) return;
+    let prs = current.prs;
+    let prUnlinked = current.prUnlinked;
+    for (const ref of finished) {
+      prs = removeLink(prs, ref);
+      prUnlinked = addUnlinkedKey(prUnlinked, prKey(ref));
+    }
+    this.store.updateSession(sessionId, { prs, prUnlinked });
+    this.endStaleBabysit(sessionId);
+  }
+
+  restoreSession(sessionId: string): Promise<SessionMeta> {
+    const pending = this.pendingRestores.get(sessionId);
+    if (pending) return pending;
+    const run = this.runRestore(sessionId).finally(() => {
+      if (this.pendingRestores.get(sessionId) === run) this.pendingRestores.delete(sessionId);
+    });
+    this.pendingRestores.set(sessionId, run);
+    return run;
+  }
+
+  private async runRestore(sessionId: string): Promise<SessionMeta> {
+    this.assertNotReserved();
+    const session = this.store.getSession(sessionId);
+    if (!session) throw new Error(`unknown session ${sessionId}`);
+    if (session.status !== "resolved") throw new Error(`session is ${session.status}; only resolved sessions can be restored`);
+    if (this.pendingResolves.has(sessionId)) throw new Error("session busy (resolve pending)");
+    const project = this.getProject(session.projectId);
+    const checkout = await this.restoredCheckout(session, project);
+    this.assertNotReserved();
+    const current = this.store.getSession(sessionId);
+    if (!current || current.status !== "resolved") throw new Error(`session is ${current?.status ?? "gone"}; restore cancelled`);
+    this.store.updateSession(sessionId, { status: "idle", ...checkout.patch }, "restore");
+    if (checkout.created) this.startWorktreeSetup(current, project, checkout.created.path);
+    const restored = this.emitSession(sessionId);
+    return checkout.created ? withCreateNotice(restored, checkout.created.baseWarning) : restored;
+  }
+
+  private async restoredCheckout(
+    session: SessionMeta,
+    project: Project
+  ): Promise<{ patch: Partial<Pick<SessionMeta, "worktreePath" | "branch" | "baseRef" | "namedBranch">>; created?: CreatedWorktree }> {
+    if (session.worktreePath && existsSync(session.worktreePath)) return { patch: {} };
+    const checkout = session.resolvedCheckout;
+    if (checkout?.kind === "root") return { patch: {} };
+    if (checkout && looksLikeWorktree(checkout.path)) return { patch: { worktreePath: checkout.path } };
+    if (!(await this.git.isRepository(project.rootPath)) || !(await this.git.hasCommits(project.rootPath))) return { patch: {} };
+    await this.git.pruneWorktrees(project.rootPath, this.worktreesRoot);
+    if (session.branch && (await this.branchAvailable(project.rootPath, session.branch))) {
+      const target = join(this.worktreesRoot, safeSegment(project.id), safeSegment(session.id));
+      const attached = await this.git.attachWorktree(project.rootPath, target, session.branch);
+      return { patch: { worktreePath: attached.path }, created: attached };
+    }
+    const created = await this.git.createWorktree(project.rootPath, project.id, session.id, this.worktreesRoot, session.baseRef, {
+      exact: false,
+      fallbackToDefault: true,
+      projectName: project.name
+    });
+    return {
+      patch: { worktreePath: created.path, branch: created.branch, namedBranch: undefined, baseRef: storableBaseRef(created.baseRef, created.branch, {}).baseRef },
+      created
+    };
+  }
+
+  private async branchAvailable(repoRoot: string, branch: string): Promise<boolean> {
+    const info = (await this.git.branches(repoRoot)).find((item) => !item.remote && item.name === branch);
+    return info !== undefined && !info.worktreePath;
   }
 
   syncFromStatus(sessionId: string, status: GitStatus): SessionMeta | null {
@@ -1118,7 +1213,7 @@ export class SessionManager {
   }
 
   private sessionBusy(sessionId: string): boolean {
-    if (this.pendingTurns.has(sessionId) || this.pendingResolves.has(sessionId)) return true;
+    if (this.pendingTurns.has(sessionId) || this.pendingResolves.has(sessionId) || this.pendingRestores.has(sessionId)) return true;
     for (const entry of this.activeTurns.values()) {
       if (entry.sessionId === sessionId) return true;
     }
@@ -1229,6 +1324,7 @@ export class SessionManager {
       if (entry.sessionId === sessionId) throw new Error("session busy (turn active)");
     }
     if (this.pendingTurns.has(sessionId)) throw new Error("session busy (turn pending)");
+    if (this.pendingRestores.has(sessionId)) throw new Error("session busy (restore pending)");
     const pending = this.pendingResolves.get(sessionId);
     if (pending) {
       if (pending.status === status) return pending.promise;
@@ -1293,9 +1389,10 @@ export class SessionManager {
     this.branchRenamed.delete(sessionId);
     this.cancelTitleTurns(sessionId);
     this.dropPendingRequests(this.pendingRequests.clearSession(sessionId));
+    const resolvedCheckout: ResolvedCheckout = session.worktreePath ? { kind: "worktree", path: session.worktreePath } : { kind: "root" };
     this.store.updateSession(
       sessionId,
-      { status, ...(opts.auto ? { autoResolved: true } : {}) },
+      { status, resolvedCheckout: session.resolvedCheckout ?? resolvedCheckout, ...(opts.auto ? { autoResolved: true } : {}) },
       opts.reason ?? (status === "archived" ? "archive" : "resolve")
     );
     this.emitSession(sessionId);
@@ -1964,8 +2061,12 @@ export class SessionManager {
     if (this.pendingResolves.has(sessionId)) throw new Error("session busy (resolve pending)");
     if (this.undoPendingOnRoot(session)) throw new Error("session busy (undo pending)");
     if (this.branchSwitchPendingOnRoot(session)) throw new Error(`${project.name} is switching branches — try again in a moment`);
+    if (this.pendingRestores.has(sessionId)) throw new Error("session busy (restore pending)");
     this.pendingTurns.add(sessionId);
     try {
+      if (session.status === "idle" && session.resumeCursor) {
+        await this.dropFinishedPrLinks(sessionId, [...(opts?.prRefs ?? []), ...(opts?.finalReview ? [opts.finalReview.ref] : [])]);
+      }
       const cwd = await this.ensureWorktree(sessionId);
       await this.worktreeSetups.get(sessionId)?.promise;
       await this.assertFolderOnSessionBranch(session, project, cwd, opts?.acceptFolderHead);
@@ -2274,6 +2375,9 @@ export class SessionManager {
     this.assertNotReserved();
     const session = this.store.getSession(sessionId);
     if (!session) throw new Error(`unknown session ${sessionId}`);
+    if (session.status === "resolved" || session.status === "archived") {
+      throw new Error(`session is ${session.status}; restore it before retrying the connection`);
+    }
     for (const entry of this.activeTurns.values()) {
       if (entry.sessionId === sessionId) throw new Error("session busy (turn in progress)");
     }
