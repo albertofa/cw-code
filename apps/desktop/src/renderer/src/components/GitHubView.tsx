@@ -31,8 +31,12 @@ function isEditingTarget(target: EventTarget | null): boolean {
   return target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable;
 }
 
-function isSettled(state: ViewTopicState | undefined): state is ViewTopicState {
-  return state !== undefined && (state.status !== "subscribing" || state.rev > 0);
+function isSettled(state: ViewTopicState | undefined): boolean {
+  if (state === undefined) return false;
+  if (state.status === "error") return true;
+  const view = state.data.view;
+  if (!view) return false;
+  return !(view.loading && view.fetchedAt === null && view.error === null);
 }
 
 function useViewTopic(kind: GitHubKind, topic: string): { state: ViewTopicState | undefined; stale: boolean } {
@@ -44,7 +48,7 @@ function useViewTopic(kind: GitHubKind, topic: string): { state: ViewTopicState 
   }, [kind, topic, live, settled]);
   if (settled) return { state: live, stale: false };
   const previous = shown.current[kind];
-  if (previous && previous.topic !== topic) return { state: previous.state, stale: true };
+  if (previous) return { state: previous.state, stale: previous.topic !== topic || live?.status === "subscribing" };
   return { state: live, stale: false };
 }
 

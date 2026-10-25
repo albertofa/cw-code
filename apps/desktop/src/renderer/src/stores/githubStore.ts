@@ -130,6 +130,7 @@ export const useGitHubStore = create<GitHubStore>((set, get) => {
       try {
         const view = await window.cw.saveGitHubView({ kind, name: name.trim(), query: normalizeQuery(tab.query), group: tab.group });
         updateTab(kind, { viewId: view.id });
+        set({ error: null });
       } catch (err) {
         fail("saving view failed", err);
       }
@@ -138,6 +139,7 @@ export const useGitHubStore = create<GitHubStore>((set, get) => {
     async renameView(id: string, name: string) {
       try {
         await window.cw.renameGitHubView(id, name.trim());
+        set({ error: null });
       } catch (err) {
         fail("renaming view failed", err);
       }
@@ -146,6 +148,7 @@ export const useGitHubStore = create<GitHubStore>((set, get) => {
     async deleteView(id: string) {
       try {
         await window.cw.deleteGitHubView(id);
+        set({ error: null });
       } catch (err) {
         fail("deleting view failed", err);
         return;
