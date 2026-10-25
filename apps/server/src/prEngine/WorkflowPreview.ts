@@ -65,6 +65,7 @@ export interface WorkflowPreviewDeps {
   listPermissions(driver: DriverKind, projectId: string | null): Promise<PermissionOption[]>;
   prSummary(key: string): PrSummary | undefined;
   prDetail(key: string): PrDetail | undefined;
+  prDetailError(key: string): string | null;
   loadPrDetail(ref: PrRef): Promise<PrDetail>;
   issueDetail(ref: IssueRef): Promise<IssueDetail>;
   cachedRun(ref: RunRef): WorkflowRunSummary | undefined;
@@ -81,6 +82,11 @@ interface CacheEntry<T> {
   at: number;
 }
 
+interface CacheTtl {
+  value: number;
+  error: number;
+}
+
 interface PrData {
   detail: PrDetail | undefined;
   summary: PrSummary | undefined;
@@ -95,8 +101,10 @@ interface LogsRead {
 
 const HARNESS_IDS: readonly DriverKind[] = ["claude", "opencode", "codex"];
 const PR_REFRESH_MS = 60_000;
-const ISSUE_TTL_MS = 60_000;
-const LOGS_TTL_MS = 10 * 60_000;
+const PR_ERROR_RETRY_MS = 60_000;
+const ISSUE_TTL: CacheTtl = { value: 60_000, error: 60_000 };
+const LOGS_TTL: CacheTtl = { value: 10 * 60_000, error: 60_000 };
+const OPTIONS_TTL: CacheTtl = { value: 30_000, error: 10_000 };
 const MAX_CACHED = 20;
 const NO_LOGS: LogsRead = { ready: true, text: undefined, error: null };
 const PENDING_LOGS: LogsRead = { ready: false, text: undefined, error: null };
@@ -109,18 +117,15 @@ class LoadCache<T> {
   private readonly entries = new Map<string, CacheEntry<T>>();
 
   constructor(
-    private readonly ttlMs: number,
+    private readonly ttl: CacheTtl,
     private readonly now: () => number
   ) {}
 
-  async read(key: string, load: () => Promise<T>, waitForNew: boolean): Promise<CacheRead<T>> {
+  async read(key: string, load: () => Promise<T>, waitForNew: boolean, retry = false): Promise<CacheRead<T>> {
     const existing = this.entries.get(key);
     if (existing?.state) {
-      if ("error" in existing.state) {
-        this.entries.delete(key);
-        return existing.state;
-      }
-      if (this.now() - existing.at <= this.ttlMs) return existing.state;
+      const ttl = "error" in existing.state ? this.ttl.error : this.ttl.value;
+      if (!(retry && "error" in existing.state) && this.now() - existing.at <= ttl) return existing.state;
       this.entries.delete(key);
     } else if (existing) {
       await existing.promise;
@@ -150,9 +155,7 @@ class LoadCache<T> {
   }
 
   private settled(key: string, entry: CacheEntry<T>): CacheRead<T> {
-    const state = entry.state ?? { error: "load did not finish" };
-    if ("error" in state && this.entries.get(key) === entry) this.entries.delete(key);
-    return state;
+    return entry.state ?? { error: "load did not finish" };
   }
 }
 
@@ -184,6 +187,11 @@ function logsOf(read: CacheRead<string>): LogsRead {
   return { ready: true, text: read.value, error: null };
 }
 
+function optionsOf<T>(read: CacheRead<T[]>): T[] {
+  if ("value" in read) return read.value;
+  throw new Error("error" in read ? read.error : "load did not finish");
+}
+
 function revisionOf(parts: unknown[]): string {
   return createHash("sha1").update(JSON.stringify(parts)).digest("hex").slice(0, 16);
 }
@@ -191,13 +199,17 @@ function revisionOf(parts: unknown[]): string {
 export class WorkflowPreviewService {
   private readonly issues: LoadCache<IssueDetail>;
   private readonly logs: LoadCache<string>;
+  private readonly models: LoadCache<ModelOption[]>;
+  private readonly permissions: LoadCache<PermissionOption[]>;
   private readonly prRefreshedAt = new Map<string, number>();
   private readonly now: () => number;
 
   constructor(private readonly deps: WorkflowPreviewDeps) {
     this.now = deps.now ?? Date.now;
-    this.issues = new LoadCache(ISSUE_TTL_MS, this.now);
-    this.logs = new LoadCache(LOGS_TTL_MS, this.now);
+    this.issues = new LoadCache(ISSUE_TTL, this.now);
+    this.logs = new LoadCache(LOGS_TTL, this.now);
+    this.models = new LoadCache(OPTIONS_TTL, this.now);
+    this.permissions = new LoadCache(OPTIONS_TTL, this.now);
   }
 
   async resolveHarness(req: WorkflowHarnessRequest): Promise<WorkflowHarnessResult> {
@@ -207,9 +219,16 @@ export class WorkflowPreviewService {
       errors.push(`${what}: ${describeError(error)}`);
       return [];
     };
+    const key = `${driver}:${req.projectId ?? ""}:${revisionOf([this.deps.settings()])}`;
     const [models, permissions] = await Promise.all([
-      this.deps.listModels(driver, req.projectId).catch(failed("models")),
-      this.deps.listPermissions(driver, req.projectId).catch(failed("permission modes"))
+      this.models
+        .read(key, () => this.deps.listModels(driver, req.projectId), true)
+        .then(optionsOf)
+        .catch(failed("models")),
+      this.permissions
+        .read(key, () => this.deps.listPermissions(driver, req.projectId), true)
+        .then(optionsOf)
+        .catch(failed("permission modes"))
     ]);
     const resolved = resolveWorkflowHarness(req.config, {
       composerDriver: req.composerDriver,
@@ -227,9 +246,10 @@ export class WorkflowPreviewService {
   }
 
   async previewTemplate(req: WorkflowTemplatePreviewRequest): Promise<WorkflowTemplatePreview> {
-    const pr = await this.prData(req.ref);
+    const retry = req.retry === true;
+    const pr = await this.prData(req.ref, retry);
     const logsNeeded = needsFailedLogs(req.template);
-    const logs = !logsNeeded ? NO_LOGS : pr.detail ? await this.prLogs(pr.detail) : PENDING_LOGS;
+    const logs = !logsNeeded ? NO_LOGS : pr.detail ? await this.prLogs(pr.detail, retry) : PENDING_LOGS;
     const harness = harnessLabel(req.driver);
     const text =
       pr.detail && logs.ready
@@ -240,12 +260,13 @@ export class WorkflowPreviewService {
 
   async preview(req: WorkflowPreviewRequest): Promise<WorkflowPreview> {
     const settings = this.deps.settings();
+    const retry = req.retry === true;
     const baseSubject = req.subject;
     const cachedRun = baseSubject.kind === "run" ? this.deps.cachedRun(baseSubject.ref) : undefined;
     const workflows = workflowsForSubject(settings.prWorkflows, baseSubject, cachedRun);
     const sessions = this.deps.sessions();
     const continueSession = req.continueSessionId ? sessions.find((s) => s.id === req.continueSessionId) : undefined;
-    const basePr = baseSubject.kind === "pr" ? await this.prData(baseSubject.ref) : null;
+    const basePr = baseSubject.kind === "pr" ? await this.prData(baseSubject.ref, retry) : null;
     const basePrState = basePr ? fresher(basePr.summary, basePr.detail)?.state : undefined;
     const babysitWorkflow =
       continueSession && baseSubject.kind === "pr" && (basePrState === undefined || basePrState === "OPEN")
@@ -288,7 +309,7 @@ export class WorkflowPreviewService {
     const updateSession = updateMode ? continueSession : undefined;
 
     const [data, harness] = await Promise.all([
-      this.subjectData(subject, basePr, cachedRun, template, updateSession, settings, workflow !== undefined, harnessName),
+      this.subjectData(subject, basePr, cachedRun, template, updateSession, settings, workflow !== undefined, harnessName, retry),
       harnessPromise
     ]);
     const prompt = data.vars && workflow ? withOverride(withAutomatedWorkflowNote(workflow, resolveTemplate(template, data.vars)), req.promptOverride, updateMode) : null;
@@ -338,7 +359,8 @@ export class WorkflowPreviewService {
     updateSession: SessionMeta | undefined,
     settings: AppSettings,
     hasWorkflow: boolean,
-    harness: string
+    harness: string,
+    retry: boolean
   ): Promise<{
     pr: PrSummary | null;
     issue: IssueDetail | null;
@@ -351,9 +373,9 @@ export class WorkflowPreviewService {
     const attribution = attributionText(settings, harness);
     switch (subject.kind) {
       case "pr": {
-        const pr = basePr ?? (await this.prData(subject.ref));
+        const pr = basePr ?? (await this.prData(subject.ref, retry));
         const logsNeeded = needsFailedLogs(template);
-        const logs = !logsNeeded ? NO_LOGS : pr.detail ? await this.prLogs(pr.detail) : PENDING_LOGS;
+        const logs = !logsNeeded ? NO_LOGS : pr.detail ? await this.prLogs(pr.detail, retry) : PENDING_LOGS;
         const link = updateSession ? linkFor(updateSession, subject.ref) : undefined;
         const vars =
           hasWorkflow && pr.detail && logs.ready
@@ -369,7 +391,7 @@ export class WorkflowPreviewService {
         return { pr: card, issue: null, loaded: pr.detail !== undefined && logs.ready, error: pr.detail ? null : pr.error, logsNeeded, logs, vars };
       }
       case "issue": {
-        const read = await this.issues.read(issueKey(subject.ref), () => this.deps.issueDetail(subject.ref), true);
+        const read = await this.issues.read(issueKey(subject.ref), () => this.deps.issueDetail(subject.ref), true, retry);
         const issue = "value" in read ? read.value : null;
         const key = issueKey(subject.ref);
         const link = updateSession?.issues?.find((item) => issueKey(item.ref) === key);
@@ -378,7 +400,7 @@ export class WorkflowPreviewService {
       }
       case "run": {
         const logsNeeded = needsRunFailedLogs(template);
-        const logs = logsNeeded ? await this.runLogs(subject.ref, cachedRun) : NO_LOGS;
+        const logs = logsNeeded ? await this.runLogs(subject.ref, cachedRun, retry) : NO_LOGS;
         const opts = { failedLogs: logs.text, attribution, harness };
         const vars = hasWorkflow && logs.ready ? (cachedRun ? runTemplateVars(cachedRun, opts) : runRefTemplateVars(subject.ref, opts)) : null;
         return { pr: null, issue: null, loaded: logs.ready, error: null, logsNeeded, logs, vars };
@@ -386,12 +408,16 @@ export class WorkflowPreviewService {
     }
   }
 
-  private async prData(ref: PrRef): Promise<PrData> {
+  private async prData(ref: PrRef, retry: boolean): Promise<PrData> {
     const key = prKey(ref);
     const now = this.now();
     let detail = this.deps.prDetail(key);
     let error: string | null = null;
     const refreshedAt = this.prRefreshedAt.get(key);
+    const knownError = detail ? null : this.deps.prDetailError(key);
+    if (knownError && !retry && refreshedAt !== undefined && now - refreshedAt <= PR_ERROR_RETRY_MS) {
+      return { detail: undefined, summary: this.deps.prSummary(key), error: knownError };
+    }
     if (!detail) {
       this.markRefreshed(key, now);
       try {
@@ -412,13 +438,13 @@ export class WorkflowPreviewService {
     for (const [entry, at] of this.prRefreshedAt) if (now - at > PR_REFRESH_MS) this.prRefreshedAt.delete(entry);
   }
 
-  private async prLogs(detail: PrDetail): Promise<LogsRead> {
+  private async prLogs(detail: PrDetail, retry: boolean): Promise<LogsRead> {
     const key = `pr:${prKey(detail.ref)}@${detail.headRefOid}`;
-    return logsOf(await this.logs.read(key, () => loadFailedLogs(detail, this.deps.checkLog), false));
+    return logsOf(await this.logs.read(key, () => loadFailedLogs(detail, this.deps.checkLog), false, retry));
   }
 
-  private async runLogs(ref: RunRef, run: WorkflowRunSummary | undefined): Promise<LogsRead> {
+  private async runLogs(ref: RunRef, run: WorkflowRunSummary | undefined, retry: boolean): Promise<LogsRead> {
     const key = `run:${runKey(ref)}:${run?.status ?? ""}:${run?.conclusion ?? ""}`;
-    return logsOf(await this.logs.read(key, () => loadRunFailedLogs(ref, this.deps.runLog), false));
+    return logsOf(await this.logs.read(key, () => loadRunFailedLogs(ref, this.deps.runLog), false, retry));
   }
 }

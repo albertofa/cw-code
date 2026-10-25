@@ -34,7 +34,7 @@ import {
   type WorkflowTarget
 } from "./prWorkflowEditor.js";
 import { attributionText, TEMPLATE_VARS_BY_TARGET } from "@cw-code/shared/workflowTemplates";
-import { usePrDetail, usePrInbox, usePrInboxItems, usePrSummary, usePrsTopicError } from "./usePrs.js";
+import { usePrDataRevision, usePrInbox, usePrInboxItems, usePrsTopicError } from "./usePrs.js";
 import { useServerPreview } from "./useServerPreview.js";
 import { SettingsPageHead, SettingsSwitch } from "./SettingsLayout.js";
 import { HARNESS_IDS, HARNESS_NAMES } from "./settingsSections.js";
@@ -42,6 +42,8 @@ import { useRecentModels } from "./lastModel.js";
 import { harnessLabel } from "./toolTabs.js";
 import { PERMISSION_LABELS, PERMISSION_MODES } from "./workflowHarness.js";
 import { WORKFLOW_ICONS, workflowIcon } from "./workflowIcons.js";
+
+const TEMPLATE_PREVIEW_DEBOUNCE_MS = 400;
 
 const CONDITION_LABELS: Record<PrSuggestCondition, string> = {
   "review-requested": "Review requested from me",
@@ -311,15 +313,15 @@ function PromptPreview({
   const inboxLoading = topicError === null && (inbox?.loading ?? true);
   const selected = prs.find((pr) => prKey(pr.ref) === prKeyValue) ?? prs[0];
   const key = selected ? prKey(selected.ref) : null;
-  const summary = usePrSummary(key);
-  const detailEntry = usePrDetail(key);
+  const prRevision = usePrDataRevision(key);
   const harness = harnessLabel(driver);
   const request = selected ? { template, ref: selected.ref, driver, attribution: attributionText(settings, harness) } : null;
   const preview = useServerPreview(
     request ? JSON.stringify(request) : null,
-    () => (request ? window.cw.workflowTemplatePreview(request) : Promise.reject(new Error("no pull request to preview with"))),
+    (retry) => (request ? window.cw.workflowTemplatePreview({ ...request, retry }) : Promise.reject(new Error("no pull request to preview with"))),
     (value) => value.logsNeeded && !value.logsReady && !value.logsError,
-    [summary, detailEntry]
+    [prRevision],
+    TEMPLATE_PREVIEW_DEBOUNCE_MS
   );
   const value = preview.current ? preview.value : null;
   const loadError = value?.error ?? preview.error;

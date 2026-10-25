@@ -16,7 +16,7 @@ import { assertPrRef } from "../github/PullRequestService.js";
 import { DRIVER_KINDS } from "../prefs/PreferencesStore.js";
 import { sanitizeWorkflowHarness, VALID_EFFORTS, VALID_PERMISSION_MODES, VALID_PR_WORKSPACES } from "../settings/SettingsStore.js";
 import type { Router } from "../transport/Router.js";
-import { handle, parseArgs, parseBoolean, parseString } from "./shared.js";
+import { handle, parseArgs, parseBoolean, parseOptionalBoolean, parseString } from "./shared.js";
 
 const MAX_ID_LENGTH = 200;
 const MAX_TEXT_LENGTH = 200_000;
@@ -86,7 +86,8 @@ export function parsePreviewRequest(args: unknown): WorkflowPreviewRequest {
     workspace: parseWorkspace(raw.workspace),
     promptOverride: parseNullable(raw.promptOverride, "promptOverride", MAX_TEXT_LENGTH),
     composerDriver: parseDriver(raw.composerDriver, "composerDriver"),
-    pendingPrefs: parsePrefs(raw.pendingPrefs)
+    pendingPrefs: parsePrefs(raw.pendingPrefs),
+    ...(parseOptionalBoolean(raw.retry, "retry") ? { retry: true } : {})
   };
 }
 
@@ -106,7 +107,8 @@ export function parseTemplatePreviewRequest(args: unknown): WorkflowTemplatePrev
     template: parseBounded(raw.template, "template", MAX_TEXT_LENGTH),
     ref: parsePrRef(raw.ref),
     driver: parseDriver(raw.driver, "driver"),
-    attribution: parseBounded(raw.attribution, "attribution", MAX_ATTRIBUTION_LENGTH)
+    attribution: parseBounded(raw.attribution, "attribution", MAX_ATTRIBUTION_LENGTH),
+    ...(parseOptionalBoolean(raw.retry, "retry") ? { retry: true } : {})
   };
 }
 

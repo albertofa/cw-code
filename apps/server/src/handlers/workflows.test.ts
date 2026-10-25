@@ -39,6 +39,13 @@ describe("workflow request parsing", () => {
     });
   });
 
+  it("passes an explicit retry through and rejects a non-boolean one", () => {
+    const base = { workflowId: "review", subject: { kind: "pr", ref }, composerDriver: "claude" };
+    expect(parsePreviewRequest({ ...base, retry: true }).retry).toBe(true);
+    expect("retry" in parsePreviewRequest({ ...base, retry: false })).toBe(false);
+    expect(() => parsePreviewRequest({ ...base, retry: "yes" })).toThrow("retry");
+  });
+
   it("parses a run request with its resume state", () => {
     const base = { workflowId: "review", subject: { kind: "pr", ref }, composerDriver: "claude", prompt: "go" };
     expect(parseRunRequest(base)).toMatchObject({ prompt: "go", resume: null, continueSessionId: null });

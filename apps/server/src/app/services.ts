@@ -389,6 +389,7 @@ export function createServices(stores: { sessionStore: SessionStore; settingsSto
       projectId ? sessions.listPermissionModesFor(projectId, driver) : sessions.listPermissionModesForHarness(driver),
     prSummary: (key) => prStore.summaryLookup().get(key),
     prDetail: (key) => prStore.detail(key),
+    prDetailError: (key) => prStore.detailError(key),
     loadPrDetail: (ref) => prStore.loadDetail(ref),
     issueDetail: (ref) => githubSearch.issueDetail(ref),
     cachedRun: (ref) => githubViews.cachedRun(ref),

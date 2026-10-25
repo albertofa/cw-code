@@ -26,7 +26,7 @@ import { ipcErrorMessage } from "./ipcError.js";
 import { findSession } from "../server/sidebarData.js";
 import { useAppSettings, useAppSettingsError } from "./useAppSettings.js";
 import { prKey } from "./prInbox.js";
-import { usePrDetail, usePrSummary } from "./usePrs.js";
+import { usePrDataRevision } from "./usePrs.js";
 import { IssueCard, PrCard, RunCard } from "./WorkflowSubjectCards.js";
 import { SubjectCardSkeleton } from "./GitHubSkeletons.js";
 import { Spinner } from "./Loading.js";
@@ -177,18 +177,17 @@ export function WorkflowRunModal({ request }: { request: RunModalState }) {
   const sessionsSignature = useMemo(() => linkSignature(Object.values(sessionsByProject).flat()), [sessionsByProject]);
   const [previewSubject, setPreviewSubject] = useState<WorkflowSubject>(baseSubject);
   const subjectPrKey = previewSubject.kind === "pr" ? prKey(previewSubject.ref) : null;
-  const prSummary = usePrSummary(subjectPrKey);
-  const prDetailEntry = usePrDetail(subjectPrKey);
+  const prRevision = usePrDataRevision(subjectPrKey);
   const previewState = useServerPreview(
     requestKey,
-    () => window.cw.workflowPreview(previewRequest),
+    (retry) => window.cw.workflowPreview({ ...previewRequest, retry }),
     (value) => value.logsNeeded && !value.logsReady && !value.logsError,
-    [prSummary, prDetailEntry, settings, sessionsSignature, installedHarnesses]
+    [prRevision, settings, sessionsSignature, installedHarnesses]
   );
   const preview = previewState.value;
   const live = preview !== null && previewState.current;
   const subject = preview?.subject ?? baseSubject;
-  const activeWorkflowId = live ? preview.activeWorkflowId : workflowId;
+  const activeWorkflowId = preview && (live || preview.babysitLocked) ? preview.activeWorkflowId : workflowId;
   const workflows = settings?.prWorkflows ?? [];
   const workflow: PrWorkflow | undefined = workflows.find((w) => w.id === activeWorkflowId);
   const pickable = (preview?.pickableWorkflowIds ?? [workflowId]).flatMap((id) => workflows.find((w) => w.id === id) ?? []);
@@ -249,6 +248,8 @@ export function WorkflowRunModal({ request }: { request: RunModalState }) {
 
   const pickWorkflow = (id: string) => {
     setDirty(false);
+    const next = workflows.find((w) => w.id === id);
+    if (next && next.target !== subject.kind) setTarget("");
     setWorkflowId(id);
   };
 

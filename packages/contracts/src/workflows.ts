@@ -41,6 +41,7 @@ export interface WorkflowPreviewRequest {
   promptOverride: string | null;
   composerDriver: DriverKind;
   pendingPrefs: ComposerPrefs;
+  retry?: boolean;
 }
 
 export interface WorkflowPreview {
@@ -79,6 +80,7 @@ export interface WorkflowTemplatePreviewRequest {
   ref: PrRef;
   driver: DriverKind;
   attribution: string;
+  retry?: boolean;
 }
 
 export interface WorkflowTemplatePreview {

@@ -116,12 +116,17 @@ interface HarnessOptions {
   workflows?: PrWorkflow[];
   sessions?: SessionMeta[];
   permissions?: PermissionOption[];
+  withDetail?: boolean;
+  issueFails?: boolean;
+  checkLog?: () => Promise<string>;
 }
 
 function harness(options: HarnessOptions = {}) {
   const settings: AppSettings = { ...DEFAULT_SETTINGS, prAttributionEnabled: false, prWorkflows: options.workflows ?? [workflow("fix")] };
-  const details = new Map<string, PrDetail>([[prKey(ref), detail()]]);
-  const calls = { checkLogs: 0, issues: 0 };
+  const details = new Map<string, PrDetail>(options.withDetail === false ? [] : [[prKey(ref), detail()]]);
+  const detailErrors = new Map<string, string>();
+  const calls = { checkLogs: 0, issues: 0, detailLoads: 0, models: 0, permissions: 0 };
+  const clock = { now: 10_000 };
   let releaseLog: (text: string) => void = () => {};
   const deps: WorkflowPreviewDeps = {
     settings: () => settings,
@@ -130,25 +135,43 @@ function harness(options: HarnessOptions = {}) {
     projectRepos: async () => [{ projectId: "p1", host: "github.com", owner: "acme", repo: "widgets" }],
     installedHarnesses: () => ["claude"],
     recentModels: () => [],
-    listModels: async () => [{ id: "opus", label: "Opus", source: "curated" }],
-    listPermissions: async () => options.permissions ?? [],
+    listModels: async () => {
+      calls.models += 1;
+      return [{ id: "opus", label: "Opus", source: "curated" }];
+    },
+    listPermissions: async () => {
+      calls.permissions += 1;
+      return options.permissions ?? [];
+    },
     prSummary: () => undefined,
     prDetail: (key) => details.get(key),
-    loadPrDetail: async (target) => details.get(prKey(target)) ?? Promise.reject(new Error("missing")),
+    prDetailError: (key) => detailErrors.get(key) ?? null,
+    loadPrDetail: async (target) => {
+      calls.detailLoads += 1;
+      const key = prKey(target);
+      const found = details.get(key);
+      if (found) return found;
+      detailErrors.set(key, "rate limited");
+      throw new Error("rate limited");
+    },
     issueDetail: async () => {
       calls.issues += 1;
+      if (options.issueFails) throw new Error("issue gone");
       return issue();
     },
     cachedRun: () => undefined,
-    checkLog: () => {
-      calls.checkLogs += 1;
-      return new Promise<string>((resolve) => {
-        releaseLog = resolve;
-      });
-    },
-    runLog: async () => "run log"
+    checkLog:
+      options.checkLog ??
+      (() => {
+        calls.checkLogs += 1;
+        return new Promise<string>((resolve) => {
+          releaseLog = resolve;
+        });
+      }),
+    runLog: async () => "run log",
+    now: () => clock.now
   };
-  return { service: new WorkflowPreviewService(deps), calls, releaseLog: (text: string) => releaseLog(text) };
+  return { service: new WorkflowPreviewService(deps), calls, clock, details, releaseLog: (text: string) => releaseLog(text) };
 }
 
 function request(overrides: Partial<WorkflowPreviewRequest> = {}): WorkflowPreviewRequest {
@@ -231,5 +254,106 @@ describe("WorkflowPreviewService.resolveHarness", () => {
     expect(result.resolved.permissionMode).toBe("acceptEdits");
     expect(result.summary.parts.find((part) => part.key === "permission")).toEqual({ key: "permission", label: "Edits", source: "fallback" });
     expect(result.error).toBeNull();
+  });
+});
+
+describe("WorkflowPreviewService load throttling", () => {
+  it("attempts a failing pull request detail load once per window across repeated previews", async () => {
+    const h = harness({ withDetail: false });
+    const first = await h.service.preview(request());
+    expect(first).toMatchObject({ loaded: false, error: "rate limited", prompt: null });
+    await h.service.preview(request());
+    await h.service.preview(request());
+    expect(h.calls.detailLoads).toBe(1);
+
+    await h.service.preview(request({ retry: true }));
+    expect(h.calls.detailLoads).toBe(2);
+
+    h.clock.now += 61_000;
+    await h.service.preview(request());
+    expect(h.calls.detailLoads).toBe(3);
+  });
+
+  it("refreshes a loaded pull request detail in the background at most once a minute", async () => {
+    const h = harness();
+    await h.service.preview(request());
+    await h.service.preview(request());
+    expect(h.calls.detailLoads).toBe(1);
+    h.clock.now += 61_000;
+    await h.service.preview(request());
+    expect(h.calls.detailLoads).toBe(2);
+  });
+
+  it("keeps a failed log fetch error until it expires or the user retries", async () => {
+    let fetches = 0;
+    const fix = workflow("fix", { startPrompt: "logs=[{{checks.failedLogs}}]" });
+    const h = harness({
+      workflows: [fix],
+      checkLog: async () => {
+        fetches += 1;
+        throw new Error("logs unavailable");
+      }
+    });
+    const pending = await h.service.preview(request());
+    expect(pending).toMatchObject({ logsNeeded: true, logsReady: false });
+    await Bun.sleep(0);
+
+    const failed = await h.service.preview(request());
+    expect(failed).toMatchObject({ logsReady: true, logsError: expect.any(String) });
+    await h.service.preview(request());
+    expect(fetches).toBe(1);
+
+    const retried = await h.service.preview(request({ retry: true }));
+    expect(retried.logsReady).toBe(false);
+    expect(fetches).toBe(2);
+  });
+
+  it("keeps a failed issue load error until it expires or the user retries", async () => {
+    const implement = workflow("implement", { target: "issue", startPrompt: "issue {{issue.number}}" });
+    const h = harness({ workflows: [implement], issueFails: true });
+    const issueRequest = request({ workflowId: "implement", subject: { kind: "issue", ref: issueRef } });
+    expect(await h.service.preview(issueRequest)).toMatchObject({ loaded: false, error: "issue gone" });
+    await h.service.preview(issueRequest);
+    expect(h.calls.issues).toBe(1);
+    await h.service.preview({ ...issueRequest, retry: true });
+    expect(h.calls.issues).toBe(2);
+    h.clock.now += 61_000;
+    await h.service.preview(issueRequest);
+    expect(h.calls.issues).toBe(3);
+  });
+
+  it("reuses model and permission lists for the same driver, project and settings", async () => {
+    const h = harness();
+    await h.service.preview(request());
+    await h.service.preview(request());
+    expect(h.calls).toMatchObject({ models: 1, permissions: 1 });
+    h.clock.now += 31_000;
+    await h.service.preview(request());
+    expect(h.calls).toMatchObject({ models: 2, permissions: 2 });
+  });
+});
+
+describe("WorkflowPreviewService.previewTemplate", () => {
+  const templateRequest = { template: "fix #{{pr.number}} on {{pr.head}}", ref, driver: "claude" as const, attribution: "" };
+
+  it("resolves a template against the pull request detail", async () => {
+    const h = harness();
+    expect(await h.service.previewTemplate(templateRequest)).toEqual({
+      text: "fix #42 on fix",
+      loaded: true,
+      error: null,
+      logsNeeded: false,
+      logsReady: true,
+      logsError: null
+    });
+  });
+
+  it("reports a detail load failure without reloading until retried", async () => {
+    const h = harness({ withDetail: false });
+    expect(await h.service.previewTemplate(templateRequest)).toMatchObject({ text: null, loaded: false, error: "rate limited" });
+    await h.service.previewTemplate(templateRequest);
+    expect(h.calls.detailLoads).toBe(1);
+    await h.service.previewTemplate({ ...templateRequest, retry: true });
+    expect(h.calls.detailLoads).toBe(2);
   });
 });

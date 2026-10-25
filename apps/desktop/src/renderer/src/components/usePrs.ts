@@ -75,6 +75,16 @@ export function usePrDetail(key: string | null): PrDetailEntry | undefined {
   return useTopicEntry<PrDetailEntry>(key ? PRS_TOPIC : null, `${DETAIL_PREFIX}${key ?? ""}`);
 }
 
+export function usePrDataRevision(key: string | null): string | null {
+  return useTopicSelect<string | null>(key ? PRS_TOPIC : null, (state) => {
+    const data = state?.data as TopicData;
+    const summary = data?.[`${SUMMARY_PREFIX}${key ?? ""}`] as PrSummary | undefined;
+    const detail = (data?.[`${DETAIL_PREFIX}${key ?? ""}`] as PrDetailEntry | undefined)?.detail;
+    if (!summary && !detail) return null;
+    return `${summary?.updatedAt ?? ""}:${summary?.headRefOid ?? ""}:${detail?.updatedAt ?? ""}:${detail?.headRefOid ?? ""}`;
+  });
+}
+
 export function usePrRelations(key: string | null): SubjectRelations | undefined {
   return useTopicEntry<SubjectRelations>(key ? PRS_TOPIC : null, `${RELATIONS_PREFIX}${key ?? ""}`);
 }
