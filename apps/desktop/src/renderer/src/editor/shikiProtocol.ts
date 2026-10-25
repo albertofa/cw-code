@@ -1,3 +1,5 @@
+export const SHIKI_MAX_CHARS = 500_000;
+
 export interface ShikiRequest {
   id: number;
   lang: string;

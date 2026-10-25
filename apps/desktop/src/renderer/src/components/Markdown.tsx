@@ -36,6 +36,8 @@ import { useAppStore } from "../stores/appStore.js";
 import { isHttpsLink } from "./releaseNotes.js";
 import { parseFilePath, type FileRef } from "./markdownPaths.js";
 import { parseAlertMarker, type AlertKind } from "./markdownAlerts.js";
+import { MarkdownCode } from "./MarkdownCode.js";
+import { resolveFenceLanguage } from "../editor/languageMap.js";
 
 const PREVIEW_EXTS = new Set(["md", "markdown", "html", "htm"]);
 const HTML_EXTS = new Set(["html", "htm"]);
@@ -112,23 +114,31 @@ export function buildPreviewHtml(title: string, markdown: string): string {
   return `<!doctype html><html><head><meta charset="utf-8"><title>${safeTitle}</title><style>${PREVIEW_CSS}</style></head><body>${body}</body></html>`;
 }
 
-const BlockCodeContext = createContext(false);
 const InLinkContext = createContext(false);
 
 function codeLanguage(children: ReactNode): string | null {
   for (const child of Children.toArray(children)) {
     if (!isValidElement<{ className?: string }>(child)) continue;
-    const match = /language-([\w+#.-]+)/.exec(child.props.className ?? "");
+    const match = /language-(\S+)/.exec(child.props.className ?? "");
     if (match) return match[1];
   }
   return null;
+}
+
+function codeClassName(children: ReactNode): string | undefined {
+  for (const child of Children.toArray(children)) {
+    if (isValidElement<{ className?: string }>(child)) return child.props.className;
+  }
+  return undefined;
 }
 
 function Pre({ children }: { children?: ReactNode }) {
   const preRef = useRef<HTMLPreElement>(null);
   const [copied, setCopied] = useState(false);
   const [wrapped, setWrapped] = useState(false);
-  const language = codeLanguage(children);
+  const info = codeLanguage(children);
+  const source = reactText(children);
+  const language = useMemo(() => resolveFenceLanguage(info), [info]);
 
   const copy = () => {
     const text = preRef.current?.querySelector("code")?.textContent ?? preRef.current?.textContent ?? "";
@@ -143,30 +153,30 @@ function Pre({ children }: { children?: ReactNode }) {
   };
 
   return (
-    <BlockCodeContext.Provider value={true}>
-      <div className={wrapped ? "md-pre md-pre-wrapped" : "md-pre"}>
-        <div className="md-pre-head">
-          <FileCode aria-hidden="true" size={14} />
-          {language && <span className="md-pre-lang">{language}</span>}
-          <div className="md-pre-actions">
-            <button
-              type="button"
-              className="md-pre-btn"
-              aria-pressed={wrapped}
-              aria-label="Wrap long lines"
-              title={wrapped ? "Stop wrapping lines" : "Wrap long lines"}
-              onClick={() => setWrapped((value) => !value)}
-            >
-              <WrapText aria-hidden="true" size={14} />
-            </button>
-            <button type="button" className="md-copy" onClick={copy} title="Copy code">
-              {copied ? <Check aria-hidden="true" size={14} /> : "Copy"}
-            </button>
-          </div>
+    <div className={wrapped ? "md-pre md-pre-wrapped" : "md-pre"}>
+      <div className="md-pre-head">
+        <FileCode aria-hidden="true" size={14} />
+        {info && <span className="md-pre-lang">{language.label}</span>}
+        <div className="md-pre-actions">
+          <button
+            type="button"
+            className="md-pre-btn"
+            aria-pressed={wrapped}
+            aria-label="Wrap long lines"
+            title={wrapped ? "Stop wrapping lines" : "Wrap long lines"}
+            onClick={() => setWrapped((value) => !value)}
+          >
+            <WrapText aria-hidden="true" size={14} />
+          </button>
+          <button type="button" className="md-copy" onClick={copy} title="Copy code">
+            {copied ? <Check aria-hidden="true" size={14} /> : "Copy"}
+          </button>
         </div>
-        <pre ref={preRef}>{children}</pre>
       </div>
-    </BlockCodeContext.Provider>
+      <pre ref={preRef}>
+        <MarkdownCode text={source} className={codeClassName(children)} language={language} />
+      </pre>
+    </div>
   );
 }
 
@@ -283,6 +293,7 @@ function MdLink({
 function reactText(node: ReactNode): string {
   if (typeof node === "string" || typeof node === "number") return String(node);
   if (Array.isArray(node)) return node.map(reactText).join("");
+  if (isValidElement<{ children?: ReactNode }>(node)) return reactText(node.props.children);
   return "";
 }
 
@@ -334,13 +345,12 @@ function MdCode({
   onOpenSource?: (path: string, line?: number) => void;
   onOpenExternal?: (path: string) => void;
 }) {
-  const inBlock = useContext(BlockCodeContext);
   const inLink = useContext(InLinkContext);
   const text = reactText(children).trim();
-  if (!inBlock && text.length > 0 && !/\s/.test(text) && isLocalPreviewLink(text) && isHtmlPath(text)) {
+  if (text.length > 0 && !/\s/.test(text) && isLocalPreviewLink(text) && isHtmlPath(text)) {
     return <HtmlFileChip href={text} label={text} onOpenFile={onOpenFile} onOpenExternal={onOpenExternal} />;
   }
-  const fileRef = !inBlock && !inLink && onOpenSource ? parseFilePath(text) : null;
+  const fileRef = !inLink && onOpenSource ? parseFilePath(text) : null;
   if (fileRef && onOpenSource) return <SourceChip fileRef={fileRef} onOpenSource={onOpenSource} />;
   return <code className={className}>{children}</code>;
 }

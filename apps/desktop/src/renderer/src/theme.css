@@ -2142,6 +2142,10 @@ body.session-dragging * {
   line-height: 1.375;
 }
 
+.md-pre pre code.md-code-hl {
+  color: var(--syn-fg);
+}
+
 .md-pre-wrapped pre,
 .md-pre-wrapped pre code {
   white-space: pre-wrap;
