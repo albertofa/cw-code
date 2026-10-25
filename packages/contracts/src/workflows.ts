@@ -100,7 +100,9 @@ export interface WorkflowRunResume {
 }
 
 export interface WorkflowRunRequest extends WorkflowPreviewRequest {
+  runId: string;
   prompt: string;
+  expectedRevision: string | null;
   resume: WorkflowRunResume | null;
 }
 

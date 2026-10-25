@@ -17,6 +17,7 @@ export interface ServerPreview<T> {
   loading: boolean;
   error: string | null;
   retry(): void;
+  refresh(): void;
 }
 
 export function useServerPreview<T>(
@@ -80,6 +81,7 @@ export function useServerPreview<T>(
     retry: () => {
       retryRef.current = true;
       setAttempt((n) => n + 1);
-    }
+    },
+    refresh: () => setAttempt((n) => n + 1)
   };
 }

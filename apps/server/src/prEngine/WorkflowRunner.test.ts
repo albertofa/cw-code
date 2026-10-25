@@ -79,8 +79,13 @@ function session(id: string, overrides: Partial<SessionMeta> = {}): SessionMeta 
   return { id, projectId: "proj_1", driver: "claude", title: id, status: "idle", createdAt: 0, updatedAt: 0, ...overrides } as SessionMeta;
 }
 
+let runCounter = 0;
+
 function request(overrides: Partial<WorkflowRunRequest> = {}): WorkflowRunRequest {
+  runCounter += 1;
   return {
+    runId: `run_${runCounter}`,
+    expectedRevision: null,
     workflowId: "fix",
     subject,
     continueSessionId: null,
@@ -94,7 +99,9 @@ function request(overrides: Partial<WorkflowRunRequest> = {}): WorkflowRunReques
   };
 }
 
-function harness(options: { preview?: WorkflowPreview; sessions?: SessionMeta[]; failTurn?: boolean; failClone?: boolean } = {}) {
+function harness(
+  options: { preview?: WorkflowPreview; sessions?: SessionMeta[]; failTurn?: boolean; failClone?: boolean; failComposer?: boolean } = {}
+) {
   const calls: string[] = [];
   const links: Array<{ sessionId: string; link: SessionPrLink }> = [];
   const turns: Array<{ sessionId: string; prompt: string }> = [];
@@ -125,6 +132,7 @@ function harness(options: { preview?: WorkflowPreview; sessions?: SessionMeta[];
     },
     setComposer: (sessionId, prefs) => {
       calls.push(`composer:${sessionId}:${prefs.model}:${prefs.variant}`);
+      if (options.failComposer) throw new Error("composer write failed");
     },
     linkPr: (sessionId, link) => {
       calls.push(`link:${sessionId}`);
@@ -197,14 +205,15 @@ describe("WorkflowRunner", () => {
 
   it("resumes after a failed send without creating or linking again", async () => {
     const { runner, calls, state, turns } = harness({ failTurn: true });
-    const failed = await runner.run(request());
+    const first = request();
+    const failed = await runner.run(first);
     expect(failed).toMatchObject({ ok: false, stage: "send", message: "session busy" });
     const resume = failed.ok ? null : failed.resume;
     expect(resume).toEqual({ sessionId: "sess_1", linked: true, sent: false, note: expect.stringContaining("cw/new") });
 
     calls.length = 0;
     state.failTurn = false;
-    expect(await runner.run(request({ resume }))).toEqual({ ok: true, sessionId: "sess_1" });
+    expect(await runner.run({ ...first, resume })).toEqual({ ok: true, sessionId: "sess_1" });
     expect(calls).toEqual(["send:sess_1", "seen:sess_1:sha1"]);
     expect(turns[0]?.prompt).toContain("git push origin HEAD:fix");
   });
@@ -243,5 +252,48 @@ describe("WorkflowRunner", () => {
     const { runner } = harness();
     const result = await runner.run(request({ resume: { sessionId: "sess_gone", linked: true, sent: false, note: null } }));
     expect(result).toMatchObject({ ok: false, stage: "send", message: "unknown session sess_gone" });
+  });
+
+  it("runs the side effects once for concurrent calls with the same run id", async () => {
+    const { runner, calls } = harness();
+    const req = request();
+    const [a, b] = await Promise.all([runner.run(req), runner.run({ ...req })]);
+    expect(a).toEqual({ ok: true, sessionId: "sess_1" });
+    expect(b).toEqual(a);
+    expect(calls.filter((call) => call.startsWith("create:") || call.startsWith("send:"))).toEqual(["create:proj_1:codex:new", "send:sess_1"]);
+    expect(await runner.run({ ...req })).toEqual(a);
+    expect(calls.filter((call) => call.startsWith("create:"))).toHaveLength(1);
+  });
+
+  it("returns the stored failure to a client that lost the resume state instead of creating again", async () => {
+    const { runner, calls } = harness({ failTurn: true });
+    const req = request();
+    const failed = await runner.run(req);
+    calls.length = 0;
+    expect(await runner.run({ ...req, resume: null })).toEqual(failed);
+    expect(calls).toEqual([]);
+  });
+
+  it("refuses to start when the preview the user saw is out of date", async () => {
+    const { runner, calls } = harness();
+    expect(await runner.run(request({ expectedRevision: "stale" }))).toEqual({
+      ok: false,
+      stage: "create",
+      message: "The preview changed — review it again",
+      resume: null
+    });
+    expect(calls).toEqual([]);
+    expect(await runner.run(request({ expectedRevision: "r" }))).toEqual({ ok: true, sessionId: "sess_1" });
+  });
+
+  it("reports a missing driver at the create stage before cloning", async () => {
+    const { runner, calls } = harness({ preview: preview({ projectId: null, needsClone: true, driverMissing: true }) });
+    expect(await runner.run(request())).toMatchObject({ ok: false, stage: "create", resume: null });
+    expect(calls).toEqual([]);
+  });
+
+  it("keeps no resume state when the resolved harness could not be applied", async () => {
+    const { runner } = harness({ failComposer: true });
+    expect(await runner.run(request())).toEqual({ ok: false, stage: "create", message: "composer write failed", resume: null });
   });
 });

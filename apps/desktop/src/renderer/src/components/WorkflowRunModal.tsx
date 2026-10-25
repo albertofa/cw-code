@@ -156,6 +156,8 @@ export function WorkflowRunModal({ request }: { request: RunModalState }) {
   const [stage, setStage] = useState<WorkflowRunStage | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [resume, setResume] = useState<WorkflowRunResume | null>(null);
+  const [uncertain, setUncertain] = useState(false);
+  const runIdRef = useRef<string | null>(null);
   const [dirty, setDirty] = useState(false);
   const runningRef = useRef(false);
   const dialogRef = useRef<HTMLDivElement>(null);
@@ -211,7 +213,8 @@ export function WorkflowRunModal({ request }: { request: RunModalState }) {
   const base = preview?.base ?? null;
   const subjectText = preview?.subjectLabel ?? "";
   const working = stage !== null;
-  const sessionBusy = useSessionRow(continueSession?.id)?.busy ?? false;
+  const sessionBusy = (useSessionRow(continueSession?.id)?.busy ?? false) && !resume?.sent;
+  const locked = resume !== null || uncertain;
   const lastActiveWorkflow = useRef(activeWorkflowId);
   const lastSubjectKind = useRef(preview?.subject.kind);
 
@@ -300,8 +303,16 @@ export function WorkflowRunModal({ request }: { request: RunModalState }) {
     setError(null);
     setStage(expectedStage());
     try {
-      if (continueSession && !resume && !(await ensureOpen(continueSession.id))) return;
-      const result = await window.cw.runWorkflow({ ...previewRequest, prompt, resume });
+      if (continueSession && !resume && !uncertain && !(await ensureOpen(continueSession.id))) return;
+      runIdRef.current ??= crypto.randomUUID();
+      const result = await window.cw.runWorkflow({
+        ...previewRequest,
+        runId: runIdRef.current,
+        prompt,
+        expectedRevision: preview.revision,
+        resume
+      });
+      setUncertain(false);
       if (result.ok) {
         if (!continueSession) useAppStore.setState({ lastDriver: driver });
         await finish(result.sessionId);
@@ -309,10 +320,12 @@ export function WorkflowRunModal({ request }: { request: RunModalState }) {
       }
       setResume(result.resume);
       setError(`${stageLabel(result.stage, noun)} failed: ${result.message}`);
+      if (!result.resume) previewState.refresh();
     } catch (err) {
       const message = ipcErrorMessage(err);
-      console.warn(`[workflow] ${subject.kind} run failed: ${message}`);
-      setError(`Running the workflow failed: ${message}`);
+      console.warn(`[workflow] ${subject.kind} run call failed: ${message}`);
+      setUncertain(true);
+      setError(`The run may have started on the server (${message}). Retry to check.`);
     } finally {
       runningRef.current = false;
       setStage(null);
@@ -346,7 +359,7 @@ export function WorkflowRunModal({ request }: { request: RunModalState }) {
     driverMissing ||
     (!continueSession && !resume && !preview.harness);
   const startsContinuous = preview?.startsContinuous === true;
-  const actionLabel = resume
+  const actionLabel = locked
     ? "Retry"
       : startsContinuous && workflow
         ? `Start ${workflow.label}`
@@ -452,7 +465,7 @@ export function WorkflowRunModal({ request }: { request: RunModalState }) {
                       label: w.label,
                       description: w.description,
                       icon: <Icon size={13} />,
-                      disabled: working || resume !== null
+                      disabled: working || locked
                     };
                   })}
                   onPick={pickWorkflow}
@@ -483,7 +496,7 @@ export function WorkflowRunModal({ request }: { request: RunModalState }) {
                           ? `${harnessLabel(driver)} · not installed`
                           : "Loading…"}
                     </span>
-                    <button type="button" className="wf-run-config" onClick={configure} disabled={working || !workflow || resume !== null}>
+                    <button type="button" className="wf-run-config" onClick={configure} disabled={working || !workflow || locked}>
                       <Settings2 size={12} aria-hidden="true" /> Configure
                     </button>
                   </div>
@@ -515,7 +528,7 @@ export function WorkflowRunModal({ request }: { request: RunModalState }) {
                 <Segment
                   label="Session"
                   value={target}
-                  disabled={working || resume !== null || babysitLocked}
+                  disabled={working || locked || babysitLocked}
                   onPick={pickTarget}
                   options={[
                     {
@@ -552,7 +565,7 @@ export function WorkflowRunModal({ request }: { request: RunModalState }) {
                     label: s.title,
                     hint: `will be linked to ${subjectText}${s.projectId === projectId ? "" : ` · ${projectNameOf(s.projectId)}`}`,
                     icon: <DriverIcon driver={s.driver} size={13} />,
-                    disabled: working || resume !== null || babysitLocked
+                    disabled: working || locked || babysitLocked
                   }))}
                   onPick={pickTarget}
                   searchable={otherSessions.length > 5}
@@ -567,7 +580,7 @@ export function WorkflowRunModal({ request }: { request: RunModalState }) {
                 <Segment
                   label="Workspace"
                   value={workspace}
-                  disabled={working || resume !== null}
+                  disabled={working || locked}
                   onPick={setWorkspaceChoice}
                   options={[
                     {
@@ -627,6 +640,9 @@ export function WorkflowRunModal({ request }: { request: RunModalState }) {
             {preview?.logsError && (
               <div className="wf-run-error" role="alert">
                 Could not fetch failed {subject.kind === "pr" ? "check" : "run"} logs: {preview.logsError}
+                <button className="btn" onClick={previewState.retry}>
+                  Retry
+                </button>
               </div>
             )}
             {sessionBusy && <div className="wf-run-status">This session is running a turn. Wait for it to finish before sending.</div>}

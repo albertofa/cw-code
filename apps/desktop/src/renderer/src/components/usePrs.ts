@@ -75,13 +75,51 @@ export function usePrDetail(key: string | null): PrDetailEntry | undefined {
   return useTopicEntry<PrDetailEntry>(key ? PRS_TOPIC : null, `${DETAIL_PREFIX}${key ?? ""}`);
 }
 
+function summaryRevision(summary: PrSummary): string {
+  const { checks } = summary;
+  return [
+    summary.updatedAt,
+    summary.state,
+    summary.isDraft,
+    summary.title,
+    summary.headRefName,
+    summary.headRefOid,
+    summary.baseRefName,
+    summary.additions,
+    summary.deletions,
+    summary.changedFiles,
+    summary.ci,
+    `${checks.total}/${checks.passed}/${checks.failed}/${checks.pending}`,
+    summary.unresolvedThreads,
+    summary.commentsCount,
+    summary.review,
+    summary.mergeStateStatus
+  ].join(":");
+}
+
+function detailRevision(detail: PrDetail): string {
+  const checkRuns = detail.checkRuns.map((check) => `${check.name}:${check.status}:${check.completedAt ?? ""}`).join(",");
+  const threads = detail.threads.map((thread) => `${thread.id}:${thread.isResolved}:${thread.comments.length}`).join(",");
+  const lastEvent = detail.timeline[detail.timeline.length - 1]?.at ?? "";
+  return [summaryRevision(detail), detail.body.length, checkRuns, threads, detail.timeline.length, lastEvent, detail.commits.length].join("|");
+}
+
+function prDataRevision(summary: PrSummary | undefined, detail: PrDetail | null | undefined): string | null {
+  if (!summary && !detail) return null;
+  return `${summary ? summaryRevision(summary) : ""}#${detail ? detailRevision(detail) : ""}`;
+}
+
 export function usePrDataRevision(key: string | null): string | null {
+  const cache = useRef<{ summary: PrSummary | undefined; detail: PrDetail | null | undefined; revision: string | null } | null>(null);
   return useTopicSelect<string | null>(key ? PRS_TOPIC : null, (state) => {
     const data = state?.data as TopicData;
     const summary = data?.[`${SUMMARY_PREFIX}${key ?? ""}`] as PrSummary | undefined;
     const detail = (data?.[`${DETAIL_PREFIX}${key ?? ""}`] as PrDetailEntry | undefined)?.detail;
-    if (!summary && !detail) return null;
-    return `${summary?.updatedAt ?? ""}:${summary?.headRefOid ?? ""}:${detail?.updatedAt ?? ""}:${detail?.headRefOid ?? ""}`;
+    const cached = cache.current;
+    if (cached && cached.summary === summary && cached.detail === detail) return cached.revision;
+    const revision = prDataRevision(summary, detail);
+    cache.current = { summary, detail, revision };
+    return revision;
   });
 }
 

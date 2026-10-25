@@ -55,10 +55,20 @@ interface RunState {
   resume: WorkflowRunResume | null;
 }
 
+interface RunRecord {
+  promise: Promise<WorkflowRunResult>;
+  result: WorkflowRunResult | null;
+  at: number;
+}
+
 interface Ready {
   preview: WorkflowPreview;
   workflow: PrWorkflow;
 }
+
+const RUN_RECORD_TTL_MS = 10 * 60_000;
+const MAX_RUN_RECORDS = 100;
+export const PREVIEW_CHANGED_MESSAGE = "The preview changed — review it again";
 
 function describeError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -94,14 +104,51 @@ function pushNote(preview: WorkflowPreview, sessionBranch: string | undefined): 
   return `You are on branch ${sessionBranch}, not the PR head. To update PR #${subject.ref.number}, push with: git push origin HEAD:${pr.headRefName}`;
 }
 
+function sameResume(a: WorkflowRunResume | null, b: WorkflowRunResume | null): boolean {
+  return JSON.stringify(a) === JSON.stringify(b);
+}
+
 export class WorkflowRunner {
   private readonly now: () => number;
+  private readonly records = new Map<string, RunRecord>();
 
   constructor(private readonly deps: WorkflowRunnerDeps) {
     this.now = deps.now ?? Date.now;
   }
 
-  async run(req: WorkflowRunRequest): Promise<WorkflowRunResult> {
+  run(req: WorkflowRunRequest): Promise<WorkflowRunResult> {
+    this.pruneRecords();
+    const known = this.records.get(req.runId);
+    if (known && !this.startsNewAttempt(known, req)) return known.promise;
+    const promise = this.attempt(req).then((result) => {
+      record.result = result;
+      record.at = this.now();
+      return result;
+    });
+    const record: RunRecord = { promise, result: null, at: this.now() };
+    this.records.delete(req.runId);
+    this.records.set(req.runId, record);
+    return record.promise;
+  }
+
+  private startsNewAttempt(known: RunRecord, req: WorkflowRunRequest): boolean {
+    const result = known.result;
+    if (!result || result.ok) return false;
+    return sameResume(result.resume, req.resume);
+  }
+
+  private pruneRecords(): void {
+    const now = this.now();
+    for (const [runId, record] of this.records) {
+      if (record.result && now - record.at > RUN_RECORD_TTL_MS) this.records.delete(runId);
+    }
+    for (const [runId, record] of this.records) {
+      if (this.records.size < MAX_RUN_RECORDS) break;
+      if (record.result) this.records.delete(runId);
+    }
+  }
+
+  private async attempt(req: WorkflowRunRequest): Promise<WorkflowRunResult> {
     const state: RunState = { stage: initialStage(req), resume: req.resume };
     try {
       const sessionId = req.continueSessionId ? await this.continueRun(state, req, req.continueSessionId) : await this.newRun(state, req);
@@ -119,6 +166,7 @@ export class WorkflowRunner {
     if (!workflow) throw new Error(`workflow ${preview.activeWorkflowId} no longer exists`);
     if (preview.subject.kind === "pr") loadedPr(preview);
     if (preview.subject.kind === "issue") loadedIssue(preview);
+    if (!req.resume && req.expectedRevision !== null && preview.revision !== req.expectedRevision) throw new Error(PREVIEW_CHANGED_MESSAGE);
     return { preview, workflow };
   }
 
@@ -177,10 +225,11 @@ export class WorkflowRunner {
   private async createSession(state: RunState, req: WorkflowRunRequest, preview: WorkflowPreview, workflow: PrWorkflow): Promise<WorkflowRunResume> {
     const config = workflow.harness ?? INHERITED_HARNESS;
     let projectId = preview.projectId;
-    state.stage = projectId ? "create" : "clone";
+    state.stage = "create";
     if (preview.driverMissing) throw new Error(`${harnessLabel(workflowDriver(config, req.composerDriver))} isn't installed`);
     let harness: ResolvedWorkflowHarness | null = preview.harness?.resolved ?? null;
     if (!projectId) {
+      state.stage = "clone";
       const project = await this.deps.clone(repoOf(preview.subject));
       await this.deps.refreshProjectRepos();
       projectId = project.id;
@@ -190,8 +239,6 @@ export class WorkflowRunner {
     if (!harness) throw new Error("the harness options are not available");
     const options = this.workspaceOptions(preview, projectId);
     const session = await this.deps.createSession(projectId, harness.driver, options);
-    const resume: WorkflowRunResume = { sessionId: session.id, linked: false, sent: false, note: pushNote(preview, session.branch) };
-    state.resume = resume;
     this.reportCreated(session, options);
     this.deps.setComposer(session.id, {
       ...req.pendingPrefs,
@@ -199,6 +246,8 @@ export class WorkflowRunner {
       effort: harness.effort,
       permissionMode: harness.permissionMode
     });
+    const resume: WorkflowRunResume = { sessionId: session.id, linked: false, sent: false, note: pushNote(preview, session.branch) };
+    state.resume = resume;
     return resume;
   }
 

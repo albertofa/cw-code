@@ -47,8 +47,11 @@ describe("workflow request parsing", () => {
   });
 
   it("parses a run request with its resume state", () => {
-    const base = { workflowId: "review", subject: { kind: "pr", ref }, composerDriver: "claude", prompt: "go" };
-    expect(parseRunRequest(base)).toMatchObject({ prompt: "go", resume: null, continueSessionId: null });
+    const base = { workflowId: "review", subject: { kind: "pr", ref }, composerDriver: "claude", prompt: "go", runId: "run_1" };
+    expect(parseRunRequest(base)).toMatchObject({ runId: "run_1", prompt: "go", expectedRevision: null, resume: null, continueSessionId: null });
+    expect(parseRunRequest({ ...base, expectedRevision: "abc" }).expectedRevision).toBe("abc");
+    expect(() => parseRunRequest({ ...base, runId: "" })).toThrow("runId");
+    expect(() => parseRunRequest({ ...base, runId: undefined })).toThrow("runId");
     expect(parseRunRequest({ ...base, resume: { sessionId: "sess_1", linked: true, sent: false, note: null } }).resume).toEqual({
       sessionId: "sess_1",
       linked: true,

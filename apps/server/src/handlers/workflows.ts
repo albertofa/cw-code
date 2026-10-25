@@ -127,7 +127,15 @@ export function parseRunRequest(args: unknown): WorkflowRunRequest {
   const raw = parseArgs(args, "workflows.run");
   const prompt = parseBounded(raw.prompt, "prompt", MAX_TEXT_LENGTH);
   if (!prompt.trim()) throw new Error("prompt must not be empty");
-  return { ...parsePreviewRequest(raw), prompt, resume: parseResume(raw.resume) };
+  const runId = parseBounded(raw.runId, "runId", MAX_ID_LENGTH);
+  if (!runId) throw new Error("runId must not be empty");
+  return {
+    ...parsePreviewRequest(raw),
+    runId,
+    prompt,
+    expectedRevision: parseNullable(raw.expectedRevision, "expectedRevision", MAX_ID_LENGTH),
+    resume: parseResume(raw.resume)
+  };
 }
 
 export function registerWorkflowHandlers(router: Router, app: ServerApp): void {
