@@ -130,7 +130,7 @@ export function registerSessionHandlers(router: Router, app: ServerApp): void {
     const { sessions, threads } = services();
     const result = await sessions.retryConnection(args.sessionId);
     threads.replaceHistory(args.sessionId, result.history);
-    return result;
+    return { status: result.status };
   });
   handle<{ sessionId: string }>(router, "threads.reloadHistory", (args) => {
     const { sessions, threads } = services();

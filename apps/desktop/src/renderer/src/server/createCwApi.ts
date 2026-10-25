@@ -42,11 +42,9 @@ import type {
 } from "@cw-code/contracts";
 import { assertPasteImageSize } from "@cw-code/shared/protocol";
 import type {
-  ActiveTurn,
   ComposerChangedEvent,
   ComposerPrefs,
   CwApi,
-  HistoryMessage,
   ModelOption,
   PermissionOption,
   Project,
@@ -162,9 +160,7 @@ export function createCwApi(client: ServerClient, topics: TopicCache, desktop: D
     resolveSession: (sessionId, status, removeWorktree, forceBranch) =>
       call<SessionCleanupResult>("sessions.resolve", { sessionId, status, removeWorktree, forceBranch }),
     pruneStaleWorktrees: () => call<WorktreePruneSummary>("worktrees.prune"),
-    getHistory: (sessionId) => call<HistoryMessage[]>("sessions.history", { sessionId }),
     getSubagentTools: (sessionId, agentId) => call<SubagentToolsResult>("sessions.subagentTools", { sessionId, agentId }),
-    activeTurns: () => call<ActiveTurn[]>("sessions.activeTurns"),
     retryConnection: (sessionId) => call<RetryConnectionResult>("sessions.retryConnection", { sessionId }),
     startTurn: (sessionId, prompt, opts) =>
       call<string>("turns.start", {
@@ -178,7 +174,8 @@ export function createCwApi(client: ServerClient, topics: TopicCache, desktop: D
         finalReview: opts?.finalReview,
         acceptFolderHead: opts?.acceptFolderHead
       }),
-    interrupt: (turnId) => callVoid("turns.interrupt", { turnId }),
+    stopTurn: (sessionId) => callVoid("turns.stop", { sessionId }),
+    reloadHistory: (sessionId) => callVoid("threads.reloadHistory", { sessionId }),
     respondApproval: (requestId, decision) => callVoid("approvals.respond", { requestId, decision }),
     respondQuestion: (requestId, answers) => callVoid("questions.respond", { requestId, answers }),
     listCommands: (sessionId) => call("commands.list", { sessionId }),

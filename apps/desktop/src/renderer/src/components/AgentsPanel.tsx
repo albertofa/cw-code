@@ -10,13 +10,12 @@ import { useAppStore, type ChatMessage } from "../stores/appStore.js";
 import { usePanelStore } from "../stores/panelStore.js";
 import { SubagentToolList, subagentAnchorId } from "./SubagentCard.js";
 import { useElapsed } from "./useElapsed.js";
+import { useThreadEntry, useThreadItems } from "./useThread.js";
 
 export interface AgentsTarget {
   groupId?: string;
   agentId?: string;
 }
-
-const EMPTY_MESSAGES: ChatMessage[] = [];
 
 let pendingTarget: AgentsTarget | null = null;
 
@@ -252,8 +251,8 @@ function AgentDetail({
 }
 
 export function AgentsPanel({ sessionId }: { sessionId: string }) {
-  const messages = useAppStore((s) => s.messagesBySession[sessionId] ?? EMPTY_MESSAGES);
-  const live = useAppStore((s) => s.busyTurns[sessionId] !== undefined);
+  const messages = useThreadItems(sessionId);
+  const live = useThreadEntry(sessionId, "turn") != null;
   const subagentToolsByKey = useAppStore((s) => s.subagentToolsByKey);
   const loadSubagentTools = useAppStore((s) => s.loadSubagentTools);
   const { basePath, openPreview } = useSessionWorkspace(sessionId);

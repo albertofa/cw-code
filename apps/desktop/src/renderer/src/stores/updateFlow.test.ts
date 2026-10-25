@@ -89,7 +89,7 @@ describe("restartToUpdate", () => {
 
   beforeEach(() => {
     bridge = installBridge();
-    useAppStore.setState({ updates: ready(1), updateRestartPending: false, shutdown: null, busyTurns: {} });
+    useAppStore.setState({ updates: ready(1), updateRestartPending: false, shutdown: null });
     useEditorBuffers.setState({ buffers: {} });
     useNotifs.setState({ notifs: [] });
   });

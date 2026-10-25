@@ -13,7 +13,6 @@ import {
   Trash2,
   type LucideIcon
 } from "lucide-react";
-import type { ChatMessage } from "../stores/appStore.js";
 
 export interface DiffStat {
   added: number;
@@ -359,54 +358,6 @@ export function describeToolCall(toolName: string, input: unknown): ToolSummary 
     }
   }
   return summary;
-}
-
-export function mergeToolPairs(messages: ChatMessage[]): ChatMessage[] {
-  const out: ChatMessage[] = [];
-  const indexById = new Map<string, number>();
-  let pending = -1;
-  const attach = (idx: number, source: ChatMessage): void => {
-    const call = out[idx];
-    out[idx] = {
-      ...call,
-      toolOutput: source.text,
-      toolDone: true,
-      isError: call.isError === true || source.isError === true,
-      ...(source.toolOutputEmpty !== undefined ? { toolOutputEmpty: source.toolOutputEmpty } : {}),
-      ...(source.toolUsage ? { toolUsage: source.toolUsage } : {}),
-      ...(source.timestamp !== undefined ? { toolCompletedAt: source.timestamp } : {})
-    };
-  };
-  for (const m of messages) {
-    if (m.role === "tool" && m.id.endsWith("-r")) {
-      const idx = indexById.get(m.id.slice(0, -2));
-      if (idx !== undefined && out[idx].role === "tool") {
-        attach(idx, m);
-        if (pending === idx) pending = -1;
-        continue;
-      }
-    }
-    if (
-      m.role === "tool" &&
-      m.toolName === "result" &&
-      pending >= 0 &&
-      out[pending].role === "tool" &&
-      out[pending].toolInput === undefined &&
-      out[pending].toolOutput === undefined
-    ) {
-      attach(pending, m);
-      pending = -1;
-      continue;
-    }
-    const stamped =
-      m.role === "tool" && m.toolStartedAt === undefined && m.timestamp !== undefined
-        ? { ...m, toolStartedAt: m.timestamp }
-        : m;
-    indexById.set(stamped.id, out.length);
-    out.push(stamped);
-    if (stamped.role === "tool" && stamped.toolOutput === undefined) pending = out.length - 1;
-  }
-  return out;
 }
 
 export function stripToolNamePrefix(toolName: string, text: string): string {

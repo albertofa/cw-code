@@ -1,16 +1,16 @@
 import { useEffect, useState } from "react";
-import { useAppStore } from "../stores/appStore.js";
 import { TriangleAlert } from "lucide-react";
 import { useBranchStore } from "../stores/branchStore.js";
 import { ipcErrorMessage } from "./ipcError.js";
 import { keepLabel, mismatchSentence, sendHereLabel, type BranchMismatch } from "./sessionBranch.js";
 import { useBranchMismatch } from "./useBranchMismatch.js";
+import { useThreadEntry } from "./useThread.js";
 
 export function BranchMismatchDock({ sessionId }: { sessionId: string }) {
   const { mismatch, projectName } = useBranchMismatch(sessionId);
   const [switching, setSwitching] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const turnBusy = useAppStore((s) => s.busyTurns[sessionId] !== undefined);
+  const turnBusy = useThreadEntry(sessionId, "turn") != null;
   const hasMismatch = mismatch !== null;
 
   useEffect(() => {

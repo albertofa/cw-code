@@ -20,7 +20,6 @@ import {
   unwrapTaskOutput,
   type SubagentMessage
 } from "./subagents.js";
-import { mergeToolPairs } from "./toolSummaries.js";
 import type { ChatMessage } from "../stores/appStore.js";
 import type { TaskSnapshot, TaskState } from "../cw.js";
 
@@ -470,18 +469,22 @@ describe("describeSubagent", () => {
   });
 
   it("derives durations from merged history timestamps", () => {
-    const history: ChatMessage[] = [
+    const merged: ChatMessage[] = [
       {
         id: "toolu_1",
         role: "tool",
         text: 'Task {"description":"Deep work","prompt":"Do it"}',
         turnId: "t9",
+        seq: 0,
         toolName: "Task",
-        timestamp: 1000
-      },
-      { id: "toolu_1-r", role: "tool", text: "done", turnId: "t9", toolName: "result", timestamp: 46000 }
+        timestamp: 1000,
+        toolStartedAt: 1000,
+        toolOutput: "done",
+        toolDone: true,
+        isError: false,
+        toolCompletedAt: 46000
+      }
     ];
-    const merged = mergeToolPairs(history);
     const infos = collectSubagents(merged);
     expect(infos).toHaveLength(1);
     expect(infos[0].name).toBe("Deep work");

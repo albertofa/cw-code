@@ -1,8 +1,7 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { useShallow } from "zustand/react/shallow";
 import { Bot, ChartColumn, ChevronDown, Gauge, GitBranch, ListChecks, RefreshCw, Sparkles } from "lucide-react";
 import type { AccountUsageOk, DriverName, TodoItem } from "../cw.js";
-import { useAppStore } from "../stores/appStore.js";
+import { useAppStore, type ChatMessage } from "../stores/appStore.js";
 import { usePrStore } from "../stores/prStore.js";
 import { useSkillsStore } from "../stores/skillsStore.js";
 import { useUsageStore } from "../stores/usageStore.js";
@@ -16,10 +15,16 @@ import { formatDuration } from "./toolSummaries.js";
 import { harnessLabel } from "./toolTabs.js";
 import { findSession, useSessionPrItems } from "./useLinkedPr.js";
 import { formatCostUsd, useNow } from "./usageFormat.js";
-import { contextMeter, totals, turnTokens } from "./usageModel.js";
+import { totals } from "./usageModel.js";
+import { useThreadEntry, useThreadItemsSelect } from "./useThread.js";
+import { sameItems } from "../server/sidebarData.js";
 import "./sessionOverview.css";
 
 const EMPTY_TODOS: TodoItem[] = [];
+
+function subagentItems(items: ChatMessage[]): ChatMessage[] {
+  return items.filter(isSubagentMessage);
+}
 
 function Section({
   icon,
@@ -66,8 +71,9 @@ function Note({ children, tone }: { children: ReactNode; tone?: "error" }) {
 }
 
 function ContextSection({ sessionId }: { sessionId: string }) {
-  const context = useAppStore((s) => s.turnUsageBySession[sessionId]?.context);
-  const meter = context ? contextMeter(context) : null;
+  const usage = useThreadEntry(sessionId, "usage");
+  const context = usage?.context ?? null;
+  const meter = usage?.meter ?? null;
   const percentLabel = meter ? Math.round(meter.percent * 100) : null;
   return (
     <Section icon={<Gauge size={14} aria-hidden="true" />} title="Context" summary={percentLabel === null ? undefined : <span className="mono">{percentLabel}%</span>}>
@@ -163,7 +169,7 @@ function SessionUsageSection({ sessionId }: { sessionId: string }) {
   const loading = useUsageStore((s) => !!s.sessionLoading[sessionId]);
   const error = useUsageStore((s) => s.sessionError[sessionId]);
   const ensureSessionRows = useUsageStore((s) => s.ensureSessionRows);
-  const lastTurn = useAppStore((s) => s.turnUsageBySession[sessionId]?.lastTurn);
+  const lastTurn = useThreadEntry(sessionId, "usage")?.lastTurn ?? null;
   const sessionTotals = useMemo(() => totals(rows ?? []), [rows]);
 
   useEffect(() => {
@@ -210,7 +216,7 @@ function SessionUsageSection({ sessionId }: { sessionId: string }) {
           <Row label="Last turn">
             <span className="mono">
               {lastTurn
-                ? `${formatTokensShort(turnTokens(lastTurn))} tok${lastTurn.durationMs !== undefined ? ` · ${formatDuration(lastTurn.durationMs)}` : ""}`
+                ? `${formatTokensShort(lastTurn.tokens)} tok${lastTurn.durationMs !== null ? ` · ${formatDuration(lastTurn.durationMs)}` : ""}`
                 : "—"}
             </span>
           </Row>
@@ -291,7 +297,7 @@ function PlanSection({ driver }: { driver: DriverName }) {
 }
 
 function TodosSection({ sessionId }: { sessionId: string }) {
-  const todos = useAppStore((s) => s.todosBySession[sessionId] ?? EMPTY_TODOS);
+  const todos = useThreadEntry(sessionId, "todos") ?? EMPTY_TODOS;
   const total = todos.length;
   const done = todos.filter((t) => t.status === "completed").length;
   const current = todos.find((t) => t.status === "in_progress") ?? todos.find((t) => t.status === "pending");
@@ -316,7 +322,7 @@ function TodosSection({ sessionId }: { sessionId: string }) {
 }
 
 function SubagentsSection({ sessionId }: { sessionId: string }) {
-  const subagentMessages = useAppStore(useShallow((s) => (s.messagesBySession[sessionId] ?? []).filter(isSubagentMessage)));
+  const subagentMessages = useThreadItemsSelect(sessionId, subagentItems, sameItems);
   const agents = useMemo(() => collectSubagents(subagentMessages), [subagentMessages]);
   return (
     <Section icon={<Bot size={14} aria-hidden="true" />} title="Subagents" summary={agents.length > 0 ? agents.length : undefined}>

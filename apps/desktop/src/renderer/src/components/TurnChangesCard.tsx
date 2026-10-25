@@ -8,6 +8,7 @@ import { FileIcon } from "./fileIcons.js";
 import { ipcErrorMessage, isFileNotFound } from "./ipcError.js";
 import { sameRootSessionIds, snapshotKey, splitRepoPath, turnTotals } from "./turnChanges.js";
 import { useAppStore } from "../stores/appStore.js";
+import { isThreadBusy, useThreadEntry } from "./useThread.js";
 import { buffersForPaths, isDirtyBuffer, useEditorBuffers, type EditorBuffer } from "../stores/editorBuffers.js";
 import { usePanelStore } from "../stores/panelStore.js";
 import "./turnChanges.css";
@@ -138,7 +139,7 @@ export function TurnChangesCard({ sessionId, snapshot }: { sessionId: string; sn
   const [phase, setPhase] = useState<UndoPhase>("idle");
   const [undoneLocally, setUndoneLocally] = useState(false);
   const [expanded, setExpanded] = useState(false);
-  const turnRunning = useAppStore((s) => s.busyTurns[sessionId] !== undefined);
+  const turnRunning = useThreadEntry(sessionId, "turn") != null;
   const rootIdsKey = useAppStore((s) => sameRootSessionIds(s.sessionsByProject, s.projects, sessionId).join("\n"));
   const rootIds = rootIdsKey.split("\n");
   const { confirm, dialog } = useConfirm();
@@ -176,7 +177,7 @@ export function TurnChangesCard({ sessionId, snapshot }: { sessionId: string; sn
   const currentBlockers = (reviewed: TurnChanges) =>
     undoBlockers(
       reviewed,
-      useAppStore.getState().busyTurns[sessionId] !== undefined,
+      isThreadBusy(sessionId),
       dirtyPaths(useEditorBuffers.getState().buffers, rootIds, reviewed.files)
     );
 

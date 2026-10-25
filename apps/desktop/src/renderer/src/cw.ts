@@ -361,14 +361,6 @@ export interface SubagentToolsResult {
 
 export interface RetryConnectionResult {
   status: "running" | "done";
-  turnId?: string;
-  history: HistoryMessage[];
-}
-
-export interface ActiveTurn {
-  sessionId: string;
-  turnId: string;
-  startedAt: number;
 }
 
 export type ApprovalDecision = "accept" | "acceptForSession" | "acceptGlobal" | "decline" | "cancel";
@@ -632,12 +624,11 @@ export interface CwApi {
   resumeAutoFollowUp(sessionId: string): Promise<void>;
   resolveSession(sessionId: string, status: SessionStatus, removeWorktree?: boolean, forceBranch?: boolean): Promise<SessionCleanupResult>;
   pruneStaleWorktrees(): Promise<WorktreePruneSummary>;
-  getHistory(sessionId: string): Promise<HistoryMessage[]>;
   getSubagentTools(sessionId: string, agentId: string): Promise<SubagentToolsResult>;
-  activeTurns(): Promise<ActiveTurn[]>;
   retryConnection(sessionId: string): Promise<RetryConnectionResult>;
   startTurn(sessionId: string, prompt: string, opts?: { prefs?: ComposerPrefs; attachments?: string[]; command?: CommandInvocation; skills?: string[]; prRefs?: PrRef[]; finalReview?: { ref: PrRef; sha: string }; acceptFolderHead?: string }): Promise<string>;
-  interrupt(turnId: string): Promise<void>;
+  stopTurn(sessionId: string): Promise<void>;
+  reloadHistory(sessionId: string): Promise<void>;
   respondApproval(requestId: string, decision: ApprovalDecision): Promise<void>;
   respondQuestion(requestId: string, answers: Record<string, string>): Promise<void>;
   listCommands(sessionId: string): Promise<CommandOption[]>;

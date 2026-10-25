@@ -9,11 +9,12 @@ import { useAppSettings } from "./useAppSettings.js";
 import { useBranchMismatch } from "./useBranchMismatch.js";
 import { ContextRing } from "./ContextRing.js";
 import { restoreConfirm } from "./sessionLifecycle.js";
+import { useThreadEntry } from "./useThread.js";
 
 export function Composer({ sessionId, driver, top }: { sessionId: string; driver: DriverName; top?: ReactNode }) {
   const prefs = useAppStore((s) => s.composerBySession[sessionId] ?? DEFAULT_COMPOSER);
   const prefsLoaded = useAppStore((s) => s.composerLoadedBySession[sessionId] === true);
-  const busy = useAppStore((s) => s.busyTurns[sessionId] !== undefined);
+  const busy = useThreadEntry(sessionId, "turn") != null;
   const projectId = useAppStore((s) => {
     for (const [pid, list] of Object.entries(s.sessionsByProject)) {
       if (list.some((session) => session.id === sessionId)) return pid;

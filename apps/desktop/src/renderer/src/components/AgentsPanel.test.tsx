@@ -4,6 +4,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "bun:test";
 import type { ChatMessage } from "../stores/appStore.js";
 import { AgentsPanel } from "./AgentsPanel.js";
+import { installFakeTopics } from "../../../../tests/fakeTopics.js";
 
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 (Element.prototype as unknown as { scrollTo: () => void }).scrollTo = () => {};
@@ -38,9 +39,10 @@ describe("AgentsPanel", () => {
       id: "m1",
       role: "assistant",
       text: "hello",
-      turnId: "turn-1"
+      turnId: "turn-1",
+      seq: 0
     };
-    useAppStore.setState({ messagesBySession: { sess_cached: [message] } });
+    installFakeTopics({ "session/sess_cached": { "item/m1": message, turn: null } });
     errors = [];
     origError = console.error;
     console.error = (...args: unknown[]) => {

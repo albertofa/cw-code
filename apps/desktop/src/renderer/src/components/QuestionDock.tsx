@@ -5,6 +5,7 @@ import { useAppStore } from "../stores/appStore.js";
 import { ipcErrorMessage } from "./ipcError.js";
 import { useNotifs } from "./Notifications.js";
 import { useThreadVisible } from "./threadVisibility.js";
+import { useThreadEntry } from "./useThread.js";
 
 interface AnswerState {
   chosen: Record<string, boolean>;
@@ -35,12 +36,10 @@ function tabLabel(q: QuestionInfo, idx: number): string {
 
 function QuestionPanel({
   request,
-  sessionId,
   position,
   total
 }: {
   request: QuestionRequest;
-  sessionId: string;
   position: number;
   total: number;
 }) {
@@ -105,7 +104,7 @@ function QuestionPanel({
     }
     if (Object.keys(answers).length === 0) return;
     setSubmitting(true);
-    void respond(sessionId, request.requestId, answers).catch((err) => {
+    void respond(request.requestId, answers).catch((err) => {
       setSubmitting(false);
       useNotifs.getState().push({ kind: "error", title: "Could not send the answer", message: ipcErrorMessage(err) });
     });
@@ -360,7 +359,7 @@ function QuestionPanel({
 const NO_REQUESTS: QuestionRequest[] = [];
 
 export function QuestionDock({ sessionId }: { sessionId: string }) {
-  const requests = useAppStore((s) => s.pendingQuestions[sessionId] ?? NO_REQUESTS);
+  const requests = useThreadEntry(sessionId, "questions") ?? NO_REQUESTS;
   const current = requests[0];
   if (!current) return null;
   return (
@@ -368,7 +367,6 @@ export function QuestionDock({ sessionId }: { sessionId: string }) {
       <QuestionPanel
         key={current.requestId}
         request={current}
-        sessionId={sessionId}
         position={1}
         total={requests.length}
       />

@@ -2,18 +2,20 @@ import "../../../../tests/dom.js";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "bun:test";
-import type { TopicCache, TopicState } from "@cw-code/client";
+import type { ThreadItem } from "@cw-code/contracts";
 import { DEFAULT_APPEARANCE } from "../appearanceFonts.js";
-import { initTopics } from "../server/topics.js";
-import type { Session, TurnEvent } from "../cw.js";
+import { installFakeTopics, type FakeTopics } from "../../../../tests/fakeTopics.js";
+import type { Session } from "../cw.js";
 
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
-type TurnCb = (msg: { sessionId: string; event: TurnEvent }) => void;
-const listeners = new Map<string, TurnCb[]>();
 let sessionSeq = 0;
+let itemSeq = 0;
 let modelsForResult: Array<{ id: string; label: string; source: "live"; variants?: string[] }> = [];
 let mockDelays = false;
+let topics!: FakeTopics;
+const startedTurns: string[] = [];
+const stoppedTurns: string[] = [];
 
 async function delayed<T>(value: T, ms: number): Promise<T> {
   if (mockDelays) await new Promise((r) => setTimeout(r, ms));
@@ -35,13 +37,6 @@ function makeSession(overrides: Partial<Session> = {}): Session {
   };
 }
 
-const topicListeners = new Map<string, Set<() => void>>();
-let sidebar: TopicState;
-
-function emitTopic(topic: string): void {
-  for (const cb of topicListeners.get(topic) ?? []) cb();
-}
-
 function addSidebarSession(session: Session): void {
   const row = {
     session,
@@ -54,50 +49,74 @@ function addSidebarSession(session: Session): void {
     latestUnseenPrUpdateAt: null,
     prMuted: false
   };
-  sidebar = { ...sidebar, rev: sidebar.rev + 1, data: { ...sidebar.data, [`row/${session.id}`]: row } };
-  emitTopic("sidebar");
+  topics.merge("sidebar", { [`row/${session.id}`]: row });
+}
+
+const RUNNING_TURN = { phase: "running", turnId: "turn-1", startedAt: Date.now(), auto: false };
+const LOADED_HISTORY = { state: "loaded", error: null, retrying: false };
+
+function threadTopic(sessionId: string): string {
+  return `session/${sessionId}`;
+}
+
+function threadItem(fields: Omit<ThreadItem, "seq">): Record<string, ThreadItem> {
+  itemSeq += 1;
+  return { [`item/${fields.id}`]: { ...fields, seq: itemSeq } };
+}
+
+function currentItem(sessionId: string, id: string): ThreadItem | undefined {
+  return topics.data(threadTopic(sessionId))?.[`item/${id}`] as ThreadItem | undefined;
+}
+
+async function publishThread(sessionId: string, data: Record<string, unknown>): Promise<void> {
+  await act(async () => {
+    topics.merge(threadTopic(sessionId), data);
+  });
+}
+
+async function startThread(sessionId: string, prompt: string): Promise<void> {
+  await publishThread(sessionId, {
+    history: LOADED_HISTORY,
+    turn: RUNNING_TURN,
+    ...threadItem({ id: "turn-1-u", role: "user", text: prompt, turnId: "turn-1" })
+  });
+}
+
+async function appendAssistant(sessionId: string, text: string): Promise<void> {
+  const id = "turn-1-a";
+  const current = currentItem(sessionId, id);
+  await publishThread(
+    sessionId,
+    current ? { [`item/${id}`]: { ...current, text: current.text + text } } : threadItem({ id, role: "assistant", text, turnId: "turn-1" })
+  );
+}
+
+async function finishTool(sessionId: string, id: string, output: string): Promise<void> {
+  const current = currentItem(sessionId, id);
+  if (!current) throw new Error(`no tool item ${id}`);
+  await publishThread(sessionId, { [`item/${id}`]: { ...current, toolOutput: output, toolDone: true, toolCompletedAt: Date.now() } });
 }
 
 function installTopics(): void {
-  topicListeners.clear();
-  sidebar = {
-    status: "ready",
-    rev: 1,
-    error: null,
-    data: {
+  topics = installFakeTopics({
+    app: {
+      settings: { ...DEFAULT_APPEARANCE, sourceControlRefreshIntervalSeconds: 30, prRefreshIntervalSeconds: 120, defaultUseWorktree: true },
+      home: { homeDir: "C:\\Users\\test" },
+      harnesses: { checks: [], installed: [], issues: [], checkedAt: null, trigger: "startup", error: null }
+    },
+    sidebar: {
       layout: { needsYou: [], workingSet: [], main: [], resolved: [], quickCounts: { pr: 0 } },
       defaults: { restoreSessionId: null, restoreProjectId: "proj_1", projectsByRecency: ["proj_1"] },
       "project/proj_1": { id: "proj_1", rootPath: "C:\\proj", name: "proj" },
       "worktrees/proj_1": []
     }
-  };
-  const app: TopicState = {
-    status: "ready",
-    rev: 1,
-    error: null,
-    data: {
-      settings: { ...DEFAULT_APPEARANCE, sourceControlRefreshIntervalSeconds: 30, prRefreshIntervalSeconds: 120, defaultUseWorktree: true },
-      home: { homeDir: "C:\\Users\\test" },
-      harnesses: { checks: [], installed: [], issues: [], checkedAt: null, trigger: "startup", error: null }
-    }
-  };
-  const cache = {
-    epoch: 0,
-    acquire: () => () => {},
-    listen: (topic: string, cb: () => void) => {
-      const set = topicListeners.get(topic) ?? new Set<() => void>();
-      set.add(cb);
-      topicListeners.set(topic, set);
-      return () => set.delete(cb);
-    },
-    onEpoch: () => () => {},
-    state: (topic: string) => (topic === "app" ? app : topic === "sidebar" ? sidebar : undefined)
-  };
-  initTopics(cache as unknown as TopicCache);
+  });
 }
 
 function installBridge(): void {
   installTopics();
+  startedTurns.length = 0;
+  stoppedTurns.length = 0;
   const noop = () => () => {};
   const explicit: Record<string, unknown> = {
     isDev: false,
@@ -109,14 +128,18 @@ function installBridge(): void {
       setTimeout(() => addSidebarSession(created), 0);
       return created;
     },
-    getHistory: async () => delayed([], 300),
-    startTurn: async () => delayed("turn-1", 800),
-    activeTurns: async () => [],
+    startTurn: async (sessionId: string) => {
+      startedTurns.push(sessionId);
+      return delayed("turn-1", 800);
+    },
+    stopTurn: async (sessionId: string) => {
+      stoppedTurns.push(sessionId);
+    },
+    reloadHistory: async () => {},
     updates: {
       onChanged: noop,
       getState: async () => ({ seq: 0, phase: "disabled", disabledReason: "Updates are disabled in development builds" })
     },
-    interrupt: async () => {},
     getComposer: async () => delayed({}, 400),
     setComposer: async (_id: string, prefs: unknown) => delayed(prefs, 200),
     getDefaultPrWorkflows: async () => [],
@@ -140,12 +163,6 @@ function installBridge(): void {
     listModelsFor: async () => delayed(modelsForResult, 900),
     listProjectFiles: async () => [],
     getUsageLedger: async () => [],
-    onTurnEvent: (cb: TurnCb) => {
-      const list = listeners.get("turn") ?? [];
-      list.push(cb);
-      listeners.set("turn", list);
-      return () => {};
-    },
     onSessionTitle: noop,
     topics: { acquire: () => () => {} },
     shutdown: { onRequested: noop, onExpired: noop },
@@ -157,7 +174,7 @@ function installBridge(): void {
       if (prop in target) return target[prop as string];
       const name = String(prop);
       if (name.startsWith("on")) return noop;
-      if (/^(minimize|toggle|close|zoom|write|resize|kill|interrupt)/.test(name)) return () => {};
+      if (/^(minimize|toggle|close|zoom|write|resize|kill)/.test(name)) return () => {};
       if (name.startsWith("list")) return async () => [];
       return async () => ({});
     }
@@ -177,16 +194,6 @@ function installBridge(): void {
     });
   }
 }
-
-async function emitAll(event: TurnEvent): Promise<void> {
-  await act(async () => {
-    for (const cb of listeners.get("turn") ?? []) {
-      cb({ sessionId: emitSessionId, event });
-    }
-  });
-}
-
-let emitSessionId = "";
 
 function fatalErrors(errors: string[]): string[] {
   return errors.filter((e) => e.includes("Maximum update depth") || e.includes("185"));
@@ -223,7 +230,6 @@ describe("new-session crash repro (interactive)", () => {
   }
 
   afterEach(async () => {
-    listeners.clear();
     console.error = origError;
     await act(async () => {
       root?.unmount();
@@ -248,9 +254,12 @@ describe("new-session crash repro (interactive)", () => {
     });
     const createdId = useAppStore.getState().activeSessionId;
     expect(createdId).toMatch(/^sess_/);
-    emitSessionId = createdId!;
-    await emitAll({ type: "assistant.delta", turnId: "turn-1", text: "hi" });
+    expect(startedTurns).toEqual([createdId!]);
+    expect(topics.acquired()).toContain(threadTopic(createdId!));
+    await startThread(createdId!, "hello world");
+    await appendAssistant(createdId!, "hi there");
 
+    expect(host!.innerHTML).toContain("hi there");
     expect(host!.innerHTML.length).toBeGreaterThan(1000);
     expect(fatalErrors(errors)).toEqual([]);
   });
@@ -273,7 +282,7 @@ describe("new-session crash repro (interactive)", () => {
     expect(fatalErrors(errors)).toEqual([]);
   });
 
-  it("replays a rich streaming turn", async () => {
+  it("renders a rich streaming turn from the session topic", async () => {
     const { useAppStore } = await mount();
     await act(async () => {
       useAppStore.getState().setPendingDriver("opencode");
@@ -281,14 +290,15 @@ describe("new-session crash repro (interactive)", () => {
     await act(async () => {
       await useAppStore.getState().sendPendingPrompt("redesign tool cards @.cw/pastes/x.png");
     });
-    emitSessionId = useAppStore.getState().activeSessionId!;
+    const sessionId = useAppStore.getState().activeSessionId!;
+    await startThread(sessionId, "redesign tool cards @.cw/pastes/x.png");
 
     const md = [
       "# Plan\n\n| Step | Owner |\n|---|---|\n| 1 | app |\n\n```tsx\nconst x = 1;\n```\n",
       "See [docs](https://example.com) and `code` > quote\n\n- a\n- b\n"
     ];
     for (let i = 0; i < 30; i += 1) {
-      await emitAll({ type: "assistant.delta", turnId: "turn-1", text: md[i % md.length] });
+      await appendAssistant(sessionId, md[i % md.length]);
     }
     const tools: Array<[string, string, unknown]> = [
       ["call_read1", "read", { path: "src/a.ts" }],
@@ -299,64 +309,36 @@ describe("new-session crash repro (interactive)", () => {
       ["call_todo", "todowrite", { todos: [{ status: "completed", content: "do it" }] }]
     ];
     for (const [id, name, input] of tools) {
-      await emitAll({ type: "tool.call", turnId: "turn-1", toolCallId: id, name, input });
+      await publishThread(sessionId, threadItem({ id, role: "tool", text: name, turnId: "turn-1", toolName: name, toolInput: input, toolStartedAt: Date.now() }));
     }
-    await emitAll({ type: "tool.call", turnId: "turn-1", toolCallId: "call_task", name: "task", input: {} });
-    await emitAll({
-      type: "tool.call",
-      turnId: "turn-1",
-      toolCallId: "call_sub",
-      name: "read",
-      input: {},
-      parentToolCallId: "call_task"
-    });
-    for (const [id] of tools) {
-      await emitAll({ type: "tool.result", turnId: "turn-1", toolCallId: id, output: "ok output", isError: false });
-    }
-    await emitAll({
-      type: "todo.updated",
-      turnId: "turn-1",
+    await publishThread(sessionId, threadItem({ id: "call_task", role: "tool", text: "task", turnId: "turn-1", toolName: "task", toolInput: {}, toolStartedAt: Date.now() }));
+    await publishThread(
+      sessionId,
+      threadItem({ id: "call_sub", role: "tool", text: "read", turnId: "turn-1", toolName: "read", toolInput: {}, parentToolCallId: "call_task", toolStartedAt: Date.now() })
+    );
+    for (const [id] of tools) await finishTool(sessionId, id, "ok output");
+    await publishThread(sessionId, {
       todos: [
         { content: "do it", status: "completed" },
         { content: "hide todo cards", status: "in_progress", priority: "high" }
+      ],
+      questions: [
+        {
+          requestId: "que_1",
+          turnId: "turn-1",
+          questions: [{ question: "Group?", options: [{ label: "Yes" }, { label: "No" }], multiSelect: false, allowCustom: true }]
+        }
+      ],
+      approvals: [
+        { requestId: "per_1", kind: "command", title: "bash: pnpm test", decisions: ["accept", "decline"], permission: "bash", patterns: ["pnpm *"] }
       ]
     });
-    await emitAll({
-      type: "question.request",
-      turnId: "turn-1",
-      request: {
-        requestId: "que_1",
-        turnId: "turn-1",
-        questions: [
-          { question: "Group?", options: [{ label: "Yes" }, { label: "No" }], multiSelect: false, allowCustom: true }
-        ]
-      }
+    await publishThread(sessionId, {
+      questions: [],
+      approvals: [],
+      ...threadItem({ id: "que_1-ans", role: "tool", text: "Group? → Yes", turnId: "turn-1", toolCompletedAt: Date.now() })
     });
-    await emitAll({
-      type: "approval.request",
-      turnId: "turn-1",
-      request: {
-        requestId: "per_1",
-        kind: "command",
-        title: "bash: pnpm test",
-        decisions: ["accept", "decline"],
-        permission: "bash",
-        patterns: ["pnpm *"]
-      }
-    });
-    await emitAll({ type: "question.resolved", turnId: "turn-1", requestId: "que_1", answers: { "Group?": "Yes" } });
-    await emitAll({ type: "approval.resolved", turnId: "turn-1", requestId: "per_1" });
-    await emitAll({
-      type: "turn.done",
-      turnId: "turn-1",
-      sessionId: "sess_new",
-      resumeCursor: "ses_x",
-      resultText: "Done. See [docs](https://example.com).",
-      usage: [],
-      numTurns: 1,
-      isError: false,
-      backgroundTasks: 0
-    });
+    await publishThread(sessionId, { turn: null, durations: { "turn-1": 4200 } });
 
     await act(async () => {
       await new Promise((r) => setTimeout(r, 100));
@@ -369,7 +351,7 @@ describe("new-session crash repro (interactive)", () => {
     expect(fatalErrors(errors)).toEqual([]);
   });
 
-  it("interrupts mid-stream turns", async () => {
+  it("stops the active session's turn through the server", async () => {
     const { useAppStore } = await mount();
     const store = () => useAppStore.getState();
     await act(async () => {
@@ -378,29 +360,21 @@ describe("new-session crash repro (interactive)", () => {
     await act(async () => {
       await store().sendPendingPrompt("first task");
     });
-    emitSessionId = store().activeSessionId!;
-    expect(emitSessionId).toMatch(/^sess_/);
-
-    for (let i = 0; i < 10; i += 1) {
-      await emitAll({ type: "assistant.delta", turnId: "turn-1", text: `chunk ${i} ` });
-    }
-    await emitAll({ type: "tool.call", turnId: "turn-1", toolCallId: "c1", name: "read", input: { path: "a" } });
+    const sessionId = store().activeSessionId!;
+    expect(sessionId).toMatch(/^sess_/);
+    await startThread(sessionId, "first task");
+    for (let i = 0; i < 10; i += 1) await appendAssistant(sessionId, `chunk ${i} `);
 
     await act(async () => {
       await store().interrupt();
     });
-    await emitAll({ type: "question.resolved", turnId: "turn-1", requestId: "q1", answers: null });
-    await emitAll({ type: "approval.resolved", turnId: "turn-1", requestId: "p1" });
+    expect(stoppedTurns).toEqual([sessionId]);
+    await publishThread(sessionId, { turn: null });
 
     await act(async () => {
       await store().sendPrompt("second task", []);
     });
-    for (let i = 0; i < 10; i += 1) {
-      await emitAll({ type: "assistant.delta", turnId: "turn-1", text: `more ${i} ` });
-    }
-    await act(async () => {
-      await store().interrupt();
-    });
+    expect(startedTurns).toEqual([sessionId, sessionId]);
 
     await act(async () => {
       await new Promise((r) => setTimeout(r, 100));
@@ -409,201 +383,77 @@ describe("new-session crash repro (interactive)", () => {
     expect(fatalErrors(errors)).toEqual([]);
   });
 
-  it("streams two sessions concurrently with errors and titles", async () => {
-    installBridge();
-    const { App } = await import("../App.js");
-    const { useAppStore } = await import("../stores/appStore.js");
-    const errors: string[] = [];
-    const origError = console.error;
-    console.error = (...args: unknown[]) => {
-      errors.push(args.map(String).join(" "));
-    };
-    try {
-      host = document.createElement("div");
-      document.body.appendChild(host);
-      root = createRoot(host);
-      await act(async () => {
-        root!.render(<App />);
-      });
-      const store = () => useAppStore.getState();
+  it("renders two streaming sessions with errors while switching between them", async () => {
+    const { useAppStore } = await mount();
+    const store = () => useAppStore.getState();
 
-      await act(async () => {
-        store().setPendingDriver("opencode");
-      });
-      await act(async () => {
-        await store().sendPendingPrompt("task one");
-      });
-      const firstId = store().activeSessionId;
+    await act(async () => {
+      store().setPendingDriver("opencode");
+    });
+    await act(async () => {
+      await store().sendPendingPrompt("task one");
+    });
+    const firstId = store().activeSessionId!;
 
-      const emit = async (sessionId: string, event: TurnEvent) => {
-        await act(async () => {
-          for (const cb of listeners.get("turn") ?? []) {
-            cb({ sessionId, event });
-          }
-        });
-      };
+    await act(async () => {
+      store().startNewSession("codex");
+    });
+    await act(async () => {
+      await store().sendPendingPrompt("task two");
+    });
+    const secondId = store().activeSessionId!;
+    expect(secondId).not.toBe(firstId);
 
-      await act(async () => {
-        store().startNewSession("codex");
-      });
-      await act(async () => {
-        await store().sendPendingPrompt("task two");
-      });
-      const secondId = store().activeSessionId;
-      expect(secondId).not.toBe(firstId);
-
-      for (let i = 0; i < 15; i += 1) {
-        await emit(firstId!, { type: "assistant.delta", turnId: "turn-1", text: `a${i} ` });
-        await emit(secondId!, { type: "assistant.delta", turnId: "turn-1", text: `b${i} ` });
-      }
-      await emit(firstId!, { type: "tool.call", turnId: "turn-1", toolCallId: "x1", name: "bash", input: {} });
-      await emit(secondId!, {
-        type: "turn.error",
-        turnId: "turn-1",
-        message: "opencode server unreachable at 127.0.0.1:1 (fetch failed)"
-      });
-      await emit(firstId!, {
-        type: "session.branch.updated",
-        turnId: "turn-1",
-        sessionId: firstId!,
-        branch: "cw/fresh"
-      } as TurnEvent);
-      await emit(firstId!, {
-        type: "turn.done",
-        turnId: "turn-1",
-        sessionId: firstId!,
-        resumeCursor: "ses_y",
-        resultText: "done",
-        usage: [],
-        numTurns: 1,
-        isError: false,
-        backgroundTasks: 0
-      });
-
-      await act(async () => {
-        store().selectSession(firstId!);
-      });
-      await act(async () => {
-        store().selectSession(secondId!);
-      });
-
-      await act(async () => {
-        await new Promise((r) => setTimeout(r, 100));
-      });
-      expect(host!.innerHTML.length).toBeGreaterThan(1000);
-      expect(fatalErrors(errors)).toEqual([]);
-    } finally {
-      console.error = origError;
+    await startThread(firstId, "task one");
+    await startThread(secondId, "task two");
+    for (let i = 0; i < 15; i += 1) {
+      await appendAssistant(firstId, `a${i} `);
+      await appendAssistant(secondId, `b${i} `);
     }
-  });
-
-  it("keeps the newer turn busy when a stale turn.done arrives", async () => {
-    const { useAppStore } = await mount();
-    useAppStore.setState({ busyTurns: { sess_stale: "turn-new" }, turnStartedAt: { sess_stale: 500 } });
-    await act(async () => {
-      useAppStore.getState().applyEvent("sess_stale", {
-        type: "turn.done",
-        turnId: "turn-old",
-        sessionId: "sess_stale",
-        resumeCursor: "",
-        resultText: "done",
-        usage: [],
-        numTurns: 1,
-        isError: false,
-        backgroundTasks: 0
-      });
+    await publishThread(firstId, threadItem({ id: "x1", role: "tool", text: "bash", turnId: "turn-1", toolName: "bash", toolInput: {} }));
+    await publishThread(secondId, {
+      turn: null,
+      ...threadItem({ id: "turn-1-e", role: "system", text: "Error: opencode server unreachable at 127.0.0.1:1 (fetch failed)", turnId: "turn-1", isError: true, retryable: true })
     });
-    expect(useAppStore.getState().busyTurns["sess_stale"]).toBe("turn-new");
-    expect(useAppStore.getState().turnStartedAt["sess_stale"]).toBe(500);
+    await publishThread(firstId, { turn: null });
+
+    await act(async () => {
+      store().selectSession(firstId);
+    });
+    await act(async () => {
+      store().selectSession(secondId);
+    });
+
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 100));
+    });
+    expect(host!.innerHTML).toContain("Retry connection");
+    expect(host!.innerHTML.length).toBeGreaterThan(1000);
+    expect(fatalErrors(errors)).toEqual([]);
   });
 
-  it("rehydrates a running turn from main on session select", async () => {
+  it("shows the history error with a retry that reloads through the server", async () => {
     const { useAppStore } = await mount();
+    const reloads: string[] = [];
     const bridge = (window as unknown as { cw: Record<string, unknown> }).cw;
-    bridge.activeTurns = async () => [{ sessionId: "sess_hist", turnId: "turn-live", startedAt: 1234 }];
-    useAppStore.setState({
-      activeProjectId: "proj_1",
-      sessionsByProject: { proj_1: [makeSession({ id: "sess_hist", status: "working" })] }
-    });
-    await act(async () => {
-      useAppStore.getState().selectSession("sess_hist");
-      await new Promise((r) => setTimeout(r, 0));
-    });
-    expect(useAppStore.getState().busyTurns["sess_hist"]).toBe("turn-live");
-    expect(useAppStore.getState().turnStartedAt["sess_hist"]).toBe(1234);
-  });
-
-  it("does not resurrect an errored turn from a stale activeTurns reply", async () => {
-    const { useAppStore } = await mount();
-    const bridge = (window as unknown as { cw: Record<string, unknown> }).cw;
-    bridge.activeTurns = async () => [{ sessionId: "sess_err", turnId: "turn-dead", startedAt: 10 }];
-    useAppStore.setState({ busyTurns: { sess_err: "turn-dead" }, turnStartedAt: { sess_err: 10 } });
-    await act(async () => {
-      useAppStore.getState().applyEvent("sess_err", {
-        type: "turn.error",
-        turnId: "turn-dead",
-        message: "boom"
-      });
-    });
-    await act(async () => {
-      await useAppStore.getState().hydrateActiveTurns();
-    });
-    expect(useAppStore.getState().busyTurns["sess_err"]).toBeUndefined();
-    expect(useAppStore.getState().turnStartedAt["sess_err"]).toBeUndefined();
-  });
-
-  it("clears busy state that main no longer reports", async () => {
-    const { useAppStore } = await mount();
-    const bridge = (window as unknown as { cw: Record<string, unknown> }).cw;
-    bridge.activeTurns = async () => [];
-    useAppStore.setState({ busyTurns: { sess_gone: "turn-gone" }, turnStartedAt: { sess_gone: 10 } });
-    await act(async () => {
-      await useAppStore.getState().hydrateActiveTurns();
-    });
-    expect(useAppStore.getState().busyTurns["sess_gone"]).toBeUndefined();
-    expect(useAppStore.getState().turnStartedAt["sess_gone"]).toBeUndefined();
-  });
-
-  it("preserves a provisional turn when main already reports it", async () => {
-    const { useAppStore } = await mount();
-    const bridge = (window as unknown as { cw: Record<string, unknown> }).cw;
-    bridge.activeTurns = async () => [{ sessionId: "sess_pending", turnId: "turn-real", startedAt: 55 }];
-    useAppStore.setState({ busyTurns: { sess_pending: "pending:99" }, turnStartedAt: { sess_pending: 42 } });
-    await act(async () => {
-      await useAppStore.getState().hydrateActiveTurns();
-    });
-    expect(useAppStore.getState().busyTurns["sess_pending"]).toBe("pending:99");
-    expect(useAppStore.getState().turnStartedAt["sess_pending"]).toBe(42);
-  });
-
-  it("interrupts a turn that started after the user cancelled during dispatch", async () => {
-    const { useAppStore } = await mount();
-    const bridge = (window as unknown as { cw: Record<string, unknown> }).cw;
-    let resolveStart!: (turnId: string) => void;
-    const started = new Promise<string>((resolve) => {
-      resolveStart = resolve;
-    });
-    const interrupted: string[] = [];
-    bridge.startTurn = () => started;
-    bridge.interrupt = async (turnId: string) => {
-      interrupted.push(turnId);
+    bridge.reloadHistory = async (sessionId: string) => {
+      reloads.push(sessionId);
     };
-    useAppStore.setState({ activeSessionId: "sess_sup" });
-    const send = useAppStore.getState().sendPrompt("hello");
     await act(async () => {
-      await Promise.resolve();
+      useAppStore.getState().setPendingDriver("opencode");
     });
-    expect(useAppStore.getState().busyTurns["sess_sup"]).toBeDefined();
     await act(async () => {
-      await useAppStore.getState().interrupt();
+      await useAppStore.getState().sendPendingPrompt("hello");
     });
-    expect(useAppStore.getState().busyTurns["sess_sup"]).toBeUndefined();
+    const sessionId = useAppStore.getState().activeSessionId!;
+    await publishThread(sessionId, { history: { state: "error", error: "transcript unreadable", retrying: false }, turn: null });
+    expect(host!.innerHTML).toContain("transcript unreadable");
+    const retry = [...host!.querySelectorAll("button")].find((button) => button.textContent === "Retry");
     await act(async () => {
-      resolveStart("turn-x");
-      await send;
+      retry?.click();
     });
-    expect(interrupted).toEqual(["turn-x"]);
-    expect(useAppStore.getState().busyTurns["sess_sup"]).toBeUndefined();
+    expect(reloads).toEqual([sessionId]);
+    expect(fatalErrors(errors)).toEqual([]);
   });
 
   it("settles model effort fallback on the new-session form", async () => {
@@ -641,133 +491,6 @@ describe("new-session crash repro (interactive)", () => {
     }
   });
 
-  it("stores todo.updated events per session", async () => {
-    const { useAppStore } = await mount();
-    emitSessionId = "sess_todos";
-    await emitAll({
-      type: "todo.updated",
-      turnId: "turn-1",
-      todos: [{ content: "write tests", status: "in_progress", priority: "high" }]
-    });
-    expect(useAppStore.getState().todosBySession["sess_todos"]).toEqual([
-      { content: "write tests", status: "in_progress", priority: "high" }
-    ]);
-    expect(fatalErrors(errors)).toEqual([]);
-  });
-
-  it("clears stale todos when a new turn starts", async () => {
-    const { useAppStore } = await mount();
-    await act(async () => {
-      useAppStore.getState().setPendingDriver("opencode");
-    });
-    await act(async () => {
-      await useAppStore.getState().sendPendingPrompt("first task");
-    });
-    const sessionId = useAppStore.getState().activeSessionId!;
-    emitSessionId = sessionId;
-    await emitAll({
-      type: "todo.updated",
-      turnId: "turn-1",
-      todos: [{ content: "write tests", status: "in_progress", priority: "high" }]
-    });
-    expect(useAppStore.getState().todosBySession[sessionId]).toHaveLength(1);
-
-    await act(async () => {
-      await useAppStore.getState().sendPrompt("second task", []);
-    });
-    expect(useAppStore.getState().todosBySession[sessionId]).toEqual([]);
-    expect(fatalErrors(errors)).toEqual([]);
-  });
-
-  it("seeds todos from history when no live update arrived", async () => {
-    const { useAppStore } = await mount();
-    const bridge = (window as unknown as { cw: Record<string, unknown> }).cw;
-    bridge.getHistory = async () => [
-      {
-        id: "m1",
-        role: "tool",
-        text: "todowrite",
-        turnId: "turn-1",
-        todos: [{ content: "do it", status: "completed" }]
-      }
-    ];
-    await act(async () => {
-      await useAppStore.getState().ensureHistory("sess_hist");
-    });
-    expect(useAppStore.getState().todosBySession["sess_hist"]).toEqual([
-      { content: "do it", status: "completed" }
-    ]);
-    expect(fatalErrors(errors)).toEqual([]);
-  });
-
-  it("keeps live todos over history seeding", async () => {
-    const { useAppStore } = await mount();
-    emitSessionId = "sess_live";
-    await emitAll({
-      type: "todo.updated",
-      turnId: "turn-1",
-      todos: [{ content: "live", status: "pending" }]
-    });
-    const bridge = (window as unknown as { cw: Record<string, unknown> }).cw;
-    bridge.getHistory = async () => [
-      {
-        id: "m1",
-        role: "tool",
-        text: "todowrite",
-        turnId: "turn-0",
-        todos: [{ content: "stale", status: "completed" }]
-      }
-    ];
-    await act(async () => {
-      await useAppStore.getState().ensureHistory("sess_live");
-    });
-    expect(useAppStore.getState().todosBySession["sess_live"]).toEqual([
-      { content: "live", status: "pending" }
-    ]);
-    expect(fatalErrors(errors)).toEqual([]);
-  });
-
-  it("seeds the last todos from history", async () => {
-    const { useAppStore } = await mount();
-    const bridge = (window as unknown as { cw: Record<string, unknown> }).cw;
-    bridge.getHistory = async () => [
-      {
-        id: "m1",
-        role: "tool",
-        text: "todowrite",
-        turnId: "turn-1",
-        todos: [{ content: "first", status: "completed" }]
-      },
-      {
-        id: "m2",
-        role: "tool",
-        text: "todowrite",
-        turnId: "turn-1",
-        todos: [{ content: "second", status: "in_progress" }]
-      }
-    ];
-    await act(async () => {
-      await useAppStore.getState().ensureHistory("sess_last_todos");
-    });
-    expect(useAppStore.getState().todosBySession["sess_last_todos"]).toEqual([
-      { content: "second", status: "in_progress" }
-    ]);
-    expect(fatalErrors(errors)).toEqual([]);
-  });
-
-  it("seeds an explicit empty todo list from history", async () => {
-    const { useAppStore } = await mount();
-    const bridge = (window as unknown as { cw: Record<string, unknown> }).cw;
-    bridge.getHistory = async () => [
-      { id: "m1", role: "tool", text: "todowrite", turnId: "turn-1", todos: [] }
-    ];
-    await act(async () => {
-      await useAppStore.getState().ensureHistory("sess_empty_todos");
-    });
-    expect(useAppStore.getState().todosBySession["sess_empty_todos"]).toEqual([]);
-    expect(fatalErrors(errors)).toEqual([]);
-  });
-
   it("submits a new session with production-like IPC latency", async () => {
     mockDelays = true;
     const { App } = await import("../App.js");
@@ -795,8 +518,8 @@ describe("new-session crash repro (interactive)", () => {
       });
       const createdId = useAppStore.getState().activeSessionId;
       expect(createdId).toMatch(/^sess_/);
-      emitSessionId = createdId!;
-      await emitAll({ type: "assistant.delta", turnId: "turn-1", text: "working on it" });
+      await startThread(createdId!, "wire up the new flow with an image @.cw/pastes/x.png");
+      await appendAssistant(createdId!, "working on it");
 
       await act(async () => {
         await new Promise((r) => setTimeout(r, 2500));

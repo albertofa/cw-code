@@ -227,8 +227,7 @@ export function createServices(stores: { sessionStore: SessionStore; settingsSto
     hub: hooks.topics,
     history: (sessionId) => sessions.getHistory(sessionId),
     liveTasks: (sessionId) => sessions.liveTasks(sessionId),
-    pendingRequests: (sessionId) => sessions.listPendingRequests(sessionId),
-    loadHistoryOnSubscribe: false
+    pendingRequests: (sessionId) => sessions.listPendingRequests(sessionId)
   });
   const turns = new TurnService({ sessions, threads });
   const autoFollowUp = new AutoFollowUpEngine({

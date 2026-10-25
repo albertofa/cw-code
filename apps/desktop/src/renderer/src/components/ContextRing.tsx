@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { DriverName } from "../cw.js";
-import { useAppStore } from "../stores/appStore.js";
 import { useUsageStore } from "../stores/usageStore.js";
 import { usePrStore } from "../stores/prStore.js";
 import { DriverIcon } from "./DriverIcon.js";
@@ -11,8 +10,9 @@ import { formatRelativeAge } from "./prInboxModel.js";
 import { formatTokensShort } from "./subagents.js";
 import { formatDuration } from "./toolSummaries.js";
 import { harnessLabel } from "./toolTabs.js";
-import { contextMeter, totals, turnTokens } from "./usageModel.js";
+import { totals } from "./usageModel.js";
 import { useThreadVisible } from "./threadVisibility.js";
+import { useThreadEntry } from "./useThread.js";
 
 const RING_CIRCUMFERENCE = 2 * Math.PI * 7.5;
 
@@ -20,8 +20,9 @@ export function ContextRing({ sessionId, driver }: { sessionId: string; driver: 
   const [open, setOpen] = useState(false);
   const visible = useThreadVisible();
   const rootRef = useRef<HTMLDivElement>(null);
-  const context = useAppStore((s) => s.turnUsageBySession[sessionId]?.context);
-  const lastTurn = useAppStore((s) => s.turnUsageBySession[sessionId]?.lastTurn);
+  const usage = useThreadEntry(sessionId, "usage");
+  const context = usage?.context ?? undefined;
+  const lastTurn = usage?.lastTurn ?? undefined;
   const snapshot = useUsageStore((s) => s.accountByDriver[driver]);
   const accountLoading = useUsageStore((s) => !!s.accountLoading[driver]);
   const accountError = useUsageStore((s) => s.accountError[driver]);
@@ -74,7 +75,7 @@ export function ContextRing({ sessionId, driver }: { sessionId: string; driver: 
 
   const sessTotals = useMemo(() => totals(sessionRows ?? []), [sessionRows]);
 
-  const meter = context ? contextMeter(context) : null;
+  const meter = usage?.meter ?? null;
   const percent = meter?.percent ?? null;
   const severityClass = meter?.severity ? ` ${meter.severity}` : "";
   const title = percent === null ? "No context data yet" : `Context window · ${Math.round(percent * 100)}% used`;
@@ -147,7 +148,7 @@ export function ContextRing({ sessionId, driver }: { sessionId: string; driver: 
                 <span>Last turn</span>
                 <b>
                   {lastTurn
-                    ? `${formatTokensShort(turnTokens(lastTurn))} tok${lastTurn.durationMs !== undefined ? ` · ${formatDuration(lastTurn.durationMs)}` : ""}`
+                    ? `${formatTokensShort(lastTurn.tokens)} tok${lastTurn.durationMs !== null ? ` · ${formatDuration(lastTurn.durationMs)}` : ""}`
                     : "—"}
                 </b>
               </div>

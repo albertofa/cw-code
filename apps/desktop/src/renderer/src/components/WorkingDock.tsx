@@ -1,9 +1,8 @@
 import { useEffect, useRef, useState } from "react";
-import { useAppStore, type ChatMessage } from "../stores/appStore.js";
+import type { ChatMessage } from "../stores/appStore.js";
 import { describeToolCall, formatDuration, isRunningTool, relativizeToBase } from "./toolSummaries.js";
 import { useElapsed } from "./useElapsed.js";
-
-const NO_MESSAGES: ChatMessage[] = [];
+import { runningTurnId, useThreadEntry, useThreadItemsSelect } from "./useThread.js";
 
 function runningStep(messages: ChatMessage[], turnId: string, basePath: string): string | undefined {
   for (let i = messages.length - 1; i >= 0; i--) {
@@ -27,19 +26,17 @@ function WorkingElapsed({ startedAt }: { startedAt: number }) {
 }
 
 export function WorkingDock({ sessionId, basePath }: { sessionId: string; basePath: string }) {
-  const turnId = useAppStore((s) => s.busyTurns[sessionId]);
-  const startedAt = useAppStore((s) => s.turnStartedAt[sessionId]);
-  const waiting = useAppStore((s) =>
-    (s.pendingApprovals[sessionId]?.length ?? 0) > 0
-      ? "waiting for approval"
-      : (s.pendingQuestions[sessionId]?.length ?? 0) > 0
-        ? "waiting for your answer"
-        : undefined
-  );
-  const step = useAppStore((s) =>
-    turnId === undefined ? undefined : runningStep(s.messagesBySession[sessionId] ?? NO_MESSAGES, turnId, basePath)
-  );
-  const running = turnId !== undefined;
+  const turn = useThreadEntry(sessionId, "turn");
+  const approvals = useThreadEntry(sessionId, "approvals");
+  const questions = useThreadEntry(sessionId, "questions");
+  const startedAt = turn?.startedAt;
+  const waiting =
+    (approvals?.length ?? 0) > 0 ? "waiting for approval" : (questions?.length ?? 0) > 0 ? "waiting for your answer" : undefined;
+  const step = useThreadItemsSelect(sessionId, (items) => {
+    const turnId = runningTurnId(turn, items);
+    return turnId === undefined ? undefined : runningStep(items, turnId, basePath);
+  });
+  const running = turn != null;
   const [announcement, setAnnouncement] = useState("");
   const wasRunning = useRef(running);
 

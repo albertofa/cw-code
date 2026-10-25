@@ -1,22 +1,17 @@
 import { create } from "zustand";
-import type { CommandInvocation, SessionRow, SessionStatusReason, SidebarDefaults } from "@cw-code/contracts";
+import type { CommandInvocation, SessionRow, SessionStatusReason, SidebarDefaults, ThreadItem } from "@cw-code/contracts";
 import type {
-  ActiveTurn,
   AppSettings,
   ApprovalDecision,
-  ApprovalRequest,
   ComposerPrefs,
-  ContextUsage,
   CreateSessionOptions,
   CustomTheme,
   DriverName,
-  HistoryMessage,
   GitStatus,
   ImportSessionRequest,
   PrRef,
   Project,
   ProjectSettings,
-  QuestionRequest,
   Session,
   SessionStatus,
   NotificationSoundSettings,
@@ -24,65 +19,28 @@ import type {
   ShutdownAssessment,
   ShutdownReason,
   SubagentToolsResult,
-  TaskSnapshot,
-  TodoItem,
-  TokenCounts,
-  TurnEvent,
-  TurnModelUsage,
   UpdateActionResult,
   UpdateChannel,
   UpdateState
 } from "../cw.js";
 import type { DirtyBuffer } from "./editorBuffers.js";
 import { usePanelStore } from "./panelStore.js";
-import { appendAssistantText, appendReasoningText, closeReasoning, upsertToolCall } from "../components/chatMessages.js";
 import { DEFAULT_APPEARANCE, appearanceOf, type AppearancePrefs } from "../appearanceFonts.js";
 import { getLastModel, pushRecentModel } from "../components/lastModel.js";
 import { defaultModelPatch } from "../components/modelMenus.js";
 import { fallbackHarness } from "../components/harnessAvailability.js";
-import { formatDuration, mergeToolPairs } from "../components/toolSummaries.js";
 import { projectDriver, withProjectPrefs } from "../components/projectDefaults.js";
 import { useNotifs } from "../components/Notifications.js";
 import { ipcErrorMessage } from "../components/ipcError.js";
 import { currentCheckoutSessionIds } from "../components/sessionBranch.js";
 import { sameItems, sessionsByProjectOf } from "../server/sidebarData.js";
+import { isThreadBusy } from "../components/useThread.js";
 import { useBranchStore } from "./branchStore.js";
 import { shouldApplyUpdateState } from "./updateThrottle.js";
 
 const GIT_REFRESH_BATCH = 6;
-const PENDING_PREFIX = "pending:";
-const LOCAL_NOTICE_TURN_ID = "worktree-cleanup";
-
-function hasLoadedMessages(messages: ChatMessage[] | undefined): boolean {
-  return (messages ?? []).some((m) => m.turnId !== LOCAL_NOTICE_TURN_ID);
-}
-
-function historyAheadOfLive(history: ChatMessage[], current: ChatMessage[]): ChatMessage[] {
-  const live = current.filter((m) => m.turnId !== LOCAL_NOTICE_TURN_ID);
-  const ids = new Set(live.map((m) => m.id));
-  const turnIds = new Set(live.map((m) => m.turnId));
-  const stamps = live.flatMap((m) => (m.timestamp !== undefined ? [m.timestamp] : []));
-  const liveSince = stamps.length > 0 ? Math.min(...stamps) : undefined;
-  const earlier = history.filter(
-    (m) =>
-      !ids.has(m.id) &&
-      !turnIds.has(m.turnId) &&
-      (liveSince === undefined || m.timestamp === undefined || m.timestamp < liveSince)
-  );
-  return [...earlier, ...current];
-}
-let pendingSeq = 0;
 let lastUpdateAppliedAt = 0;
 let pendingPromptInFlight = false;
-
-function nextPendingTurnId(): string {
-  pendingSeq += 1;
-  return `${PENDING_PREFIX}${pendingSeq}`;
-}
-
-function isPendingTurn(value: string | undefined): boolean {
-  return value !== undefined && value.startsWith(PENDING_PREFIX);
-}
 
 export class NewSessionRefusedError extends Error {
   constructor(message: string) {
@@ -105,16 +63,7 @@ async function refreshGitStatusInBatches(ids: string[], refresh: (id: string) =>
   }
 }
 
-export interface ChatMessage extends HistoryMessage {
-  toolInput?: unknown;
-  toolOutput?: string;
-  toolDone?: boolean;
-  toolStartedAt?: number;
-  toolCompletedAt?: number;
-  reasoningStartedAt?: number;
-  retryable?: boolean;
-  severity?: "warning";
-}
+export type ChatMessage = ThreadItem;
 
 export const DEFAULT_COMPOSER: Required<Pick<ComposerPrefs, "effort" | "permissionMode">> & ComposerPrefs = {
   effort: "medium",
@@ -196,29 +145,6 @@ function defaultModelsFrom(settings: AppSettings): Record<DriverName, string> {
   };
 }
 
-export interface TurnUsage {
-  context?: ContextUsage;
-  lastTurn: TokenCounts & { costUsd: number | null; durationMs?: number };
-}
-
-function sumTurnUsage(usage: TurnModelUsage[]): TokenCounts & { costUsd: number | null } {
-  let inputTokens = 0;
-  let cacheReadTokens = 0;
-  let cacheWriteTokens = 0;
-  let outputTokens = 0;
-  let reasoningTokens = 0;
-  let costUsd: number | null = null;
-  for (const entry of usage) {
-    inputTokens += entry.inputTokens;
-    cacheReadTokens += entry.cacheReadTokens;
-    cacheWriteTokens += entry.cacheWriteTokens;
-    outputTokens += entry.outputTokens;
-    reasoningTokens += entry.reasoningTokens;
-    if (entry.costUsd !== null) costUsd = (costUsd ?? 0) + entry.costUsd;
-  }
-  return { inputTokens, cacheReadTokens, cacheWriteTokens, outputTokens, reasoningTokens, costUsd };
-}
-
 export type ShutdownPhase = "review" | "waiting" | "saving" | "preparing" | "timeout";
 
 export interface ShutdownUiState {
@@ -250,22 +176,11 @@ interface AppState {
   sessionsByProject: Record<string, Session[]>;
   activeProjectId: string | null;
   activeSessionId: string | null;
-  messagesBySession: Record<string, ChatMessage[]>;
-  todosBySession: Record<string, TodoItem[]>;
-  turnUsageBySession: Record<string, TurnUsage>;
-  busyTurns: Record<string, string>;
-  loadingHistory: Record<string, boolean>;
-  historyLoadedBySession: Record<string, boolean>;
-  historyErrorBySession: Record<string, string>;
-  turnStartedAt: Record<string, number>;
-  turnDurations: Record<string, Record<string, number>>;
   composerBySession: Record<string, ComposerPrefs>;
   composerLoadedBySession: Record<string, boolean>;
   pendingDriver: DriverName | null;
   lastDriver: DriverName;
   installedHarnesses: DriverName[] | null;
-  pendingApprovals: Record<string, ApprovalRequest[]>;
-  pendingQuestions: Record<string, QuestionRequest[]>;
   pendingPrefs: ComposerPrefs;
   pendingWorkspace: CreateSessionOptions;
   newSessionError: string | null;
@@ -295,11 +210,9 @@ interface AppState {
   addProjectForNewSession(rootPath: string): Promise<void>;
   setPendingProject(projectId: string): void;
   selectSession(sessionId: string): void;
-  hydrateActiveTurns(): Promise<void>;
   startNewSession(driver?: DriverName): void;
   setPendingDriver(driver: DriverName): void;
   sendPendingPrompt(prompt: string, attachments?: string[], opts?: ComposerSendOptions): Promise<void>;
-  ensureHistory(sessionId: string, opts?: { force?: boolean; isRetry?: boolean }): Promise<void>;
   subagentToolsByKey: Record<string, SubagentToolsResult>;
   subagentToolsLoading: Record<string, boolean>;
   loadSubagentTools(sessionId: string, agentId: string): Promise<void>;
@@ -326,8 +239,7 @@ interface AppState {
   interrupt(): Promise<void>;
   retryConnection(sessionId: string): Promise<void>;
   respondApproval(requestId: string, decision: ApprovalDecision): Promise<void>;
-  respondQuestion(sessionId: string, requestId: string, answers: Record<string, string>): Promise<void>;
-  applyEvent(sessionId: string, event: TurnEvent): void;
+  respondQuestion(requestId: string, answers: Record<string, string>): Promise<void>;
   updates: UpdateState | null;
   subscribeUpdates(): () => void;
   applyUpdateState(state: UpdateState): void;
@@ -336,89 +248,6 @@ interface AppState {
   setUpdateChannel(channel: UpdateChannel): Promise<UpdateActionResult>;
   setUpdateBackgroundDownload(enabled: boolean): Promise<AppSettings>;
   updateRestartPending: boolean;
-}
-
-const bufferedTasks = new Map<string, Map<string, TaskSnapshot>>();
-const BUFFERED_TASKS_PER_SESSION = 200;
-
-function bufferTask(sessionId: string, task: TaskSnapshot): void {
-  const forSession = bufferedTasks.get(sessionId) ?? new Map<string, TaskSnapshot>();
-  forSession.delete(task.id);
-  forSession.set(task.id, task);
-  if (forSession.size > BUFFERED_TASKS_PER_SESSION) {
-    const oldest = forSession.keys().next().value;
-    if (oldest !== undefined) forSession.delete(oldest);
-  }
-  bufferedTasks.set(sessionId, forSession);
-}
-
-function takeBufferedTask(sessionId: string, taskId: string): TaskSnapshot | undefined {
-  const forSession = bufferedTasks.get(sessionId);
-  const task = forSession?.get(taskId);
-  if (!forSession || !task) return undefined;
-  forSession.delete(taskId);
-  if (forSession.size === 0) bufferedTasks.delete(sessionId);
-  return task;
-}
-
-function withBufferedTasks(sessionId: string, messages: ChatMessage[]): ChatMessage[] {
-  const forSession = bufferedTasks.get(sessionId);
-  if (!forSession) return messages;
-  bufferedTasks.delete(sessionId);
-  let changed = false;
-  const out = messages.map((m) => {
-    const task = m.role === "tool" ? forSession.get(m.id) : undefined;
-    if (!task) return m;
-    changed = true;
-    return { ...m, task };
-  });
-  return changed ? out : messages;
-}
-
-function finalizeTurnTools(messages: ChatMessage[], turnId: string): ChatMessage[] {
-  let changed = false;
-  const out = messages.map((m) => {
-    if (m.role !== "tool" || m.turnId !== turnId) return m;
-    if (m.toolInput === undefined || m.toolDone === true || m.toolOutput !== undefined) return m;
-    changed = true;
-    return { ...m, toolDone: true, toolCompletedAt: Date.now() };
-  });
-  return changed ? out : messages;
-}
-
-function withoutRetryNotice(messages: ChatMessage[], turnId: string): ChatMessage[] {
-  const id = `${turnId}-retry`;
-  return messages.some((m) => m.id === id) ? messages.filter((m) => m.id !== id) : messages;
-}
-
-interface TurnBookkeeping {
-  busyTurns: Record<string, string>;
-  turnStartedAt: Record<string, number>;
-  turnDurations: Record<string, Record<string, number>>;
-}
-
-function closeTurn(book: TurnBookkeeping, sessionId: string, turnId: string | undefined): TurnBookkeeping {
-  const busyTurns = { ...book.busyTurns };
-  const turnStartedAt = { ...book.turnStartedAt };
-  const turnDurations = { ...book.turnDurations };
-  delete busyTurns[sessionId];
-  const startedAt = turnStartedAt[sessionId];
-  if (turnId !== undefined && startedAt !== undefined) {
-    turnDurations[sessionId] = {
-      ...(turnDurations[sessionId] ?? {}),
-      [turnId]: Math.max(0, Date.now() - startedAt)
-    };
-  }
-  delete turnStartedAt[sessionId];
-  return { busyTurns, turnStartedAt, turnDurations };
-}
-
-type TurnStartedEvent = Extract<TurnEvent, { type: "turn.started" }>;
-
-const ignoredTurnStarts = new Map<string, TurnStartedEvent>();
-
-function knownTurnId(value: string | undefined): string | undefined {
-  return value !== undefined && !isPendingTurn(value) ? value : undefined;
 }
 
 async function answerPendingRequest(answer: Promise<void>): Promise<void> {
@@ -435,25 +264,14 @@ export const useAppStore = create<AppState>((set, get) => ({
   sessionsByProject: {},
   activeProjectId: null,
   activeSessionId: null,
-  messagesBySession: {},
-  todosBySession: {},
-  turnUsageBySession: {},
-  busyTurns: {},
-  loadingHistory: {},
-  historyLoadedBySession: {},
-  historyErrorBySession: {},
   subagentToolsByKey: {},
   subagentToolsLoading: {},
-  turnStartedAt: {},
-  turnDurations: {},
   composerBySession: {},
   composerLoadedBySession: {},
   settingsLoaded: false,
   pendingDriver: null,
   lastDriver: "claude",
   installedHarnesses: null,
-  pendingApprovals: {},
-  pendingQuestions: {},
   pendingPrefs: { ...DEFAULT_COMPOSER },
   pendingWorkspace: defaultWorkspace(true),
   newSessionError: null,
@@ -608,7 +426,6 @@ export const useAppStore = create<AppState>((set, get) => ({
         console.warn(`openSession failed for ${picked.id}: ${err.message}`)
       );
     }
-    void get().ensureHistory(picked.id);
     void get().ensureComposer(picked.id);
     void get().refreshGitStatus(picked.id);
   },
@@ -673,33 +490,6 @@ export const useAppStore = create<AppState>((set, get) => ({
     await window.cw.restoreSession(sessionId);
   },
 
-  async hydrateActiveTurns() {
-    let active: ActiveTurn[] = [];
-    try {
-      active = await window.cw.activeTurns();
-    } catch (err) {
-      console.warn(`activeTurns failed: ${(err as Error).message}`);
-      return;
-    }
-    const localBusy = get().busyTurns;
-    const localStarted = get().turnStartedAt;
-    const durations = get().turnDurations;
-    const busy: Record<string, string> = {};
-    const startedAt: Record<string, number> = {};
-    for (const turn of active) {
-      if (durations[turn.sessionId]?.[turn.turnId] !== undefined) continue;
-      if (isPendingTurn(localBusy[turn.sessionId])) continue;
-      busy[turn.sessionId] = turn.turnId;
-      startedAt[turn.sessionId] = turn.startedAt;
-    }
-    for (const [sessionId, value] of Object.entries(localBusy)) {
-      if (!isPendingTurn(value)) continue;
-      busy[sessionId] = value;
-      startedAt[sessionId] = localStarted[sessionId] ?? Date.now();
-    }
-    set({ busyTurns: busy, turnStartedAt: startedAt });
-  },
-
   selectSession(sessionId: string) {
     const ownerId = sessionOwnerId(get().sessionsByProject, sessionId);
     set({
@@ -707,10 +497,8 @@ export const useAppStore = create<AppState>((set, get) => ({
       pendingDriver: null,
       ...(ownerId && ownerId !== get().activeProjectId ? { activeProjectId: ownerId } : {})
     });
-    void get().ensureHistory(sessionId);
     void get().ensureComposer(sessionId);
     void get().refreshGitStatus(sessionId);
-    void get().hydrateActiveTurns();
   },
 
   startNewSession(driver?: DriverName) {
@@ -762,67 +550,6 @@ export const useAppStore = create<AppState>((set, get) => ({
       await get().sendPrompt(prompt, attachments, opts);
     } finally {
       pendingPromptInFlight = false;
-    }
-  },
-
-  async ensureHistory(sessionId: string, opts?: { force?: boolean; isRetry?: boolean }) {
-    if (!opts?.force) {
-      if (get().historyLoadedBySession[sessionId]) return;
-      if (get().loadingHistory[sessionId]) return;
-    }
-    set({
-      loadingHistory: { ...get().loadingHistory, [sessionId]: true },
-      historyErrorBySession: Object.fromEntries(
-        Object.entries(get().historyErrorBySession).filter(([id]) => id !== sessionId)
-      )
-    });
-    try {
-      const history = await window.cw.getHistory(sessionId);
-      const current = get().messagesBySession[sessionId] ?? [];
-      const firstLoad = !get().historyLoadedBySession[sessionId];
-      set({ historyLoadedBySession: { ...get().historyLoadedBySession, [sessionId]: true } });
-      if (firstLoad && history.length > 0) {
-        const merged = withBufferedTasks(sessionId, mergeToolPairs(history));
-        set({
-          messagesBySession: {
-            ...get().messagesBySession,
-            [sessionId]: hasLoadedMessages(current) ? historyAheadOfLive(merged, current) : [...merged, ...current]
-          }
-        });
-        if (get().todosBySession[sessionId] === undefined) {
-          const seeded = [...merged].reverse().find((m) => m.todos !== undefined)?.todos;
-          if (seeded !== undefined) {
-            set({ todosBySession: { ...get().todosBySession, [sessionId]: seeded } });
-          }
-        }
-      }
-    } catch (err) {
-      const message = (err as Error).message;
-      set({ historyErrorBySession: { ...get().historyErrorBySession, [sessionId]: message } });
-      if (!opts?.isRetry) {
-        window.setTimeout(() => {
-          if (get().historyErrorBySession[sessionId]) {
-            void get().ensureHistory(sessionId, { force: true, isRetry: true });
-          }
-        }, 2000);
-      } else {
-        useNotifs.getState().push({
-          kind: "error",
-          title: "Could not load history",
-          message,
-          actions: [
-            {
-              label: "Retry",
-              primary: true,
-              onClick: () => void get().ensureHistory(sessionId, { force: true, isRetry: true })
-            }
-          ]
-        });
-      }
-    } finally {
-      const loading = { ...get().loadingHistory };
-      delete loading[sessionId];
-      set({ loadingHistory: loading });
     }
   },
 
@@ -951,7 +678,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         ...(stillHeld ? {} : { message: "The requested worktree no longer exists." })
       });
     }
-    set({ historyLoadedBySession: { ...get().historyLoadedBySession, [session.id]: true }, lastDriver: driver });
+    set({ lastDriver: driver });
     await selectWhenListed(session.id, () => set({ activeProjectId: projectId, activeSessionId: session.id, pendingDriver: null }));
     await get().ensureComposer(session.id);
     if (prefs) await get().setComposerPrefs(session.id, { ...prefs });
@@ -981,530 +708,42 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   async sendPromptTo(sessionId: string, prompt: string, attachments?: string[], opts?: SendPromptOptions) {
     if (!prompt.trim()) return;
-    if (isPendingTurn(get().busyTurns[sessionId])) throw new Error("session busy (turn pending)");
     const prefs = get().composerBySession[sessionId] ?? DEFAULT_COMPOSER;
-    const previousTodos = get().todosBySession[sessionId];
     const acceptFolderHead = opts?.acceptFolderHead ?? useBranchStore.getState().keptFolderHeadBySession[sessionId];
-    const pending = nextPendingTurnId();
-    ignoredTurnStarts.delete(sessionId);
-    set({
-      busyTurns: { ...get().busyTurns, [sessionId]: pending },
-      turnStartedAt: { ...get().turnStartedAt, [sessionId]: Date.now() },
-      todosBySession: { ...get().todosBySession, [sessionId]: [] }
+    await window.cw.startTurn(sessionId, prompt, {
+      prefs,
+      attachments,
+      ...(opts?.command ? { command: opts.command } : {}),
+      ...(opts?.skills?.length ? { skills: opts.skills } : {}),
+      ...(opts?.prRefs ? { prRefs: opts.prRefs } : {}),
+      ...(acceptFolderHead ? { acceptFolderHead } : {})
     });
-    let turnId: string;
-    try {
-      turnId = await window.cw.startTurn(sessionId, prompt, {
-        prefs,
-        attachments,
-        ...(opts?.command ? { command: opts.command } : {}),
-        ...(opts?.skills?.length ? { skills: opts.skills } : {}),
-        ...(opts?.prRefs ? { prRefs: opts.prRefs } : {}),
-        ...(acceptFolderHead ? { acceptFolderHead } : {})
-      });
-    } catch (err) {
-      const remoteStart = ignoredTurnStarts.get(sessionId);
-      ignoredTurnStarts.delete(sessionId);
-      if (get().busyTurns[sessionId] === pending) {
-        const book = closeTurn(
-          { busyTurns: get().busyTurns, turnStartedAt: get().turnStartedAt, turnDurations: get().turnDurations },
-          sessionId,
-          undefined
-        );
-        set({
-          busyTurns: book.busyTurns,
-          turnStartedAt: book.turnStartedAt,
-          turnDurations: book.turnDurations,
-          ...(previousTodos && previousTodos.length > 0 && (get().todosBySession[sessionId] ?? []).length === 0
-            ? { todosBySession: { ...get().todosBySession, [sessionId]: previousTodos } }
-            : {})
-        });
-        if (remoteStart) get().applyEvent(sessionId, remoteStart);
-      }
-      throw err;
-    }
-    ignoredTurnStarts.delete(sessionId);
-    const superseded = get().busyTurns[sessionId] !== pending;
-    const existing = get().messagesBySession[sessionId] ?? [];
-    set({
-      ...(superseded ? {} : { busyTurns: { ...get().busyTurns, [sessionId]: turnId } }),
-      ...(existing.some((m) => m.id === `${turnId}-u`)
-        ? {}
-        : {
-            messagesBySession: {
-              ...get().messagesBySession,
-              [sessionId]: [...existing, { id: `${turnId}-u`, role: "user", text: prompt, turnId, timestamp: Date.now() }]
-            }
-          })
-    });
-    if (superseded) void window.cw.interrupt(turnId);
-    else void get().hydrateActiveTurns();
   },
 
   async interrupt() {
     const sessionId = get().activeSessionId;
-    const turnId = sessionId ? get().busyTurns[sessionId] : undefined;
-    if (!turnId) return;
-    if (!isPendingTurn(turnId)) {
-      try {
-        await window.cw.interrupt(turnId);
-      } catch (err) {
-        useNotifs.getState().push({ kind: "error", title: "Could not stop the turn", message: ipcErrorMessage(err) });
-        return;
-      }
+    if (!sessionId || !isThreadBusy(sessionId)) return;
+    try {
+      await window.cw.stopTurn(sessionId);
+    } catch (err) {
+      useNotifs.getState().push({ kind: "error", title: "Could not stop the turn", message: ipcErrorMessage(err) });
     }
-    const book = closeTurn(
-      { busyTurns: get().busyTurns, turnStartedAt: get().turnStartedAt, turnDurations: get().turnDurations },
-      sessionId ?? "",
-      knownTurnId(turnId)
-    );
-    set({
-      busyTurns: book.busyTurns,
-      turnStartedAt: book.turnStartedAt,
-      turnDurations: book.turnDurations
-    });
   },
 
   async retryConnection(sessionId: string) {
     try {
-      const result = await window.cw.retryConnection(sessionId);
-      const running = result.status === "running" && result.turnId ? result.turnId : undefined;
-      const current = { busyTurns: get().busyTurns, turnStartedAt: get().turnStartedAt, turnDurations: get().turnDurations };
-      const book: TurnBookkeeping = running
-        ? {
-            busyTurns: { ...current.busyTurns, [sessionId]: running },
-            turnStartedAt: { ...current.turnStartedAt, [sessionId]: Date.now() },
-            turnDurations: current.turnDurations
-          }
-        : closeTurn(current, sessionId, knownTurnId(current.busyTurns[sessionId]));
-      set({
-        busyTurns: book.busyTurns,
-        turnStartedAt: book.turnStartedAt,
-        turnDurations: book.turnDurations,
-        messagesBySession: {
-          ...get().messagesBySession,
-          [sessionId]: withBufferedTasks(sessionId, mergeToolPairs(result.history))
-        },
-        historyLoadedBySession: { ...get().historyLoadedBySession, [sessionId]: true }
-      });
-      void get().hydrateActiveTurns();
+      await window.cw.retryConnection(sessionId);
     } catch (err) {
-      useNotifs.getState().push({
-        kind: "error",
-        title: "Could not reconnect",
-        message: (err as Error).message
-      });
+      useNotifs.getState().push({ kind: "error", title: "Could not reconnect", message: ipcErrorMessage(err) });
     }
   },
 
   async respondApproval(requestId: string, decision: ApprovalDecision) {
     await answerPendingRequest(window.cw.respondApproval(requestId, decision));
-    const approvals = get().pendingApprovals;
-    let changed = false;
-    const next: Record<string, ApprovalRequest[]> = {};
-    for (const [sessionId, list] of Object.entries(approvals)) {
-      const filtered = list.filter((p) => p.requestId !== requestId);
-      if (filtered.length !== list.length) changed = true;
-      next[sessionId] = filtered;
-    }
-    if (changed) set({ pendingApprovals: next });
   },
 
-  async respondQuestion(sessionId: string, requestId: string, answers: Record<string, string>) {
+  async respondQuestion(requestId: string, answers: Record<string, string>) {
     await answerPendingRequest(window.cw.respondQuestion(requestId, answers));
-    const pending = get().pendingQuestions[sessionId] ?? [];
-    set({
-      pendingQuestions: {
-        ...get().pendingQuestions,
-        [sessionId]: pending.filter((q) => q.requestId !== requestId)
-      }
-    });
-  },
-
-  applyEvent(sessionId: string, event: TurnEvent) {
-    let messages = get().messagesBySession[sessionId] ?? [];
-    if (event.type === "task.updated") {
-      const idx = messages.findIndex((m) => m.role === "tool" && m.id === event.task.id);
-      if (idx < 0) {
-        bufferTask(sessionId, event.task);
-        return;
-      }
-      set({
-        messagesBySession: {
-          ...get().messagesBySession,
-          [sessionId]: [...messages.slice(0, idx), { ...messages[idx], task: event.task }, ...messages.slice(idx + 1)]
-        }
-      });
-      return;
-    }
-    if (event.type === "session.notice") {
-      const id = `notice-${event.noticeId}`;
-      const notice: ChatMessage = {
-        id,
-        role: "system",
-        text: event.text,
-        turnId: LOCAL_NOTICE_TURN_ID,
-        ...(event.severity === "error" ? { isError: true } : event.severity === "warning" ? { severity: "warning" as const } : {})
-      };
-      const idx = messages.findIndex((m) => m.id === id);
-      set({
-        messagesBySession: {
-          ...get().messagesBySession,
-          [sessionId]: idx >= 0 ? [...messages.slice(0, idx), notice, ...messages.slice(idx + 1)] : [...messages, notice]
-        }
-      });
-      return;
-    }
-    if (event.type === "turn.started") {
-      const current = get().busyTurns[sessionId];
-      if (isPendingTurn(current)) {
-        ignoredTurnStarts.set(sessionId, event);
-        return;
-      }
-      if (current === event.turnId) return;
-      const userId = `${event.turnId}-u`;
-      set({
-        busyTurns: { ...get().busyTurns, [sessionId]: event.turnId },
-        turnStartedAt: { ...get().turnStartedAt, [sessionId]: event.startedAt },
-        todosBySession: { ...get().todosBySession, [sessionId]: [] },
-        ...(event.prompt === "" || messages.some((m) => m.id === userId)
-          ? {}
-          : {
-              messagesBySession: {
-                ...get().messagesBySession,
-                [sessionId]: [...messages, { id: userId, role: "user", text: event.prompt, turnId: event.turnId, timestamp: event.startedAt }]
-              }
-            })
-      });
-      return;
-    }
-    if (event.type === "turn.interrupted") {
-      if (get().busyTurns[sessionId] !== event.turnId) return;
-      const book = closeTurn(
-        { busyTurns: get().busyTurns, turnStartedAt: get().turnStartedAt, turnDurations: get().turnDurations },
-        sessionId,
-        event.turnId
-      );
-      const approvals = { ...get().pendingApprovals };
-      delete approvals[sessionId];
-      const questions = { ...get().pendingQuestions };
-      delete questions[sessionId];
-      set({
-        busyTurns: book.busyTurns,
-        turnStartedAt: book.turnStartedAt,
-        turnDurations: book.turnDurations,
-        pendingApprovals: approvals,
-        pendingQuestions: questions
-      });
-      return;
-    }
-    if (event.type !== "turn.retry" && event.type !== "turn.done" && event.type !== "turn.error" && "turnId" in event) {
-      const stripped = withoutRetryNotice(messages, event.turnId);
-      if (stripped !== messages) {
-        messages = stripped;
-        set({ messagesBySession: { ...get().messagesBySession, [sessionId]: stripped } });
-      }
-    }
-    if (event.type === "reasoning.delta") {
-      set({
-        messagesBySession: {
-          ...get().messagesBySession,
-          [sessionId]: appendReasoningText(messages, event.turnId, event.text, Date.now())
-        }
-      });
-      return;
-    }
-    messages = closeReasoning(messages, Date.now());
-    if (event.type === "assistant.delta") {
-      set({
-        messagesBySession: {
-          ...get().messagesBySession,
-          [sessionId]: appendAssistantText(messages, event.turnId, event.text)
-        }
-      });
-    } else if (event.type === "context.compacted") {
-      const id = `${event.turnId}-compaction`;
-      const marker: ChatMessage = {
-        id,
-        role: "system",
-        text: "Context compacted",
-        turnId: event.turnId,
-        compaction: event.compaction
-      };
-      const idx = messages.findIndex((m) => m.id === id);
-      const nextMessages =
-        idx >= 0
-          ? [...messages.slice(0, idx), marker, ...messages.slice(idx + 1)]
-          : [...messages, marker];
-      const usage = get().turnUsageBySession[sessionId];
-      set({
-        messagesBySession: { ...get().messagesBySession, [sessionId]: nextMessages },
-        ...(event.context
-          ? {
-              turnUsageBySession: {
-                ...get().turnUsageBySession,
-                [sessionId]: {
-                  context: event.context,
-                  lastTurn:
-                    usage?.lastTurn ?? {
-                      inputTokens: 0,
-                      cacheReadTokens: 0,
-                      cacheWriteTokens: 0,
-                      outputTokens: 0,
-                      reasoningTokens: 0,
-                      costUsd: null
-                    }
-                }
-              }
-            }
-          : {})
-      });
-    } else if (event.type === "approval.request") {
-      const pending = get().pendingApprovals[sessionId] ?? [];
-      if (pending.some((p) => p.requestId === event.request.requestId)) return;
-      set({
-        pendingApprovals: {
-          ...get().pendingApprovals,
-          [sessionId]: [...pending, event.request]
-        }
-      });
-    } else if (event.type === "approval.resolved") {
-      const pending = (get().pendingApprovals[sessionId] ?? []).filter(
-        (p) => p.requestId !== event.requestId
-      );
-      set({
-        pendingApprovals: {
-          ...get().pendingApprovals,
-          [sessionId]: pending
-        }
-      });
-    } else if (event.type === "question.request") {
-      const pending = get().pendingQuestions[sessionId] ?? [];
-      if (pending.some((q) => q.requestId === event.request.requestId)) return;
-      set({
-        pendingQuestions: {
-          ...get().pendingQuestions,
-          [sessionId]: [...pending, event.request]
-        }
-      });
-    } else if (event.type === "question.resolved") {
-      const pending = (get().pendingQuestions[sessionId] ?? []).filter(
-        (q) => q.requestId !== event.requestId
-      );
-      const notes: ChatMessage[] = event.answers
-        ? [
-            {
-              id: `${event.requestId}-ans`,
-              role: "tool",
-              text: Object.entries(event.answers)
-                .map(([q, a]) => `${q} → ${a}`)
-                .join("\n"),
-              turnId: event.turnId,
-              toolCompletedAt: Date.now()
-            }
-          ]
-        : [];
-      set({
-        pendingQuestions: {
-          ...get().pendingQuestions,
-          [sessionId]: pending
-        },
-        messagesBySession: {
-          ...get().messagesBySession,
-          [sessionId]: [...messages, ...notes]
-        }
-      });
-    } else if (event.type === "tool.call") {
-      const buffered = takeBufferedTask(sessionId, event.toolCallId);
-      set({
-        messagesBySession: {
-          ...get().messagesBySession,
-          [sessionId]: upsertToolCall(messages, buffered && !event.task ? { ...event, task: buffered } : event, Date.now())
-        }
-      });
-    } else if (event.type === "tool.result") {
-      const idx = messages.findIndex((m) => m.role === "tool" && (m.id === event.toolCallId || m.id === `${event.toolCallId}-r`));
-      if (idx >= 0 && messages[idx].role === "tool") {
-        const updated = [...messages];
-        const call = updated[idx];
-        updated[idx] = {
-          ...call,
-          ...(call.id === `${event.toolCallId}-r` ? { text: event.output.slice(0, 1000) } : {}),
-          toolOutput: event.output.slice(0, 8000),
-          toolDone: true,
-          toolCompletedAt: Date.now(),
-          isError: call.isError === true || event.isError,
-          ...(event.outputEmpty !== undefined ? { toolOutputEmpty: event.outputEmpty } : {}),
-          ...(event.usage ? { toolUsage: event.usage } : {}),
-          ...(event.agentId ? { subagentAgentId: event.agentId } : {}),
-          ...(event.model ? { subagentModel: event.model } : {})
-        };
-        set({
-          messagesBySession: { ...get().messagesBySession, [sessionId]: updated }
-        });
-      } else {
-        set({
-          messagesBySession: {
-            ...get().messagesBySession,
-            [sessionId]: [
-              ...messages,
-              {
-                id: `${event.toolCallId}-r`,
-                role: "tool",
-                text: event.output.slice(0, 1000),
-                turnId: event.turnId,
-                isError: event.isError,
-                ...(event.outputEmpty !== undefined ? { toolOutputEmpty: event.outputEmpty } : {}),
-                ...(event.usage ? { toolUsage: event.usage } : {}),
-                ...(event.agentId ? { subagentAgentId: event.agentId } : {}),
-                ...(event.model ? { subagentModel: event.model } : {}),
-                toolCompletedAt: Date.now()
-              }
-            ]
-          }
-        });
-      }
-    } else if (event.type === "todo.updated") {
-      set({
-        todosBySession: { ...get().todosBySession, [sessionId]: event.todos }
-      });
-    } else if (event.type === "turn.retry") {
-      const id = `${event.turnId}-retry`;
-      const now = Date.now();
-      const attempt = event.attempt > 0 ? ` (attempt ${event.attempt})` : "";
-      const wait = event.retryAt > now ? ` in ${formatDuration(event.retryAt - now)}` : "";
-      const lines = [`Retrying${wait}${attempt}: ${event.message}`];
-      if (event.detail) lines.push(event.detail);
-      if (event.link) lines.push(event.link);
-      const text = lines.join("\n");
-      const idx = messages.findIndex((m) => m.id === id);
-      const notice: ChatMessage = { id, role: "system", text, turnId: event.turnId, severity: "warning" };
-      set({
-        messagesBySession: {
-          ...get().messagesBySession,
-          [sessionId]:
-            idx >= 0
-              ? [...messages.slice(0, idx), { ...messages[idx], text }, ...messages.slice(idx + 1)]
-              : [...messages, notice]
-        }
-      });
-    } else if (event.type === "turn.done") {
-      const backgroundTasks = event.backgroundTasks ?? 0;
-      const busyForSession = get().busyTurns[sessionId];
-      const busyMatch = busyForSession === event.turnId;
-      const isFinal = busyMatch && backgroundTasks === 0;
-      const superseded = busyForSession !== undefined && !busyMatch;
-      const book = isFinal
-        ? closeTurn(
-            { busyTurns: get().busyTurns, turnStartedAt: get().turnStartedAt, turnDurations: get().turnDurations },
-            sessionId,
-            event.turnId
-          )
-        : { busyTurns: get().busyTurns, turnStartedAt: get().turnStartedAt, turnDurations: get().turnDurations };
-      const approvals = { ...get().pendingApprovals };
-      if (busyMatch) delete approvals[sessionId];
-      const questions = { ...get().pendingQuestions };
-      if (busyMatch) delete questions[sessionId];
-      let turnMessages = finalizeTurnTools(messages, event.turnId).filter(
-        (m) => m.id !== `${event.turnId}-retry`
-      );
-      if (!event.isError) {
-        const resultText = event.resultText ?? "";
-        if (resultText.trim()) {
-          const shown = turnMessages
-            .filter((m) => m.role === "assistant" && m.turnId === event.turnId)
-            .map((m) => m.text)
-            .join("\n");
-          const squash = (s: string) => s.replace(/\s+/g, " ").trim();
-          const alreadyShown = shown.includes(resultText) || squash(shown).includes(squash(resultText));
-          if (!alreadyShown) {
-            const last = turnMessages[turnMessages.length - 1];
-            const lastIsAssistant = !!last && last.role === "assistant" && last.turnId === event.turnId;
-            const prefixSource =
-              shown.trim() && resultText.startsWith(shown)
-                ? shown
-                : lastIsAssistant && last.text.trim() && resultText.startsWith(last.text)
-                  ? last.text
-                  : null;
-            if (prefixSource !== null) {
-              const suffix = resultText.slice(prefixSource.length);
-              if (suffix.trim()) turnMessages = appendAssistantText(turnMessages, event.turnId, suffix);
-            } else {
-              turnMessages = appendAssistantText(turnMessages, event.turnId, resultText);
-            }
-          }
-        }
-      }
-      if (event.isError && !turnMessages.some((m) => m.id === `${event.turnId}-e`)) {
-        turnMessages = [
-          ...turnMessages,
-          {
-            id: `${event.turnId}-e`,
-            role: "system",
-            text: `Error: ${event.resultText || "Claude reported an error with no output."}`,
-            turnId: event.turnId,
-            isError: true
-          }
-        ];
-      }
-      set({
-        busyTurns: book.busyTurns,
-        turnStartedAt: book.turnStartedAt,
-        turnDurations: book.turnDurations,
-        pendingApprovals: approvals,
-        pendingQuestions: questions,
-        messagesBySession: {
-          ...get().messagesBySession,
-          [sessionId]: turnMessages
-        },
-        turnUsageBySession: superseded
-          ? get().turnUsageBySession
-          : {
-              ...get().turnUsageBySession,
-              [sessionId]: {
-                context: event.context ?? get().turnUsageBySession[sessionId]?.context,
-                lastTurn: {
-                  ...sumTurnUsage(event.usage),
-                  durationMs: book.turnDurations[sessionId]?.[event.turnId]
-                }
-              }
-            }
-      });
-    } else if (event.type === "turn.error") {
-      const book =
-        get().busyTurns[sessionId] === event.turnId
-          ? closeTurn(
-              { busyTurns: get().busyTurns, turnStartedAt: get().turnStartedAt, turnDurations: get().turnDurations },
-              sessionId,
-              event.turnId
-            )
-          : { busyTurns: get().busyTurns, turnStartedAt: get().turnStartedAt, turnDurations: get().turnDurations };
-      const approvals = { ...get().pendingApprovals };
-      delete approvals[sessionId];
-      const questions = { ...get().pendingQuestions };
-      delete questions[sessionId];
-      set({
-        busyTurns: book.busyTurns,
-        turnStartedAt: book.turnStartedAt,
-        turnDurations: book.turnDurations,
-        pendingApprovals: approvals,
-        pendingQuestions: questions,
-        messagesBySession: {
-          ...get().messagesBySession,
-          [sessionId]: [
-            ...finalizeTurnTools(messages, event.turnId).filter((m) => m.id !== `${event.turnId}-retry`),
-            {
-              id: `${event.turnId}-e`,
-              role: "system",
-              text: `Error: ${event.message}`,
-              turnId: event.turnId,
-              isError: true,
-              ...(event.retryable ? { retryable: true } : {})
-            }
-          ]
-        }
-      });
-    }
   }
 }));
 

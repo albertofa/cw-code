@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
-import { useShallow } from "zustand/react/shallow";
 import { applyAppearance } from "./appearanceFonts.js";
 import { ThemeSync } from "./components/ThemeSync.js";
 import { HarnessNotices } from "./components/HarnessNotices.js";
 import { collectSubagents } from "./components/subagents.js";
+import { useThreadItemsSelect } from "./components/useThread.js";
 import { Sidebar } from "./components/Sidebar.js";
 import { WindowControls } from "./components/WindowControls.js";
 import { SkillsModal } from "./components/SkillsModal.js";
@@ -29,15 +29,14 @@ import { Notifications } from "./components/Notifications.js";
 import { useNotificationSounds } from "./components/useNotificationSounds.js";
 import { useHoldPrs } from "./components/usePrs.js";
 import { visibleLayerOpen } from "./components/openLayer.js";
-import { useAppStore } from "./stores/appStore.js";
+import { useAppStore, type ChatMessage } from "./stores/appStore.js";
 import { rightOpenTabs } from "./stores/panelLayout.js";
 import { selectSessionPanel, usePanelStore } from "./stores/panelStore.js";
 import { usePrStore } from "./stores/prStore.js";
 import { useSkillsStore } from "./stores/skillsStore.js";
 import { projectDirty, useSettingsDraftStore } from "./stores/settingsDraftStore.js";
 import { prKey } from "./components/prInbox.js";
-import type { TurnEvent } from "./cw.js";
-import { gitTopic, sessionTopic } from "@cw-code/shared/topics";
+import { gitTopic } from "@cw-code/shared/topics";
 import { startAppBridge } from "./server/appBridge.js";
 import { startSidebarBridge } from "./server/sidebarBridge.js";
 import { useDocumentVisible, useTopics } from "./server/useTopics.js";
@@ -45,62 +44,24 @@ import { useDocumentVisible, useTopics } from "./server/useTopics.js";
 const RIGHT_WIDTH_DEFAULT = 520;
 const SIDE_WIDTH_DEFAULT = 320;
 
-const pendingDeltas = new Map<string, string>();
-let deltaRaf = 0;
-
-function flushPendingDeltas(): void {
-  if (pendingDeltas.size === 0) return;
-  const state = useAppStore.getState();
-  for (const [key, text] of pendingDeltas) {
-    const sep = key.indexOf("\n");
-    const sessionId = key.slice(0, sep);
-    const turnId = key.slice(sep + 1);
-    state.applyEvent(sessionId, { type: "assistant.delta", turnId, text });
-  }
-  pendingDeltas.clear();
-  if (deltaRaf !== 0) {
-    cancelAnimationFrame(deltaRaf);
-    deltaRaf = 0;
-  }
+interface SubagentStats {
+  total: number;
+  running: number;
 }
 
-function flushPendingDeltasForSession(sessionId: string): void {
-  const prefix = `${sessionId}\n`;
-  const state = useAppStore.getState();
-  let changed = false;
-  for (const [key, text] of [...pendingDeltas]) {
-    if (!key.startsWith(prefix)) continue;
-    pendingDeltas.delete(key);
-    state.applyEvent(sessionId, { type: "assistant.delta", turnId: key.slice(prefix.length), text });
-    changed = true;
-  }
-  if (changed && pendingDeltas.size === 0 && deltaRaf !== 0) {
-    cancelAnimationFrame(deltaRaf);
-    deltaRaf = 0;
-  }
+function subagentStatsOf(items: ChatMessage[]): SubagentStats {
+  const subagents = collectSubagents(items);
+  return { total: subagents.length, running: subagents.filter((item) => item.status === "running").length };
 }
 
-function handleTurnEvent(msg: { sessionId: string; event: TurnEvent }): void {
-  if (msg.event.type === "assistant.delta") {
-    const key = `${msg.sessionId}\n${msg.event.turnId}`;
-    pendingDeltas.set(key, (pendingDeltas.get(key) ?? "") + msg.event.text);
-    if (deltaRaf === 0) {
-      deltaRaf = requestAnimationFrame(() => {
-        deltaRaf = 0;
-        flushPendingDeltas();
-      });
-    }
-    return;
-  }
-  flushPendingDeltasForSession(msg.sessionId);
-  useAppStore.getState().applyEvent(msg.sessionId, msg.event);
+function sameSubagentStats(a: SubagentStats, b: SubagentStats): boolean {
+  return a.total === b.total && a.running === b.running;
 }
 
 export function App() {
   useHoldPrs();
   useNotificationSounds();
   const activeSessionId = useAppStore((s) => s.activeSessionId);
-  const sessionsByProject = useAppStore((s) => s.sessionsByProject);
   const mainView = usePrStore((s) => s.mainView);
   const runModal = usePrStore((s) => s.runModal);
   const appearance = useAppStore((s) => s.appearance);
@@ -155,11 +116,9 @@ export function App() {
       setPreloadError("window.cw is missing — preload did not load. Restart the Electron app (plain browsers can't reach the backend).");
       return;
     }
-    const off = window.cw.onTurnEvent(handleTurnEvent);
     const offProject = window.cw.onProjectChanged((project) => useAppStore.getState().applyProject(project));
     const offApp = startAppBridge();
     const offSidebar = startSidebarBridge();
-    void useAppStore.getState().hydrateActiveTurns();
     const offSkills = window.cw.onSkillsChanged((result) => useSkillsStore.getState().applyList(result));
     const offComposer = window.cw.onComposerChanged(({ sessionId, prefs }) => useAppStore.getState().applyComposer(sessionId, prefs));
     const offGitStatus = window.cw.onGitStatus(({ sessionId, status }) => useAppStore.getState().applyGitStatus(sessionId, status));
@@ -194,7 +153,6 @@ export function App() {
     };
     window.addEventListener("keydown", onKey);
     return () => {
-      off();
       offProject();
       offApp();
       offSidebar();
@@ -204,21 +162,10 @@ export function App() {
       offUpdates();
       offShutdown();
       offShutdownExpired();
-      flushPendingDeltas();
       window.removeEventListener("keydown", onKey);
     };
   }, []);
 
-  const subscribedTopics = useMemo(() => {
-    const topics: string[] = [];
-    for (const session of Object.values(sessionsByProject).flat()) {
-      if (session.status === "resolved" || session.status === "archived") continue;
-      topics.push(sessionTopic(session.id));
-    }
-    if (activeSessionId) topics.push(sessionTopic(activeSessionId));
-    return topics;
-  }, [sessionsByProject, activeSessionId]);
-  useTopics(subscribedTopics);
 
   const documentVisible = useDocumentVisible();
   const gitTopics = useMemo(
@@ -246,12 +193,7 @@ export function App() {
     return () => window.removeEventListener("cw:open-agents", onOpenAgents);
   }, [activeSessionId, activateOrOpen, setRightVisible]);
 
-  const subagentStats = useAppStore(
-    useShallow((s) => {
-      const items = collectSubagents((activeSessionId ? s.messagesBySession[activeSessionId] : undefined) ?? []);
-      return { total: items.length, running: items.filter((item) => item.status === "running").length };
-    })
-  );
+  const subagentStats = useThreadItemsSelect(activeSessionId, subagentStatsOf, sameSubagentStats);
 
   const { driver, hasPr, hasPreview, isToolAvailable, rightTop: topTool } = useToolAvailability(activeSessionId ?? undefined);
 

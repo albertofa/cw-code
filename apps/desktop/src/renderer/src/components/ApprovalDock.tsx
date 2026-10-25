@@ -5,6 +5,7 @@ import { useAppStore } from "../stores/appStore.js";
 import { ipcErrorMessage } from "./ipcError.js";
 import { useNotifs } from "./Notifications.js";
 import { shortenHome } from "./pathDisplay.js";
+import { useThreadEntry } from "./useThread.js";
 
 function ApprovalPanel({ request, position, total }: { request: ApprovalRequest; position: number; total: number }) {
   const respond = useAppStore((s) => s.respondApproval);
@@ -108,7 +109,7 @@ function ApprovalPanel({ request, position, total }: { request: ApprovalRequest;
 const NO_REQUESTS: ApprovalRequest[] = [];
 
 export function ApprovalDock({ sessionId }: { sessionId: string }) {
-  const requests = useAppStore((s) => s.pendingApprovals[sessionId] ?? NO_REQUESTS);
+  const requests = useThreadEntry(sessionId, "approvals") ?? NO_REQUESTS;
   const current = requests[0];
   if (!current) return null;
   return (
