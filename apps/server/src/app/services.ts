@@ -32,6 +32,8 @@ import { ThreadService } from "../threads/ThreadService.js";
 import { TurnService } from "../threads/TurnService.js";
 import type { TopicHub } from "../topics/TopicHub.js";
 import { AccountUsageService } from "../usage/AccountUsageService.js";
+import { UsageTopic } from "../usage/UsageTopic.js";
+import { wireSessionUsageTotals } from "../usage/wireSessionUsageTotals.js";
 import { AppTopic } from "./AppTopic.js";
 
 export type Emit = (channel: string, payload?: unknown) => void;
@@ -53,6 +55,7 @@ export interface Services {
   githubViews: GitHubViews;
   ptys: PtyPool;
   accountUsage: AccountUsageService;
+  usageTopic: UsageTopic;
   shutdown: ShutdownCoordinator;
   appTopic: AppTopic;
   preferences: PreferencesStore;
@@ -83,6 +86,10 @@ function wireAutoFollowUp({ autoFollowUp, prStore, threads, turns }: Services): 
   turns.onTurnStarted((sessionId, auto) => autoFollowUp.turnStarted(sessionId, auto));
   turns.onTurnStopped((sessionId) => autoFollowUp.turnStopped(sessionId));
   autoFollowUp.setEnabled(true);
+}
+
+function wireUsage({ sessions, threads, usageTopic }: Services): void {
+  wireSessionUsageTotals(threads, usageTopic, (cb) => sessions.onUsageRecorded(cb));
 }
 
 function wireSidebar({ sidebar, threads, sourceControl, prStore, autoFollowUp, preferences }: Services): void {
@@ -293,6 +300,12 @@ export function createServices(stores: { sessionStore: SessionStore; settingsSto
     watchRuns: (refs) => runWatcher.watch(refs),
     setRunWatchActive: (active) => runWatcher.setActive(active)
   });
+  const accountUsage = new AccountUsageService(() => sessions.driversForProbe());
+  const usageTopic = new UsageTopic(hooks.topics, {
+    accountUsage,
+    ledgerRows: (query) => sessions.queryUsageLedger(query),
+    onUsageRecorded: (cb) => sessions.onUsageRecorded(cb)
+  });
   const services: Services = {
     sessions,
     skills: new SkillsStore(),
@@ -309,7 +322,8 @@ export function createServices(stores: { sessionStore: SessionStore; settingsSto
     runWatcher,
     githubViews,
     ptys,
-    accountUsage: new AccountUsageService(() => sessions.driversForProbe()),
+    accountUsage,
+    usageTopic,
     shutdown,
     appTopic,
     preferences,
@@ -321,6 +335,7 @@ export function createServices(stores: { sessionStore: SessionStore; settingsSto
   };
   wireServiceEvents(services, hooks);
   wireAutoFollowUp(services);
+  wireUsage(services);
   wireSidebar(services);
   wireGitTopic(services);
   wireGitHubViews(services);

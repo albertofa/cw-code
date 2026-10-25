@@ -6,9 +6,9 @@ import { UsageBalanceRow } from "./UsageBalanceRow.js";
 import { useNow } from "./usageFormat.js";
 import { formatRelativeAge } from "./prInboxModel.js";
 import { useAppStore } from "../stores/appStore.js";
-import { useUsageStore } from "../stores/usageStore.js";
 import { ipcErrorMessage } from "./ipcError.js";
 import { useNotifs } from "./Notifications.js";
+import { useAccountUsage } from "./useUsage.js";
 
 function cardTitle(driver: DriverName, snapshot: AccountUsageSnapshot | undefined): string {
   if (driver === "claude") return "Claude Code";
@@ -38,32 +38,23 @@ export function unavailableTitle(reason: AccountUsageUnavailableReason): string 
   }
 }
 
-export function UsagePlanCard({
-  driver,
-  snapshot,
-  loading,
-  error,
-  onOpenSettings
-}: {
-  driver: DriverName;
-  snapshot: AccountUsageSnapshot | undefined;
-  loading: boolean;
-  error?: string;
-  onOpenSettings?: (driver: DriverName) => void;
-}) {
+export function UsagePlanCard({ driver, onOpenSettings }: { driver: DriverName; onOpenSettings?: (driver: DriverName) => void }) {
   const [retrying, setRetrying] = useState(false);
   const [allowing, setAllowing] = useState(false);
-  const refreshAccount = useUsageStore((s) => s.refreshAccount);
+  const { snapshot: current, loading, error } = useAccountUsage(driver);
   const saveSettings = useAppStore((s) => s.saveSettings);
   const now = useNow();
 
+  const snapshot = current ?? undefined;
   const title = cardTitle(driver, snapshot);
   const state = snapshot?.state;
 
   const retry = async () => {
     setRetrying(true);
     try {
-      await refreshAccount([driver], true);
+      await window.cw.refreshAccountUsage(true);
+    } catch (err) {
+      useNotifs.getState().push({ kind: "error", title: "Could not refresh plan limits", message: ipcErrorMessage(err) });
     } finally {
       setRetrying(false);
     }
@@ -73,7 +64,7 @@ export function UsagePlanCard({
     setAllowing(true);
     try {
       await saveSettings({ opencodeGoUsage: true });
-      await refreshAccount([driver], true);
+      await window.cw.refreshAccountUsage(true);
     } catch (err) {
       useNotifs.getState().push({ kind: "error", title: "Could not save the setting", message: ipcErrorMessage(err) });
     } finally {

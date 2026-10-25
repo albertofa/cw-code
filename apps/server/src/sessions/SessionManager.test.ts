@@ -407,6 +407,8 @@ describe("SessionManager", () => {
     const { manager } = makeManager();
     const project = manager.addProject("C:\\proj-usage-known");
     const session = await manager.createSession(project.id, "claude");
+    const recorded: string[] = [];
+    manager.onUsageRecorded((sessionId) => recorded.push(sessionId));
     (manager as unknown as { routeEvent(e: ThreadEvent): void }).routeEvent({
       type: "turn.done",
       turnId: "turn-usage-1",
@@ -423,6 +425,7 @@ describe("SessionManager", () => {
     const rows = manager.queryUsageLedger({ sessionId: session.id });
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({ sessionId: session.id, projectId: project.id, driver: "claude", inputTokens: 10, costUsd: 0.02 });
+    expect(recorded).toEqual([session.id]);
     manager.dispose();
   });
 
@@ -510,6 +513,8 @@ describe("SessionManager", () => {
     const { manager } = makeManager();
     const project = manager.addProject("C:\\proj-usage-empty");
     const session = await manager.createSession(project.id, "claude");
+    const recorded: string[] = [];
+    manager.onUsageRecorded((sessionId) => recorded.push(sessionId));
     (manager as unknown as { routeEvent(e: ThreadEvent): void }).routeEvent({
       type: "turn.done",
       turnId: "turn-empty",
@@ -522,6 +527,7 @@ describe("SessionManager", () => {
       backgroundTasks: 0
     });
     expect(manager.queryUsageLedger({ sessionId: session.id })).toEqual([]);
+    expect(recorded).toEqual([]);
     manager.dispose();
   });
 

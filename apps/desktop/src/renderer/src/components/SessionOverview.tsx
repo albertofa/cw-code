@@ -1,10 +1,9 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { Bot, ChartColumn, ChevronDown, Gauge, GitBranch, ListChecks, RefreshCw, Sparkles } from "lucide-react";
+import { Bot, ChartColumn, ChevronDown, Gauge, GitBranch, ListChecks, Sparkles } from "lucide-react";
 import type { AccountUsageOk, DriverName, TodoItem } from "../cw.js";
 import { useAppStore, type ChatMessage } from "../stores/appStore.js";
 import { usePrStore } from "../stores/prStore.js";
 import { useSkillsStore } from "../stores/skillsStore.js";
-import { useUsageStore } from "../stores/usageStore.js";
 import { DriverIcon } from "./DriverIcon.js";
 import { PrChipBadge } from "./PrChipBadge.js";
 import { PlanMeters } from "./PlanMeters.js";
@@ -15,9 +14,9 @@ import { formatDuration } from "./toolSummaries.js";
 import { harnessLabel } from "./toolTabs.js";
 import { findSession, useSessionPrItems } from "./useLinkedPr.js";
 import { formatCostUsd, useNow } from "./usageFormat.js";
-import { totals } from "./usageModel.js";
 import { useGitStatus } from "./useGit.js";
 import { useThreadEntry, useThreadItemsSelect } from "./useThread.js";
+import { useAccountUsage } from "./useUsage.js";
 import { sameItems } from "../server/sidebarData.js";
 import "./sessionOverview.css";
 
@@ -166,41 +165,14 @@ function WorkspaceSection({ sessionId }: { sessionId: string }) {
 }
 
 function SessionUsageSection({ sessionId }: { sessionId: string }) {
-  const rows = useUsageStore((s) => s.sessionRowsById[sessionId]);
-  const loading = useUsageStore((s) => !!s.sessionLoading[sessionId]);
-  const error = useUsageStore((s) => s.sessionError[sessionId]);
-  const ensureSessionRows = useUsageStore((s) => s.ensureSessionRows);
+  const sessionTotals = useThreadEntry(sessionId, "usageTotals");
   const lastTurn = useThreadEntry(sessionId, "usage")?.lastTurn ?? null;
-  const sessionTotals = useMemo(() => totals(rows ?? []), [rows]);
-
-  useEffect(() => {
-    void ensureSessionRows(sessionId);
-    return window.cw.onTurnEvent((msg) => {
-      if (msg.event.type !== "turn.done" || msg.sessionId !== sessionId) return;
-      void ensureSessionRows(sessionId);
-    });
-  }, [sessionId, ensureSessionRows]);
-
-  const refresh = (
-    <button
-      type="button"
-      className="ov-icon-btn"
-      onClick={() => void ensureSessionRows(sessionId)}
-      disabled={loading}
-      title="Refresh session usage"
-      aria-label="Refresh session usage"
-    >
-      <RefreshCw size={12} className={loading ? "ov-spin" : undefined} aria-hidden="true" />
-    </button>
-  );
 
   return (
-    <Section icon={<ChartColumn size={14} aria-hidden="true" />} title="This session" summary={refresh}>
-      {!rows && (loading || !error) ? (
+    <Section icon={<ChartColumn size={14} aria-hidden="true" />} title="This session">
+      {sessionTotals === undefined ? (
         <Note>Loading…</Note>
-      ) : !rows && error ? (
-        <Note tone="error">Couldn&apos;t load session usage: {error}</Note>
-      ) : rows && rows.length === 0 ? (
+      ) : sessionTotals === null ? (
         <Note>No usage recorded yet.</Note>
       ) : (
         <>
@@ -226,7 +198,6 @@ function SessionUsageSection({ sessionId }: { sessionId: string }) {
           </Row>
         </>
       )}
-      {rows && error && <Note tone="error">Couldn&apos;t refresh session usage: {error}</Note>}
     </Section>
   );
 }
@@ -243,16 +214,10 @@ function PlanLimits({ driver, state, stale }: { driver: DriverName; state: Accou
 }
 
 function PlanSection({ driver }: { driver: DriverName }) {
-  const snapshot = useUsageStore((s) => s.accountByDriver[driver]);
-  const loading = useUsageStore((s) => !!s.accountLoading[driver]);
-  const error = useUsageStore((s) => s.accountError[driver]);
-  const refreshAccount = useUsageStore((s) => s.refreshAccount);
+  const { snapshot: account, loading, error } = useAccountUsage(driver);
+  const snapshot = account ?? undefined;
   const openUsage = usePrStore((s) => s.openUsage);
   const now = useNow();
-
-  useEffect(() => {
-    void refreshAccount([driver], false);
-  }, [driver, refreshAccount]);
 
   const state = snapshot?.state;
   const shownState = state?.status === "ok" ? state : state?.status === "error" ? snapshot?.lastGood?.state : undefined;

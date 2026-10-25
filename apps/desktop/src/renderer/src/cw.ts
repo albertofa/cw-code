@@ -1,5 +1,6 @@
 import type { TopicCache } from "@cw-code/client";
 import type {
+  AccountUsageEntry,
   AccountUsageOk,
   AccountUsageSnapshot,
   AccountUsageState,
@@ -115,9 +116,12 @@ import type {
   UpdateProgress,
   UpdateState,
   UsageBalance,
-  UsageLedgerQuery,
-  UsageLedgerRow,
+  UsageMetric,
+  UsageReport,
+  UsageReportQuery,
   UsageSeverity,
+  UsageTopicData,
+  UsageTotals,
   UsageWindow
 } from "@cw-code/contracts";
 
@@ -152,6 +156,7 @@ export type {
   ShutdownPrepareResult,
   ShutdownReason,
   ShutdownTerminal,
+  AccountUsageEntry,
   AccountUsageOk,
   AccountUsageSnapshot,
   AccountUsageState,
@@ -212,9 +217,12 @@ export type {
   UpdateProgress,
   UpdateState,
   UsageBalance,
-  UsageLedgerQuery,
-  UsageLedgerRow,
+  UsageMetric,
+  UsageReport,
+  UsageReportQuery,
   UsageSeverity,
+  UsageTopicData,
+  UsageTotals,
   UsageWindow
 };
 
@@ -671,8 +679,8 @@ export interface CwApi {
   getSourceControlHealth(projectId?: string): Promise<SourceControlHealth>;
   setProjectGitHubAccount(projectId: string, account: { host: string; login: string } | null): Promise<Project>;
   setRepositoryGitIdentity(projectId: string, name: string, email: string): Promise<void>;
-  getUsageLedger(query: UsageLedgerQuery): Promise<UsageLedgerRow[]>;
-  getAccountUsage(drivers: DriverName[], force?: boolean): Promise<AccountUsageSnapshot[]>;
+  usageReport(query: UsageReportQuery): Promise<UsageReport>;
+  refreshAccountUsage(force: boolean): Promise<void>;
   refreshPrInbox(force?: boolean): Promise<void>;
   getPrDetail(ref: PrRef): Promise<PrDetail>;
   getPrDiff(ref: PrRef): Promise<string>;
@@ -694,7 +702,6 @@ export interface CwApi {
   linkSessionRun(sessionId: string, link: SessionRunLink): Promise<Session>;
   unlinkSessionRun(sessionId: string, ref: RunRef): Promise<Session>;
   markSessionRunSeen(sessionId: string, ref: RunRef, seenAt: number): Promise<Session>;
-  onTurnEvent(cb: (msg: { sessionId: string; event: TurnEvent }) => void): () => void;
   onProjectChanged(cb: (project: Project) => void): () => void;
   onSkillsChanged(cb: (result: SkillsListResult) => void): () => void;
   onComposerChanged(cb: (event: ComposerChangedEvent) => void): () => void;

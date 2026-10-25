@@ -1,5 +1,5 @@
 import type { ThreadEvent } from "@cw-code/contracts";
-import { filesTopic, GITHUB_RUNS_TOPIC, topicId, USAGE_TOPIC } from "@cw-code/shared/topics";
+import { filesTopic, GITHUB_RUNS_TOPIC, topicId } from "@cw-code/shared/topics";
 import type { ClientInputs } from "../app/clientInputs.js";
 import type { Services } from "../app/services.js";
 import { MAX_WATCHED_RUNS } from "../github/RunWatcher.js";
@@ -96,7 +96,6 @@ export function createWatchControls(hub: TopicHub, services: Services, { clientI
   };
 
   const providers: TopicProvider[] = [
-    emptyStoreProvider(hub, ownsExact(USAGE_TOPIC)),
     services.gitTopic,
     emptyStoreProvider(hub, ownsPrefix(FILES_PREFIX), {
       onSubscribe: (_clientId, topic) => applyFilesTopic(topic),

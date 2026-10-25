@@ -1,6 +1,5 @@
 import type { ServerClient, TopicCache } from "@cw-code/client";
 import type {
-  AccountUsageSnapshot,
   AppSettings,
   BranchMismatch,
   CliBinary,
@@ -35,7 +34,7 @@ import type {
   SubagentToolsResult,
   TextSearchResult,
   TurnChanges,
-  UsageLedgerRow,
+  UsageReport,
   WorktreePruneSummary
 } from "@cw-code/contracts";
 import { assertPasteImageSize } from "@cw-code/shared/protocol";
@@ -202,8 +201,8 @@ export function createCwApi(client: ServerClient, topics: TopicCache, desktop: D
     getSourceControlHealth: (projectId) => call<SourceControlHealth>("git.health", { projectId }),
     setProjectGitHubAccount: (projectId, account) => call<Project>("git.setProjectAccount", { projectId, account }),
     setRepositoryGitIdentity: (projectId, name, email) => callVoid("git.setIdentity", { projectId, name, email }),
-    getUsageLedger: (query) => call<UsageLedgerRow[]>("usage.ledger", query),
-    getAccountUsage: (drivers, force) => call<AccountUsageSnapshot[]>("usage.account", { drivers, force }),
+    usageReport: (query) => call<UsageReport>("usage.report", query),
+    refreshAccountUsage: (force) => callVoid("usage.refreshAccount", { force }),
     refreshPrInbox: (force) => callVoid("prs.refresh", { force }),
     getPrDetail: (ref) => call<PrDetail>("prs.detail", { ref }),
     getPrDiff: (ref) => call<string>("prs.diff", { ref }),
@@ -225,7 +224,6 @@ export function createCwApi(client: ServerClient, topics: TopicCache, desktop: D
     linkSessionRun: (sessionId, link) => call<Session>("sessions.linkRun", { sessionId, link }),
     unlinkSessionRun: (sessionId, ref) => call<Session>("sessions.unlinkRun", { sessionId, ref }),
     markSessionRunSeen: (sessionId, ref, seenAt) => call<Session>("sessions.markRunSeen", { sessionId, ref, seenAt }),
-    onTurnEvent: (cb) => subscribe("turn.event", cb),
     onProjectChanged: (cb) => subscribe("projects.changed", cb),
     onSkillsChanged: (cb) => subscribe("skills.changed", cb),
     onComposerChanged: (cb) => subscribe("composer.changed", cb),

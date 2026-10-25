@@ -1,0 +1,226 @@
+import { afterEach, beforeEach, describe, expect, it, setSystemTime, vi } from "bun:test";
+import type { AccountUsageSnapshot, DriverKind, ThreadTopicData, TopicPatch, UsageLedgerQuery, UsageLedgerRow, UsageTopicData } from "@cw-code/contracts";
+import { sessionTopic, USAGE_TOPIC } from "@cw-code/shared/topics";
+import { advanceTimersByTimeAsync } from "../../tests/testing.js";
+import { ThreadService } from "../threads/ThreadService.js";
+import { createThreadTopicProvider } from "../threads/threadTopic.js";
+import { TopicHub } from "../topics/TopicHub.js";
+import type { CallContext } from "../transport/Router.js";
+import { ACCOUNT_REFRESH_MS, UsageTopic } from "./UsageTopic.js";
+import { wireSessionUsageTotals } from "./wireSessionUsageTotals.js";
+
+const ctx: CallContext = { clientId: "a", client: "web", auth: { kind: "owner" } };
+const NOW = new Date(2026, 5, 15, 12).getTime();
+
+function snapshot(driver: DriverKind): AccountUsageSnapshot {
+  return { driver, fetchedAt: NOW, state: { status: "ok", windows: [], balances: [], notes: [] } };
+}
+
+function row(overrides: Partial<UsageLedgerRow> = {}): UsageLedgerRow {
+  return {
+    day: "2026-06-15",
+    sessionId: "s1",
+    projectId: "p1",
+    driver: "claude",
+    model: "sonnet",
+    inputTokens: 10,
+    cacheReadTokens: 20,
+    cacheWriteTokens: 0,
+    outputTokens: 5,
+    reasoningTokens: 0,
+    turns: 1,
+    costUsd: 0.5,
+    unpricedTurns: 0,
+    ...overrides
+  };
+}
+
+function setup(rows: UsageLedgerRow[] = []) {
+  const patches: TopicPatch[] = [];
+  const hub = new TopicHub((_clientIds, frame) => patches.push(JSON.parse(frame) as TopicPatch));
+  const fetched: Array<{ driver: DriverKind; force: boolean }> = [];
+  const recorded: Array<(sessionId: string) => void> = [];
+  const queries: UsageLedgerQuery[] = [];
+  const topic = new UsageTopic(hub, {
+    accountUsage: {
+      get: async (drivers, force) => {
+        for (const driver of drivers) fetched.push({ driver, force });
+        return drivers.map(snapshot);
+      }
+    },
+    ledgerRows: (query) => {
+      queries.push(query);
+      return rows.filter((entry) => (query.sessionId ? entry.sessionId === query.sessionId : true));
+    },
+    onUsageRecorded: (cb) => {
+      recorded.push(cb);
+      return () => undefined;
+    },
+    now: () => Date.now()
+  });
+  hub.register(topic);
+  const recordTurn = (sessionId: string): void => recorded.forEach((cb) => cb(sessionId));
+  return { hub, topic, patches, fetched, recordTurn, queries };
+}
+
+function data(hub: TopicHub): UsageTopicData {
+  return hub.subscribe({ ...ctx, clientId: "probe" }, [USAGE_TOPIC])[USAGE_TOPIC]?.data as UsageTopicData;
+}
+
+describe("UsageTopic", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    setSystemTime(new Date(NOW));
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    setSystemTime();
+  });
+
+  it("refreshes every driver once on open and publishes the snapshots", async () => {
+    const { hub, fetched, patches } = setup();
+    const initial = hub.subscribe(ctx, [USAGE_TOPIC])[USAGE_TOPIC]?.data as UsageTopicData;
+    expect(initial.account.claude.loading).toBe(true);
+    await advanceTimersByTimeAsync(0);
+    expect(fetched.map((entry) => entry.driver).sort()).toEqual(["claude", "codex", "opencode"]);
+    expect(fetched.every((entry) => !entry.force)).toBe(true);
+    const latest = data(hub);
+    expect(latest.account.claude).toEqual({ snapshot: snapshot("claude"), loading: false, error: null });
+    expect(latest.accountFetchedAt).toBe(NOW);
+    expect(patches.length).toBeGreaterThan(0);
+  });
+
+  it("refreshes every five minutes only while subscribed", async () => {
+    const { hub, fetched } = setup();
+    expect(fetched).toHaveLength(0);
+    await advanceTimersByTimeAsync(ACCOUNT_REFRESH_MS * 2);
+    expect(fetched).toHaveLength(0);
+
+    hub.subscribe(ctx, [USAGE_TOPIC]);
+    await advanceTimersByTimeAsync(0);
+    expect(fetched).toHaveLength(3);
+    await advanceTimersByTimeAsync(ACCOUNT_REFRESH_MS);
+    expect(fetched).toHaveLength(6);
+
+    hub.unsubscribe(ctx, [USAGE_TOPIC]);
+    await advanceTimersByTimeAsync(ACCOUNT_REFRESH_MS * 3);
+    expect(fetched).toHaveLength(6);
+  });
+
+  it("a second subscriber does not restart the refresh loop", async () => {
+    const { hub, fetched } = setup();
+    hub.subscribe(ctx, [USAGE_TOPIC]);
+    await advanceTimersByTimeAsync(0);
+    hub.subscribe({ ...ctx, clientId: "b" }, [USAGE_TOPIC]);
+    await advanceTimersByTimeAsync(0);
+    expect(fetched).toHaveLength(3);
+  });
+
+  it("dispose stops the loop and resume restarts it while subscribed", async () => {
+    const { hub, topic, fetched } = setup();
+    hub.subscribe(ctx, [USAGE_TOPIC]);
+    await advanceTimersByTimeAsync(0);
+    topic.dispose();
+    await advanceTimersByTimeAsync(ACCOUNT_REFRESH_MS * 2);
+    expect(fetched).toHaveLength(3);
+    topic.resume();
+    await advanceTimersByTimeAsync(0);
+    expect(fetched).toHaveLength(6);
+  });
+
+  it("refreshAccount forces a fetch and keeps working while unsubscribed", async () => {
+    const { topic, fetched } = setup();
+    await topic.refreshAccount(true);
+    expect(fetched).toHaveLength(3);
+    expect(fetched.every((entry) => entry.force)).toBe(true);
+  });
+
+  it("records a failing driver as an error without dropping its last snapshot", async () => {
+    const hub = new TopicHub(() => undefined);
+    let fail = false;
+    const topic = new UsageTopic(hub, {
+      accountUsage: {
+        get: async (drivers) => {
+          if (fail) throw new Error("boom");
+          return drivers.map(snapshot);
+        }
+      },
+      ledgerRows: () => [],
+      onUsageRecorded: () => () => undefined
+    });
+    hub.register(topic);
+    hub.subscribe(ctx, [USAGE_TOPIC]);
+    await advanceTimersByTimeAsync(0);
+    fail = true;
+    await topic.refreshAccount(true);
+    const entry = data(hub).account.codex;
+    expect(entry).toEqual({ snapshot: snapshot("codex"), loading: false, error: "boom" });
+  });
+
+  it("a recorded turn bumps ledgerRev for subscribers", async () => {
+    const { hub, topic, recordTurn, patches } = setup();
+    hub.subscribe(ctx, [USAGE_TOPIC]);
+    await advanceTimersByTimeAsync(0);
+    patches.length = 0;
+    recordTurn("s1");
+    recordTurn("s2");
+    expect(topic.ledgerRev).toBe(2);
+    expect(data(hub).ledgerRev).toBe(2);
+    expect(patches.flatMap((patch) => patch.ops)).toContainEqual({ op: "upsert", key: "ledgerRev", value: 2 });
+  });
+
+  it("counts turns recorded while nobody is subscribed", () => {
+    const { hub, recordTurn } = setup();
+    recordTurn("s1");
+    expect(data(hub).ledgerRev).toBe(1);
+  });
+
+  it("report filters the ledger and stamps the current ledgerRev", () => {
+    const rows = [row(), row({ driver: "codex", sessionId: "s2", model: "gpt" }), row({ day: "2026-01-01", sessionId: "s3" })];
+    const { topic, recordTurn, queries } = setup(rows);
+    recordTurn("s1");
+    const report = topic.report({ days: 7, metric: "all", driver: "claude", projectId: "all" });
+    expect(queries).toEqual([{ sinceDay: "2026-06-09" }]);
+    expect(report.sinceDay).toBe("2026-06-09");
+    expect(report.ledgerRev).toBe(1);
+    expect(report.totals.sessions).toBe(1);
+    expect(report.totals.totalTokens).toBe(35);
+    expect(report.daily).toHaveLength(7);
+  });
+
+  it("sessionTotals sums a session and is null without usage", () => {
+    const { topic } = setup([row(), row({ model: "opus", inputTokens: 1, cacheReadTokens: 0, outputTokens: 1 })]);
+    expect(topic.sessionTotals("s1")).toMatchObject({ turns: 2, inputTokens: 11, cacheReadTokens: 20, outputTokens: 6, sessions: 1 });
+    expect(topic.sessionTotals("missing")).toBeNull();
+  });
+});
+
+describe("session usage totals extra", () => {
+  it("fills the thread snapshot and updates for the recorded session", () => {
+    const rows = [row()];
+    const { hub, topic } = setup(rows);
+    const threads = new ThreadService({
+      hub,
+      history: async () => [],
+      liveTasks: () => [],
+      pendingRequests: () => [],
+      loadHistoryOnSubscribe: false
+    });
+    hub.register(createThreadTopicProvider(threads));
+    const recorded: Array<(sessionId: string) => void> = [];
+    wireSessionUsageTotals(threads, topic, (cb) => recorded.push(cb));
+    const totalsOf = (sessionId: string, clientId: string) =>
+      (hub.subscribe({ ...ctx, clientId }, [sessionTopic(sessionId)])[sessionTopic(sessionId)]?.data as ThreadTopicData).usageTotals;
+
+    expect(totalsOf("s1", "c1")?.turns).toBe(1);
+    expect(totalsOf("s2", "c2")).toBeNull();
+
+    rows.push(row({ model: "opus", outputTokens: 100 }));
+    recorded.forEach((cb) => cb("s1"));
+
+    expect(totalsOf("s1", "c3")?.turns).toBe(2);
+    expect(totalsOf("s1", "c3")?.outputTokens).toBe(105);
+    expect(totalsOf("s2", "c4")).toBeNull();
+  });
+});

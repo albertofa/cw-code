@@ -157,7 +157,6 @@ function installBridge(): void {
     listModels: async () => [],
     listModelsFor: async () => delayed(modelsForResult, 900),
     listProjectFiles: async () => [],
-    getUsageLedger: async () => [],
     onSessionTitle: noop,
     topics: { acquire: () => () => {} },
     shutdown: { onRequested: noop, onExpired: noop },

@@ -1,6 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { DriverName } from "../cw.js";
-import { useUsageStore } from "../stores/usageStore.js";
 import { usePrStore } from "../stores/prStore.js";
 import { DriverIcon } from "./DriverIcon.js";
 import { PlanMeters } from "./PlanMeters.js";
@@ -10,9 +9,9 @@ import { formatRelativeAge } from "./prInboxModel.js";
 import { formatTokensShort } from "./subagents.js";
 import { formatDuration } from "./toolSummaries.js";
 import { harnessLabel } from "./toolTabs.js";
-import { totals } from "./usageModel.js";
 import { useThreadVisible } from "./threadVisibility.js";
 import { useThreadEntry } from "./useThread.js";
+import { EMPTY_USAGE_TOTALS, useAccountUsage } from "./useUsage.js";
 
 const RING_CIRCUMFERENCE = 2 * Math.PI * 7.5;
 
@@ -23,35 +22,15 @@ export function ContextRing({ sessionId, driver }: { sessionId: string; driver: 
   const usage = useThreadEntry(sessionId, "usage");
   const context = usage?.context ?? undefined;
   const lastTurn = usage?.lastTurn ?? undefined;
-  const snapshot = useUsageStore((s) => s.accountByDriver[driver]);
-  const accountLoading = useUsageStore((s) => !!s.accountLoading[driver]);
-  const accountError = useUsageStore((s) => s.accountError[driver]);
-  const refreshAccount = useUsageStore((s) => s.refreshAccount);
-  const ensureSessionRows = useUsageStore((s) => s.ensureSessionRows);
-  const sessionRows = useUsageStore((s) => s.sessionRowsById[sessionId]);
-  const sessionLoading = useUsageStore((s) => !!s.sessionLoading[sessionId]);
-  const sessionError = useUsageStore((s) => s.sessionError[sessionId]);
+  const usageTotals = useThreadEntry(sessionId, "usageTotals");
+  const { snapshot: account, loading: accountLoading, error: accountError } = useAccountUsage(driver, open);
+  const snapshot = account ?? undefined;
   const openUsage = usePrStore((s) => s.openUsage);
   const now = useNow();
 
   useEffect(() => {
     setOpen(false);
   }, [sessionId]);
-
-  useEffect(() => {
-    if (!open) return;
-    void refreshAccount([driver], false);
-    void ensureSessionRows(sessionId);
-  }, [open, driver, sessionId, refreshAccount, ensureSessionRows]);
-
-  useEffect(() => {
-    if (!open) return;
-    const off = window.cw.onTurnEvent((msg) => {
-      if (msg.event.type !== "turn.done" || msg.sessionId !== sessionId) return;
-      void ensureSessionRows(sessionId);
-    });
-    return off;
-  }, [open, sessionId, ensureSessionRows]);
 
   useEffect(() => {
     if (!open || !visible) return;
@@ -73,7 +52,7 @@ export function ContextRing({ sessionId, driver }: { sessionId: string; driver: 
   const shownPlan =
     planState?.status === "ok" ? planState : planState?.status === "error" ? snapshot?.lastGood?.state : undefined;
 
-  const sessTotals = useMemo(() => totals(sessionRows ?? []), [sessionRows]);
+  const sessTotals = usageTotals ?? EMPTY_USAGE_TOTALS;
 
   const meter = usage?.meter ?? null;
   const percent = meter?.percent ?? null;
@@ -129,10 +108,8 @@ export function ContextRing({ sessionId, driver }: { sessionId: string; driver: 
           </section>
           <section className="context-dock-sec">
             <div className="context-dock-h">This session</div>
-            {sessionLoading && !sessionRows ? (
+            {usageTotals === undefined ? (
               <div className="context-dock-sub">Loading…</div>
-            ) : sessionError && !sessionRows ? (
-              <div className="context-dock-sub context-dock-error">Couldn&apos;t load session usage: {sessionError}</div>
             ) : (
               <div className="context-dock-grid">
                 <span>Turns</span>
@@ -152,9 +129,6 @@ export function ContextRing({ sessionId, driver }: { sessionId: string; driver: 
                     : "—"}
                 </b>
               </div>
-            )}
-            {sessionError && sessionRows && (
-              <div className="context-dock-sub context-dock-error">Couldn&apos;t refresh session usage: {sessionError}</div>
             )}
           </section>
           <section className="context-dock-sec">

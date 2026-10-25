@@ -1,9 +1,10 @@
-import type { DriverKind, UsageLedgerQuery } from "@cw-code/contracts";
+import type { DriverKind, UsageLedgerQuery, UsageReportQuery } from "@cw-code/contracts";
 import type { ServerApp } from "../app/ServerApp.js";
 import type { Router } from "../transport/Router.js";
-import { handle } from "./shared.js";
+import { handle, parseArgs } from "./shared.js";
 
 const DRIVER_KINDS: DriverKind[] = ["claude", "opencode", "codex"];
+const MAX_REPORT_DAYS = 366;
 const DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 function isValidUsageLedgerQuery(query: unknown): query is UsageLedgerQuery | undefined {
@@ -13,6 +14,18 @@ function isValidUsageLedgerQuery(query: unknown): query is UsageLedgerQuery | un
   if (q.sinceDay !== undefined && (typeof q.sinceDay !== "string" || !DAY_RE.test(q.sinceDay))) return false;
   if (q.sessionId !== undefined && typeof q.sessionId !== "string") return false;
   return true;
+}
+
+export function parseUsageReportQuery(args: unknown): UsageReportQuery {
+  const query = parseArgs(args, "usage.report");
+  const { days, metric, driver, projectId } = query;
+  if (typeof days !== "number" || !Number.isInteger(days) || days < 1 || days > MAX_REPORT_DAYS) {
+    throw new Error(`days must be an integer between 1 and ${MAX_REPORT_DAYS}`);
+  }
+  if (metric !== "all" && metric !== "fresh") throw new Error("metric must be 'all' or 'fresh'");
+  if (driver !== "all" && !DRIVER_KINDS.includes(driver as DriverKind)) throw new Error("driver must be 'all' or a harness id");
+  if (typeof projectId !== "string") throw new Error("projectId must be a string");
+  return { days, metric, driver: driver as UsageReportQuery["driver"], projectId };
 }
 
 export function registerUsageHandlers(router: Router, app: ServerApp): void {
@@ -27,5 +40,11 @@ export function registerUsageHandlers(router: Router, app: ServerApp): void {
       throw new Error("usage.account requires { drivers: DriverKind[] }");
     }
     return app.requireServices().accountUsage.get(args.drivers, args.force ?? false);
+  });
+  handle(router, "usage.report", (args) => app.requireServices().usageTopic.report(parseUsageReportQuery(args)));
+  handle(router, "usage.refreshAccount", async (args) => {
+    const { force } = parseArgs(args, "usage.refreshAccount");
+    if (typeof force !== "boolean") throw new Error("force must be a boolean");
+    await app.requireServices().usageTopic.refreshAccount(force);
   });
 }

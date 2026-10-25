@@ -99,11 +99,11 @@ import { sanitizeProjectSettings } from "./projectSettings.js";
 import { describeScriptResult, runWorktreeScript, scriptLabel } from "./worktreeScripts.js";
 import { NEW_SESSION_TITLE, pickRestoreCandidate } from "./sessionRestore.js";
 import { cwCodeHome, opencodeServerDir, sessionDbPath, settingsFilePath, titleGenDir, usageDir, worktreesDir } from "../paths/appPaths.js";
+import { notifyAll } from "../events/notifyAll.js";
 import { UsageLedger } from "../usage/UsageLedger.js";
 import { shutdownReservedError } from "../shutdown/shutdownReservation.js";
 import { BRANCH_MISMATCH_MARKER } from "./branchMismatch.js";
 import { currentCheckoutSessionIds } from "../sourceControl/branchMismatch.js";
-import { notifyAll } from "../events/notifyAll.js";
 import { overlayLiveTasks } from "../tasks/overlayLiveTasks.js";
 import { SessionBusyError } from "./SessionBusyError.js";
 import { PendingRequests, type PendingRequest } from "./PendingRequests.js";
@@ -232,6 +232,7 @@ export class SessionManager {
   private drivers: Record<DriverKind, CliDriver>;
   private readonly driverActivityListeners = new Set<() => void>();
   private readonly checkoutListeners = new Set<(sessionIds: string[]) => void>();
+  private readonly usageRecordedListeners = new Set<(sessionId: string) => void>();
   private unwatchDriverActivity: () => void = () => {};
   private driverFactory: DriverFactory;
   private driverGeneration = 0;
@@ -664,7 +665,14 @@ export class SessionManager {
       });
     } catch (err) {
       console.warn(`usage ledger record failed for session ${event.sessionId}: ${(err as Error).message}`);
+      return;
     }
+    notifyAll(this.usageRecordedListeners, "[usage] recorded", event.sessionId);
+  }
+
+  onUsageRecorded(cb: (sessionId: string) => void): () => void {
+    this.usageRecordedListeners.add(cb);
+    return () => this.usageRecordedListeners.delete(cb);
   }
 
   queryUsageLedger(query: UsageLedgerQuery): UsageLedgerRow[] {
