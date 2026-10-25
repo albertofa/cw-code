@@ -494,7 +494,7 @@ export function ThreadView({ hidden = false }: { hidden?: boolean }) {
         <div key={m.id} className={`msg-system${m.severity === "warning" ? " msg-warning" : ""}`}>
           <TriangleAlert size={14} aria-hidden="true" />
           <span>{m.text}</span>
-          {m.retryable && (
+          {m.retryable && session.status !== "resolved" && session.status !== "archived" && (
             <button className="msg-retry" onClick={() => void retryConnection(session.id)}>
               Retry connection
             </button>

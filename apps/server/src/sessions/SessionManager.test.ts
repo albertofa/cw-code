@@ -3656,6 +3656,21 @@ describe("SessionManager", () => {
     manager.dispose();
   });
 
+  it("refuses to retry the connection of a resolved session so only restore can reopen it", async () => {
+    const { manager, project } = makeGitSandboxManager("cw-restore-retry-");
+    const session = await manager.createSession(project.id, "claude", { baseBranch: "main" });
+    const worktreePath = session.worktreePath;
+    if (!worktreePath) throw new Error("expected a worktree-backed session");
+    await manager.resolveSession(session.id, "resolved", { removeWorktree: true });
+
+    await expect(manager.retryConnection(session.id)).rejects.toThrow("session is resolved; restore it before retrying the connection");
+
+    const store = (manager as unknown as { store: SessionStore }).store;
+    expect(store.getSession(session.id)?.status).toBe("resolved");
+    expect(store.getSession(session.id)?.resolvedCheckout).toEqual({ kind: "worktree", path: worktreePath });
+    manager.dispose();
+  });
+
   it("only restores resolved sessions", async () => {
     const { manager, project } = makeGitSandboxManager("cw-restore-gate-");
     const session = await manager.createSession(project.id, "claude", { baseBranch: "main" });

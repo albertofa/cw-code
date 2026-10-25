@@ -2370,6 +2370,9 @@ export class SessionManager {
     this.assertNotReserved();
     const session = this.store.getSession(sessionId);
     if (!session) throw new Error(`unknown session ${sessionId}`);
+    if (session.status === "resolved" || session.status === "archived") {
+      throw new Error(`session is ${session.status}; restore it before retrying the connection`);
+    }
     for (const entry of this.activeTurns.values()) {
       if (entry.sessionId === sessionId) throw new Error("session busy (turn in progress)");
     }

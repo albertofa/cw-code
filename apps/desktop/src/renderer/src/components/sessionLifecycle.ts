@@ -1,5 +1,7 @@
+import { useCallback, type ReactNode } from "react";
 import type { Session } from "../cw.js";
-import type { ConfirmRequest } from "./ConfirmDialog.js";
+import { useAppStore } from "../stores/appStore.js";
+import { useConfirm, type ConfirmRequest } from "./ConfirmDialog.js";
 
 export function restoreLosesWork(session: Pick<Session, "worktreePath" | "resolvedCheckout">): boolean {
   return !session.worktreePath && session.resolvedCheckout?.kind !== "root";
@@ -23,3 +25,21 @@ export const ARCHIVE_CONFIRM: ConfirmRequest = {
   confirmLabel: "Archive",
   danger: true
 };
+
+export function useRestoreBeforeSend(): { ensureOpen: (sessionId: string) => Promise<boolean>; dialog: ReactNode } {
+  const { confirm, dialog } = useConfirm();
+  const ensureOpen = useCallback(
+    async (sessionId: string) => {
+      const session = Object.values(useAppStore.getState().sessionsByProject)
+        .flat()
+        .find((item) => item.id === sessionId);
+      if (session?.status !== "resolved") return true;
+      const request = restoreConfirm(session);
+      if (request && !(await confirm(request))) return false;
+      await useAppStore.getState().restoreSession(sessionId);
+      return true;
+    },
+    [confirm]
+  );
+  return { ensureOpen, dialog };
+}
