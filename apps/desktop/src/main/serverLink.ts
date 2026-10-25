@@ -14,6 +14,7 @@ function errorMessage(error: unknown): string {
 export class ServerLink {
   private readonly client: ServerClient;
   private readonly topics: TopicCache;
+  private releaseApp: () => void;
   private cachedAttention: number | null = null;
   private cachedSettings: AppSettings | null = null;
   private cachedShutdown: ShutdownStatus = IDLE_SHUTDOWN;
@@ -31,7 +32,7 @@ export class ServerLink {
     });
     this.topics = new TopicCache(this.client);
     this.topics.listen(APP_TOPIC, () => this.readAttention());
-    this.topics.acquire(APP_TOPIC);
+    this.releaseApp = this.topics.acquire(APP_TOPIC);
   }
 
   get attentionCount(): number | null {
@@ -100,6 +101,10 @@ export class ServerLink {
   }
 
   private async applyStartup(startup: StartupState): Promise<void> {
+    if (startup.mode === "ready" && this.topics.state(APP_TOPIC)?.status === "error") {
+      this.releaseApp();
+      this.releaseApp = this.topics.acquire(APP_TOPIC);
+    }
     if (startup.mode === "ready") {
       try {
         this.setSettings(await this.client.call<AppSettings>("settings.get"));

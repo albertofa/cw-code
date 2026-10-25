@@ -439,7 +439,11 @@ function showAttentionIndicators(win: BrowserWindow, count: number): void {
 
 function applyAttention(count: number): void {
   const win = liveMainWindow();
-  if (!win) return;
+  if (!win) {
+    if (process.platform !== "win32") app.setBadgeCount(count);
+    attentionCount = count;
+    return;
+  }
   const flash = shouldFlash(attentionCount, count, win.isFocused());
   attentionCount = count;
   showAttentionIndicators(win, count);
