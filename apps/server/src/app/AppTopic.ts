@@ -87,6 +87,11 @@ export class AppTopic implements TopicProvider {
     this.store?.upsert("shutdown", this.data.shutdown);
   }
 
+  setShutdownStatus(status: ShutdownStatus): void {
+    this.data.shutdown = { ...this.data.shutdown, status };
+    this.store?.upsert("shutdown", this.data.shutdown);
+  }
+
   setRecentModels(driver: DriverKind, models: string[]): void {
     this.data.recentModels = { ...this.data.recentModels, [driver]: models };
     this.store?.upsert("recentModels", this.data.recentModels);

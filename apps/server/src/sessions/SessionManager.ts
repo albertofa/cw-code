@@ -228,6 +228,8 @@ export class SessionManager {
   private store: SessionStore;
   private settings: SettingsStore;
   private drivers: Record<DriverKind, CliDriver>;
+  private readonly driverActivityListeners = new Set<() => void>();
+  private unwatchDriverActivity: () => void = () => {};
   private driverFactory: DriverFactory;
   private driverGeneration = 0;
   private shutdownReserved = false;
@@ -300,6 +302,30 @@ export class SessionManager {
     this.legacyAppRoots = opts.legacyAppRoots ?? [];
     this.driverFactory = opts.driverFactory ?? defaultDriverFactory(opts.drivers);
     this.drivers = this.buildDrivers();
+    this.watchDriverActivity();
+  }
+
+  onDriverActivityChanged(listener: () => void): () => void {
+    this.driverActivityListeners.add(listener);
+    return () => this.driverActivityListeners.delete(listener);
+  }
+
+  private notifyDriverActivity(): void {
+    for (const listener of [...this.driverActivityListeners]) {
+      try {
+        listener();
+      } catch (err) {
+        console.warn(`driver activity listener failed: ${(err as Error).message}`);
+      }
+    }
+  }
+
+  private watchDriverActivity(): void {
+    this.unwatchDriverActivity();
+    const stops = this.uniqueDrivers().map(({ driver }) => driver.onActivityChanged?.(() => this.notifyDriverActivity()));
+    this.unwatchDriverActivity = () => {
+      for (const stop of stops) stop?.();
+    };
   }
 
   private buildDrivers(): Record<DriverKind, CliDriver> {
@@ -1916,6 +1942,7 @@ export class SessionManager {
     while (!this.disposed && Date.now() < deadline && driverBusy(driver, sessionId)) {
       await delay(Math.min(INTERRUPT_SETTLE_POLL_MS, Math.max(1, deadline - Date.now())));
     }
+    this.notifyDriverActivity();
   }
 
   private async settledSnapshot(sessionId: string): Promise<{ session: SessionMeta; snapshot: TurnSnapshot | undefined }> {
@@ -2867,6 +2894,7 @@ export class SessionManager {
     this.forceStopDrivers();
     try {
       this.drivers = this.buildDrivers();
+      this.watchDriverActivity();
     } catch (err) {
       this.driverFailure = `cw-code could not restart its CLI drivers after the cancelled restart (${(err as Error).message}). Quit and reopen cw-code.`;
       throw new Error(this.driverFailure);

@@ -43,6 +43,7 @@ import { describeClaudeExit } from "./claudeExit.js";
 import { claudeTranscriptProjectDir, listClaudeSessions, listNativeClaudeSessions } from "./claudeSessions.js";
 import { readClaudeHistory, readSidecarAgent, readClaudeTaskResult, findSidecarModel, type SidecarAgent } from "./claudeHistory.js";
 import { buildClaudeUserContent, claudePromptText } from "./claudeUserContent.js";
+import { ActivityNotifier } from "../ActivityNotifier.js";
 import { previewText, traceHarnessCall, truncateError } from "../../debug/harnessTrace.js";
 import type { ClaudeModelUsageSnapshot } from "./claudeUsage.js";
 
@@ -181,6 +182,7 @@ export class ClaudeCliDriver implements CliDriver {
   private processes = new Map<string, ClaudeProcessState>();
   private turnToSession = new Map<string, string>();
   private interruptedTurns = new Set<string>();
+  private readonly activityNotifier = new ActivityNotifier();
   private pendingQuestions = new Map<string, { turnId: string; sessionId: string; control: ClaudeControlRequest }>();
   private pendingApprovals = new Map<string, PendingClaudeApproval>();
   private sessionAllows = new Map<string, Set<string>>();
@@ -244,6 +246,7 @@ export class ClaudeCliDriver implements CliDriver {
     this.closeTasks(state, "interrupted", "process-exit");
     this.killChild(state);
     if (this.processes.get(state.sessionId) === state) this.processes.delete(state.sessionId);
+    this.activityNotifier.notify();
   }
 
   private clearIdleTimer(state: ClaudeProcessState): void {
@@ -286,6 +289,7 @@ export class ClaudeCliDriver implements CliDriver {
       if (this.processes.get(state.sessionId) !== state) return;
       if (!this.isProcessAlive(state)) {
         this.processes.delete(state.sessionId);
+        this.activityNotifier.notify();
         return;
       }
       if (
@@ -591,6 +595,14 @@ export class ClaudeCliDriver implements CliDriver {
   }
 
   private handleTurnDone(state: ClaudeProcessState, info: TurnDoneInfo): void {
+    try {
+      this.applyTurnDone(state, info);
+    } finally {
+      this.activityNotifier.notify();
+    }
+  }
+
+  private applyTurnDone(state: ClaudeProcessState, info: TurnDoneInfo): void {
     if (state.apiErrorMessage) {
       info = { ...info, isError: true, resultText: state.apiErrorMessage };
     }
@@ -694,6 +706,7 @@ export class ClaudeCliDriver implements CliDriver {
     }
     this.turnToSession.delete(turnId);
     this.interruptedTurns.delete(turnId);
+    this.activityNotifier.notify();
   }
 
   async listSessions(projectRoot: string, projectId = ""): Promise<import("@cw-code/contracts").SessionMeta[]> {
@@ -922,6 +935,7 @@ export class ClaudeCliDriver implements CliDriver {
     state.completedTurn = true;
     state.postCompletionOutputPending = false;
     this.turnToSession.delete(turnId);
+    this.activityNotifier.notify();
   }
 
   stopSession(sessionId: string): void {
@@ -932,6 +946,11 @@ export class ClaudeCliDriver implements CliDriver {
     this.processes.delete(sessionId);
     this.closeTasks(state, "interrupted", "process-exit");
     this.killChild(state);
+    this.activityNotifier.notify();
+  }
+
+  onActivityChanged(listener: () => void): () => void {
+    return this.activityNotifier.subscribe(listener);
   }
 
   liveTasks(sessionId: string): TaskSnapshot[] {

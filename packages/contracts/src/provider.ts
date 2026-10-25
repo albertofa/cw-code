@@ -77,6 +77,7 @@ export interface CliDriver {
   terminalLaunch?(cwd: string): Promise<TerminalLaunch | null>;
   /** Snapshot of the sessions this driver is busy for (including internal ones) and the processes it currently owns. */
   activity?(): DriverActivity;
+  onActivityChanged?(listener: () => void): () => void;
   /**
    * Asks every owned process to exit and waits up to `timeoutMs`. Processes still alive at the deadline are
    * left for `dispose()` to force-stop, and the result reports `timedOut`. Never touches processes it did not spawn.

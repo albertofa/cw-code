@@ -42,7 +42,7 @@ function isProcessGone(pid: number): boolean {
 }
 
 function affectsShutdownAssessment(channel: string, payload: unknown): boolean {
-  if (channel === "session.title") return true;
+  if (channel === "session.title" || channel === "session.updated") return true;
   if (channel !== "turn.event") return false;
   const event = (payload as { event?: { type?: string } } | undefined)?.event;
   return event?.type === "task.updated";
@@ -234,7 +234,11 @@ export class ServerApp {
 
   private publishShutdown(): void {
     const services = this.services;
-    if (!services || this.servicesDisposed) return;
+    if (!services) return;
+    if (this.servicesDisposed) {
+      services.appTopic.setShutdownStatus(this.shutdownStatus());
+      return;
+    }
     services.appTopic.setShutdown(this.shutdownStatus(), services.shutdown.assess());
   }
 
@@ -242,6 +246,7 @@ export class ServerApp {
     this.unwireShutdownPublishing();
     this.unwireShutdownPublishing = this.shutdownPublisher.watch(
       (onChange) => services.threads.onRuntimeChanged(onChange),
+      (onChange) => services.sessions.onDriverActivityChanged(onChange),
       (onChange) => services.ptys.onChanged(onChange)
     );
   }

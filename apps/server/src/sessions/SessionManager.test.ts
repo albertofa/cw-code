@@ -4880,3 +4880,76 @@ describe("SessionManager status machine", () => {
     manager.dispose();
   });
 });
+
+class ActivityDriver implements CliDriver {
+  readonly kind = "claude" as const;
+  private readonly listeners = new Set<() => void>();
+  async listSessions(): Promise<[]> {
+    return [];
+  }
+  async getHistory(): Promise<HistoryMessage[]> {
+    return [];
+  }
+  startTurn(): TurnHandle {
+    return { turnId: randomUUID(), events: (async function* () {})() };
+  }
+  interrupt(): void {}
+  async renameSession(): Promise<void> {}
+  async *events(): AsyncIterable<never> {}
+  onActivityChanged(listener: () => void): () => void {
+    this.listeners.add(listener);
+    return () => this.listeners.delete(listener);
+  }
+  changeActivity(): void {
+    for (const listener of [...this.listeners]) listener();
+  }
+  dispose(): void {}
+}
+
+describe("SessionManager driver activity", () => {
+  function setupActivity() {
+    const dir = mkdtempSync(join(tmpdir(), "cw-driver-activity-"));
+    const generations: ActivityDriver[] = [];
+    const manager = new SessionManager({
+      dbPath: join(dir, "test.db"),
+      settingsPath: join(dir, "settings.json"),
+      driverFactory: () => {
+        const driver = new ActivityDriver();
+        generations.push(driver);
+        return { claude: driver, opencode: driver, codex: driver };
+      }
+    });
+    return { manager, generations };
+  }
+
+  it("forwards a driver activity change once per change, including after the drivers are rebuilt", () => {
+    const { manager, generations } = setupActivity();
+    const changes: number[] = [];
+    manager.onDriverActivityChanged(() => changes.push(changes.length));
+
+    generations[0]?.changeActivity();
+    expect(changes).toHaveLength(1);
+
+    manager.reinitializeDrivers();
+    expect(generations).toHaveLength(2);
+    generations[0]?.changeActivity();
+    generations[1]?.changeActivity();
+    expect(changes).toHaveLength(2);
+    manager.dispose();
+  });
+
+  it("stops forwarding to a listener that unsubscribed and survives one that throws", () => {
+    const { manager, generations } = setupActivity();
+    const seen: string[] = [];
+    manager.onDriverActivityChanged(() => {
+      throw new Error("listener failed");
+    });
+    const stop = manager.onDriverActivityChanged(() => seen.push("removed"));
+    manager.onDriverActivityChanged(() => seen.push("kept"));
+    stop();
+
+    generations[0]?.changeActivity();
+    expect(seen).toEqual(["kept"]);
+    manager.dispose();
+  });
+});
