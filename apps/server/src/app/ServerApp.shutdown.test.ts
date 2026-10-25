@@ -1,7 +1,8 @@
 import { afterAll, beforeAll, describe, expect, mock, spyOn, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { settingsFilePath } from "../paths/appPaths.js";
 import type { ServerApp as ServerAppType } from "./ServerApp.js";
 import type { Services } from "./services.js";
 
@@ -16,6 +17,17 @@ const { ServerApp } = await import("./ServerApp.js");
 
 const settle = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
 
+function unavailableBinaries(dir: string): Record<string, string> {
+  const missing = (name: string): string => join(dir, `missing-${name}`);
+  return {
+    claudeBinaryPath: missing("claude"),
+    opencodeBinaryPath: missing("opencode"),
+    codexBinaryPath: missing("codex"),
+    gitBinaryPath: missing("git"),
+    githubCliBinaryPath: missing("gh")
+  };
+}
+
 let home = "";
 let previousHome: string | undefined;
 let app: ServerAppType;
@@ -25,6 +37,8 @@ beforeAll(() => {
   previousHome = process.env.CW_CODE_HOME;
   home = mkdtempSync(join(tmpdir(), "cw-server-app-shutdown-"));
   process.env.CW_CODE_HOME = home;
+  mkdirSync(dirname(settingsFilePath()), { recursive: true });
+  writeFileSync(settingsFilePath(), JSON.stringify(unavailableBinaries(home)), "utf8");
   app = new ServerApp({ host: null, port: 0, parentPid: null, legacyUserData: [], allowOrigins: [] }, "test");
   app.reboot();
   const running = app.currentServices();
@@ -33,6 +47,7 @@ beforeAll(() => {
 });
 
 afterAll(() => {
+  (app as unknown as { disposeServices(): void }).disposeServices();
   if (previousHome === undefined) delete process.env.CW_CODE_HOME;
   else process.env.CW_CODE_HOME = previousHome;
   rmSync(home, { recursive: true, force: true });

@@ -5,18 +5,14 @@ import type {
   GitHubKind,
   GitHubMetaTopicData,
   GitHubRow,
-  GitHubSearchResult,
   GitHubSubject,
   GitHubTabBadge,
   GitHubViewState,
   GitHubViewTopicData,
   IssueSummary,
-  PrInboxResult,
   PrRef,
   PrSummary,
   RunRef,
-  RunSources,
-  RunsResult,
   SessionMeta,
   WorkflowRunSummary
 } from "@cw-code/contracts";
@@ -58,6 +54,7 @@ import {
   type RunContext,
   type SplitQuery
 } from "./viewQuery.js";
+import type { GitHubSearchResult, PrInboxResult, RunSources, RunsResult } from "./results.js";
 
 export interface GitHubViewsDeps {
   settings(): AppSettings;

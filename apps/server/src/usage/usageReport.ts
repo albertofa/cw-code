@@ -4,12 +4,12 @@ import type {
   ModelUsageRow,
   SessionUsageRow,
   TokenCounts,
-  UsageLedgerRow,
   UsageMetric,
   UsageReport,
   UsageReportQuery,
   UsageTotals
 } from "@cw-code/contracts";
+import type { UsageLedgerRow } from "./ledgerTypes.js";
 
 const ALL = "all";
 const TOP_MODELS = 6;

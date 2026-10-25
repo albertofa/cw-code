@@ -3,7 +3,6 @@ import type {
   GitHubContext,
   PrDetail,
   PrDetailEntry,
-  PrInboxResult,
   PrInboxState,
   PrRef,
   PrsTopicData,
@@ -23,6 +22,7 @@ import { shouldRequestDetail, type DetailAttempt } from "./needsYou.js";
 import { detailRefreshKey } from "./prUpdates.js";
 import { prSummaryLookup } from "./sessionPrLinks.js";
 import { subjectRelations } from "./subjectRelations.js";
+import type { PrInboxResult } from "../github/results.js";
 
 const MIN_REFRESH_SECONDS = 30;
 const DEFAULT_REFRESH_SECONDS = 120;
@@ -232,7 +232,10 @@ export class PrStore {
     this.store = null;
     this.changePending = false;
     const reason = new Error("PR store disposed");
-    for (const request of this.detailRequests.values()) request.cancel(reason);
+    for (const [key, request] of this.detailRequests) {
+      request.cancel(reason);
+      this.attempts.delete(key);
+    }
     this.detailRequests.clear();
     this.detailQueue = [];
     this.runningLoads = 0;

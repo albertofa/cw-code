@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, setSystemTime, vi } from "bun:test";
-import type { AccountUsageSnapshot, DriverKind, ThreadTopicData, TopicPatch, UsageLedgerQuery, UsageLedgerRow, UsageTopicData } from "@cw-code/contracts";
+import type { AccountUsageSnapshot, DriverKind, ThreadTopicData, TopicPatch, UsageTopicData } from "@cw-code/contracts";
 import { sessionTopic, USAGE_TOPIC } from "@cw-code/shared/topics";
 import { advanceTimersByTimeAsync } from "../../tests/testing.js";
 import { ThreadService } from "../threads/ThreadService.js";
@@ -8,6 +8,7 @@ import { TopicHub } from "../topics/TopicHub.js";
 import type { CallContext } from "../transport/Router.js";
 import { ACCOUNT_REFRESH_MS, UsageTopic } from "./UsageTopic.js";
 import { wireSessionUsageTotals } from "./wireSessionUsageTotals.js";
+import type { UsageLedgerQuery, UsageLedgerRow } from "./ledgerTypes.js";
 
 const ctx: CallContext = { clientId: "a", client: "web", auth: { kind: "owner" } };
 const NOW = new Date(2026, 5, 15, 12).getTime();
@@ -127,6 +128,19 @@ describe("UsageTopic", () => {
     topic.resume();
     await advanceTimersByTimeAsync(0);
     expect(fetched).toHaveLength(6);
+  });
+
+  it("resume followed by a resync starts a single refresh loop", async () => {
+    const { hub, topic, fetched } = setup();
+    hub.subscribe(ctx, [USAGE_TOPIC]);
+    await advanceTimersByTimeAsync(0);
+    topic.dispose();
+    topic.resume();
+    hub.resync();
+    await advanceTimersByTimeAsync(0);
+    expect(fetched).toHaveLength(6);
+    await advanceTimersByTimeAsync(ACCOUNT_REFRESH_MS);
+    expect(fetched).toHaveLength(9);
   });
 
   it("refreshAccount forces a fetch and keeps working while unsubscribed", async () => {

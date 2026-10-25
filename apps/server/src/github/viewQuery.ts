@@ -6,7 +6,6 @@ import type {
   ProjectGitHubRepo,
   RepoRef,
   RunRef,
-  RunSources,
   SessionMeta,
   WorkflowRunSummary
 } from "@cw-code/contracts";
@@ -39,6 +38,7 @@ import {
   sessionsForRun
 } from "../prEngine/subjectRelations.js";
 import { MAX_RUN_ORGS, MAX_RUN_REPOS } from "./runQueries.js";
+import type { RunSources } from "./results.js";
 
 export interface LocalFilter {
   key: "has" | "cloned" | "is";

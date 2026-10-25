@@ -21,7 +21,6 @@ interface StartTurnArgs {
   skills?: string[];
   prRefs?: PrRef[];
   acceptFolderHead?: string;
-  auto?: boolean;
 }
 
 interface DriverTarget {
@@ -36,7 +35,6 @@ export function registerTurnHandlers(router: Router, app: ServerApp): void {
     if (args.skills !== undefined && !isSkillMentionList(args.skills)) throw new Error("invalid skills");
     if (args.prRefs !== undefined && !Array.isArray(args.prRefs)) throw new Error("invalid prRefs");
     if (args.acceptFolderHead !== undefined && typeof args.acceptFolderHead !== "string") throw new Error("invalid acceptFolderHead");
-    if (args.auto !== undefined && typeof args.auto !== "boolean") throw new Error("invalid auto");
     for (const ref of args.prRefs ?? []) assertPrRef(ref);
     return turns().start(args.sessionId, args.prompt, {
       prefs: args.prefs,
@@ -44,8 +42,7 @@ export function registerTurnHandlers(router: Router, app: ServerApp): void {
       ...(args.command ? { command: args.command } : {}),
       ...(args.skills?.length ? { skills: args.skills } : {}),
       prRefs: args.prRefs,
-      ...(args.acceptFolderHead !== undefined ? { acceptFolderHead: args.acceptFolderHead } : {}),
-      ...(args.auto ? { auto: true } : {})
+      ...(args.acceptFolderHead !== undefined ? { acceptFolderHead: args.acceptFolderHead } : {})
     });
   });
   handle<{ sessionId: string }>(router, "turns.stop", (args) => turns().stop(knownSessionId(sessions(), args.sessionId)));

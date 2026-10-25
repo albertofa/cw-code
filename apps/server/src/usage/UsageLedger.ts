@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { DriverKind, TurnModelUsage, UsageLedgerQuery, UsageLedgerRow } from "@cw-code/contracts";
+import type { DriverKind, TurnModelUsage } from "@cw-code/contracts";
+import type { UsageLedgerQuery, UsageLedgerRow } from "./ledgerTypes.js";
 
 interface MonthFile {
   version: 1;

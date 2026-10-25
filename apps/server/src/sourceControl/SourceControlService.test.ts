@@ -1,10 +1,11 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import type { AppSettings, GitStatus, GitStatusUpdate, SessionMeta } from "@cw-code/contracts";
+import type { AppSettings, GitStatus, SessionMeta } from "@cw-code/contracts";
 import type { GitService } from "../fs/GitService.js";
 import type { PrTracker } from "../github/PrTracker.js";
 import type { SessionManager } from "../sessions/SessionManager.js";
 import type { GitWatcher } from "./GitWatcher.js";
 import { SourceControlService } from "./SourceControlService.js";
+import type { GitStatusUpdate } from "./gitStatusUpdate.js";
 
 function session(id: string): SessionMeta {
   return { id, projectId: "p", driver: "claude", title: id, status: "working", resumeCursor: "", createdAt: 0, updatedAt: 0, worktreePath: `/w/${id}` };

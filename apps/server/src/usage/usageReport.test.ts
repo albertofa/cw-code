@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
-import type { UsageLedgerRow } from "@cw-code/contracts";
 import { byModel, dailyByDriver, sinceDayFor, topSessions, totals, turnTokens, usageReport } from "./usageReport.js";
+import type { UsageLedgerRow } from "./ledgerTypes.js";
 
 function row(overrides: Partial<UsageLedgerRow> = {}): UsageLedgerRow {
   return {

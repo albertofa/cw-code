@@ -5,9 +5,6 @@ import type { Router } from "../transport/Router.js";
 import { handle } from "./shared.js";
 
 export function registerCliHandlers(router: Router, app: ServerApp): void {
-  handle(router, "cli.checkVersions", async () => {
-    return (await app.requireServices().harnessMonitor.check("recheck")).checks;
-  });
   handle(router, "cli.recheck", async () => {
     return app.requireServices().harnessMonitor.check("recheck");
   });

@@ -2,7 +2,7 @@ import { existsSync } from "node:fs";
 import { mkdir, readdir } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, relative, resolve } from "node:path";
-import type { AppSettings, PrDetail, PrInboxResult, PrRef, PrSummary, Project, RepoRef } from "@cw-code/contracts";
+import type { AppSettings, PrDetail, PrRef, PrSummary, Project, RepoRef } from "@cw-code/contracts";
 import { authenticatedEnvironment, execText, type GitService } from "../fs/GitService.js";
 import { expandHome } from "../skills/skillPaths.js";
 import { OWNER_RE, REPO_RE, assertRepoRef, assertRunId, isSafePositiveInt, isValidHost } from "./githubRefs.js";
@@ -10,6 +10,7 @@ import { GH_HOST, githubCliBinary, resolveGitHubAccount, withGitHubAccount, type
 import { defaultGitHubAccounts } from "./GitHubAccounts.js";
 import { DETAIL_QUERY, HEAD_QUERY, INBOX_QUERY, INBOX_SEARCH_LIMIT, inboxSearchQueries } from "./prQueries.js";
 import { parseDetail, parseHead, parseInbox, prKey, type PrHeadInfo } from "./prParsers.js";
+import type { PrInboxResult } from "./results.js";
 
 const INBOX_CACHE_TTL_MS = 30_000;
 const STATE_REFRESH_TTL_MS = 60_000;

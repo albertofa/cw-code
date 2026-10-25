@@ -62,17 +62,6 @@ export interface ProjectGitHubRepo {
   repo: string;
 }
 
-export interface PrInboxResult {
-  account: { host: string; login: string } | null;
-  items: PrSummary[];
-  fetchedAt: number;
-  error: string | null;
-  /** True when at least one inbox search hit its page size, so older PRs may be missing. */
-  truncated?: boolean;
-  /** Page size used per inbox search query. */
-  limit?: number;
-}
-
 export interface PrCheck {
   name: string;
   workflow: string | null;

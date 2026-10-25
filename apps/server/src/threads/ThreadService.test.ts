@@ -357,6 +357,46 @@ describe("ThreadService runtime", () => {
   });
 });
 
+describe("ThreadService lifecycle", () => {
+  test("a history load requested while disposed is replayed by resume", async () => {
+    const { threads, subscribe, snapshot, historyCalls } = setup();
+    threads.dispose();
+    subscribe("s1");
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    expect(snapshot("s1").history.state).toBe("loading");
+    threads.resume();
+    await waitFor(() => expect(historyCalls.length).toBeGreaterThan(0), { interval: 2 });
+    await waitFor(() => expect(snapshot("s1").history.state).toBe("loaded"), { interval: 2 });
+  });
+
+  test("todo and usage changes do not fire runtime listeners", () => {
+    const { threads } = setup();
+    threads.onDriverEvent("s1", started("turn-1"));
+    const changed: string[] = [];
+    threads.onRuntimeChanged((sessionId) => changed.push(sessionId));
+    threads.onDriverEvent("s1", { type: "todo.updated", turnId: "turn-1", todos: [{ content: "a", status: "pending" }] });
+    expect(changed).toEqual([]);
+  });
+
+  test("subscribing to an unknown session is rejected as unknown-topic", () => {
+    const { subscribe } = setup({ hasSession: (id) => id === "s1" });
+    expect(() => subscribe("ghost")).toThrow(expect.objectContaining({ code: "unknown-topic" }));
+    expect(() => subscribe("s1")).not.toThrow();
+  });
+
+  test("forget drops an idle entry but keeps subscribed ones and turns in flight", () => {
+    const { threads, subscribe, snapshot } = setup({ loadHistoryOnSubscribe: false });
+    for (const id of ["idle", "open", "busy"]) threads.onDriverEvent(id, started(`${id}-t`));
+    threads.onDriverEvent("idle", { ...done("idle-t") });
+    threads.onDriverEvent("open", done("open-t"));
+    subscribe("open", "c2");
+    for (const id of ["idle", "open", "busy"]) threads.forget(id);
+    expect(itemIds(snapshot("idle"))).toEqual([]);
+    expect(itemIds(snapshot("open"))).toEqual(["open-t-u"]);
+    expect(itemIds(snapshot("busy"))).toEqual(["busy-t-u"]);
+  });
+});
+
 describe("ThreadService memory", () => {
   test("idle threads beyond the LRU limit drop their items but keep runtime state", async () => {
     const { threads, historyCalls, subscribe } = setup({ idleThreadLimit: 2, history: async (id) => (historyCalls.push(id), HISTORY) });

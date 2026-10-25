@@ -2,8 +2,6 @@ import type {
   AccountUsageEntry,
   AccountUsageSnapshot,
   DriverKind,
-  UsageLedgerQuery,
-  UsageLedgerRow,
   UsageReport,
   UsageReportQuery,
   UsageTopicData,
@@ -13,6 +11,7 @@ import { USAGE_TOPIC } from "@cw-code/shared/topics";
 import type { TopicHub, TopicProvider } from "../topics/TopicHub.js";
 import type { TopicStore } from "../topics/TopicStore.js";
 import { sinceDayFor, totals, usageReport } from "./usageReport.js";
+import type { UsageLedgerQuery, UsageLedgerRow } from "./ledgerTypes.js";
 
 export const ACCOUNT_REFRESH_MS = 5 * 60 * 1000;
 
@@ -70,11 +69,11 @@ export class UsageTopic implements TopicProvider {
   }
 
   onSubscribe(): void {
-    if (!this.disposed && !this.timer) this.startRefreshing();
+    this.ensureRefreshing();
   }
 
   resync(): void {
-    if (!this.disposed) this.startRefreshing();
+    this.ensureRefreshing();
   }
 
   dispose(): void {
@@ -85,7 +84,7 @@ export class UsageTopic implements TopicProvider {
   resume(): void {
     if (!this.disposed) return;
     this.disposed = false;
-    if (this.store) this.startRefreshing();
+    if (this.store) this.ensureRefreshing();
   }
 
   get ledgerRev(): number {
@@ -113,8 +112,8 @@ export class UsageTopic implements TopicProvider {
     this.store?.upsert("ledgerRev", this.data.ledgerRev);
   }
 
-  private startRefreshing(): void {
-    this.stopTimer();
+  private ensureRefreshing(): void {
+    if (this.disposed || this.timer) return;
     void this.refreshAccount(false);
     this.timer = setInterval(() => void this.refreshAccount(false), ACCOUNT_REFRESH_MS);
     this.timer.unref?.();

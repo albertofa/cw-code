@@ -31,17 +31,6 @@ export interface GitHubAccountRef {
   login: string;
 }
 
-export interface GitHubSearchResult<T> {
-  account: GitHubAccountRef | null;
-  items: T[];
-  openCount: number | null;
-  closedCount: number | null;
-  truncated: boolean;
-  limit: number;
-  fetchedAt: number;
-  error: string | null;
-}
-
 export interface IssueLinkedPr {
   number: number;
   url: string;
@@ -125,19 +114,6 @@ export interface WorkflowRunSummary {
   /** Epoch milliseconds. */
   updatedAt: number;
   jobs: RunJob[];
-}
-
-export interface RunSources {
-  prSearchQuery: string | null;
-  repos: RepoRef[];
-  orgs: string[];
-}
-
-export interface RunsResult {
-  account: GitHubAccountRef | null;
-  items: WorkflowRunSummary[];
-  fetchedAt: number;
-  error: string | null;
 }
 
 export interface SessionIssueLink {

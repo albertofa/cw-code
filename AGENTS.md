@@ -53,6 +53,11 @@ Core behaviors:
   in `packages/shared/src/topics.ts`, providers in `apps/server/src/topics/`). `TopicCache` is
   the only owner of `topics.subscribe`/`topics.unsubscribe` in a client: it ref-counts
   holders, applies patches, resubscribes after a reconnect and then bumps `epoch`.
+- Ordering: patches that a call mutates directly are sent before that call's `result`.
+  Derived recomputes (PrStore, auto follow-up, session PR extras, sidebar) are scheduled in a
+  microtask or macrotask, so their patches may arrive after the `result`. A client must never
+  assume derived topics are updated when a call resolves; wait for the topic to show the
+  change.
 - Multi-client: several clients (`desktop-ui`, `desktop-shell`, `web`) connect to one server.
   The few remaining events are routed by topic: `apps/server/src/app/eventTopics.ts` maps
   each channel to the topic whose subscribers receive it. A channel mapped to no topic

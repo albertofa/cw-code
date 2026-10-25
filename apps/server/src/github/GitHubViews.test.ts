@@ -4,14 +4,10 @@ import type {
   GitHubContext,
   GitHubMetaTopicData,
   GitHubRow,
-  GitHubSearchResult,
   GitHubViewTopicData,
   IssueSummary,
-  PrInboxResult,
   PrSummary,
   RunRef,
-  RunSources,
-  RunsResult,
   SessionMeta,
   WorkflowRunSummary
 } from "@cw-code/contracts";
@@ -24,6 +20,7 @@ import type { TopicStore } from "../topics/TopicStore.js";
 import { GitHubViews } from "./GitHubViews.js";
 import { MAX_WATCHED_RUNS, runKey } from "./RunWatcher.js";
 import { watchedRunRefs } from "./viewQuery.js";
+import type { GitHubSearchResult, PrInboxResult, RunSources, RunsResult } from "./results.js";
 
 const ACCOUNT = { host: "github.com", login: "me" };
 

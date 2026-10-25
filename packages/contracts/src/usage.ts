@@ -80,24 +80,6 @@ export interface AccountUsageSnapshot {
   lastGood?: { fetchedAt: number; state: AccountUsageOk };
 }
 
-export interface UsageLedgerRow extends TokenCounts {
-  /** Local calendar day, YYYY-MM-DD. */
-  day: string;
-  sessionId: string;
-  projectId: string;
-  driver: DriverKind;
-  model: string;
-  turns: number;
-  /** Sum over priced turns; null when no turn in the row was priced. */
-  costUsd: number | null;
-  unpricedTurns: number;
-}
-
-export interface UsageLedgerQuery {
-  sinceDay?: string;
-  sessionId?: string;
-}
-
 export interface UsageTotals {
   totalTokens: number;
   inputTokens: number;

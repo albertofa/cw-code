@@ -44,8 +44,6 @@ import type {
   TurnChanges,
   TurnHandle,
   TurnSnapshot,
-  UsageLedgerQuery,
-  UsageLedgerRow,
   WorktreePruneSummary
 } from "@cw-code/contracts";
 import { type SessionStatusReason } from "../debug/sessionStatusTrace.js";
@@ -108,6 +106,7 @@ import { currentCheckoutSessionIds } from "../sourceControl/branchMismatch.js";
 import { overlayLiveTasks } from "../tasks/overlayLiveTasks.js";
 import { SessionBusyError } from "./SessionBusyError.js";
 import { PendingRequests, type PendingRequest } from "./PendingRequests.js";
+import type { UsageLedgerQuery, UsageLedgerRow } from "../usage/ledgerTypes.js";
 
 export interface SessionManagerOptions {
   dbPath?: string;

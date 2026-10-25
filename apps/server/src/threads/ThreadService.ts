@@ -6,8 +6,7 @@ import type {
   ThreadEvent,
   ThreadHistory,
   ThreadTopicData,
-  ThreadTurn,
-  TodoItem
+  ThreadTurn
 } from "@cw-code/contracts";
 import { sessionTopic } from "@cw-code/shared/topics";
 import { notifyAll } from "../events/notifyAll.js";
@@ -18,7 +17,6 @@ import type { TopicStore } from "../topics/TopicStore.js";
 import { clearItems, type ThreadChange, type ThreadField, type ThreadState } from "./threadItems.js";
 import {
   abortTurn,
-  appendNotice,
   beginTurn,
   commitTurn,
   createThreadState,
@@ -35,7 +33,6 @@ export interface SessionRuntime {
   turn: ThreadTurn | null;
   approvals: ApprovalRequest[];
   questions: QuestionRequest[];
-  todos: TodoItem[];
 }
 
 export type ThreadExtras = Partial<Pick<ThreadTopicData, "babysit" | "prItems" | "prDock" | "usageTotals" | "usageTotalsError" | "turnChanges">>;
@@ -51,6 +48,7 @@ export interface ThreadServiceDeps {
   hub: TopicHub;
   history(sessionId: string): Promise<HistoryMessage[]>;
   hasNoTranscript?(sessionId: string): boolean;
+  hasSession?(sessionId: string): boolean;
   liveTasks(sessionId: string): TaskSnapshot[];
   pendingRequests(sessionId: string): PendingRequest[];
   loadHistoryOnSubscribe?: boolean;
@@ -67,7 +65,7 @@ export const IDLE_THREAD_LIMIT = 20;
 type ThreadStore = TopicStore<ThreadTopicData>;
 type LoadMode = "subscribe" | "reload";
 
-const RUNTIME_FIELDS: ReadonlySet<ThreadField> = new Set(["turn", "approvals", "questions", "todos", "usage"]);
+const RUNTIME_FIELDS: ReadonlySet<ThreadField> = new Set(["turn", "approvals", "questions"]);
 const HISTORY_LOADING: ThreadHistory = { state: "loading", error: null, retrying: false };
 const HISTORY_LOADED: ThreadHistory = { state: "loaded", error: null, retrying: false };
 const EXTRAS_DEFAULTS: Required<ThreadExtras> = { babysit: null, prItems: [], prDock: [], usageTotals: null, usageTotalsError: null, turnChanges: null };
@@ -126,7 +124,7 @@ export class ThreadService {
 
   runtime(sessionId: string): SessionRuntime {
     const state = this.entries.get(sessionId)?.state ?? seededState(this.deps.pendingRequests(sessionId));
-    return { busy: state.turn !== null, turn: state.turn, approvals: state.approvals, questions: state.questions, todos: state.todos };
+    return { busy: state.turn !== null, turn: state.turn, approvals: state.approvals, questions: state.questions };
   }
 
   onRuntimeChanged(cb: (sessionId: string) => void): () => void {
@@ -137,11 +135,6 @@ export class ThreadService {
   onTurnSettled(cb: (sessionId: string, turnId: string, event: SettledTurnEvent) => void): () => void {
     this.settledListeners.add(cb);
     return () => this.settledListeners.delete(cb);
-  }
-
-  appendNotice(sessionId: string, notice: ThreadNotice): void {
-    const entry = this.entry(sessionId);
-    this.apply(entry, appendNotice(entry.state, notice));
   }
 
   replaceHistory(sessionId: string, history: HistoryMessage[]): void {
@@ -197,6 +190,7 @@ export class ThreadService {
   }
 
   acquire(sessionId: string): ThreadStore {
+    if (this.deps.hasSession && !this.deps.hasSession(sessionId)) throw new Error(`unknown session '${sessionId}'`);
     const entry = this.entry(sessionId);
     this.idle.delete(sessionId);
     if (!entry.state.historyLoaded && !entry.loading && this.deps.hasNoTranscript?.(sessionId)) {
@@ -219,6 +213,14 @@ export class ThreadService {
       entry.history = this.settledHistory(entry);
     }
     this.retain(entry);
+  }
+
+  forget(sessionId: string): void {
+    const entry = this.entries.get(sessionId);
+    if (!entry || entry.store || entry.state.turn !== null) return;
+    this.cancelLoad(entry);
+    this.entries.delete(sessionId);
+    this.idle.delete(sessionId);
   }
 
   dispose(): void {
@@ -433,10 +435,11 @@ export class ThreadService {
         return;
       }
     } finally {
-      if (entry.generation === generation && !this.disposed) {
+      if (entry.generation === generation) {
         entry.loading = null;
         entry.loadMode = null;
-        this.retain(entry);
+        if (this.disposed) entry.interruptedLoad = mode;
+        else this.retain(entry);
       }
     }
   }

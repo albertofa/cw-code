@@ -243,11 +243,6 @@ export interface GitStatus {
   clean: boolean;
 }
 
-export interface GitStatusUpdate {
-  sessionId: string;
-  status: GitStatus;
-}
-
 export type GitHubAccountSelectionSource = "project" | "owner" | "access" | "single" | "active" | "none";
 
 export interface GitHubAccountInfo {

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "bun:test";
-import type { PrDetail, PrDetailEntry, PrInboxResult, PrRef, PrsTopicData, PrSummary, PrWorkflow, SessionMeta, SessionPrLink, TopicPatch } from "@cw-code/contracts";
+import type { PrDetail, PrDetailEntry, PrRef, PrsTopicData, PrSummary, PrWorkflow, SessionMeta, SessionPrLink, TopicPatch } from "@cw-code/contracts";
 import { prKey } from "@cw-code/shared/prRef";
 import { sessionTopic } from "@cw-code/shared/topics";
 import { advanceTimersByTimeAsync } from "../../tests/testing.js";
@@ -7,6 +7,7 @@ import { DEFAULT_SETTINGS } from "../settings/SettingsStore.js";
 import { TopicHub } from "../topics/TopicHub.js";
 import type { TopicStore } from "../topics/TopicStore.js";
 import { PrStore } from "./PrStore.js";
+import type { PrInboxResult } from "../github/results.js";
 
 const REF: PrRef = { host: "github.com", owner: "acme", repo: "widgets", number: 42 };
 const KEY = prKey(REF);
@@ -420,6 +421,23 @@ describe("PrStore", () => {
       await settle();
       expect(h.prStore.detail(prKey(refN(1)))).toBeUndefined();
       expect(h.fetchedDetails).toHaveLength(3);
+    });
+  });
+
+  describe("dispose and resume", () => {
+    it("re-requests the loads that dispose cancelled", async () => {
+      const h = createHarness([session()]);
+      h.detailControl.hold = true;
+      h.detailControl.auto = true;
+      h.openSession("s1");
+      await settle();
+      expect(h.fetchedDetails).toHaveLength(1);
+      h.prStore.dispose();
+      for (const release of h.releases.values()) release();
+      await settle();
+      h.prStore.resume();
+      await settle();
+      expect(h.fetchedDetails).toHaveLength(2);
     });
   });
 

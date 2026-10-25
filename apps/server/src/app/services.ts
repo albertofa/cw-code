@@ -149,7 +149,7 @@ function wireGitHubViews({ githubViews, prStore }: Services): void {
 }
 
 function wireServiceEvents(
-  { sessions, sourceControl, gitTopic, filesTopic, prTracker, prStore, ptys, runWatcher, githubViews, threads, autoFollowUp, sessionPrs, sidebar }: Services,
+  { sessions, sourceControl, gitTopic, filesTopic, prTracker, prStore, ptys, runWatcher, githubViews, threads, autoFollowUp, sidebar }: Services,
   { emit, dropTopic, assessmentChanged }: ServiceHooks
 ): void {
   sessions.setEmitter((sessionId, event) => {
@@ -170,12 +170,10 @@ function wireServiceEvents(
     assessmentChanged();
     prTracker.setTracked(sessions.trackedPrRefs());
     prStore.onSessionsChanged();
-    autoFollowUp.reevaluate();
-    sessionPrs.invalidate();
-    sidebar.invalidate();
     if (session.status === "archived" || session.status === "resolved") {
       gitTopic.forgetKeptHead(session.id);
       filesTopic.forget(session.id);
+      threads.forget(session.id);
     } else gitTopic.stateChanged(session.id);
   });
   sessions.setProjectEmitter((project) => {
@@ -281,6 +279,7 @@ export function createServices(stores: { sessionStore: SessionStore; settingsSto
     hub: hooks.topics,
     history: (sessionId) => sessions.getHistory(sessionId),
     hasNoTranscript: (sessionId) => sessions.hasNoTranscript(sessionId),
+    hasSession: (sessionId) => sessions.hasSession(sessionId),
     liveTasks: (sessionId) => sessions.liveTasks(sessionId),
     pendingRequests: (sessionId) => sessions.listPendingRequests(sessionId)
   });

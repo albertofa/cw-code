@@ -1,4 +1,4 @@
-import type { AppSettings, GitStatus, GitStatusUpdate, PrRef, SessionMeta, ThreadEvent } from "@cw-code/contracts";
+import type { AppSettings, GitStatus, PrRef, SessionMeta, ThreadEvent } from "@cw-code/contracts";
 import { prKey } from "@cw-code/shared/prRef";
 import { notifyAll } from "../events/notifyAll.js";
 import type { GitService } from "../fs/GitService.js";
@@ -9,6 +9,7 @@ import { classifyToolCall, type ToolGitEffect } from "./gitActivity.js";
 import { GitWatcher, type GitWatchRoot } from "./GitWatcher.js";
 import { RefreshScheduler, type RefreshRequest } from "./RefreshScheduler.js";
 import { statusGroupsForRoot, type StatusCandidate, type StatusGroup } from "./statusTargets.js";
+import type { GitStatusUpdate } from "./gitStatusUpdate.js";
 
 export const TOOL_REFRESH_DEBOUNCE_MS = 250;
 export const STATUS_REFRESH_CONCURRENCY = 4;
