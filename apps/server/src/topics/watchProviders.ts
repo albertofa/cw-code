@@ -3,12 +3,12 @@ import { filesTopic, GITHUB_RUNS_TOPIC, SIDEBAR_TOPIC, topicId, USAGE_TOPIC } fr
 import type { ClientInputs } from "../app/clientInputs.js";
 import type { Services } from "../app/services.js";
 import { MAX_WATCHED_RUNS } from "../github/RunWatcher.js";
+import { createThreadTopicProvider, THREAD_TOPIC_PREFIX } from "../threads/threadTopic.js";
 import type { TopicHub, TopicProvider } from "./TopicHub.js";
 
 const GIT_PREFIX = "git/";
 const FILES_PREFIX = "files/";
 const PTY_PREFIX = "pty/";
-const SESSION_PREFIX = "session/";
 
 export interface TopicProviderDeps {
   clientInputs: ClientInputs;
@@ -104,7 +104,7 @@ export function createWatchControls(hub: TopicHub, services: Services, { clientI
   };
 
   const pushPendingRequests = (clientId: string, topic: string): void => {
-    const sessionId = topicId(topic, SESSION_PREFIX);
+    const sessionId = topicId(topic, THREAD_TOPIC_PREFIX);
     if (!sessionId) return;
     for (const entry of services.sessions.listPendingRequests(sessionId)) {
       const event: ThreadEvent =
@@ -153,7 +153,7 @@ export function createWatchControls(hub: TopicHub, services: Services, { clientI
         syncWatchedRuns();
       }
     }),
-    emptyStoreProvider(hub, ownsPrefix(SESSION_PREFIX), {
+    createThreadTopicProvider(services.threads, {
       onSubscribe: (clientId, topic) => {
         pushPendingRequests(clientId, topic);
         services.prStore.reevaluate();

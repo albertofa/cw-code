@@ -641,6 +641,67 @@ describe("thread reducer begin, commit and abort", () => {
     expect(state.turn?.turnId).toBe("other");
     expect(state.items.size).toBe(0);
   });
+
+  it("inserts the user item on commit when the history was replaced during the pending window", () => {
+    const state = createThreadState();
+    const { pendingId } = beginTurn(state, { prompt: "hi", now: 500, auto: false });
+    replaceHistory(state, [{ id: "h1", role: "assistant", text: "old", turnId: "h0" }], []);
+    expect(state.items.has(pendingId)).toBe(false);
+
+    const change = commitTurn(state, pendingId, "turn-1");
+
+    expect(items(state).map((m) => m.id)).toEqual(["h1", "turn-1-u"]);
+    expect(state.items.get("turn-1-u")).toMatchObject({ role: "user", text: "hi", turnId: "turn-1", timestamp: 500 });
+    expect(state.items.get("turn-1-u")?.pending).toBeUndefined();
+    expect(change.upserted).toEqual(["turn-1-u"]);
+    expect(state.turn).toEqual({ phase: "running", turnId: "turn-1", startedAt: 500, auto: false });
+  });
+
+  it("restores the running turn when a start sent during it fails", () => {
+    const state = createThreadState();
+    apply(state, started("turn-0", 100, "first"));
+    const running = state.turn;
+    const begun = beginTurn(state, { prompt: "second", now: 500, auto: false });
+    expect(begun.previousTurn).toEqual(running);
+
+    abortTurn(state, begun.pendingId, begun.previousTodos, begun.previousTurn);
+
+    expect(state.turn).toEqual(running);
+    expect(items(state).map((m) => m.id)).toEqual(["turn-0-u"]);
+  });
+});
+
+describe("thread reducer item indexes", () => {
+  it("keeps appending to the last assistant item after the newest item is removed", () => {
+    const state = createThreadState();
+    apply(state, { type: "assistant.delta", turnId: "turn-1", text: "one" });
+    apply(state, { type: "turn.retry", turnId: "turn-1", attempt: 1, retryAt: 0, message: "overloaded" });
+    const change = apply(state, { type: "assistant.delta", turnId: "turn-1", text: " two" });
+    expect(change.appended).toEqual([{ id: "turn-1-a", text: " two" }]);
+    expect(items(state).map((m) => [m.id, m.text])).toEqual([["turn-1-a", "one two"]]);
+  });
+
+  it("closes open reasoning once and appends after a re-keyed echo", () => {
+    const state = createThreadState();
+    const { pendingId } = beginTurn(state, { prompt: "hi", now: 500, auto: false });
+    commitTurn(state, pendingId, "turn-1");
+    apply(state, { type: "reasoning.delta", turnId: "turn-1", text: "think" }, 1000);
+    const closing = apply(state, { type: "assistant.delta", turnId: "turn-1", text: "a" }, 1500);
+    expect(state.items.get("turn-1-th")?.reasoningMs).toBe(500);
+    expect(closing.upserted).toEqual(["turn-1-th", "turn-1-a"]);
+    const next = apply(state, { type: "assistant.delta", turnId: "turn-1", text: "b" }, 2000);
+    expect(next).toEqual({ upserted: [], removed: [], appended: [{ id: "turn-1-a", text: "b" }], fields: [], reloaded: false });
+    expect(state.openReasoningIds.size).toBe(0);
+    expect(state.lastItemId).toBe("turn-1-a");
+  });
+
+  it("rebuilds the indexes when history is reloaded", () => {
+    const state = createThreadState();
+    apply(state, { type: "reasoning.delta", turnId: "turn-1", text: "think" }, 1000);
+    replaceHistory(state, [{ id: "h1", role: "assistant", text: "old", turnId: "h0" }], []);
+    expect(state.openReasoningIds.size).toBe(0);
+    expect(state.lastItemId).toBe("h1");
+  });
 });
 
 describe("thread reducer history", () => {

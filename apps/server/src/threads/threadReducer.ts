@@ -6,6 +6,7 @@ import type {
   ThreadItem,
   ThreadLastTurn,
   ThreadTopicData,
+  ThreadTurn,
   TodoItem
 } from "@cw-code/contracts";
 import { overlayLiveTasks } from "../tasks/overlayLiveTasks.js";
@@ -30,6 +31,7 @@ import {
   mergeToolPairs,
   orderedItems,
   putItem,
+  reindexItems,
   removeItem,
   reseqItems,
   sumTurnUsage,
@@ -428,46 +430,65 @@ export function replaceHistory(state: ThreadState, history: HistoryMessage[], li
   return changes.build();
 }
 
-export function beginTurn(
-  state: ThreadState,
-  input: { prompt: string; now: number; auto: boolean }
-): { pendingId: string; previousTodos: TodoItem[]; change: ThreadChange } {
+export interface BegunTurn {
+  pendingId: string;
+  previousTodos: TodoItem[];
+  previousTurn: ThreadTurn | null;
+  change: ThreadChange;
+}
+
+export function beginTurn(state: ThreadState, input: { prompt: string; now: number; auto: boolean }): BegunTurn {
   if (state.turn !== null && state.turn.turnId === null) throw new Error("session busy (turn pending)");
   const changes = new ChangeSet();
   const previousTodos = state.todos;
+  const previousTurn = state.turn;
   const pendingId = `${PENDING_PREFIX}${state.nextSeq}`;
   state.ignoredTurnStart = null;
   state.turn = { phase: "starting", turnId: null, startedAt: input.now, auto: input.auto };
   changes.touch("turn");
   setTodos(state, [], changes);
-  insertItem(
-    state,
-    { id: pendingId, role: "user", text: input.prompt, turnId: pendingId, timestamp: input.now, pending: true },
-    changes
-  );
-  return { pendingId, previousTodos, change: changes.build() };
+  const echo: ItemFields = { id: pendingId, role: "user", text: input.prompt, turnId: pendingId, timestamp: input.now, pending: true };
+  state.pendingEcho = echo;
+  insertItem(state, echo, changes);
+  return { pendingId, previousTodos, previousTurn, change: changes.build() };
+}
+
+function settledEcho(echo: ItemFields, id: string, turnId: string): ItemFields {
+  const { pending: _pending, ...settled } = echo;
+  return { ...settled, id, turnId };
 }
 
 function rekeyEcho(state: ThreadState, echo: ThreadItem, id: string, turnId: string): void {
-  const { pending: _pending, ...settled } = echo;
   const entries = [...state.items.entries()].map(([key, item]): [string, ThreadItem] =>
-    key === echo.id ? [id, { ...settled, id, turnId }] : [key, item]
+    key === echo.id ? [id, { ...settledEcho(echo, id, turnId), seq: echo.seq }] : [key, item]
   );
   state.items = new Map(entries);
+  reindexItems(state);
+}
+
+function takePendingEcho(state: ThreadState, pendingId: string): ItemFields | null {
+  const echo = state.pendingEcho;
+  if (echo?.id !== pendingId) return null;
+  state.pendingEcho = null;
+  return echo;
 }
 
 export function commitTurn(state: ThreadState, pendingId: string, turnId: string): ThreadChange {
   const changes = new ChangeSet();
   state.ignoredTurnStart = null;
+  const pendingEcho = takePendingEcho(state, pendingId);
   if (state.turn !== null && state.turn.turnId === null) {
     state.turn = { ...state.turn, phase: "running", turnId };
     changes.touch("turn");
   }
-  const echo = state.items.get(pendingId);
-  if (!echo) return changes.build();
   const userId = `${turnId}-u`;
   if (state.items.has(userId)) {
     removeItem(state, pendingId, changes);
+    return changes.build();
+  }
+  const echo = state.items.get(pendingId);
+  if (!echo) {
+    if (pendingEcho) insertItem(state, settledEcho(pendingEcho, userId, turnId), changes);
     return changes.build();
   }
   rekeyEcho(state, echo, userId, turnId);
@@ -476,11 +497,17 @@ export function commitTurn(state: ThreadState, pendingId: string, turnId: string
   return changes.build();
 }
 
-export function abortTurn(state: ThreadState, pendingId: string, previousTodos: TodoItem[]): ThreadChange {
+export function abortTurn(state: ThreadState, pendingId: string, previousTodos: TodoItem[], previousTurn: ThreadTurn | null = null): ThreadChange {
   const changes = new ChangeSet();
+  takePendingEcho(state, pendingId);
   removeItem(state, pendingId, changes);
   if (state.turn === null || state.turn.turnId !== null) return changes.build();
-  closeTurn(state, undefined, state.turn.startedAt, changes);
+  if (previousTurn) {
+    state.turn = previousTurn;
+    changes.touch("turn");
+  } else {
+    closeTurn(state, undefined, state.turn.startedAt, changes);
+  }
   if (previousTodos.length > 0 && state.todos.length === 0) setTodos(state, previousTodos, changes);
   const remoteStart = state.ignoredTurnStart;
   state.ignoredTurnStart = null;

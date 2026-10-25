@@ -35,6 +35,9 @@ export interface ThreadState {
   historyLoaded: boolean;
   todosTouched: boolean;
   ignoredTurnStart: TurnStartedEvent | null;
+  pendingEcho: ItemFields | null;
+  lastItemId: string | null;
+  openReasoningIds: Set<string>;
 }
 
 export interface ThreadChange {
@@ -106,7 +109,10 @@ export function createThreadState(): ThreadState {
     bufferedTasks: new Map(),
     historyLoaded: false,
     todosTouched: false,
-    ignoredTurnStart: null
+    ignoredTurnStart: null,
+    pendingEcho: null,
+    lastItemId: null,
+    openReasoningIds: new Set()
   };
 }
 
@@ -115,23 +121,44 @@ export function orderedItems(state: ThreadState): ThreadItem[] {
 }
 
 export function lastItem(state: ThreadState): ThreadItem | undefined {
-  let last: ThreadItem | undefined;
-  for (const item of state.items.values()) {
-    if (!last || item.seq > last.seq) last = item;
-  }
-  return last;
+  return state.lastItemId === null ? undefined : state.items.get(state.lastItemId);
+}
+
+function isOpenReasoning(item: ThreadItem): boolean {
+  return item.role === "reasoning" && item.reasoningMs === undefined && item.reasoningStartedAt !== undefined;
+}
+
+function trackItem(state: ThreadState, item: ThreadItem): void {
+  if (isOpenReasoning(item)) state.openReasoningIds.add(item.id);
+  else state.openReasoningIds.delete(item.id);
+  const last = lastItem(state);
+  if (!last || item.seq >= last.seq) state.lastItemId = item.id;
+}
+
+export function reindexItems(state: ThreadState): void {
+  state.lastItemId = null;
+  state.openReasoningIds = new Set();
+  for (const item of state.items.values()) trackItem(state, item);
+}
+
+export function clearItems(state: ThreadState): void {
+  state.items = new Map();
+  state.nextSeq = 1;
+  reindexItems(state);
 }
 
 export function insertItem(state: ThreadState, fields: ItemFields, changes: ChangeSet): ThreadItem {
   const item: ThreadItem = { ...fields, seq: state.nextSeq };
   state.nextSeq += 1;
   state.items.set(item.id, item);
+  trackItem(state, item);
   changes.upsert(item.id);
   return item;
 }
 
 export function putItem(state: ThreadState, item: ThreadItem, changes: ChangeSet): void {
   state.items.set(item.id, item);
+  trackItem(state, item);
   changes.upsert(item.id);
 }
 
@@ -143,6 +170,8 @@ export function insertOrReplaceItem(state: ThreadState, fields: ItemFields, chan
 
 export function removeItem(state: ThreadState, id: string, changes: ChangeSet): void {
   if (!state.items.delete(id)) return;
+  state.openReasoningIds.delete(id);
+  if (state.lastItemId === id) reindexItems(state);
   changes.remove(id);
 }
 
@@ -153,6 +182,7 @@ export function reseqItems(state: ThreadState, ordered: ItemFields[]): void {
     state.items.set(fields.id, { ...fields, seq: state.nextSeq });
     state.nextSeq += 1;
   }
+  reindexItems(state);
 }
 
 function toolCallText(name: string, input: unknown): string {
@@ -240,9 +270,14 @@ export function appendReasoningText(
 }
 
 export function closeReasoning(state: ThreadState, now: number, changes: ChangeSet): void {
-  for (const item of orderedItems(state)) {
-    if (item.role !== "reasoning" || item.reasoningMs !== undefined || item.reasoningStartedAt === undefined) continue;
-    putItem(state, { ...item, reasoningMs: Math.max(0, now - item.reasoningStartedAt) }, changes);
+  if (state.openReasoningIds.size === 0) return;
+  const open = [...state.openReasoningIds]
+    .flatMap((id) => state.items.get(id) ?? [])
+    .filter(isOpenReasoning)
+    .sort((a, b) => a.seq - b.seq);
+  state.openReasoningIds.clear();
+  for (const item of open) {
+    putItem(state, { ...item, reasoningMs: Math.max(0, now - (item.reasoningStartedAt ?? now)) }, changes);
   }
 }
 

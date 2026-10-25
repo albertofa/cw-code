@@ -2479,6 +2479,11 @@ export class SessionManager {
     return this.pendingRequests.list(sessionId);
   }
 
+  liveTasks(sessionId: string): TaskSnapshot[] {
+    const session = this.store.getSession(sessionId);
+    return session ? driverLiveTasks(this.drivers[session.driver], sessionId) : [];
+  }
+
   async respondApproval(requestId: string, decision: ApprovalDecision): Promise<void> {
     await this.answerPendingRequest(requestId, "approval", async (driver) => {
       if (typeof driver.respondToApproval !== "function") throw new Error(`${driver.kind} cannot answer approvals`);

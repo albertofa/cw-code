@@ -73,5 +73,11 @@ export function registerSessionHandlers(router: Router, app: ServerApp): void {
     services().sessions.getSubagentTools(args.sessionId, args.agentId)
   );
   handle(router, "sessions.activeTurns", () => services().sessions.listActiveTurns());
-  handle<{ sessionId: string }>(router, "sessions.retryConnection", (args) => services().sessions.retryConnection(args.sessionId));
+  handle<{ sessionId: string }>(router, "sessions.retryConnection", async (args) => {
+    const { sessions, threads } = services();
+    const result = await sessions.retryConnection(args.sessionId);
+    threads.replaceHistory(args.sessionId, result.history);
+    return result;
+  });
+  handle<{ sessionId: string }>(router, "threads.reloadHistory", (args) => services().threads.reloadHistory(args.sessionId));
 }

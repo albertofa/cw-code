@@ -24,6 +24,8 @@ import type { SettingsStore } from "../settings/SettingsStore.js";
 import { ShutdownCoordinator } from "../shutdown/ShutdownCoordinator.js";
 import { SkillsStore } from "../skills/SkillsStore.js";
 import { SourceControlService } from "../sourceControl/SourceControlService.js";
+import { ThreadService } from "../threads/ThreadService.js";
+import { TurnService } from "../threads/TurnService.js";
 import type { TopicHub } from "../topics/TopicHub.js";
 import { AccountUsageService } from "../usage/AccountUsageService.js";
 import { AppTopic } from "./AppTopic.js";
@@ -49,6 +51,8 @@ export interface Services {
   appTopic: AppTopic;
   preferences: PreferencesStore;
   harnessMonitor: HarnessMonitor;
+  threads: ThreadService;
+  turns: TurnService;
 }
 
 export interface ServiceHooks {
@@ -62,9 +66,10 @@ export interface ServiceHooks {
 
 const PR_STATE_REUSE_MS = 60_000;
 
-function wireServiceEvents({ sessions, sourceControl, prTracker, prStore, ptys, runWatcher }: Services, { emit, dropTopic }: ServiceHooks): void {
+function wireServiceEvents({ sessions, sourceControl, prTracker, prStore, ptys, runWatcher, threads }: Services, { emit, dropTopic }: ServiceHooks): void {
   sessions.setEmitter((sessionId, event) => {
     emit("turn.event", { sessionId, event });
+    threads.onDriverEvent(sessionId, event);
     sourceControl.onThreadEvent(sessionId, event);
   });
   sessions.setTitleEmitter((sessionId, title) => emit("session.title", { sessionId, title }));
@@ -164,6 +169,13 @@ export function createServices(stores: { sessionStore: SessionStore; settingsSto
     current: () => appTopic.harnesses,
     publish: (availability) => appTopic.setHarnesses(availability)
   });
+  const threads = new ThreadService({
+    hub: hooks.topics,
+    history: (sessionId) => sessions.getHistory(sessionId),
+    liveTasks: (sessionId) => sessions.liveTasks(sessionId),
+    pendingRequests: (sessionId) => sessions.listPendingRequests(sessionId),
+    loadHistoryOnSubscribe: false
+  });
   const services: Services = {
     sessions,
     skills: new SkillsStore(),
@@ -182,7 +194,9 @@ export function createServices(stores: { sessionStore: SessionStore; settingsSto
     shutdown,
     appTopic,
     preferences,
-    harnessMonitor
+    harnessMonitor,
+    threads,
+    turns: new TurnService({ sessions, threads })
   };
   wireServiceEvents(services, hooks);
   return services;
