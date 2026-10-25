@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { BookmarkPlus, Pencil, Settings2, Trash2 } from "lucide-react";
 import type { GitHubKind } from "../cw.js";
-import { SAVED_VIEW_ICON, resolveViews, useGitHubStore, type GitHubView } from "../stores/githubStore.js";
+import { SAVED_VIEW_ICON, resolveViews } from "@cw-code/shared/githubViews";
+import { useGitHubStore, type GitHubView } from "../stores/githubStore.js";
 import { AnchoredPopover, type AnchorRect } from "./AnchoredPopover.js";
 import { KIND_ICONS, NamedIcon } from "./GitHubIcon.js";
 import { KIND_LABELS, currentViewOf, isViewEdited } from "./githubViewModel.js";

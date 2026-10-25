@@ -6,8 +6,7 @@ import {
   badgeSearchKeys,
   clonedReposOf,
   githubProjectRepos,
-  resolveViews,
-  scopeSplitQuery,
+  scopedSplitOf,
   searchKey,
   useGitHubStore
 } from "../stores/githubStore.js";
@@ -19,7 +18,9 @@ import { GitHubListSkeleton } from "./GitHubSkeletons.js";
 import { GitHubToolbar } from "./GitHubToolbar.js";
 import { GitHubViewMenu } from "./GitHubViewMenu.js";
 import { useRetainedEntry } from "./useRetainedEntry.js";
-import { addQualifier, applyLocalFilters, normalizeQuery, queryProblems, runMatches, sortRuns, splitQuery } from "./githubQuery.js";
+import { addQualifier, normalizeQuery, queryProblems } from "@cw-code/shared/githubQueryDsl";
+import { resolveViews } from "@cw-code/shared/githubViews";
+import { applyLocalFilters, runMatches, sortRuns } from "./githubViewQueryLegacy.js";
 import {
   KIND_NOUNS,
   assignedOpenIssueCount,
@@ -123,7 +124,7 @@ export function GitHubView() {
   const involvedPrKeys = useMemo(() => involvedPrKeysOf(inbox?.items ?? NO_PRS, cachedPrs, viewer), [inbox, cachedPrs, viewer]);
   const runContext = useMemo(() => buildRunContext(viewer, involvedPrKeys, sessions), [viewer, involvedPrKeys, sessions]);
 
-  const split = useMemo(() => (kind === "run" ? null : scopeSplitQuery(splitQuery(kind, tab.query))), [kind, tab.query]);
+  const split = useMemo(() => (kind === "run" ? null : scopedSplitOf(kind, tab.query)), [kind, tab.query]);
   const remoteEmpty = split !== null && split.remote.trim() === "";
 
   const listing = useMemo<Listing>(() => {

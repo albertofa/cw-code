@@ -3,6 +3,7 @@ import type {
   GitHubAccountRef,
   GitHubKind,
   GitHubSearchResult,
+  GitHubViewDef,
   GitHubViewGroup,
   IssueSummary,
   PrSummary,
@@ -14,9 +15,24 @@ import type {
   SavedGitHubView,
   WorkflowRunSummary
 } from "../cw.js";
+import {
+  DEFAULT_REMOTE_SORT,
+  definitionOf,
+  isStateToken,
+  joinTokens,
+  kindFromQuery,
+  lowerValue,
+  normalizeQuery,
+  sortKeysFor,
+  tokenProblem,
+  tokenize,
+  uniqueBy,
+  type QueryToken
+} from "@cw-code/shared/githubQueryDsl";
+import { BUILTIN_VIEWS, MAX_QUERY_LENGTH, MAX_SAVED_VIEWS, MAX_VIEW_NAME_LENGTH, resolveViews } from "@cw-code/shared/githubViews";
 import { GITHUB_RUNS_TOPIC } from "@cw-code/shared/topics";
 import { errorMessage } from "../components/errorMessage.js";
-import { normalizeQuery, kindFromQuery, runSources, sortedRemoteOf, splitQuery, tokenize, type SplitQuery } from "../components/githubQuery.js";
+import type { LocalFilter } from "../components/githubViewQueryLegacy.js";
 import { useAppStore } from "./appStore.js";
 import { usePrStore } from "./prStore.js";
 
@@ -29,15 +45,7 @@ export interface GitHubTabState {
 
 export type Loadable<T> = { loading: boolean; data: T | null; error: string | null; stale?: boolean };
 
-export interface GitHubView {
-  id: string;
-  kind: GitHubKind;
-  name: string;
-  icon: string;
-  query: string;
-  group: GitHubViewGroup;
-  saved: boolean;
-}
+export type GitHubView = GitHubViewDef;
 
 export interface GitHubStore {
   kind: GitHubKind;
@@ -69,31 +77,6 @@ export interface GitHubStore {
   clearError(): void;
 }
 
-export const ORG_PLACEHOLDER = "{org}";
-
-export const BUILTIN_VIEWS: Array<{ id: string; kind: GitHubKind; name: string; icon: string; query: string; group: GitHubViewGroup }> = [
-  { id: "pr:inbox", kind: "pr", name: "Inbox", icon: "Inbox", query: "is:pr involves:@me state:open", group: "triage" },
-  { id: "pr:authored", kind: "pr", name: "Authored by me", icon: "Pencil", query: "is:pr author:@me state:open archived:false sort:updated-desc", group: "none" },
-  { id: "pr:review", kind: "pr", name: "Review requests", icon: "Eye", query: "is:pr review-requested:@me state:open", group: "none" },
-  { id: "pr:assigned", kind: "pr", name: "Assigned to me", icon: "UserCheck", query: "is:pr assignee:@me state:open", group: "none" },
-  { id: "pr:mentions", kind: "pr", name: "Mentions", icon: "AtSign", query: "is:pr mentions:@me state:open", group: "none" },
-  { id: "pr:org", kind: "pr", name: `${ORG_PLACEHOLDER} · all open`, icon: "Building2", query: `is:pr org:${ORG_PLACEHOLDER} state:open`, group: "repo" },
-  { id: "issue:inbox", kind: "issue", name: "Inbox", icon: "Inbox", query: "is:issue involves:@me state:open", group: "triage" },
-  { id: "issue:assigned", kind: "issue", name: "Assigned to me", icon: "UserCheck", query: "is:issue assignee:@me state:open", group: "none" },
-  { id: "issue:created", kind: "issue", name: "Created by me", icon: "Pencil", query: "is:issue author:@me state:open", group: "none" },
-  { id: "issue:mentions", kind: "issue", name: "Mentions", icon: "AtSign", query: "is:issue mentions:@me state:open", group: "none" },
-  { id: "issue:org", kind: "issue", name: `${ORG_PLACEHOLDER} · all open`, icon: "Building2", query: `is:issue org:${ORG_PLACEHOLDER} state:open`, group: "repo" },
-  { id: "run:watching", kind: "run", name: "Watching", icon: "Inbox", query: "is:run involves:@me", group: "triage" },
-  { id: "run:mine", kind: "run", name: "Triggered by me", icon: "User", query: "is:run actor:@me", group: "none" },
-  { id: "run:failing", kind: "run", name: "Failing", icon: "CircleX", query: "is:run involves:@me status:failure", group: "none" },
-  { id: "run:org", kind: "run", name: `${ORG_PLACEHOLDER} · all runs`, icon: "Building2", query: `is:run org:${ORG_PLACEHOLDER}`, group: "repo" }
-];
-
-export const SAVED_VIEW_ICON = "Bookmark";
-export const MAX_SAVED_VIEWS = 50;
-export const MAX_VIEW_NAME_LENGTH = 80;
-export const MAX_QUERY_LENGTH = 512;
-
 const QUERY_DEBOUNCE_MS = 350;
 const VIEW_COUNTS_TTL_MS = 60_000;
 const MAX_WATCHED_RUNS = 30;
@@ -109,23 +92,6 @@ const KINDS: GitHubKind[] = ["pr", "issue", "run"];
 function initialTab(kind: GitHubKind): GitHubTabState {
   const view = BUILTIN_VIEWS.find((item) => item.kind === kind && item.id.endsWith(":inbox")) ?? BUILTIN_VIEWS.find((item) => item.kind === kind);
   return { query: view?.query ?? `is:${kind}`, viewId: view?.id ?? null, group: view?.group ?? "none", collapsed: [] };
-}
-
-export function resolveViews(kind: GitHubKind, org: string | null, savedViews: SavedGitHubView[]): GitHubView[] {
-  const builtin = BUILTIN_VIEWS.filter((view) => view.kind === kind).flatMap((view): GitHubView[] => {
-    const needsOrg = view.query.includes(ORG_PLACEHOLDER);
-    if (needsOrg && !org) return [];
-    return [
-      {
-        ...view,
-        name: view.name.split(ORG_PLACEHOLDER).join(org ?? ""),
-        query: view.query.split(ORG_PLACEHOLDER).join(org ?? ""),
-        saved: false
-      }
-    ];
-  });
-  const saved = savedViews.filter((view) => view.kind === kind).map((view): GitHubView => ({ ...view, icon: SAVED_VIEW_ICON, saved: true }));
-  return [...builtin, ...saved];
 }
 
 const GITHUB_HOST = "github.com";
@@ -146,6 +112,90 @@ export function orgFromRepos(repos: ProjectGitHubRepo[], viewer: string | null):
 
 export function clonedReposOf(repos: ProjectGitHubRepo[]): RepoRef[] {
   return githubProjectRepos(repos).map((repo) => ({ host: repo.host, owner: repo.owner, repo: repo.repo }));
+}
+
+export interface SplitQuery {
+  remote: string;
+  countBase: string;
+  local: LocalFilter[];
+  sort: string;
+}
+
+const DEFAULT_HOST = "github.com";
+
+function isLocalToken(t: QueryToken): boolean {
+  if (t.kind !== "qual") return false;
+  const value = lowerValue(t);
+  if (t.key === "has") return value === "" || value === "session";
+  if (t.key === "cloned") return true;
+  return t.key === "is" && value === "unread";
+}
+
+function localFilterOf(t: QueryToken): LocalFilter | null {
+  const value = lowerValue(t);
+  if (t.key === "has" && value === "session") return { key: "has", value, neg: !!t.neg };
+  if (t.key === "cloned" && (value === "true" || value === "false")) return { key: "cloned", value, neg: !!t.neg };
+  if (t.key === "is" && value === "unread") return { key: "is", value, neg: !!t.neg };
+  return null;
+}
+
+export function splitQuery(kind: "pr" | "issue", q: string): SplitQuery {
+  const tokens = tokenize(q);
+  const local: LocalFilter[] = [];
+  const remoteTokens: QueryToken[] = [];
+  let sort = DEFAULT_REMOTE_SORT;
+  const validSorts = sortKeysFor(kind);
+  for (const t of tokens) {
+    if (t.kind === "space") continue;
+    const invalidValue = t.kind === "qual" && !!t.key && !!definitionOf(kind, t.key) && !!tokenProblem(kind, t);
+    if (t.kind === "qual" && (isLocalToken(t) || !t.value || invalidValue)) {
+      const filter = localFilterOf(t);
+      if (filter) local.push(filter);
+      continue;
+    }
+    if (t.kind === "qual" && !t.neg && t.key === "sort" && validSorts.includes(lowerValue(t))) sort = lowerValue(t);
+    remoteTokens.push(t);
+  }
+  return {
+    remote: joinTokens(remoteTokens),
+    countBase: joinTokens(remoteTokens.filter((t) => !isStateToken(t))),
+    local,
+    sort
+  };
+}
+
+export function sortedRemoteOf(split: SplitQuery): string {
+  const hasSort = tokenize(split.remote).some((t) => t.kind === "qual" && !t.neg && t.key === "sort");
+  return hasSort ? split.remote : `${split.remote} sort:${split.sort}`.trim();
+}
+
+export function runSources(q: string, clonedRepos: RepoRef[]): RunSources {
+  const tokens = tokenize(q).filter((t) => t.kind === "qual" && !t.neg && !!t.value);
+  const orgs = uniqueBy(
+    tokens.filter((t) => t.key === "org").map((t) => t.value ?? ""),
+    (org) => org
+  );
+  const repoNames = uniqueBy(
+    tokens.map((t) => (t.key === "repo" ? (t.value ?? "") : "")).filter((v) => /^[^/\s]+\/[^/\s]+$/.test(v)),
+    (name) => name
+  );
+
+  if (orgs.length === 0 && repoNames.length === 0) {
+    return {
+      prSearchQuery: "is:pr is:open involves:@me archived:false",
+      repos: uniqueBy(clonedRepos, (r) => `${r.host}/${r.owner}/${r.repo}`),
+      orgs: []
+    };
+  }
+
+  const repos = repoNames.map((name): RepoRef => {
+    const [owner, repo] = name.split("/");
+    const cloned = clonedRepos.find((r) => r.owner.toLowerCase() === owner.toLowerCase() && r.repo.toLowerCase() === repo.toLowerCase());
+    return { host: cloned?.host ?? DEFAULT_HOST, owner, repo };
+  });
+  const scopes = [...orgs.map((org) => `org:${org}`), ...repoNames.map((name) => `repo:${name}`)];
+  const archived = orgs.length > 0 ? " archived:false" : "";
+  return { prSearchQuery: `is:pr is:open ${scopes.join(" ")}${archived}`, repos, orgs };
 }
 
 export function cappedRunSources(query: string, clonedRepos: RepoRef[]): RunSources {
@@ -178,6 +228,10 @@ function scoped(query: string): string {
 export function scopeSplitQuery(split: SplitQuery): SplitQuery {
   if (split.local.length === 0) return split;
   return { ...split, remote: scoped(split.remote), countBase: scoped(split.countBase) };
+}
+
+export function scopedSplitOf(kind: "pr" | "issue", query: string): SplitQuery {
+  return scopeSplitQuery(splitQuery(kind, query));
 }
 
 export function searchKey(kind: GitHubKind, query: string, clonedRepos: RepoRef[]): string {

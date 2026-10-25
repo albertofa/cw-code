@@ -1,7 +1,8 @@
 import "../../../../tests/dom.js";
 import { describe, expect, it } from "bun:test";
 import type { ProjectGitHubRepo } from "../cw.js";
-import { badgeSearchKeys, BUILTIN_VIEWS, cappedRunSources, clonedReposOf, evictionCandidates, orgFromRepos, searchKey } from "./githubStore.js";
+import { BUILTIN_VIEWS } from "@cw-code/shared/githubViews";
+import { badgeSearchKeys, cappedRunSources, clonedReposOf, evictionCandidates, orgFromRepos, searchKey } from "./githubStore.js";
 
 describe("evictionCandidates", () => {
   const touched = new Map([

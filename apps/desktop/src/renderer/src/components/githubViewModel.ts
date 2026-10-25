@@ -9,16 +9,9 @@ import type {
   WorkflowRunSummary
 } from "../cw.js";
 import type { GitHubView } from "../stores/githubStore.js";
-import {
-  normalizeQuery,
-  prKeyOf,
-  runMatches,
-  sortKeysFor,
-  tokenize,
-  type LocalContext,
-  type RunContext,
-  type SuggestionSource
-} from "./githubQuery.js";
+import { normalizeQuery, sortKeysFor, tokenize } from "@cw-code/shared/githubQueryDsl";
+import type { SuggestionSource } from "./githubAutocomplete.js";
+import { prKeyOf, runMatches, type LocalContext, type RunContext } from "./githubViewQueryLegacy.js";
 import {
   isRunFailed,
   sameLogin,

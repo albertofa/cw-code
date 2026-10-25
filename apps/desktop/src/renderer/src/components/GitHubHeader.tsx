@@ -5,7 +5,7 @@ import type { GitHubView } from "../stores/githubStore.js";
 import { GitHubAvatar } from "./GitHubAvatar.js";
 import { GitHubQueryEditor } from "./GitHubQueryEditor.js";
 import { KIND_ICONS, NamedIcon } from "./GitHubIcon.js";
-import type { SuggestionSource } from "./githubQuery.js";
+import type { SuggestionSource } from "./githubAutocomplete.js";
 import { KIND_LABELS, KIND_ORDER, type TabBadge } from "./githubViewModel.js";
 import { formatRelativeAge } from "./prInboxModel.js";
 import { useNow } from "./usageFormat.js";

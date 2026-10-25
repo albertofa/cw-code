@@ -3,15 +3,8 @@ import { createPortal } from "react-dom";
 import type { GitHubKind } from "../cw.js";
 import { GitHubAvatar } from "./GitHubAvatar.js";
 import { NamedIcon, valueIconName } from "./GitHubIcon.js";
-import {
-  applyAutocomplete,
-  autocomplete,
-  qualifiersFor,
-  queryProblems,
-  tokenize,
-  type AutocompleteItem,
-  type SuggestionSource
-} from "./githubQuery.js";
+import { qualifiersFor, queryProblems, tokenize } from "@cw-code/shared/githubQueryDsl";
+import { applyAutocomplete, autocomplete, type AutocompleteItem, type SuggestionSource } from "./githubAutocomplete.js";
 import { KIND_NOUNS, retargetQuery } from "./githubViewModel.js";
 
 const AC_WIDTH_FALLBACK = 320;

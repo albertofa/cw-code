@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import type { IssueSummary, PrSummary, WorkflowRunSummary } from "@cw-code/contracts";
-import { prKeyOf } from "./githubQuery.js";
+import { prKeyOf } from "./githubViewQueryLegacy.js";
 import {
   ISSUE_BUCKETS,
   PR_BUCKETS,
