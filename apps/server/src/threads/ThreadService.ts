@@ -10,6 +10,7 @@ import type {
   TodoItem
 } from "@cw-code/contracts";
 import { sessionTopic } from "@cw-code/shared/topics";
+import { notifyAll } from "../events/notifyAll.js";
 import type { PendingRequest } from "../sessions/PendingRequests.js";
 import { SessionBusyError } from "../sessions/SessionBusyError.js";
 import type { TopicHub } from "../topics/TopicHub.js";
@@ -91,15 +92,7 @@ function seededState(pending: PendingRequest[]): ThreadState {
   return state;
 }
 
-export function notifyAll<A extends unknown[]>(listeners: ReadonlySet<(...args: A) => void>, label: string, ...args: A): void {
-  for (const listener of listeners) {
-    try {
-      listener(...args);
-    } catch (error) {
-      console.warn(`${label} listener failed: ${errorMessage(error)}`);
-    }
-  }
-}
+export { notifyAll };
 
 export class ThreadService {
   private readonly entries = new Map<string, ThreadEntry>();

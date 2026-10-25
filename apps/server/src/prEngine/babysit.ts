@@ -160,7 +160,7 @@ export interface AutoFollowUp {
   signature: string;
 }
 
-function isWatchable(session: Pick<SessionMeta, "status">): boolean {
+export function isWatchable(session: Pick<SessionMeta, "status">): boolean {
   return session.status !== "resolved" && session.status !== "archived";
 }
 

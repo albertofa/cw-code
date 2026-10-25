@@ -429,6 +429,7 @@ export class ServerApp {
     this.sessionSettleTimer.unref?.();
     this.services?.prTracker.start();
     this.services?.prStore.resume();
+    this.services?.autoFollowUp.reactivate();
     this.services?.sourceControl.start();
   }
 
@@ -454,10 +455,14 @@ export class ServerApp {
     } catch (err) {
       console.warn(`flush before exit failed: ${(err as Error).message}`);
     }
+    try {
+      services.preferences.dispose();
+    } catch (err) {
+      console.warn(`preferences flush before exit failed: ${(err as Error).message}`);
+    }
     services.autoFollowUp.dispose();
     services.prStore.dispose();
     services.threads.dispose();
-    services.preferences.dispose();
     void services.sourceControl.dispose();
     services.runWatcher.dispose();
     void services.fileWatcher.dispose();

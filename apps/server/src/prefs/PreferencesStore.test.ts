@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from "bun:test";
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { advanceTimersByTimeAsync } from "../../tests/testing.js";
@@ -140,6 +140,20 @@ describe("PreferencesStore", () => {
       expect(changes).toContainEqual({ kind: "draft", key: "k1", draft: null });
     });
 
+    test("never evicts the draft being written, even with the oldest timestamp", () => {
+      const store = open();
+      for (let index = 0; index < MAX_DRAFTS; index += 1) {
+        clock = 1_000 + index;
+        store.setDraft(`k${index}`, "x", []);
+      }
+      clock = 1;
+      store.setDraft("early", "x", []);
+      const keys = Object.keys(store.drafts());
+      expect(keys).toHaveLength(MAX_DRAFTS);
+      expect(keys).toContain("early");
+      expect(keys).not.toContain("k0");
+    });
+
     test("does not rewrite an unchanged draft", () => {
       const store = open();
       const changes: PreferencesChange[] = [];
@@ -183,6 +197,86 @@ describe("PreferencesStore", () => {
       const store = open();
       expect(store.importLegacy({})).toEqual([]);
       expect(store.legacyImported()).toBe(true);
+    });
+
+    test("a second import changes nothing and stays silent", () => {
+      const store = open();
+      store.importLegacy({ recentModels: { claude: ["opus"] } });
+      const changes: PreferencesChange[] = [];
+      store.onChanged((change) => changes.push(change));
+      expect(store.importLegacy({ sidebarOrder: { main: ["a"], resolved: [], pinned: [] }, recentModels: { claude: ["sonnet"] } })).toEqual([]);
+      expect(store.sidebarOrder()).toBeNull();
+      expect(store.recentModels().claude).toEqual(["opus"]);
+      expect(changes).toEqual([]);
+    });
+  });
+
+  describe("recovery after dispose", () => {
+    test("listeners survive dispose and later changes still notify and persist", () => {
+      const store = open();
+      const changes: PreferencesChange[] = [];
+      store.onChanged((change) => changes.push(change));
+      store.dispose();
+      store.setSidebarOrder({ main: ["a"], resolved: [], pinned: [] });
+      expect(changes).toEqual([{ kind: "sidebarOrder" }]);
+      expect((stored().sidebarOrder as { main: string[] }).main).toEqual(["a"]);
+    });
+  });
+
+  describe("unreadable files", () => {
+    function seedValidFile(): void {
+      writeFileSync(file, JSON.stringify({ version: 1, sidebarOrder: { main: ["disk"], resolved: [], pinned: [] }, recentModels: { claude: ["disk-model"] }, drafts: {}, legacyImported: true }));
+    }
+
+    test("a non-ENOENT read error refuses to write until the file can be read, then merges the disk content", () => {
+      mkdirSync(file);
+      const store = open();
+      expect(warnings).toHaveLength(1);
+      store.pushRecentModel("claude", "memory-model");
+      store.setSidebarOrder({ main: ["memory"], resolved: [], pinned: [] });
+      expect(statSync(file).isDirectory()).toBe(true);
+      expect(warnings).toHaveLength(1);
+
+      rmSync(file, { recursive: true });
+      seedValidFile();
+      const changes: PreferencesChange[] = [];
+      store.onChanged((change) => changes.push(change));
+      store.pushRecentModel("claude", "later");
+      expect(stored().sidebarOrder).toEqual({ main: ["memory"], resolved: [], pinned: [] });
+      expect(stored().recentModels).toMatchObject({ claude: ["later", "memory-model", "disk-model"] });
+      expect(stored().legacyImported).toBe(true);
+      expect(store.legacyImported()).toBe(true);
+      expect(changes).toContainEqual({ kind: "recentModels", driver: "claude" });
+    });
+
+    test("a missing file after a failed read is treated as confirmed empty and written", () => {
+      mkdirSync(file);
+      const store = open();
+      store.setSidebarOrder({ main: ["a"], resolved: [], pinned: [] });
+      expect(statSync(file).isDirectory()).toBe(true);
+      rmSync(file, { recursive: true });
+      store.pushRecentModel("codex", "m");
+      expect(stored().sidebarOrder).toEqual({ main: ["a"], resolved: [], pinned: [] });
+    });
+  });
+
+  describe("failed writes", () => {
+    beforeEach(() => {
+      vi.useFakeTimers();
+    });
+
+    test("retries through the flush timer and warns once", async () => {
+      const store = open();
+      rmSync(dir, { recursive: true, force: true });
+      store.setDraft("k", "a", []);
+      await advanceTimersByTimeAsync(1_000);
+      await advanceTimersByTimeAsync(1_000);
+      expect(warnings).toHaveLength(1);
+
+      mkdirSync(dir, { recursive: true });
+      await advanceTimersByTimeAsync(1_000);
+      expect((stored().drafts as Record<string, { text: string }>).k?.text).toBe("a");
+      expect(warnings).toHaveLength(1);
     });
   });
 

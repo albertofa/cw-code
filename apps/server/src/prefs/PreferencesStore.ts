@@ -10,6 +10,7 @@ export const DRAFT_FLUSH_MS = 1_000;
 export const DRIVER_KINDS: readonly DriverKind[] = ["claude", "opencode", "codex"];
 
 const CONTEXT_SUFFIX = /\[1m\]$/i;
+const BYTE_ORDER_MARK = /^﻿/;
 
 export type LegacyImportField = "sidebarOrder" | "recentModels";
 
@@ -88,6 +89,8 @@ export class PreferencesStore {
   private draftEntries = new Map<string, ComposerDraft>();
   private imported = false;
   private dirty = false;
+  private loadFailed = false;
+  private failureWarned = false;
   private flushTimer: ReturnType<typeof setTimeout> | null = null;
   private readonly listeners = new Set<(change: PreferencesChange) => void>();
   private readonly now: () => number;
@@ -152,13 +155,14 @@ export class PreferencesStore {
     const draft: ComposerDraft = { text, attachments: [...attachments], updatedAt: this.now() };
     this.draftEntries.delete(key);
     this.draftEntries.set(key, draft);
-    const evicted = this.evictOldestDrafts();
+    const evicted = this.evictOldestDrafts(key);
     this.scheduleFlush();
     this.emit({ kind: "draft", key, draft: cloneDraft(draft) });
     for (const evictedKey of evicted) this.emit({ kind: "draft", key: evictedKey, draft: null });
   }
 
   importLegacy(legacy: LegacyPreferences): LegacyImportField[] {
+    if (this.imported) return [];
     const imported: LegacyImportField[] = [];
     const legacyOrder = sanitizeSidebarOrder(legacy.sidebarOrder);
     if (legacyOrder && this.sidebar === null) {
@@ -193,7 +197,7 @@ export class PreferencesStore {
 
   dispose(): void {
     this.flush();
-    this.listeners.clear();
+    this.clearFlushTimer();
   }
 
   private emit(change: PreferencesChange): void {
@@ -206,13 +210,13 @@ export class PreferencesStore {
     }
   }
 
-  private evictOldestDrafts(): string[] {
+  private evictOldestDrafts(protectedKey?: string): string[] {
     const evicted: string[] = [];
     while (this.draftEntries.size > MAX_DRAFTS) {
       let oldestKey: string | null = null;
       let oldestAt = Infinity;
       for (const [key, draft] of this.draftEntries) {
-        if (draft.updatedAt < oldestAt) {
+        if (key !== protectedKey && draft.updatedAt < oldestAt) {
           oldestAt = draft.updatedAt;
           oldestKey = key;
         }
@@ -246,6 +250,10 @@ export class PreferencesStore {
   }
 
   private write(): void {
+    if (this.loadFailed && !this.load()) {
+      this.scheduleFlush();
+      return;
+    }
     const document: PreferencesDocument = {
       version: PREFERENCES_VERSION,
       sidebarOrder: this.sidebar,
@@ -256,53 +264,82 @@ export class PreferencesStore {
     try {
       writeFileAtomic(this.filePath, JSON.stringify(document));
       this.dirty = false;
+      this.failureWarned = false;
     } catch (error) {
-      this.warn(`could not write preferences to ${this.filePath}: ${(error as Error).message}`);
+      this.warnOnce(`could not write preferences to ${this.filePath}: ${(error as Error).message}`);
+      this.scheduleFlush();
     }
   }
 
-  private load(): void {
+  private warnOnce(message: string): void {
+    if (this.failureWarned) return;
+    this.failureWarned = true;
+    this.warn(message);
+  }
+
+  private load(): boolean {
     let bytes: Buffer | null;
     try {
       bytes = readBytesIfExists(this.filePath);
     } catch (error) {
-      this.warn(`could not read preferences at ${this.filePath}: ${(error as Error).message}`);
-      return;
+      this.loadFailed = true;
+      this.warnOnce(`could not read preferences at ${this.filePath}; changes are not saved until it can be read: ${(error as Error).message}`);
+      return false;
     }
-    if (!bytes) return;
-    const parsed = this.parse(bytes);
-    if (!parsed) {
-      this.quarantine();
-      return;
+    if (bytes) {
+      const parsed = this.parse(bytes);
+      if (parsed) this.merge(parsed);
+      else if (!this.quarantine()) {
+        this.loadFailed = true;
+        return false;
+      }
     }
-    this.sidebar = sanitizeSidebarOrder(parsed.sidebarOrder);
+    this.loadFailed = false;
+    this.failureWarned = false;
+    return true;
+  }
+
+  private merge(parsed: Record<string, unknown>): void {
+    if (this.sidebar === null) {
+      this.sidebar = sanitizeSidebarOrder(parsed.sidebarOrder);
+      if (this.sidebar) this.emit({ kind: "sidebarOrder" });
+    }
     const recents = isRecord(parsed.recentModels) ? parsed.recentModels : {};
-    for (const driver of DRIVER_KINDS) this.recents[driver] = sanitizeRecentModels(driver, recents[driver]);
-    this.imported = parsed.legacyImported === true;
+    for (const driver of DRIVER_KINDS) {
+      const merged = [...new Set([...this.recents[driver], ...sanitizeRecentModels(driver, recents[driver])])].slice(0, RECENT_MODELS_MAX);
+      if (sameList(merged, this.recents[driver])) continue;
+      this.recents[driver] = merged;
+      this.emit({ kind: "recentModels", driver });
+    }
+    this.imported = this.imported || parsed.legacyImported === true;
     const drafts = isRecord(parsed.drafts) ? parsed.drafts : {};
     for (const [key, value] of Object.entries(drafts)) {
       const draft = sanitizeDraft(value);
-      if (draft && !isEmptyDraft(draft.text, draft.attachments)) this.draftEntries.set(key, draft);
+      if (!draft || isEmptyDraft(draft.text, draft.attachments) || this.draftEntries.has(key)) continue;
+      this.draftEntries.set(key, draft);
+      this.emit({ kind: "draft", key, draft: cloneDraft(draft) });
     }
-    this.evictOldestDrafts();
+    for (const evictedKey of this.evictOldestDrafts()) this.emit({ kind: "draft", key: evictedKey, draft: null });
   }
 
   private parse(bytes: Buffer): Record<string, unknown> | null {
     try {
-      const parsed: unknown = JSON.parse(bytes.toString("utf8").replace(/^﻿/, ""));
+      const parsed: unknown = JSON.parse(bytes.toString("utf8").replace(BYTE_ORDER_MARK, ""));
       return isRecord(parsed) && parsed.version === PREFERENCES_VERSION ? parsed : null;
     } catch {
       return null;
     }
   }
 
-  private quarantine(): void {
+  private quarantine(): boolean {
     const target = `${this.filePath}.corrupt-${this.now()}`;
     try {
       renameSync(this.filePath, target);
       this.warn(`preferences at ${this.filePath} were unreadable; moved to ${target} and starting empty`);
+      return true;
     } catch (error) {
-      this.warn(`preferences at ${this.filePath} were unreadable and could not be quarantined: ${(error as Error).message}`);
+      this.warnOnce(`preferences at ${this.filePath} were unreadable and could not be quarantined: ${(error as Error).message}`);
+      return false;
     }
   }
 }

@@ -100,6 +100,7 @@ function wireServiceEvents(
   sessions.setEmitter((sessionId, event) => {
     emit("turn.event", { sessionId, event });
     threads.onDriverEvent(sessionId, event);
+    if (event.type === "turn.interrupted") autoFollowUp.turnInterrupted(sessionId, event.reason);
     sourceControl.onThreadEvent(sessionId, event);
   });
   sessions.setTitleEmitter((sessionId, title) => {
@@ -226,6 +227,7 @@ export function createServices(stores: { sessionStore: SessionStore; settingsSto
     },
     updateAutoFollowUp: (sessionId, update) => sessions.updateAutoFollowUp(sessionId, update) !== null,
     postNotice: (sessionId, notice) => sessions.emitNotice(sessionId, notice.noticeId, notice.text, notice.severity),
+    shutdownReserved: () => sessions.isShutdownReserved(),
     enabled: false
   });
   const sidebar = new SidebarService(hooks.topics, {

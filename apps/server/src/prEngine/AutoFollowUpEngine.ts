@@ -2,18 +2,17 @@ import type { AppSettings, AutoFollowUpPause, BabysitState, PrDetail, PrRef, Ses
 import { harnessLabel } from "@cw-code/shared/harnessLabels";
 import { withAutomatedWorkflowNote } from "@cw-code/shared/autoFollowUp";
 import { prKey } from "@cw-code/shared/prRef";
+import { notifyAll } from "../events/notifyAll.js";
+import { BRANCH_MISMATCH_MARKER } from "../sessions/branchMismatch.js";
 import type { AutoFollowUpMeta } from "../sessions/SessionStore.js";
 import { SHUTDOWN_RESERVED_MESSAGE } from "../shutdown/shutdownReservation.js";
 import type { SessionRuntime, SettledTurnEvent, ThreadNotice } from "../threads/ThreadService.js";
-import { notifyAll } from "../threads/ThreadService.js";
-import { autoFollowUps, babysitState, finalReviewPrompt, followUpPrompt, needsFailedLogs, type AutoFollowUp } from "./babysit.js";
+import { autoFollowUps, babysitState, finalReviewPrompt, followUpPrompt, isWatchable, needsFailedLogs, type AutoFollowUp } from "./babysit.js";
 import { seenThrough } from "./prUpdates.js";
 import { loadFailedLogs } from "./prWorkflows.js";
 import { prRefLabel, sessionLinks, type PrSummaryLookup } from "./sessionPrLinks.js";
 
 export const AUTO_FOLLOW_UP_NOTICE_ID = "auto-follow-up";
-
-const BRANCH_MISMATCH_MARKER = "[cw-branch-mismatch]";
 
 export interface AutoFollowUpTurnInput {
   auto: true;
@@ -32,6 +31,7 @@ export interface AutoFollowUpEngineDeps {
   markPrSeen(sessionId: string, ref: PrRef, headSha: string | null, seenAt: number | null): void;
   updateAutoFollowUp(sessionId: string, update: (current: AutoFollowUpMeta | undefined) => AutoFollowUpMeta | undefined): boolean;
   postNotice(sessionId: string, notice: ThreadNotice): void;
+  shutdownReserved(): boolean;
   enabled?: boolean;
 }
 
@@ -112,6 +112,10 @@ export class AutoFollowUpEngine {
     this.pause(sessionId, "interrupted");
   }
 
+  turnInterrupted(sessionId: string, reason: "shutdown" | undefined): void {
+    if (reason !== "shutdown") this.pause(sessionId, "interrupted");
+  }
+
   turnSettled(sessionId: string, event: SettledTurnEvent): void {
     if (event.type === "turn.error" || event.isError) this.pause(sessionId, "error");
     else this.reevaluate();
@@ -133,11 +137,19 @@ export class AutoFollowUpEngine {
 
   dispose(): void {
     this.disposed = true;
-    this.listeners.clear();
+  }
+
+  reactivate(): void {
+    this.disposed = false;
+    this.reevaluate();
+  }
+
+  private watchable(session: SessionMeta): boolean {
+    return isWatchable(session) && sessionLinks(session).length > 0;
   }
 
   private babysitFor(session: SessionMeta, lookup: PrSummaryLookup, workflows: AppSettings["prWorkflows"]): BabysitState | null {
-    if (sessionLinks(session).length === 0) return null;
+    if (!this.watchable(session)) return null;
     return babysitState(session, lookup, workflows, {
       busy: this.deps.runtime(session.id).busy,
       paused: session.autoFollowUp?.paused,
@@ -152,18 +164,33 @@ export class AutoFollowUpEngine {
     const lookup = this.deps.summaryLookup();
     this.publishBabysit(sessions, lookup, workflows);
     this.forgetResumed(sessions);
-    if (!this.enabled) return;
-    const linked = sessions.filter((session) => sessionLinks(session).length > 0);
+    if (!this.enabled || this.deps.shutdownReserved()) return;
+    const watched = sessions.filter((session) => this.watchable(session));
+    for (const followUp of this.candidates(watched, lookup, workflows)) {
+      if (this.started.has(followUp.signature)) continue;
+      const session = watched.find((item) => item.id === followUp.sessionId);
+      if (!session) continue;
+      this.started.add(followUp.signature);
+      this.inFlight.add(followUp.signature);
+      void this.send(followUp, settings, harnessLabel(session.driver))
+        .then((handled) => {
+          if (!handled) this.started.delete(followUp.signature);
+        })
+        .finally(() => this.inFlight.delete(followUp.signature));
+    }
+  }
+
+  private candidates(watched: SessionMeta[], lookup: PrSummaryLookup, workflows: AppSettings["prWorkflows"]): AutoFollowUp[] {
     const detailByKey: Record<string, PrDetail> = {};
-    for (const session of linked) {
+    for (const session of watched) {
       for (const link of sessionLinks(session)) {
         const key = prKey(link.ref);
         const detail = this.deps.detail(key);
         if (detail) detailByKey[key] = detail;
       }
     }
-    const candidates = autoFollowUps(
-      linked.map((session) => {
+    return autoFollowUps(
+      watched.map((session) => {
         const runtime = this.deps.runtime(session.id);
         return {
           session,
@@ -177,18 +204,15 @@ export class AutoFollowUpEngine {
       detailByKey,
       workflows
     );
-    for (const followUp of candidates) {
-      if (this.started.has(followUp.signature)) continue;
-      const session = linked.find((item) => item.id === followUp.sessionId);
-      if (!session) continue;
-      this.started.add(followUp.signature);
-      this.inFlight.add(followUp.signature);
-      void this.send(followUp, settings, harnessLabel(session.driver))
-        .then((handled) => {
-          if (!handled) this.started.delete(followUp.signature);
-        })
-        .finally(() => this.inFlight.delete(followUp.signature));
-    }
+  }
+
+  private stillCurrent(followUp: AutoFollowUp): boolean {
+    if (!this.canSend(followUp.sessionId)) return false;
+    const session = this.deps.sessions().find((item) => item.id === followUp.sessionId);
+    if (!session || !this.watchable(session)) return false;
+    return this.candidates([session], this.deps.summaryLookup(), this.deps.settings().prWorkflows).some(
+      (candidate) => candidate.signature === followUp.signature
+    );
   }
 
   private publishBabysit(sessions: SessionMeta[], lookup: PrSummaryLookup, workflows: AppSettings["prWorkflows"]): void {
@@ -218,7 +242,7 @@ export class AutoFollowUpEngine {
   }
 
   private canSend(sessionId: string): boolean {
-    return this.enabled && !this.disposed && !this.deps.runtime(sessionId).busy;
+    return this.enabled && !this.disposed && !this.deps.shutdownReserved() && !this.deps.runtime(sessionId).busy;
   }
 
   private async failedLogsOrNotice(detail: PrDetail): Promise<string> {
@@ -235,7 +259,7 @@ export class AutoFollowUpEngine {
     if (!this.canSend(sessionId)) return false;
     try {
       const failedLogs = !finalReview && needsFailedLogs(workflow.updatePrompt) ? await this.failedLogsOrNotice(detail) : undefined;
-      if (!this.canSend(sessionId)) return false;
+      if (!this.stillCurrent(followUp)) return false;
       const prompt = finalReview
         ? withAutomatedWorkflowNote(workflow, finalReviewPrompt(detail))
         : followUpPrompt(detail, link, workflow, updates, settings, harness, failedLogs);

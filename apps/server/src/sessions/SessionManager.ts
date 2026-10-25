@@ -101,6 +101,7 @@ import { NEW_SESSION_TITLE, pickRestoreCandidate } from "./sessionRestore.js";
 import { cwCodeHome, opencodeServerDir, sessionDbPath, settingsFilePath, titleGenDir, usageDir, worktreesDir } from "../paths/appPaths.js";
 import { UsageLedger } from "../usage/UsageLedger.js";
 import { shutdownReservedError } from "../shutdown/shutdownReservation.js";
+import { BRANCH_MISMATCH_MARKER } from "./branchMismatch.js";
 import { overlayLiveTasks } from "../tasks/overlayLiveTasks.js";
 import { SessionBusyError } from "./SessionBusyError.js";
 import { PendingRequests, type PendingRequest } from "./PendingRequests.js";
@@ -1964,7 +1965,7 @@ export class SessionManager {
     const head = await this.git.folderHead(cwd);
     if (!head || head.value === session.branch || head.value === acceptedHead) return;
     const label = head.detached ? "a detached HEAD" : head.value;
-    throw new Error(`[cw-branch-mismatch] ${project.name} is on ${label}, not this session's branch ${session.branch}.`);
+    throw new Error(`${BRANCH_MISMATCH_MARKER} ${project.name} is on ${label}, not this session's branch ${session.branch}.`);
   }
 
   private undoPendingOnRoot(session: SessionMeta): boolean {

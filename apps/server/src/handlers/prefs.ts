@@ -5,6 +5,7 @@ import type { Router } from "../transport/Router.js";
 import { handle, parseArgs, parseString } from "./shared.js";
 
 export const MAX_DRAFT_KEY_LENGTH = 200;
+export const MAX_SIDEBAR_ID_LENGTH = 200;
 export const MAX_DRAFT_TEXT_LENGTH = 200_000;
 export const MAX_DRAFT_ATTACHMENTS = 50;
 export const MAX_ATTACHMENT_LENGTH = 4_096;
@@ -31,9 +32,9 @@ function parseStringList(value: unknown, name: string, maxEntries: number, maxLe
 function parseSidebarOrder(value: unknown): SidebarOrderPrefs {
   const order = parseArgs(value, "sidebarOrder");
   return {
-    main: parseStringList(order.main, "sidebarOrder.main", MAX_ORDER_ENTRIES, MAX_DRAFT_KEY_LENGTH),
-    resolved: parseStringList(order.resolved, "sidebarOrder.resolved", MAX_ORDER_ENTRIES, MAX_DRAFT_KEY_LENGTH),
-    pinned: parseStringList(order.pinned, "sidebarOrder.pinned", MAX_ORDER_ENTRIES, MAX_DRAFT_KEY_LENGTH)
+    main: parseStringList(order.main, "sidebarOrder.main", MAX_ORDER_ENTRIES, MAX_SIDEBAR_ID_LENGTH),
+    resolved: parseStringList(order.resolved, "sidebarOrder.resolved", MAX_ORDER_ENTRIES, MAX_SIDEBAR_ID_LENGTH),
+    pinned: parseStringList(order.pinned, "sidebarOrder.pinned", MAX_ORDER_ENTRIES, MAX_SIDEBAR_ID_LENGTH)
   };
 }
 

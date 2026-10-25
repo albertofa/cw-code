@@ -6,7 +6,10 @@ import type { ApprovalRequest, PrDetail, PrRef, PrWorkflow, SessionPrLink } from
 import { SessionBusyError } from "../sessions/SessionBusyError.js";
 import { SessionStore } from "../sessions/SessionStore.js";
 import { DEFAULT_SETTINGS } from "../settings/SettingsStore.js";
-import type { SettledTurnEvent, ThreadNotice } from "../threads/ThreadService.js";
+import { ThreadService, type SettledTurnEvent, type ThreadNotice } from "../threads/ThreadService.js";
+import { TurnService } from "../threads/TurnService.js";
+import type { BegunTurn } from "../threads/threadReducer.js";
+import { TopicHub } from "../topics/TopicHub.js";
 import { AUTO_FOLLOW_UP_LIMIT } from "./babysit.js";
 import { AUTO_FOLLOW_UP_NOTICE_ID, AutoFollowUpEngine, type AutoFollowUpTurnInput } from "./AutoFollowUpEngine.js";
 
@@ -94,13 +97,15 @@ function flush(): Promise<void> {
   return new Promise((resolve) => setImmediate(resolve));
 }
 
-function harness(options: { enabled?: boolean; pr?: PrDetail; workflows?: PrWorkflow[] } = {}) {
+function harness(options: { enabled?: boolean; pr?: PrDetail; workflows?: PrWorkflow[]; failedCheckLog?: () => Promise<string> } = {}) {
   const dbPath = join(mkdtempSync(join(tmpdir(), "cw-auto-")), "test.db");
   const store = new SessionStore(dbPath);
   const project = store.addProject("C:/proj");
   const sessionId = store.createSession(project.id, "claude", "babysat").id;
   store.updateSession(sessionId, { status: "done", prs: [LINK] }, "turn-done");
   const runtime: FakeRuntime = { busy: false, approvals: [], questions: [] };
+  const runtimeReads: string[] = [];
+  let shutdownReserved = false;
   let pr = options.pr ?? detail();
   const sent: Sent[] = [];
   const seen: Array<{ sessionId: string; headSha: string | null; seenAt: number | null }> = [];
@@ -110,10 +115,14 @@ function harness(options: { enabled?: boolean; pr?: PrDetail; workflows?: PrWork
   const engine = new AutoFollowUpEngine({
     sessions: () => store.listAllSessions(),
     settings: () => ({ ...DEFAULT_SETTINGS, prWorkflows: options.workflows ?? [workflow("babysit", { autoFollowUp: true }), workflow("review")] }),
-    runtime: () => runtime,
+    runtime: (id) => {
+      runtimeReads.push(id);
+      return runtime;
+    },
     summaryLookup: () => new Map([[KEY, pr]]),
     detail: (key) => (key === KEY ? pr : undefined),
-    failedCheckLog: async () => "log",
+    failedCheckLog: options.failedCheckLog ?? (async () => "log"),
+    shutdownReserved: () => shutdownReserved,
     startTurn: (id, prompt, input) => {
       sent.push({ sessionId: id, prompt, input });
       return startTurn(id);
@@ -140,6 +149,10 @@ function harness(options: { enabled?: boolean; pr?: PrDetail; workflows?: PrWork
     seen,
     notices,
     changed,
+    runtimeReads,
+    setShutdownReserved(value: boolean) {
+      shutdownReserved = value;
+    },
     setPr(next: PrDetail) {
       pr = next;
       engine.reevaluate();
@@ -153,7 +166,7 @@ function harness(options: { enabled?: boolean; pr?: PrDetail; workflows?: PrWork
   };
 }
 
-const done = (isError: boolean): SettledTurnEvent => ({
+const done = (isError: boolean): Extract<SettledTurnEvent, { type: "turn.done" }> => ({
   type: "turn.done",
   turnId: "t1",
   sessionId: "s",
@@ -332,5 +345,186 @@ describe("AutoFollowUpEngine pause rules", () => {
     h.engine.turnStarted(h.sessionId, true);
     h.engine.turnStopped(h.sessionId);
     expect(new SessionStore(h.dbPath).getSession(h.sessionId)?.autoFollowUp).toEqual({ turns: 3, paused: "interrupted" });
+  });
+});
+
+describe("AutoFollowUpEngine interruption", () => {
+  it("pauses on any interrupt except a shutdown one and persists the pause once", async () => {
+    const h = harness({ enabled: false });
+    h.engine.turnInterrupted(h.sessionId, "shutdown");
+    expect(h.autoFollowUp()).toBeUndefined();
+
+    h.store.updateAutoFollowUp(h.sessionId, () => ({ turns: 2 }));
+    const updates: boolean[] = [];
+    const original = h.store.updateAutoFollowUp.bind(h.store);
+    h.store.updateAutoFollowUp = (id, update) => {
+      const changed = original(id, update);
+      updates.push(changed);
+      return changed;
+    };
+    h.engine.turnInterrupted(h.sessionId, undefined);
+    h.engine.turnStopped(h.sessionId);
+    expect(h.autoFollowUp()).toEqual({ turns: 2, paused: "interrupted" });
+    expect(updates).toEqual([true, false]);
+  });
+});
+
+describe("AutoFollowUpEngine lifecycle", () => {
+  it("keeps its listeners through dispose and resumes work on reactivate", async () => {
+    const h = harness();
+    await flush();
+    expect(h.sent).toHaveLength(1);
+    h.engine.dispose();
+    h.setPr(detail({ headRefOid: "pushed" }));
+    await flush();
+    expect(h.sent).toHaveLength(1);
+
+    h.engine.reactivate();
+    await flush();
+    expect(h.sent).toHaveLength(2);
+    const before = h.changed.length;
+    h.store.updateAutoFollowUp(h.sessionId, () => ({ turns: 3 }));
+    h.engine.reevaluate();
+    await flush();
+    expect(h.changed.length).toBeGreaterThan(before);
+  });
+
+  it("evaluates nothing while a shutdown is reserved and catches up when it clears", async () => {
+    const h = harness();
+    h.setShutdownReserved(true);
+    h.engine.reevaluate();
+    await flush();
+    expect(h.sent).toHaveLength(0);
+
+    h.setShutdownReserved(false);
+    h.engine.reactivate();
+    await flush();
+    expect(h.sent).toHaveLength(1);
+  });
+
+  it("reads runtimes only for watchable sessions", async () => {
+    const h = harness({ enabled: false });
+    const project = h.store.listProjects()[0];
+    const plain = h.store.createSession(project.id, "claude", "plain");
+    const resolved = h.store.createSession(project.id, "claude", "resolved");
+    h.store.updateSession(resolved.id, { status: "resolved", prs: [LINK] }, "turn-done");
+    h.runtimeReads.length = 0;
+    h.engine.reevaluate();
+    await flush();
+    expect(h.runtimeReads).not.toContain(plain.id);
+    expect(h.runtimeReads).not.toContain(resolved.id);
+    expect(h.runtimeReads).toContain(h.sessionId);
+  });
+
+  it("drops a send whose session got paused while the failed logs were loading", async () => {
+    let release: (log: string) => void = () => {};
+    const h = harness({
+      workflows: [workflow("babysit", { autoFollowUp: true, updatePrompt: "fix {{checks.failedLogs}}" })],
+      failedCheckLog: () => new Promise<string>((resolve) => (release = resolve))
+    });
+    await flush();
+    expect(h.sent).toHaveLength(0);
+
+    h.engine.pause(h.sessionId);
+    release("boom");
+    await flush();
+    expect(h.sent).toHaveLength(0);
+
+    h.engine.resume(h.sessionId);
+    await flush();
+    release("boom");
+    await flush();
+    expect(h.sent).toHaveLength(1);
+  });
+});
+
+describe("AutoFollowUpEngine with the real thread and turn services", () => {
+  function wired(options: { sneakInUserTurn?: boolean } = {}) {
+    const dbPath = join(mkdtempSync(join(tmpdir(), "cw-auto-")), "test.db");
+    const store = new SessionStore(dbPath);
+    const project = store.addProject("C:/proj");
+    const sessionId = store.createSession(project.id, "claude", "babysat").id;
+    store.updateSession(sessionId, { status: "done", prs: [LINK] }, "turn-done");
+    const threads = new ThreadService({
+      hub: new TopicHub(() => {}),
+      history: async () => [],
+      liveTasks: () => [],
+      pendingRequests: () => [],
+      loadHistoryOnSubscribe: false
+    });
+    const driverStarts: string[] = [];
+    const turns = new TurnService({
+      sessions: {
+        startTurn: async (id, prompt) => {
+          driverStarts.push(prompt);
+          const turnId = `turn-${driverStarts.length}`;
+          threads.onDriverEvent(id, { type: "turn.started", turnId, sessionId: id, startedAt: 1, prompt });
+          return turnId;
+        },
+        interrupt: () => {},
+        listActiveTurns: () => []
+      },
+      threads
+    });
+    let sneak = options.sneakInUserTurn ?? false;
+    let userTurn: BegunTurn | null = null;
+    const engine = new AutoFollowUpEngine({
+      sessions: () => store.listAllSessions(),
+      settings: () => ({ ...DEFAULT_SETTINGS, prWorkflows: [workflow("babysit", { autoFollowUp: true }), workflow("review")] }),
+      runtime: (id) => threads.runtime(id),
+      summaryLookup: () => new Map([[KEY, detail()]]),
+      detail: (key) => (key === KEY ? detail() : undefined),
+      failedCheckLog: async () => "log",
+      startTurn: (id, prompt, input) => {
+        if (sneak) {
+          sneak = false;
+          userTurn = threads.beginTurn(id, "user typed first", false);
+        }
+        return turns.start(id, prompt, input);
+      },
+      markPrSeen: () => {},
+      updateAutoFollowUp: (id, update) => store.updateAutoFollowUp(id, update),
+      postNotice: () => {},
+      shutdownReserved: () => false,
+      enabled: true
+    });
+    threads.onRuntimeChanged(() => engine.reevaluate());
+    threads.onTurnSettled((id, _turnId, event) => engine.turnSettled(id, event));
+    turns.onTurnStarted((id, auto) => engine.turnStarted(id, auto));
+    return {
+      threads,
+      driverStarts,
+      store,
+      sessionId,
+      abortUserTurn() {
+        if (userTurn) threads.abortTurn(sessionId, userTurn);
+      }
+    };
+  }
+
+  it("sends exactly once across start, commit and settle", async () => {
+    const ctx = wired();
+    await flush();
+    await flush();
+    expect(ctx.driverStarts).toHaveLength(1);
+    expect(ctx.store.getSession(ctx.sessionId)?.autoFollowUp).toEqual({ turns: 1 });
+
+    ctx.threads.onDriverEvent(ctx.sessionId, { ...done(false), turnId: "turn-1", sessionId: ctx.sessionId });
+    await flush();
+    await flush();
+    expect(ctx.driverStarts).toHaveLength(1);
+  });
+
+  it("neither pauses nor loses the follow-up when a user turn wins the race and then aborts", async () => {
+    const ctx = wired({ sneakInUserTurn: true });
+    await flush();
+    await flush();
+    expect(ctx.driverStarts).toHaveLength(0);
+    expect(ctx.store.getSession(ctx.sessionId)?.autoFollowUp).toBeUndefined();
+
+    ctx.abortUserTurn();
+    await flush();
+    await flush();
+    expect(ctx.driverStarts).toHaveLength(1);
   });
 });
