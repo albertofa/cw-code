@@ -690,7 +690,7 @@ export interface CwApi {
   setProjectGitHubAccount(projectId: string, account: { host: string; login: string } | null): Promise<Project>;
   setRepositoryGitIdentity(projectId: string, name: string, email: string): Promise<void>;
   usageReport(query: UsageReportQuery): Promise<UsageReport>;
-  refreshAccountUsage(force: boolean): Promise<void>;
+  refreshAccountUsage(force: boolean, drivers?: DriverName[]): Promise<void>;
   refreshPrInbox(force?: boolean): Promise<void>;
   getPrDetail(ref: PrRef): Promise<PrDetail>;
   getPrDiff(ref: PrRef): Promise<string>;

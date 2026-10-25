@@ -32,15 +32,24 @@ function Section({
   title,
   summary,
   defaultOpen = true,
+  open: controlledOpen,
+  onOpenChange,
   children
 }: {
   icon: ReactNode;
   title: string;
   summary?: ReactNode;
   defaultOpen?: boolean;
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
   children: ReactNode;
 }) {
-  const [open, setOpen] = useState(defaultOpen);
+  const [localOpen, setLocalOpen] = useState(defaultOpen);
+  const open = controlledOpen ?? localOpen;
+  const setOpen = (next: boolean) => {
+    setLocalOpen(next);
+    onOpenChange?.(next);
+  };
   return (
     <section className={`ov-sec${open ? "" : " closed"}`} aria-label={title}>
       <div className="ov-h">
@@ -167,11 +176,14 @@ function WorkspaceSection({ sessionId }: { sessionId: string }) {
 
 function SessionUsageSection({ sessionId }: { sessionId: string }) {
   const sessionTotals = useThreadEntry(sessionId, "usageTotals");
+  const totalsError = useThreadEntry(sessionId, "usageTotalsError");
   const lastTurn = useThreadEntry(sessionId, "usage")?.lastTurn ?? null;
 
   return (
     <Section icon={<ChartColumn size={14} aria-hidden="true" />} title="This session">
-      {sessionTotals === undefined ? (
+      {totalsError ? (
+        <Note tone="error">Couldn&apos;t load usage: {totalsError}</Note>
+      ) : sessionTotals === undefined ? (
         <Note>Loading…</Note>
       ) : sessionTotals === null ? (
         <Note>No usage recorded yet.</Note>
@@ -215,7 +227,8 @@ function PlanLimits({ driver, state, stale }: { driver: DriverName; state: Accou
 }
 
 function PlanSection({ driver }: { driver: DriverName }) {
-  const { snapshot: account, loading, error } = useAccountUsage(driver);
+  const [open, setOpen] = useState(true);
+  const { snapshot: account, loading, error } = useAccountUsage(driver, open);
   const snapshot = account ?? undefined;
   const openUsage = usePrStore((s) => s.openUsage);
   const now = useNow();
@@ -229,6 +242,8 @@ function PlanSection({ driver }: { driver: DriverName }) {
     <Section
       icon={<DriverIcon driver={driver} size={14} />}
       title={title}
+      open={open}
+      onOpenChange={setOpen}
       summary={fetchedAt !== undefined ? <span className="ov-faint">Updated {formatRelativeAge(fetchedAt, now)} ago</span> : undefined}
     >
       <div className={`ov-plan ${driver}`}>

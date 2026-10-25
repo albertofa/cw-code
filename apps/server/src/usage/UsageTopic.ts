@@ -59,7 +59,7 @@ export class UsageTopic implements TopicProvider {
 
   acquire(topic: string): UsageStore {
     this.store = null;
-    this.setLoading(DRIVERS, true);
+    this.setLoading(DRIVERS.filter((driver) => this.data.account[driver].snapshot === null), true);
     this.store = this.hub.createStore<UsageTopicData>(topic, { ...this.data });
     return this.store;
   }
@@ -70,11 +70,11 @@ export class UsageTopic implements TopicProvider {
   }
 
   onSubscribe(): void {
-    if (!this.timer) this.startRefreshing();
+    if (!this.disposed && !this.timer) this.startRefreshing();
   }
 
   resync(): void {
-    this.startRefreshing();
+    if (!this.disposed) this.startRefreshing();
   }
 
   dispose(): void {
@@ -103,9 +103,9 @@ export class UsageTopic implements TopicProvider {
     return rows.length === 0 ? null : totals(rows);
   }
 
-  async refreshAccount(force: boolean): Promise<void> {
-    this.setLoading(DRIVERS, true);
-    await Promise.all(DRIVERS.map((driver) => this.refreshDriver(driver, force)));
+  async refreshAccount(force: boolean, drivers: readonly DriverKind[] = DRIVERS): Promise<void> {
+    this.setLoading(drivers.filter((driver) => force || this.data.account[driver].snapshot === null), true);
+    await Promise.all(drivers.map((driver) => this.refreshDriver(driver, force)));
   }
 
   private recordTurn(): void {

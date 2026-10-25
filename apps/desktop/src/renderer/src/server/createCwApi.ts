@@ -205,7 +205,7 @@ export function createCwApi(client: ServerClient, topics: TopicCache, desktop: D
     setProjectGitHubAccount: (projectId, account) => call<Project>("git.setProjectAccount", { projectId, account }),
     setRepositoryGitIdentity: (projectId, name, email) => callVoid("git.setIdentity", { projectId, name, email }),
     usageReport: (query) => call<UsageReport>("usage.report", query),
-    refreshAccountUsage: (force) => callVoid("usage.refreshAccount", { force }),
+    refreshAccountUsage: (force, drivers) => callVoid("usage.refreshAccount", { force, ...(drivers ? { drivers } : {}) }),
     refreshPrInbox: (force) => callVoid("prs.refresh", { force }),
     getPrDetail: (ref) => call<PrDetail>("prs.detail", { ref }),
     getPrDiff: (ref) => call<string>("prs.diff", { ref }),

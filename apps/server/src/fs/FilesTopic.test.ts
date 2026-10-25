@@ -145,7 +145,7 @@ describe("FilesTopic", () => {
     expect(ctx.watched).toEqual([{ sessionId: "s1", root: "/root/s1", paths: ["", "src"] }]);
   });
 
-  test("dispose stops pending recomputes and resync resumes them", async () => {
+  test("dispose stops pending recomputes; resync alone does not resume them, resume does", async () => {
     const ctx = setup();
     ctx.data();
     await advanceTimersByTimeAsync(250);
@@ -154,8 +154,43 @@ describe("FilesTopic", () => {
     await advanceTimersByTimeAsync(1000);
     expect(ctx.computed).toHaveLength(1);
     ctx.hub.resync();
+    await advanceTimersByTimeAsync(1000);
+    expect(ctx.computed).toHaveLength(1);
+    ctx.files.resume();
     await advanceTimersByTimeAsync(250);
     expect(ctx.computed).toHaveLength(2);
+  });
+
+  test("a reopened topic starts with the last decorations", async () => {
+    const ctx = setup();
+    ctx.data();
+    await advanceTimersByTimeAsync(250);
+    ctx.hub.unsubscribe(CTX, [TOPIC]);
+    ctx.setDecorations(decorations("b.ts"));
+    expect(ctx.data()).toEqual({ decorations: decorations("a.ts") });
+    await advanceTimersByTimeAsync(250);
+    expect(ctx.data()).toEqual({ decorations: decorations("b.ts") });
+  });
+
+  test("the last decorations are dropped after the topic stays released for the retain window", async () => {
+    const ctx = setup({ retainMs: 1000 });
+    ctx.data();
+    await advanceTimersByTimeAsync(250);
+    ctx.hub.unsubscribe(CTX, [TOPIC]);
+    await advanceTimersByTimeAsync(999);
+    expect(ctx.data()).toEqual({ decorations: decorations("a.ts") });
+    ctx.hub.unsubscribe(CTX, [TOPIC]);
+    await advanceTimersByTimeAsync(1000);
+    expect(ctx.data()).toEqual({});
+  });
+
+  test("forget drops the last decorations of a released topic", async () => {
+    const ctx = setup();
+    ctx.data();
+    await advanceTimersByTimeAsync(250);
+    ctx.hub.unsubscribe(CTX, [TOPIC]);
+    ctx.files.forget("s1");
+    expect(ctx.data()).toEqual({});
   });
 
   test("a failing computation keeps the previous decorations", async () => {

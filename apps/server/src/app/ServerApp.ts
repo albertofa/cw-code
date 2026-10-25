@@ -437,6 +437,7 @@ export class ServerApp {
     this.services?.threads.resume();
     this.services?.githubViews.resume();
     this.services?.usageTopic.resume();
+    this.services?.filesTopic.resume();
     this.services?.autoFollowUp.reactivate();
     this.services?.sourceControl.start();
   }

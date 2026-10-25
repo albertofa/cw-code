@@ -136,6 +136,40 @@ describe("UsageTopic", () => {
     expect(fetched.every((entry) => entry.force)).toBe(true);
   });
 
+  it("refreshAccount can target a single driver", async () => {
+    const { topic, fetched } = setup();
+    await topic.refreshAccount(true, ["codex"]);
+    expect(fetched).toEqual([{ driver: "codex", force: true }]);
+  });
+
+  it("a background refresh keeps loading false once a snapshot exists; a forced one sets it", async () => {
+    const { hub, topic, patches } = setup();
+    hub.subscribe(ctx, [USAGE_TOPIC]);
+    await advanceTimersByTimeAsync(0);
+    patches.length = 0;
+    await advanceTimersByTimeAsync(ACCOUNT_REFRESH_MS);
+    const loadingValues = (): boolean[] =>
+      patches.flatMap((patch) => patch.ops).flatMap((op) => (op.op === "upsert" && op.key === "account" ? [(op.value as UsageTopicData["account"]).claude.loading] : []));
+    expect(loadingValues().every((loading) => !loading)).toBe(true);
+    patches.length = 0;
+    const pending = topic.refreshAccount(true, ["claude"]);
+    expect(loadingValues()).toContain(true);
+    await pending;
+    expect(data(hub).account.claude.loading).toBe(false);
+  });
+
+  it("a disposed topic ignores new subscribers and resyncs until resumed", async () => {
+    const { hub, topic, fetched } = setup();
+    topic.dispose();
+    hub.subscribe(ctx, [USAGE_TOPIC]);
+    hub.resync();
+    await advanceTimersByTimeAsync(ACCOUNT_REFRESH_MS * 2);
+    expect(fetched).toHaveLength(0);
+    topic.resume();
+    await advanceTimersByTimeAsync(0);
+    expect(fetched).toHaveLength(3);
+  });
+
   it("records a failing driver as an error without dropping its last snapshot", async () => {
     const hub = new TopicHub(() => undefined);
     let fail = false;
@@ -222,5 +256,41 @@ describe("session usage totals extra", () => {
     expect(totalsOf("s1", "c3")?.turns).toBe(2);
     expect(totalsOf("s1", "c3")?.outputTokens).toBe(105);
     expect(totalsOf("s2", "c4")).toBeNull();
+  });
+
+  it("does not query the ledger again when extras refresh for other reasons", () => {
+    const { hub, topic, queries } = setup([row()]);
+    const threads = new ThreadService({
+      hub,
+      history: async () => [],
+      liveTasks: () => [],
+      pendingRequests: () => [],
+      loadHistoryOnSubscribe: false
+    });
+    hub.register(createThreadTopicProvider(threads));
+    wireSessionUsageTotals(threads, topic, () => undefined);
+    hub.subscribe(ctx, [sessionTopic("s1")]);
+    threads.refreshExtras("s1");
+    threads.refreshExtras("s1");
+    expect(queries.filter((query) => query.sessionId === "s1")).toHaveLength(1);
+  });
+
+  it("publishes an error instead of empty totals when the ledger query fails", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const { hub } = setup();
+    const failing = { sessionTotals: () => { throw new Error("ledger locked"); } };
+    const threads = new ThreadService({
+      hub,
+      history: async () => [],
+      liveTasks: () => [],
+      pendingRequests: () => [],
+      loadHistoryOnSubscribe: false
+    });
+    hub.register(createThreadTopicProvider(threads));
+    wireSessionUsageTotals(threads, failing, () => undefined);
+    const state = hub.subscribe(ctx, [sessionTopic("s1")])[sessionTopic("s1")]?.data as ThreadTopicData;
+    expect(state.usageTotals).toBeNull();
+    expect(state.usageTotalsError).toBe("ledger locked");
+    warn.mockRestore();
   });
 });

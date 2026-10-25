@@ -6,6 +6,7 @@ import type { TopicStore } from "../topics/TopicStore.js";
 export const FILES_TOPIC_PREFIX = "files/";
 
 const DEFAULT_COALESCE_MS = 250;
+const DEFAULT_RETAIN_MS = 10 * 60 * 1000;
 
 export interface FilesTopicDeps {
   ensureWorktree(sessionId: string): Promise<string>;
@@ -15,6 +16,7 @@ export interface FilesTopicDeps {
   watch(sessionId: string, root: string, paths: string[]): void;
   unwatch(sessionId: string): void;
   coalesceMs?: number;
+  retainMs?: number;
 }
 
 type FilesStore = TopicStore<Partial<FilesTopicData>>;
@@ -31,6 +33,8 @@ function describeError(error: unknown): string {
 
 export class FilesTopic implements TopicProvider {
   private readonly stores = new Map<string, FilesStore>();
+  private readonly lastDecorations = new Map<string, GitDecorations>();
+  private readonly retainTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private readonly timers = new Map<string, ReturnType<typeof setTimeout>>();
   private readonly computing = new Set<string>();
   private readonly dirty = new Set<string>();
@@ -49,9 +53,10 @@ export class FilesTopic implements TopicProvider {
 
   acquire(topic: string): FilesStore {
     const sessionId = sessionIdOf(topic);
-    const store = this.hub.createStore<Partial<FilesTopicData>>(topic, {});
+    this.cancelRetain(sessionId);
+    const last = this.lastDecorations.get(sessionId);
+    const store = this.hub.createStore<Partial<FilesTopicData>>(topic, last ? { decorations: last } : {});
     this.stores.set(sessionId, store);
-    this.disposed = false;
     this.schedule(sessionId);
     return store;
   }
@@ -61,6 +66,7 @@ export class FilesTopic implements TopicProvider {
     if (!sessionId) return;
     this.stores.delete(sessionId);
     this.cancel(sessionId);
+    this.retainWhileReleased(sessionId);
   }
 
   onSubscribe(_clientId: string, topic: string): void {
@@ -75,7 +81,6 @@ export class FilesTopic implements TopicProvider {
   }
 
   resync(topic: string): void {
-    this.disposed = false;
     this.applyWatchedTopic(topic);
     const sessionId = topicId(topic, FILES_TOPIC_PREFIX);
     if (sessionId) this.schedule(sessionId);
@@ -109,10 +114,35 @@ export class FilesTopic implements TopicProvider {
     this.schedule(sessionId);
   }
 
+  forget(sessionId: string): void {
+    this.cancelRetain(sessionId);
+    this.lastDecorations.delete(sessionId);
+  }
+
   dispose(): void {
     this.disposed = true;
     for (const timer of this.timers.values()) clearTimeout(timer);
     this.timers.clear();
+  }
+
+  resume(): void {
+    if (!this.disposed) return;
+    this.disposed = false;
+    for (const sessionId of this.stores.keys()) this.schedule(sessionId);
+  }
+
+  private retainWhileReleased(sessionId: string): void {
+    if (!this.lastDecorations.has(sessionId)) return;
+    this.cancelRetain(sessionId);
+    const timer = setTimeout(() => this.forget(sessionId), this.deps.retainMs ?? DEFAULT_RETAIN_MS);
+    timer.unref?.();
+    this.retainTimers.set(sessionId, timer);
+  }
+
+  private cancelRetain(sessionId: string): void {
+    const timer = this.retainTimers.get(sessionId);
+    if (timer) clearTimeout(timer);
+    this.retainTimers.delete(sessionId);
   }
 
   private applyWatchedTopic(topic: string): void {
@@ -156,7 +186,9 @@ export class FilesTopic implements TopicProvider {
     try {
       const root = await this.deps.ensureWorktree(sessionId);
       const decorations = await this.deps.decorations(root);
-      if (this.stores.get(sessionId) === store) store.upsert("decorations", decorations);
+      if (this.stores.get(sessionId) !== store) return;
+      this.lastDecorations.set(sessionId, decorations);
+      store.upsert("decorations", decorations);
     } catch (error) {
       console.warn(`[files] git decorations unavailable for ${sessionId}: ${describeError(error)}`);
     }

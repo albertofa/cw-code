@@ -38,7 +38,7 @@ export interface SessionRuntime {
   todos: TodoItem[];
 }
 
-export type ThreadExtras = Partial<Pick<ThreadTopicData, "babysit" | "prItems" | "prDock" | "usageTotals" | "turnChanges">>;
+export type ThreadExtras = Partial<Pick<ThreadTopicData, "babysit" | "prItems" | "prDock" | "usageTotals" | "usageTotalsError" | "turnChanges">>;
 export type ThreadExtrasProvider = (sessionId: string) => ThreadExtras;
 export type SettledTurnEvent = Extract<ThreadEvent, { type: "turn.done" | "turn.error" }>;
 export interface ThreadNotice {
@@ -70,7 +70,7 @@ type LoadMode = "subscribe" | "reload";
 const RUNTIME_FIELDS: ReadonlySet<ThreadField> = new Set(["turn", "approvals", "questions", "todos", "usage"]);
 const HISTORY_LOADING: ThreadHistory = { state: "loading", error: null, retrying: false };
 const HISTORY_LOADED: ThreadHistory = { state: "loaded", error: null, retrying: false };
-const EXTRAS_DEFAULTS: Required<ThreadExtras> = { babysit: null, prItems: [], prDock: [], usageTotals: null, turnChanges: null };
+const EXTRAS_DEFAULTS: Required<ThreadExtras> = { babysit: null, prItems: [], prDock: [], usageTotals: null, usageTotalsError: null, turnChanges: null };
 
 interface ThreadEntry {
   sessionId: string;
@@ -169,6 +169,7 @@ export class ThreadService {
       store.upsert("prItems", extras.prItems);
       store.upsert("prDock", extras.prDock);
       store.upsert("usageTotals", extras.usageTotals);
+      store.upsert("usageTotalsError", extras.usageTotalsError);
       store.upsert("turnChanges", extras.turnChanges);
     });
   }

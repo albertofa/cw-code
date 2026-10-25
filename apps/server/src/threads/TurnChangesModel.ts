@@ -7,6 +7,7 @@ export interface TurnChangesModelDeps {
   projects(): Project[];
   isOpen(sessionId: string): boolean;
   turnChanges(sessionId: string): Promise<TurnChanges | null>;
+  latestTurnId(sessionId: string): string | null;
   refresh(sessionId: string): void;
 }
 
@@ -44,6 +45,13 @@ export class TurnChangesModel {
     this.cache.delete(sessionId);
     this.queued.delete(sessionId);
     this.rerun.delete(sessionId);
+  }
+
+  async recompute(sessionId: string): Promise<TurnChanges | null> {
+    const value = await this.read(sessionId);
+    if (this.deps.isOpen(sessionId)) this.store(sessionId, value);
+    if (value.error !== null) throw new Error(value.error);
+    return value.changes;
   }
 
   snapshotChanged(sessionId: string): void {
@@ -98,10 +106,12 @@ export class TurnChangesModel {
 
   private async read(sessionId: string): Promise<ThreadTurnChanges> {
     const rootSessionIds = this.rootSessionIds(sessionId);
+    const latestTurnId = this.deps.latestTurnId(sessionId);
     try {
-      return { changes: await this.deps.turnChanges(sessionId), error: null, rootSessionIds };
+      const changes = await this.deps.turnChanges(sessionId);
+      return { changes, error: null, turnId: changes?.turnId ?? latestTurnId, rootSessionIds };
     } catch (error) {
-      return { changes: null, error: describeError(error), rootSessionIds };
+      return { changes: null, error: describeError(error), turnId: latestTurnId, rootSessionIds };
     }
   }
 

@@ -402,7 +402,10 @@ function FileWorkspace({ sessionId }: { sessionId: string }) {
   const watchedKey = watched.join("\n");
 
   const documentVisible = useDocumentVisible();
-  const gitDecorations = useTopicEntry<GitDecorations>(filesTopic(sessionId), "decorations");
+  const topicDecorations = useTopicEntry<GitDecorations>(filesTopic(sessionId), "decorations");
+  const lastDecorations = useRef<{ sessionId: string; value: GitDecorations } | null>(null);
+  if (topicDecorations) lastDecorations.current = { sessionId, value: topicDecorations };
+  const gitDecorations = topicDecorations ?? (lastDecorations.current?.sessionId === sessionId ? lastDecorations.current.value : undefined);
   const decorations = useMemo<DecorationLookup>(
     () => (gitDecorations?.available ? buildDecorationIndex(gitDecorations.entries) : NO_DECORATIONS),
     [gitDecorations]

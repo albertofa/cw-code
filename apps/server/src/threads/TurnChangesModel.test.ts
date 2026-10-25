@@ -52,6 +52,7 @@ function setup(open: string[]) {
       if (failWith) throw new Error(failWith);
       return changesFor(`${sessionId}-${version}`);
     },
+    latestTurnId: (sessionId) => `${sessionId}-${version}`,
     refresh: (sessionId) => published.push(sessionId)
   });
   return {
@@ -71,7 +72,7 @@ describe("TurnChangesModel", () => {
     expect(t.value("a")).toBeNull();
     t.model.opened("a");
     await until(() => t.published.includes("a"));
-    expect(t.value("a")).toEqual({ changes: changesFor("a-0"), error: null, rootSessionIds: ["a", "b"] });
+    expect(t.value("a")).toEqual({ changes: changesFor("a-0"), error: null, turnId: "a-0", rootSessionIds: ["a", "b"] });
   });
 
   test("a sibling session's snapshot change recomputes every open session on the same root", async () => {
@@ -144,6 +145,32 @@ describe("TurnChangesModel", () => {
     t.failWith("session worktree is missing");
     t.model.opened("a");
     await until(() => t.published.includes("a"));
-    expect(t.value("a")).toEqual({ changes: null, error: "session worktree is missing", rootSessionIds: ["a", "b"] });
+    expect(t.value("a")).toEqual({ changes: null, error: "session worktree is missing", turnId: "a-0", rootSessionIds: ["a", "b"] });
+  });
+
+  test("recompute returns the fresh changes and publishes them for an open thread", async () => {
+    const t = setup(["a"]);
+    t.model.opened("a");
+    await until(() => t.published.length === 1);
+    t.bump();
+    const changes = await t.model.recompute("a");
+    expect(changes?.turnId).toBe("a-1");
+    expect(t.value("a")?.changes?.turnId).toBe("a-1");
+    expect(t.published).toEqual(["a", "a"]);
+  });
+
+  test("recompute on a closed thread returns the changes without caching them", async () => {
+    const t = setup([]);
+    expect((await t.model.recompute("a"))?.turnId).toBe("a-0");
+    expect(t.value("a")).toBeNull();
+    expect(t.published).toEqual([]);
+  });
+
+  test("recompute stores the failure for an open thread and rejects", async () => {
+    const t = setup(["a"]);
+    t.failWith("boom");
+    await expect(t.model.recompute("a")).rejects.toThrow("boom");
+    expect(t.value("a")).toEqual({ changes: null, error: "boom", turnId: "a-0", rootSessionIds: ["a", "b"] });
+    expect(t.published).toEqual(["a"]);
   });
 });

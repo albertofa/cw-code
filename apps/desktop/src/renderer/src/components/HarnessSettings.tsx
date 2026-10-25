@@ -292,7 +292,7 @@ function StatusCard({ driver, check, onOpenUsage }: { driver: DriverName; check:
   const snapshot = currentSnapshot ?? undefined;
 
   const runRecheck = useCallback(async () => {
-    await Promise.all([recheckHarnesses(), window.cw.refreshAccountUsage(true)]);
+    await Promise.all([recheckHarnesses(), window.cw.refreshAccountUsage(true, [driver])]);
     if (accountRefreshFailed(driver) || useSettingsDraftStore.getState().harnessChecksError) throw new Error("Recheck failed");
   }, [recheckHarnesses, driver]);
   const recheck = useRefreshFeedback(runRecheck);

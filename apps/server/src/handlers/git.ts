@@ -62,7 +62,7 @@ export function registerGitHandlers(router: Router, app: ServerApp): void {
     const range = await sessions.turnDiffRange(args.sessionId);
     return git.diff(root, "turn", range.base, range.head);
   });
-  handle<{ sessionId: string }>(router, "git.turnChanges", (args) => services().sessions.turnChanges(args.sessionId));
+  handle<{ sessionId: string }>(router, "git.turnChanges", (args) => services().turnChanges.recompute(args.sessionId));
   handle<{ sessionId: string; turnId: string; expectedEndSha: string }>(router, "git.undoTurn", async (args) => {
     if (typeof args.turnId !== "string" || !args.turnId) throw new Error("invalid turnId");
     if (typeof args.expectedEndSha !== "string" || !args.expectedEndSha) throw new Error("invalid expectedEndSha");

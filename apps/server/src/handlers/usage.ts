@@ -7,6 +7,10 @@ const DRIVER_KINDS: DriverKind[] = ["claude", "opencode", "codex"];
 const MAX_REPORT_DAYS = 366;
 const DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
 
+function isDriverList(value: unknown): value is DriverKind[] {
+  return Array.isArray(value) && value.length > 0 && value.every((driver) => DRIVER_KINDS.includes(driver as DriverKind));
+}
+
 function isValidUsageLedgerQuery(query: unknown): query is UsageLedgerQuery | undefined {
   if (query === undefined) return true;
   if (!query || typeof query !== "object") return false;
@@ -43,8 +47,9 @@ export function registerUsageHandlers(router: Router, app: ServerApp): void {
   });
   handle(router, "usage.report", (args) => app.requireServices().usageTopic.report(parseUsageReportQuery(args)));
   handle(router, "usage.refreshAccount", async (args) => {
-    const { force } = parseArgs(args, "usage.refreshAccount");
+    const { force, drivers } = parseArgs(args, "usage.refreshAccount");
     if (typeof force !== "boolean") throw new Error("force must be a boolean");
-    await app.requireServices().usageTopic.refreshAccount(force);
+    if (drivers !== undefined && !isDriverList(drivers)) throw new Error("drivers must be a non-empty list of harness ids");
+    await app.requireServices().usageTopic.refreshAccount(force, drivers);
   });
 }

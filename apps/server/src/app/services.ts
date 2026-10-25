@@ -147,7 +147,7 @@ function wireGitHubViews({ githubViews, prStore }: Services): void {
 }
 
 function wireServiceEvents(
-  { sessions, sourceControl, gitTopic, prTracker, prStore, ptys, runWatcher, githubViews, threads, autoFollowUp, sessionPrs, sidebar }: Services,
+  { sessions, sourceControl, gitTopic, filesTopic, prTracker, prStore, ptys, runWatcher, githubViews, threads, autoFollowUp, sessionPrs, sidebar }: Services,
   { emit, dropTopic }: ServiceHooks
 ): void {
   sessions.setEmitter((sessionId, event) => {
@@ -171,8 +171,10 @@ function wireServiceEvents(
     autoFollowUp.reevaluate();
     sessionPrs.invalidate();
     sidebar.invalidate();
-    if (session.status === "archived" || session.status === "resolved") gitTopic.forgetKeptHead(session.id);
-    else gitTopic.stateChanged(session.id);
+    if (session.status === "archived" || session.status === "resolved") {
+      gitTopic.forgetKeptHead(session.id);
+      filesTopic.forget(session.id);
+    } else gitTopic.stateChanged(session.id);
   });
   sessions.setProjectEmitter((project) => {
     emit("projects.changed", project);
@@ -325,6 +327,7 @@ export function createServices(stores: { sessionStore: SessionStore; settingsSto
     projects: () => sessions.listProjects(),
     isOpen: (sessionId) => threads.isOpen(sessionId),
     turnChanges: (sessionId) => sessions.turnChanges(sessionId),
+    latestTurnId: (sessionId) => sessions.findSession(sessionId)?.lastTurnSnapshot?.turnId ?? null,
     refresh: (sessionId) => threads.refreshExtras(sessionId)
   });
   const sidebar = new SidebarService(hooks.topics, {

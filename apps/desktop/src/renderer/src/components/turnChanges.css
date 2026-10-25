@@ -182,6 +182,11 @@
   flex: none;
 }
 
+.turn-changes-warn > .btn {
+  flex: none;
+  margin-left: auto;
+}
+
 .turn-undo-confirm p {
   margin: 0 0 8px;
 }

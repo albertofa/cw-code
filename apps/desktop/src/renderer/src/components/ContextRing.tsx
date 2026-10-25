@@ -23,6 +23,7 @@ export function ContextRing({ sessionId, driver }: { sessionId: string; driver: 
   const context = usage?.context ?? undefined;
   const lastTurn = usage?.lastTurn ?? undefined;
   const usageTotals = useThreadEntry(sessionId, "usageTotals");
+  const usageTotalsError = useThreadEntry(sessionId, "usageTotalsError");
   const { snapshot: account, loading: accountLoading, error: accountError } = useAccountUsage(driver, open);
   const snapshot = account ?? undefined;
   const openUsage = usePrStore((s) => s.openUsage);
@@ -108,7 +109,9 @@ export function ContextRing({ sessionId, driver }: { sessionId: string; driver: 
           </section>
           <section className="context-dock-sec">
             <div className="context-dock-h">This session</div>
-            {usageTotals === undefined ? (
+            {usageTotalsError ? (
+              <div className="context-dock-sub">Couldn&apos;t load usage: {usageTotalsError}</div>
+            ) : usageTotals === undefined ? (
               <div className="context-dock-sub">Loading…</div>
             ) : (
               <div className="context-dock-grid">

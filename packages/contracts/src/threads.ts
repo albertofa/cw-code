@@ -49,6 +49,7 @@ export interface ThreadUsage {
 export interface ThreadTurnChanges {
   changes: TurnChanges | null;
   error: string | null;
+  turnId: string | null;
   rootSessionIds: string[];
 }
 
@@ -58,6 +59,7 @@ export type ThreadTopicData = {
   durations: Record<string, number>;
   usage: ThreadUsage;
   usageTotals: UsageTotals | null;
+  usageTotalsError: string | null;
   todos: TodoItem[];
   approvals: ApprovalRequest[];
   questions: QuestionRequest[];

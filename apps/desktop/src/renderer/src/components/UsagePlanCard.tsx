@@ -52,7 +52,7 @@ export function UsagePlanCard({ driver, onOpenSettings }: { driver: DriverName; 
   const retry = async () => {
     setRetrying(true);
     try {
-      await window.cw.refreshAccountUsage(true);
+      await window.cw.refreshAccountUsage(true, [driver]);
     } catch (err) {
       useNotifs.getState().push({ kind: "error", title: "Could not refresh plan limits", message: ipcErrorMessage(err) });
     } finally {
@@ -64,7 +64,7 @@ export function UsagePlanCard({ driver, onOpenSettings }: { driver: DriverName; 
     setAllowing(true);
     try {
       await saveSettings({ opencodeGoUsage: true });
-      await window.cw.refreshAccountUsage(true);
+      await window.cw.refreshAccountUsage(true, [driver]);
     } catch (err) {
       useNotifs.getState().push({ kind: "error", title: "Could not save the setting", message: ipcErrorMessage(err) });
     } finally {
