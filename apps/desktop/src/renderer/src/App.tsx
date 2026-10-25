@@ -3,7 +3,7 @@ import { applyAppearance } from "./appearanceFonts.js";
 import { ThemeSync } from "./components/ThemeSync.js";
 import { HarnessNotices } from "./components/HarnessNotices.js";
 import { collectSubagents } from "./components/subagents.js";
-import { useThreadItemsSelect } from "./components/useThread.js";
+import { useHoldRecentThreads, useThreadItemsSelect } from "./components/useThread.js";
 import { Sidebar } from "./components/Sidebar.js";
 import { WindowControls } from "./components/WindowControls.js";
 import { SkillsModal } from "./components/SkillsModal.js";
@@ -165,6 +165,7 @@ export function App() {
 
 
   useHoldGit(activeSessionId);
+  useHoldRecentThreads(activeSessionId);
 
   useEffect(() => {
     if (!activeSessionId) return;

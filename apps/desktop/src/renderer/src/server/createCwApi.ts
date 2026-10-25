@@ -46,6 +46,7 @@ import type {
   PermissionOption,
   Project,
   RetryConnectionResult,
+  StopTurnResult,
   Session,
   SessionCleanupResult
 } from "../cw.js";
@@ -165,7 +166,7 @@ export function createCwApi(client: ServerClient, topics: TopicCache, desktop: D
         finalReview: opts?.finalReview,
         acceptFolderHead: opts?.acceptFolderHead
       }),
-    stopTurn: (sessionId) => callVoid("turns.stop", { sessionId }),
+    stopTurn: (sessionId) => call<StopTurnResult>("turns.stop", { sessionId }),
     reloadHistory: (sessionId) => callVoid("threads.reloadHistory", { sessionId }),
     respondApproval: (requestId, decision) => callVoid("approvals.respond", { requestId, decision }),
     respondQuestion: (requestId, answers) => callVoid("questions.respond", { requestId, answers }),

@@ -1,15 +1,17 @@
-import { useRef } from "react";
+import { useEffect, useRef } from "react";
 import type { TopicState } from "@cw-code/client";
 import type { ThreadItem, ThreadTopicData } from "@cw-code/contracts";
 import { sessionTopic } from "@cw-code/shared/topics";
-import { peekTopic, useTopicEntry, useTopicSelect, type TopicOptions } from "../server/topics.js";
+import { acquireTopic, peekTopic, useTopicEntry, useTopicSelect, type TopicOptions } from "../server/topics.js";
 import { sameItems } from "../server/sidebarData.js";
+import { useSessionRow } from "./useSessions.js";
 
 export type ThreadField = Exclude<keyof ThreadTopicData, `item/${string}`>;
 
 const ITEM_PREFIX = "item/";
 const HELD: TopicOptions = { whenHidden: "keep" };
 const CACHED_THREADS = 8;
+const HELD_THREADS = 3;
 const NO_ITEMS: ThreadItem[] = [];
 
 interface ItemsCache {
@@ -85,6 +87,41 @@ export function useThreadEntry<K extends ThreadField>(sessionId: string | null |
 
 export function useThreadTopicError(sessionId: string | null | undefined): string | null {
   return useTopicSelect<string | null>(threadTopic(sessionId), (state) => (state?.status === "error" ? (state.error ?? "unknown error") : null), HELD);
+}
+
+export function useHoldRecentThreads(activeSessionId: string | null | undefined): void {
+  const held = useRef(new Map<string, () => void>());
+
+  useEffect(() => {
+    if (!activeSessionId) return;
+    const releases = held.current;
+    const release = releases.get(activeSessionId) ?? acquireTopic(sessionTopic(activeSessionId));
+    releases.delete(activeSessionId);
+    releases.set(activeSessionId, release);
+    while (releases.size > HELD_THREADS) {
+      const [oldest, releaseOldest] = releases.entries().next().value as [string, () => void];
+      releases.delete(oldest);
+      releaseOldest();
+    }
+  }, [activeSessionId]);
+
+  useEffect(() => {
+    const releases = held.current;
+    return () => {
+      for (const release of releases.values()) release();
+      releases.clear();
+    };
+  }, []);
+}
+
+export function useThreadBusy(sessionId: string | null | undefined): boolean {
+  const live = useTopicSelect<boolean | undefined>(
+    threadTopic(sessionId),
+    (state) => (state?.status === "ready" ? state.data.turn != null : undefined),
+    HELD
+  );
+  const rowBusy = useSessionRow(sessionId)?.busy ?? false;
+  return live ?? rowBusy;
 }
 
 export function isThreadBusy(sessionId: string): boolean {

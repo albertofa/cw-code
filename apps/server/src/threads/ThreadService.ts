@@ -50,6 +50,7 @@ export interface ThreadNotice {
 export interface ThreadServiceDeps {
   hub: TopicHub;
   history(sessionId: string): Promise<HistoryMessage[]>;
+  hasNoTranscript?(sessionId: string): boolean;
   liveTasks(sessionId: string): TaskSnapshot[];
   pendingRequests(sessionId: string): PendingRequest[];
   loadHistoryOnSubscribe?: boolean;
@@ -197,6 +198,9 @@ export class ThreadService {
   acquire(sessionId: string): ThreadStore {
     const entry = this.entry(sessionId);
     this.idle.delete(sessionId);
+    if (!entry.state.historyLoaded && !entry.loading && this.deps.hasNoTranscript?.(sessionId)) {
+      this.applyHistory(entry, [], "subscribe");
+    }
     const autoLoad = this.deps.loadHistoryOnSubscribe !== false && !entry.state.historyLoaded;
     if (autoLoad && !entry.loading) entry.history = HISTORY_LOADING;
     const store = this.deps.hub.createStore<ThreadTopicData>(sessionTopic(sessionId), this.topicData(entry));

@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import type { ChatMessage } from "../stores/appStore.js";
 import { describeToolCall, formatDuration, isRunningTool, relativizeToBase } from "./toolSummaries.js";
 import { useElapsed } from "./useElapsed.js";
-import { runningTurnId, useThreadEntry, useThreadItemsSelect } from "./useThread.js";
+import { runningTurnId, useThreadBusy, useThreadEntry, useThreadItemsSelect } from "./useThread.js";
 
 function runningStep(messages: ChatMessage[], turnId: string, basePath: string): string | undefined {
   for (let i = messages.length - 1; i >= 0; i--) {
@@ -36,7 +36,7 @@ export function WorkingDock({ sessionId, basePath }: { sessionId: string; basePa
     const turnId = runningTurnId(turn, items);
     return turnId === undefined ? undefined : runningStep(items, turnId, basePath);
   });
-  const running = turn != null;
+  const running = useThreadBusy(sessionId);
   const [announcement, setAnnouncement] = useState("");
   const wasRunning = useRef(running);
 

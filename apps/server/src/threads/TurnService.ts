@@ -20,6 +20,10 @@ export interface TurnServiceDeps {
   git: Pick<GitTopic, "keptFolderHead">;
 }
 
+export interface StopResult {
+  stopped: boolean;
+}
+
 interface StartingTurn {
   stopRequested: boolean;
 }
@@ -57,15 +61,17 @@ export class TurnService {
     return turnId;
   }
 
-  stop(sessionId: string): void {
+  stop(sessionId: string): StopResult {
     const active = this.deps.sessions.listActiveTurns().filter((turn) => turn.sessionId === sessionId);
     if (active.length === 0) {
       const starting = this.starting.get(sessionId);
-      if (starting) starting.stopRequested = true;
-      return;
+      if (!starting) return { stopped: false };
+      starting.stopRequested = true;
+      return { stopped: true };
     }
     for (const turn of active) this.deps.sessions.interrupt(turn.turnId);
     this.notifyStopped(sessionId);
+    return { stopped: true };
   }
 
   private notifyStopped(sessionId: string): void {

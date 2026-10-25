@@ -5,7 +5,7 @@ import { ipcErrorMessage } from "./ipcError.js";
 import { keepLabel, mismatchSentence, sendHereLabel, type BranchMismatch } from "./sessionBranch.js";
 import { useBranchMismatch } from "./useGit.js";
 import { findSession } from "../server/sidebarData.js";
-import { useThreadEntry } from "./useThread.js";
+import { useThreadBusy } from "./useThread.js";
 
 export function BranchMismatchDock({ sessionId }: { sessionId: string }) {
   const mismatch = useBranchMismatch(sessionId);
@@ -15,7 +15,7 @@ export function BranchMismatchDock({ sessionId }: { sessionId: string }) {
   });
   const [switching, setSwitching] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const turnBusy = useThreadEntry(sessionId, "turn") != null;
+  const turnBusy = useThreadBusy(sessionId);
   const hasMismatch = mismatch !== null;
 
   useEffect(() => {

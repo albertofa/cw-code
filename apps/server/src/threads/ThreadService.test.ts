@@ -103,6 +103,12 @@ describe("ThreadService history", () => {
     expect(threads.isOpen("s1")).toBe(true);
   });
 
+  test("a session without a transcript is loaded on subscribe without fetching history", () => {
+    const { subscribe, historyCalls } = setup({ hasNoTranscript: () => true });
+    expect(subscribe("s1").history).toEqual({ state: "loaded", error: null, retrying: false });
+    expect(historyCalls).toEqual([]);
+  });
+
   test("a failed load retries once, then reports the error", async () => {
     let calls = 0;
     const gate = deferred<void>();

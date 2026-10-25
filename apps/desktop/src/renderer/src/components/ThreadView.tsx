@@ -189,7 +189,11 @@ export function ThreadView({ hidden = false }: { hidden?: boolean }) {
   const hasMessages = messages.length > 0;
   const notifiedHistoryError = useRef<string | null>(null);
   useEffect(() => {
-    if (!activeSessionId || !historyError || !hasMessages) return;
+    if (!historyError) {
+      notifiedHistoryError.current = null;
+      return;
+    }
+    if (!activeSessionId || !hasMessages) return;
     const key = `${activeSessionId}:${historyError}`;
     if (notifiedHistoryError.current === key) return;
     notifiedHistoryError.current = key;
@@ -224,6 +228,7 @@ export function ThreadView({ hidden = false }: { hidden?: boolean }) {
         const known = turnDurations?.[slice.turnId];
         const first = slice.messages[0];
         return {
+          key: slice.messages[0].seq,
           turnId: slice.turnId,
           pieces: splitTurn(slice.messages, nestedIds, running),
           running,
@@ -617,7 +622,7 @@ export function ThreadView({ hidden = false }: { hidden?: boolean }) {
           )}
           {turns.map((turn, index) => (
             <TurnBlock
-              key={`${turn.turnId}:${index}`}
+              key={turn.key}
               running={turn.running}
               startedAt={turn.startedAt}
               durationMs={turn.durationMs}

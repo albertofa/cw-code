@@ -1784,12 +1784,23 @@ export class SessionManager {
     return driver.getSubagentTools(await this.ensureWorktree(sessionId), session.resumeCursor, agentId);
   }
 
-  private async healMissingCursor(session: SessionMeta, project: Project): Promise<HistoryMessage[] | null> {
-    if (session.title.trim().toLowerCase() === NEW_SESSION_TITLE.toLowerCase()) return null;
-    if (this.pendingTurns.has(session.id)) return null;
+  hasNoTranscript(sessionId: string): boolean {
+    const session = this.store.getSession(sessionId);
+    return session !== undefined && this.isUnstarted(session);
+  }
+
+  private isUnstarted(session: SessionMeta): boolean {
+    if (session.resumeCursor) return false;
+    if (session.title.trim().toLowerCase() === NEW_SESSION_TITLE.toLowerCase()) return true;
+    if (this.pendingTurns.has(session.id)) return true;
     for (const entry of this.activeTurns.values()) {
-      if (entry.sessionId === session.id) return null;
+      if (entry.sessionId === session.id) return true;
     }
+    return false;
+  }
+
+  private async healMissingCursor(session: SessionMeta, project: Project): Promise<HistoryMessage[] | null> {
+    if (this.isUnstarted(session)) return null;
     let cwd: string;
     try {
       cwd = await this.ensureWorktree(session.id);

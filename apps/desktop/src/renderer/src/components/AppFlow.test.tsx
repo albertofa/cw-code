@@ -134,6 +134,7 @@ function installBridge(): void {
     },
     stopTurn: async (sessionId: string) => {
       stoppedTurns.push(sessionId);
+      return { stopped: true };
     },
     reloadHistory: async () => {},
     updates: {

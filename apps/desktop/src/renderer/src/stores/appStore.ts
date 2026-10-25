@@ -32,7 +32,6 @@ import { projectDriver, withProjectPrefs } from "../components/projectDefaults.j
 import { useNotifs } from "../components/Notifications.js";
 import { ipcErrorMessage } from "../components/ipcError.js";
 import { sameItems, sessionsByProjectOf } from "../server/sidebarData.js";
-import { isThreadBusy } from "../components/useThread.js";
 import { shouldApplyUpdateState } from "./updateThrottle.js";
 
 let lastUpdateAppliedAt = 0;
@@ -655,9 +654,12 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   async interrupt() {
     const sessionId = get().activeSessionId;
-    if (!sessionId || !isThreadBusy(sessionId)) return;
+    if (!sessionId) return;
     try {
-      await window.cw.stopTurn(sessionId);
+      const { stopped } = await window.cw.stopTurn(sessionId);
+      if (!stopped) {
+        useNotifs.getState().push({ kind: "info", title: "Nothing to stop", message: "This session has no running turn." });
+      }
     } catch (err) {
       useNotifs.getState().push({ kind: "error", title: "Could not stop the turn", message: ipcErrorMessage(err) });
     }

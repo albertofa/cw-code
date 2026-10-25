@@ -274,6 +274,7 @@ export function createServices(stores: { sessionStore: SessionStore; settingsSto
   const threads = new ThreadService({
     hub: hooks.topics,
     history: (sessionId) => sessions.getHistory(sessionId),
+    hasNoTranscript: (sessionId) => sessions.hasNoTranscript(sessionId),
     liveTasks: (sessionId) => sessions.liveTasks(sessionId),
     pendingRequests: (sessionId) => sessions.listPendingRequests(sessionId)
   });

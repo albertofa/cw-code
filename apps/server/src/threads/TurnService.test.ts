@@ -196,10 +196,10 @@ describe("TurnService", () => {
     });
     const stopped: string[] = [];
     ctx.turns.onTurnStopped((sessionId) => stopped.push(sessionId));
-    ctx.turns.stop("s1");
+    expect(ctx.turns.stop("s1")).toEqual({ stopped: false });
     expect(stopped).toEqual([]);
     await ctx.turns.start("s1", "hello", {});
-    ctx.turns.stop("s1");
+    expect(ctx.turns.stop("s1")).toEqual({ stopped: true });
     expect(ctx.interrupted).toEqual(["turn-1"]);
     expect(stopped).toEqual(["s1"]);
     expect(ctx.snapshot().turn).toBeNull();

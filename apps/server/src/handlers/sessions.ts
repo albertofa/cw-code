@@ -9,13 +9,12 @@ import type {
   SidebarReorderRequest,
   SidebarSection
 } from "@cw-code/contracts";
-import { MAX_TOPICS_PER_CLIENT, sessionTopic } from "@cw-code/shared/topics";
 import { homedir } from "node:os";
 import type { ServerApp } from "../app/ServerApp.js";
 import type { Services } from "../app/services.js";
 import type { SessionStatusReason } from "../debug/sessionStatusTrace.js";
 import type { Router } from "../transport/Router.js";
-import { handle, knownSessionId, parseArgs, parseBoolean, parseString, subscribeIfConnected } from "./shared.js";
+import { handle, knownSessionId, parseArgs, parseBoolean, parseString } from "./shared.js";
 
 function parseSection(value: unknown, name: string): SidebarSection {
   if (value !== "main" && value !== "resolved") throw new Error(`${name} must be main or resolved`);
@@ -52,9 +51,6 @@ async function resolveSession(
 
 export function registerSessionHandlers(router: Router, app: ServerApp): void {
   const services = () => app.requireServices();
-  const subscribeToSession = (clientId: string, sessionId: string): void => {
-    if (app.topics.countFor(clientId) < MAX_TOPICS_PER_CLIENT) subscribeIfConnected(app, clientId, [sessionTopic(sessionId)]);
-  };
   handle(router, "projects.list", () => services().sessions.listProjects());
   handle<string>(router, "projects.add", (rootPath) => services().sessions.addProject(rootPath));
   handle<{ projectId: string; settings: ProjectSettings }>(router, "projects.updateSettings", (args) =>
@@ -62,17 +58,11 @@ export function registerSessionHandlers(router: Router, app: ServerApp): void {
   );
   handle(router, "os.homeDir", () => homedir());
   handle<string>(router, "sessions.list", (projectId) => services().sessions.listSessions(projectId));
-  handle<{ projectId: string; driver: DriverKind; options?: CreateSessionOptions }>(router, "sessions.create", async (args, ctx) => {
-    const session = await services().sessions.createSession(args.projectId, args.driver, args.options);
-    subscribeToSession(ctx.clientId, session.id);
-    return session;
-  });
+  handle<{ projectId: string; driver: DriverKind; options?: CreateSessionOptions }>(router, "sessions.create", (args) =>
+    services().sessions.createSession(args.projectId, args.driver, args.options)
+  );
   handle<DriverKind>(router, "sessions.importable", (driver) => services().sessions.listImportableSessions(driver));
-  handle<ImportSessionRequest>(router, "sessions.import", async (request, ctx) => {
-    const result = await services().sessions.importSession(request);
-    subscribeToSession(ctx.clientId, result.session.id);
-    return result;
-  });
+  handle<ImportSessionRequest>(router, "sessions.import", (request) => services().sessions.importSession(request));
   handle<{ sessionId: string; title: string }>(router, "sessions.rename", (args) =>
     services().sessions.renameSession(args.sessionId, args.title)
   );

@@ -86,6 +86,10 @@ export function readTopic<D = Record<string, unknown>>(topic: string): TopicStat
   return topicCache().state<D>(topic);
 }
 
+export function acquireTopic(topic: string): () => void {
+  return topicCache().acquire(topic);
+}
+
 export function peekTopic<D = Record<string, unknown>>(topic: string): TopicState<D> | undefined {
   return cache?.state<D>(topic);
 }
