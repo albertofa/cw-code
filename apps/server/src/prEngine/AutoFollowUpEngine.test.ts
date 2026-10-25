@@ -455,6 +455,7 @@ describe("AutoFollowUpEngine with the real thread and turn services", () => {
     const driverStarts: string[] = [];
     const turns = new TurnService({
       sessions: {
+        assertCanStartTurn: (id) => ({ session: store.getSession(id)!, project }),
         startTurn: async (id, prompt) => {
           driverStarts.push(prompt);
           const turnId = `turn-${driverStarts.length}`;
