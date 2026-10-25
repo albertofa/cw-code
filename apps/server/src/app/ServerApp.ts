@@ -24,6 +24,7 @@ import { ClientInputs } from "./clientInputs.js";
 import { eventAudience } from "./eventAudience.js";
 import { eventTopic, isRoutableTopic } from "./eventTopics.js";
 import { createServices, type Services } from "./services.js";
+import { ShutdownPublisher } from "./ShutdownPublisher.js";
 
 const SESSION_SETTLE_INTERVAL_MS = 60_000;
 const SESSION_SETTLE_INITIAL_DELAY_MS = 5_000;
@@ -38,6 +39,13 @@ function isProcessGone(pid: number): boolean {
   } catch (error) {
     return (error as NodeJS.ErrnoException).code === "ESRCH";
   }
+}
+
+function affectsShutdownAssessment(channel: string, payload: unknown): boolean {
+  if (channel === "session.title") return true;
+  if (channel !== "turn.event") return false;
+  const event = (payload as { event?: { type?: string } } | undefined)?.event;
+  return event?.type === "task.updated";
 }
 
 export class ServerApp {
@@ -55,6 +63,8 @@ export class ServerApp {
   private parentTimer: ReturnType<typeof setInterval> | null = null;
   private stopping = false;
   private lastShutdownStatus: ShutdownStatus = { idle: true, committed: false, reason: null };
+  private readonly shutdownPublisher = new ShutdownPublisher(() => this.publishShutdown());
+  private unwireShutdownPublishing: () => void = () => {};
   private pendingShellNotices: AppNotice[] = [];
 
   constructor(
@@ -72,6 +82,7 @@ export class ServerApp {
   }
 
   emit(channel: string, payload?: unknown): void {
+    if (affectsShutdownAssessment(channel, payload)) this.shutdownPublisher.schedule();
     const topic = eventTopic(channel, payload);
     if (topic === null) {
       this.ws?.broadcast(channel, payload, eventAudience(channel));
@@ -221,7 +232,22 @@ export class ServerApp {
     };
   }
 
+  private publishShutdown(): void {
+    const services = this.services;
+    if (!services || this.servicesDisposed) return;
+    services.appTopic.setShutdown(this.shutdownStatus(), services.shutdown.assess());
+  }
+
+  private wireShutdownPublishing(services: Services): void {
+    this.unwireShutdownPublishing();
+    this.unwireShutdownPublishing = this.shutdownPublisher.watch(
+      (onChange) => services.threads.onRuntimeChanged(onChange),
+      (onChange) => services.ptys.onChanged(onChange)
+    );
+  }
+
   emitShutdownChanged(): void {
+    this.shutdownPublisher.schedule();
     const status = this.shutdownStatus();
     const last = this.lastShutdownStatus;
     if (last.idle === status.idle && last.committed === status.committed && last.reason === status.reason) return;
@@ -276,6 +302,7 @@ export class ServerApp {
     if (this.parentTimer) clearInterval(this.parentTimer);
     this.parentTimer = null;
     try {
+      this.shutdownPublisher.dispose();
       this.stopSessionSweeps();
       this.disposeServices();
     } catch (err) {
@@ -323,6 +350,7 @@ export class ServerApp {
     this.services = services;
     this.servicesDisposed = false;
     this.state = { mode: "ready" };
+    this.wireShutdownPublishing(services);
     services.sessions.warmOpencodeModels();
     reapOrphanedServers()
       .then((reaped) => {
@@ -351,6 +379,7 @@ export class ServerApp {
   private handleShutdownRecovered(failure: string | null): void {
     this.servicesDisposed = false;
     this.startSessionSweeps();
+    if (this.services) this.wireShutdownPublishing(this.services);
     this.topics.resync();
     this.emitShutdownChanged();
     if (!failure) return;

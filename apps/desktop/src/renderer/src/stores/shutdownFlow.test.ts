@@ -1,18 +1,19 @@
 import "../../../../tests/dom.js";
-import { afterEach, beforeEach, describe, expect, it, vi } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import type { ShutdownAssessment, ShutdownPrepareRequest, ShutdownPrepareResult } from "../cw.js";
 import { useAppStore } from "./appStore.js";
 import { useEditorBuffers } from "./editorBuffers.js";
 import {
+  applyShutdownAssessment,
   handleShutdownExpired,
   hasShutdownBlockers,
-  refreshShutdownAssessment,
   runShutdownFlow,
   shutdownCancel,
   shutdownDiscardAll,
   shutdownForce,
   shutdownProceed,
   shutdownSaveAll,
+  shutdownStopWaiting,
   shutdownWait
 } from "./shutdownFlow.js";
 
@@ -98,7 +99,7 @@ describe("runShutdownFlow", () => {
 
   beforeEach(() => {
     api = installCw();
-    useAppStore.setState({ shutdown: null, busyTurns: {} });
+    useAppStore.setState({ shutdown: null });
     useEditorBuffers.setState({ buffers: {} });
   });
 
@@ -211,53 +212,77 @@ describe("runShutdownFlow", () => {
     expect(useAppStore.getState().shutdown).toBeNull();
   });
 
-  it("prepares once when several refreshes see the turns finish at the same time", async () => {
-    vi.useFakeTimers();
-    try {
-      api.assessments = [BUSY, BUSY];
-      api.prepareResults = [
-        { ok: true, token: "token-1", stoppedTurnIds: [] },
-        { ok: false, code: "busy" }
-      ];
-      let release: () => void = () => {};
-      api.prepareGate = new Promise((resolve) => {
-        release = resolve;
-      });
-      const pending = runShutdownFlow("update");
-      await settle();
-      shutdownWait();
-      await settle();
-      expect(useAppStore.getState().shutdown?.phase).toBe("waiting");
-      const refreshes = [refreshShutdownAssessment(), refreshShutdownAssessment(), refreshShutdownAssessment()];
-      await settle();
-      expect(api.prepareCalls).toHaveLength(1);
-      void refreshShutdownAssessment();
-      release();
-      await Promise.all(refreshes);
-      expect(await pending).toEqual({ token: "token-1" });
-      expect(api.prepareCalls).toHaveLength(1);
-    } finally {
-      vi.useRealTimers();
-    }
+  it("prepares once when several pushes see the turns finish at the same time", async () => {
+    api.assessments = [BUSY];
+    api.prepareResults = [
+      { ok: true, token: "token-1", stoppedTurnIds: [] },
+      { ok: false, code: "busy" }
+    ];
+    let release: () => void = () => {};
+    api.prepareGate = new Promise((resolve) => {
+      release = resolve;
+    });
+    const pending = runShutdownFlow("update");
+    await settle();
+    shutdownWait();
+    expect(useAppStore.getState().shutdown?.phase).toBe("waiting");
+    const pushes = [applyShutdownAssessment(EMPTY), applyShutdownAssessment(EMPTY), applyShutdownAssessment(EMPTY)];
+    await settle();
+    expect(api.prepareCalls).toHaveLength(1);
+    release();
+    await Promise.all(pushes);
+    expect(await pending).toEqual({ token: "token-1" });
+    expect(api.prepareCalls).toHaveLength(1);
   });
 
-  it("waits for running turns and continues on its own once they finish", async () => {
-    vi.useFakeTimers();
-    try {
-      api.assessments = [BUSY, BUSY];
-      const pending = runShutdownFlow("update");
-      await settle();
-      shutdownWait();
-      await settle();
-      expect(useAppStore.getState().shutdown?.phase).toBe("waiting");
-      expect(api.prepareCalls).toHaveLength(0);
-      useAppStore.setState({ busyTurns: { sess_bg: "t1" } });
-      useAppStore.setState({ busyTurns: {} });
-      await settle();
-      expect(api.prepareCalls).toEqual([{ reason: "update", stopActiveTurns: false, approvedTurnIds: [], timeoutMs: 10_000 }]);
-      expect(await pending).toEqual({ token: "token-1" });
-    } finally {
-      vi.useRealTimers();
-    }
+  it("waits for running turns and continues on its own once a push shows none", async () => {
+    api.assessments = [BUSY];
+    const pending = runShutdownFlow("update");
+    await settle();
+    shutdownWait();
+    expect(useAppStore.getState().shutdown?.phase).toBe("waiting");
+    await applyShutdownAssessment(BUSY);
+    expect(api.prepareCalls).toHaveLength(0);
+    expect(useAppStore.getState().shutdown?.phase).toBe("waiting");
+    await applyShutdownAssessment(EMPTY);
+    expect(api.prepareCalls).toEqual([{ reason: "update", stopActiveTurns: false, approvedTurnIds: [], timeoutMs: 10_000 }]);
+    expect(await pending).toEqual({ token: "token-1" });
+  });
+
+  it("keeps the dialog in review when the turns finish while files are still unsaved", async () => {
+    dirtyFile("sess_a", "a.ts", "A");
+    api.assessments = [BUSY];
+    void runShutdownFlow("update");
+    await settle();
+    shutdownWait();
+    await applyShutdownAssessment(EMPTY);
+    expect(api.prepareCalls).toHaveLength(0);
+    expect(useAppStore.getState().shutdown).toMatchObject({ phase: "review", assessment: EMPTY });
+    expect(useAppStore.getState().shutdown?.dirty).toHaveLength(1);
+  });
+
+  it("applies a pushed assessment in review without preparing", async () => {
+    api.assessments = [BUSY];
+    void runShutdownFlow("update");
+    await settle();
+    await applyShutdownAssessment(EMPTY);
+    expect(useAppStore.getState().shutdown).toMatchObject({ phase: "review", assessment: EMPTY });
+    expect(api.prepareCalls).toHaveLength(0);
+  });
+
+  it("stops following turns after waiting is cancelled", async () => {
+    api.assessments = [BUSY];
+    void runShutdownFlow("update");
+    await settle();
+    shutdownWait();
+    shutdownStopWaiting();
+    await applyShutdownAssessment(EMPTY);
+    expect(api.prepareCalls).toHaveLength(0);
+    expect(useAppStore.getState().shutdown?.phase).toBe("review");
+  });
+
+  it("ignores pushes when no dialog is open", async () => {
+    await applyShutdownAssessment(BUSY);
+    expect(useAppStore.getState().shutdown).toBeNull();
   });
 });

@@ -1,7 +1,11 @@
 import { useEffect, useId, useMemo } from "react";
-import type { ShutdownReason } from "../cw.js";
+import type { AppTopicData } from "@cw-code/contracts";
+import { APP_TOPIC } from "@cw-code/shared/topics";
+import type { ShutdownAssessment, ShutdownReason } from "../cw.js";
+import { useTopicSelect } from "../server/topics.js";
 import { useAppStore } from "../stores/appStore.js";
 import {
+  applyShutdownAssessment,
   shutdownCancel,
   shutdownDiscardAll,
   shutdownDiscardFile,
@@ -48,6 +52,16 @@ export function ShutdownDialog() {
   }, [sessionsByProject]);
 
   const busy = state?.phase === "saving" || state?.phase === "preparing";
+  const listening = state?.phase === "review" || state?.phase === "waiting";
+  const pushed = useTopicSelect<ShutdownAssessment | undefined, Partial<AppTopicData>>(
+    listening ? APP_TOPIC : null,
+    (topic) => topic?.data.shutdown?.assessment,
+    { whenHidden: "keep" }
+  );
+
+  useEffect(() => {
+    if (listening && pushed) void applyShutdownAssessment(pushed);
+  }, [listening, pushed]);
 
   useEffect(() => {
     if (!state) return;

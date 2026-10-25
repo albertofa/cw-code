@@ -183,6 +183,28 @@ describe("PtyPool shutdown support", () => {
   });
 });
 
+describe("PtyPool change notifications", () => {
+  it("notifies when a terminal is added, exits, is killed or the pool is disposed", async () => {
+    const { pool, spawned } = makePool();
+    let changes = 0;
+    const stop = pool.onChanged(() => (changes += 1));
+    await pool.open("sess_a", ".", "shell", "", undefined, noData);
+    expect(changes).toBe(1);
+    spawned[0].exit(0);
+    expect(changes).toBe(2);
+    await pool.open("sess_a", ".", "codex", "", undefined, noData);
+    pool.kill("sess_a:codex");
+    expect(changes).toBe(4);
+    await pool.open("sess_a", ".", "shell", "", undefined, noData);
+    pool.dispose();
+    expect(changes).toBe(6);
+    stop();
+    pool.reopen();
+    await pool.open("sess_a", ".", "shell", "", undefined, noData);
+    expect(changes).toBe(6);
+  });
+});
+
 describe("PtyPool terminal launch", () => {
   function recordingPool(fail = false) {
     const spawns: Array<{ args: string[]; env: NodeJS.ProcessEnv | undefined }> = [];
