@@ -3,8 +3,10 @@ import type { ShutdownReason } from "@cw-code/contracts";
 import { prKey } from "@cw-code/shared/prRef";
 import { ptyTopic } from "@cw-code/shared/topics";
 import { FileService } from "../fs/FileService.js";
+import { FilesTopic } from "../fs/FilesTopic.js";
 import { FileWatcher } from "../fs/FileWatcher.js";
-import { GitService } from "../fs/GitService.js";
+import { configuredGitBinary, GitService } from "../fs/GitService.js";
+import { gitDecorations } from "../fs/workspaceQueries.js";
 import { configureGitHubAccounts, defaultGitHubAccounts } from "../github/GitHubAccounts.js";
 import { githubCliBinary } from "../github/githubAccount.js";
 import { GitHubSearchService } from "../github/GitHubSearchService.js";
@@ -35,6 +37,7 @@ import { AccountUsageService } from "../usage/AccountUsageService.js";
 import { UsageTopic } from "../usage/UsageTopic.js";
 import { wireSessionUsageTotals } from "../usage/wireSessionUsageTotals.js";
 import { AppTopic } from "./AppTopic.js";
+import type { ClientInputs } from "./clientInputs.js";
 
 export type Emit = (channel: string, payload?: unknown) => void;
 
@@ -43,6 +46,7 @@ export interface Services {
   skills: SkillsStore;
   files: FileService;
   fileWatcher: FileWatcher;
+  filesTopic: FilesTopic;
   git: GitService;
   pullRequests: PullRequestService;
   prTracker: PrTracker;
@@ -69,6 +73,7 @@ export interface Services {
 export interface ServiceHooks {
   emit: Emit;
   topics: TopicHub;
+  clientInputs: ClientInputs;
   dropTopic: (topic: string) => void;
   legacyAppRoots: string[];
   onShutdownRecovered: (failure: string | null) => void;
@@ -111,6 +116,10 @@ function wireGitTopic({ gitTopic, sourceControl, sessions }: Services): void {
   sessions.onCheckoutChanged((sessionIds) => {
     for (const sessionId of sessionIds) void sourceControl.refresh(sessionId, { forcePullRequest: true });
   });
+}
+
+function wireFilesTopic({ filesTopic, sourceControl }: Services): void {
+  sourceControl.onPublished((update) => filesTopic.gitPublished(update.sessionId));
 }
 
 function wireGitHubViews({ githubViews, prStore }: Services): void {
@@ -165,7 +174,10 @@ function wireServiceEvents(
 export function createServices(stores: { sessionStore: SessionStore; settingsStore: SettingsStore }, hooks: ServiceHooks): Services {
   const { emit } = hooks;
   let pullRequests: PullRequestService;
-  const fileWatcher = new FileWatcher((event) => emit("fs.changed", event));
+  const fileWatcher = new FileWatcher((event) => {
+    emit("fs.changed", event);
+    filesTopic.changed(event.sessionId);
+  });
   configureGitHubAccounts(() => githubCliBinary(() => sessions.getSettings()));
   const git: GitService = new GitService(() => sessions.getSettings(), defaultGitHubAccounts);
   const sessions: SessionManager = new SessionManager({
@@ -306,11 +318,20 @@ export function createServices(stores: { sessionStore: SessionStore; settingsSto
     ledgerRows: (query) => sessions.queryUsageLedger(query),
     onUsageRecorded: (cb) => sessions.onUsageRecorded(cb)
   });
+  const filesTopic = new FilesTopic(hooks.topics, {
+    ensureWorktree: (sessionId) => sessions.ensureWorktree(sessionId),
+    decorations: (root) => gitDecorations(configuredGitBinary(sessions.getSettings()), root),
+    clientPaths: (sessionId, clientIds) => hooks.clientInputs.pathsUnion(sessionId, clientIds),
+    clearClientPaths: (clientId, sessionId) => hooks.clientInputs.clearPaths(clientId, sessionId),
+    watch: (sessionId, root, paths) => fileWatcher.setWatched(sessionId, root, paths),
+    unwatch: (sessionId) => void fileWatcher.unwatch(sessionId)
+  });
   const services: Services = {
     sessions,
     skills: new SkillsStore(),
     files: new FileService(),
     fileWatcher,
+    filesTopic,
     git,
     pullRequests,
     prTracker,
@@ -338,6 +359,7 @@ export function createServices(stores: { sessionStore: SessionStore; settingsSto
   wireUsage(services);
   wireSidebar(services);
   wireGitTopic(services);
+  wireFilesTopic(services);
   wireGitHubViews(services);
   return services;
 }

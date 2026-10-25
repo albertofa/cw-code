@@ -1,12 +1,11 @@
 import type { ThreadEvent } from "@cw-code/contracts";
-import { filesTopic, GITHUB_RUNS_TOPIC, topicId } from "@cw-code/shared/topics";
+import { GITHUB_RUNS_TOPIC, topicId } from "@cw-code/shared/topics";
 import type { ClientInputs } from "../app/clientInputs.js";
 import type { Services } from "../app/services.js";
 import { MAX_WATCHED_RUNS } from "../github/RunWatcher.js";
 import { createThreadTopicProvider, THREAD_TOPIC_PREFIX } from "../threads/threadTopic.js";
 import type { TopicHub, TopicProvider } from "./TopicHub.js";
 
-const FILES_PREFIX = "files/";
 const PTY_PREFIX = "pty/";
 
 export interface TopicProviderDeps {
@@ -17,7 +16,6 @@ export interface TopicProviderDeps {
 export interface WatchControls {
   providers: TopicProvider[];
   syncWatchedRuns(): void;
-  applyFiles(sessionId: string): void;
 }
 
 type ProviderHooks = Partial<Pick<TopicProvider, "onSubscribe" | "onUnsubscribe" | "resync">> & {
@@ -49,38 +47,9 @@ function emptyStoreProvider(hub: TopicHub, owns: TopicProvider["owns"], hooks: P
 }
 
 export function createWatchControls(hub: TopicHub, services: Services, { clientInputs, sendTo }: TopicProviderDeps): WatchControls {
-  let filesGeneration = 0;
-  const latestFilesGeneration = new Map<string, number>();
-
   const syncWatchedRuns = (): void => {
     const clientIds = [...hub.subscriberIds(GITHUB_RUNS_TOPIC)];
     services.githubViews.setLegacyRunRefs(clientInputs.runRefsUnion(clientIds, MAX_WATCHED_RUNS));
-  };
-
-  const applyFiles = (sessionId: string): void => {
-    const generation = ++filesGeneration;
-    const topic = filesTopic(sessionId);
-    if (hub.subscribers(topic) === 0) {
-      latestFilesGeneration.delete(sessionId);
-      void services.fileWatcher.unwatch(sessionId);
-      return;
-    }
-    latestFilesGeneration.set(sessionId, generation);
-    services.sessions
-      .ensureWorktree(sessionId)
-      .then((root) => {
-        if (latestFilesGeneration.get(sessionId) !== generation) return;
-        const paths = clientInputs.pathsUnion(sessionId, [...hub.subscriberIds(topic)]);
-        services.fileWatcher.setWatched(sessionId, root, paths);
-      })
-      .catch((err: unknown) => {
-        console.warn(`[files] cannot watch ${sessionId}: ${err instanceof Error ? err.message : String(err)}`);
-      });
-  };
-
-  const applyFilesTopic = (topic: string): void => {
-    const sessionId = topicId(topic, FILES_PREFIX);
-    if (sessionId) applyFiles(sessionId);
   };
 
   const pushPendingRequests = (clientId: string, topic: string): void => {
@@ -97,16 +66,7 @@ export function createWatchControls(hub: TopicHub, services: Services, { clientI
 
   const providers: TopicProvider[] = [
     services.gitTopic,
-    emptyStoreProvider(hub, ownsPrefix(FILES_PREFIX), {
-      onSubscribe: (_clientId, topic) => applyFilesTopic(topic),
-      onUnsubscribe: (clientId, topic) => {
-        const sessionId = topicId(topic, FILES_PREFIX);
-        if (!sessionId) return;
-        clientInputs.clearPaths(clientId, sessionId);
-        applyFiles(sessionId);
-      },
-      resync: applyFilesTopic
-    }),
+    services.filesTopic,
     emptyStoreProvider(hub, ownsPrefix(PTY_PREFIX), {
       onUnsubscribe: (clientId, topic) => {
         const ptyId = topicId(topic, PTY_PREFIX);
@@ -132,5 +92,5 @@ export function createWatchControls(hub: TopicHub, services: Services, { clientI
     })
   ];
 
-  return { providers, syncWatchedRuns, applyFiles };
+  return { providers, syncWatchedRuns };
 }

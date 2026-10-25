@@ -127,7 +127,7 @@ export class ServerApp {
   }
 
   applyWatchedFiles(sessionId: string): void {
-    this.topicControls?.applyFiles(sessionId);
+    this.services?.filesTopic.applyWatched(sessionId);
   }
 
   currentServices(): Services | null {
@@ -347,6 +347,7 @@ export class ServerApp {
     const services = createServices(stores, {
       emit: (channel, payload) => this.emit(channel, payload),
       topics: this.topics,
+      clientInputs: this.clientInputs,
       dropTopic: (topic) => this.topics.dropTopic(topic),
       legacyAppRoots: this.args.legacyUserData,
       onShutdownRecovered: (failure) => this.handleShutdownRecovered(failure),
@@ -474,6 +475,7 @@ export class ServerApp {
     services.githubViews.dispose();
     services.usageTopic.dispose();
     services.runWatcher.dispose();
+    services.filesTopic.dispose();
     void services.fileWatcher.dispose();
     services.sessions.dispose();
     services.ptys.dispose();

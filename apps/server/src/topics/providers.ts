@@ -5,7 +5,6 @@ import { createWatchControls, type TopicProviderDeps } from "./watchProviders.js
 
 export interface TopicProviderControls {
   syncWatchedRuns(): void;
-  applyFiles(sessionId: string): void;
 }
 
 function createPrsProvider(hub: TopicHub, services: Services, { sendTo }: TopicProviderDeps): TopicProvider {
@@ -30,5 +29,5 @@ export function registerTopicProviders(hub: TopicHub, services: Services, deps: 
   hub.register(createPrsProvider(hub, services, deps));
   hub.register(services.githubViews.metaProvider);
   hub.register(services.githubViews.viewProvider);
-  return { syncWatchedRuns: watch.syncWatchedRuns, applyFiles: watch.applyFiles };
+  return { syncWatchedRuns: watch.syncWatchedRuns };
 }
