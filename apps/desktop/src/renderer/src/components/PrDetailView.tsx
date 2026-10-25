@@ -30,7 +30,7 @@ import { PrFilesPanel } from "./PrFilesPanel.js";
 import { CheckLogSkeleton, PrDetailSkeleton } from "./GitHubSkeletons.js";
 import { prKey } from "./prInbox.js";
 import { firstUnseenIndex } from "./prUpdates.js";
-import { usePrSettings } from "./useLinkedPr.js";
+import { useAppSettings, useAppSettingsError } from "./useAppSettings.js";
 import { suggestedWorkflow } from "./prWorkflows.js";
 import { groupCommitsByDay, linkedSessionsBarState, mergeBoxState, relativeTime, threadQuoteText, threadSendTarget, type LinkedBarState } from "./prDetailModel.js";
 import { linkFor, pickMainSession, sessionsLinkedTo } from "./sessionPrLinks.js";
@@ -163,7 +163,8 @@ export function PrDetailView({ prRef }: { prRef: PrRef }) {
   const openSessionView = usePrStore((s) => s.openSessionView);
   const sessionsByProject = useAppStore((s) => s.sessionsByProject);
   const selectSession = useAppStore((s) => s.selectSession);
-  const { settings, error: settingsError } = usePrSettings();
+  const settings = useAppSettings();
+  const settingsError = useAppSettingsError();
   const workflows = useMemo<PrWorkflow[]>(() => (settings?.prWorkflows ?? []).filter((workflow) => workflow.target === "pr"), [settings]);
   const [selectedCheckIndex, setSelectedCheckIndex] = useState<number | null>(null);
   const [logByRunId, setLogByRunId] = useState<Record<number, string>>({});

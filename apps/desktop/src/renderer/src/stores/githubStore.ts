@@ -69,7 +69,6 @@ export interface GitHubStore {
   saveView(name: string): Promise<void>;
   renameView(id: string, name: string): Promise<void>;
   deleteView(id: string): Promise<void>;
-  loadSavedViews(): Promise<void>;
   applySavedViews(views: SavedGitHubView[]): void;
   setActive(active: boolean, force?: boolean): void;
   setWatchedRuns(refs: RunRef[]): void;
@@ -742,17 +741,8 @@ export const useGitHubStore = create<GitHubStore>((set, get) => {
     },
 
     applySavedViews(views: SavedGitHubView[]) {
-      if (savedViewsLoaded) set({ savedViews: views });
-    },
-
-    async loadSavedViews() {
-      try {
-        const settings = await window.cw.getSettings();
-        savedViewsLoaded = true;
-        set((state) => ({ savedViews: settings.githubSavedViews ?? [], error: state.error === SAVED_VIEWS_LOADING ? null : state.error }));
-      } catch (err) {
-        fail("loading saved views failed", err);
-      }
+      savedViewsLoaded = true;
+      set((state) => ({ savedViews: views, error: state.error === SAVED_VIEWS_LOADING ? null : state.error }));
     },
 
     setActive(active: boolean, force?: boolean) {
@@ -767,7 +757,6 @@ export const useGitHubStore = create<GitHubStore>((set, get) => {
       if (requestedRuns.length > 0) get().setWatchedRuns(requestedRuns);
       subscribe();
       scheduleRefresh();
-      if (!savedViewsLoaded) void get().loadSavedViews();
       void fetchKind(get().kind, force === true);
       get().syncContext();
     },

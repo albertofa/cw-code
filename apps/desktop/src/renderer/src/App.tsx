@@ -1,10 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { useShallow } from "zustand/react/shallow";
-import type { DriverName } from "./cw.js";
 import { applyAppearance } from "./appearanceFonts.js";
 import { ThemeSync } from "./components/ThemeSync.js";
+import { HarnessNotices } from "./components/HarnessNotices.js";
 import { collectSubagents } from "./components/subagents.js";
-import { installedHarnesses, isHarnessSkipped } from "./components/harnessAvailability.js";
 import { isWorkingSetStatus } from "./components/workingSet.js";
 import { Sidebar } from "./components/Sidebar.js";
 import { WindowControls } from "./components/WindowControls.js";
@@ -37,17 +36,15 @@ import { ipcErrorMessage } from "./components/ipcError.js";
 import { useAppStore } from "./stores/appStore.js";
 import { rightOpenTabs } from "./stores/panelLayout.js";
 import { selectSessionPanel, usePanelStore } from "./stores/panelStore.js";
-import { useGitHubStore } from "./stores/githubStore.js";
 import { usePrStore } from "./stores/prStore.js";
 import { useSkillsStore } from "./stores/skillsStore.js";
 import { projectDirty, useSettingsDraftStore } from "./stores/settingsDraftStore.js";
 import { prKey } from "./components/prInbox.js";
 import type { TurnEvent } from "./cw.js";
-import { APP_TOPIC, PRS_TOPIC, SIDEBAR_TOPIC, gitTopic, sessionTopic } from "@cw-code/shared/topics";
+import { PRS_TOPIC, SIDEBAR_TOPIC, gitTopic, sessionTopic } from "@cw-code/shared/topics";
+import { startAppBridge } from "./server/appBridge.js";
 import { useDocumentVisible, useTopics } from "./server/useTopics.js";
 
-const VERSION_NOTIF_ID = "cli-versions";
-const BINARY_NOTIF_ID = "cli-binaries";
 const LOAD_NOTIF_ID = "workspace-load";
 
 const RIGHT_WIDTH_DEFAULT = 520;
@@ -116,7 +113,6 @@ export function App() {
   const runModal = usePrStore((s) => s.runModal);
   const holdingHours = useAppStore((s) => s.holdingHours);
   const holdingAutoExpireEnabled = useAppStore((s) => s.holdingAutoExpireEnabled);
-  const settingsVersion = useAppStore((s) => s.settingsVersion);
   const loadProjects = useAppStore((s) => s.loadProjects);
   const appearance = useAppStore((s) => s.appearance);
   const sessionPanel = usePanelStore((s) => selectSessionPanel(s, activeSessionId ?? undefined));
@@ -139,8 +135,6 @@ export function App() {
   const [skillsOpen, setSkillsOpen] = useState(false);
   const { confirm, dialog: confirmDialog } = useConfirm();
   const settingsActive = mainView.kind === "settings";
-
-  const openSettings = (harness?: DriverName) => usePrStore.getState().openSettings(undefined, harness);
 
   const leaveSettings = useCallback(
     async (go: () => void) => {
@@ -179,7 +173,7 @@ export function App() {
           useNotifs.getState().upsert({
             id: LOAD_NOTIF_ID,
             kind: "error",
-            title: useAppStore.getState().settingsLoaded ? "Could not load projects" : "Could not load projects and settings",
+            title: "Could not load projects",
             message: ipcErrorMessage(err),
             sticky: true,
             actions: [{ label: "Retry", primary: true, onClick: loadWorkspace }]
@@ -191,10 +185,7 @@ export function App() {
     const offTitle = window.cw.onSessionTitle(({ sessionId, title }) => useAppStore.getState().applySessionTitle(sessionId, title));
     const offSession = window.cw.onSessionUpdated((session) => useAppStore.getState().applySession(session));
     const offProject = window.cw.onProjectChanged((project) => useAppStore.getState().applyProject(project));
-    const offSettings = window.cw.onSettingsChanged((settings) => {
-      useAppStore.getState().applySettings(settings);
-      useGitHubStore.getState().applySavedViews(settings.githubSavedViews ?? []);
-    });
+    const offApp = startAppBridge();
     const offSkills = window.cw.onSkillsChanged((result) => useSkillsStore.getState().applyList(result));
     const offComposer = window.cw.onComposerChanged(({ sessionId, prefs }) => useAppStore.getState().applyComposer(sessionId, prefs));
     const offGitStatus = window.cw.onGitStatus(({ sessionId, status }) => useAppStore.getState().applyGitStatus(sessionId, status));
@@ -235,7 +226,7 @@ export function App() {
       offTitle();
       offSession();
       offProject();
-      offSettings();
+      offApp();
       offSkills();
       offComposer();
       offGitStatus();
@@ -260,7 +251,7 @@ export function App() {
   );
 
   const subscribedTopics = useMemo(() => {
-    const topics = [APP_TOPIC, SIDEBAR_TOPIC, PRS_TOPIC];
+    const topics = [SIDEBAR_TOPIC, PRS_TOPIC];
     for (const session of Object.values(sessionsByProject).flat()) {
       if (session.status === "resolved" || session.status === "archived") continue;
       topics.push(sessionTopic(session.id));
@@ -318,105 +309,6 @@ export function App() {
   }, [holdingAutoExpireEnabled, holdingHours]);
 
   useEffect(() => {
-    if (!window.cw) return;
-    let active = true;
-    let latestRun = 0;
-    const recheckVersions = () => {
-      const run = ++latestRun;
-      const isLatest = () => active && run === latestRun;
-      window.cw
-        .checkVersions()
-        .then((checks) => {
-          if (!isLatest()) return;
-          const installed = installedHarnesses(checks);
-          useAppStore.getState().setInstalledHarnesses(installed);
-          const missing = checks.filter((c) => !c.available && !isHarnessSkipped(c));
-          const failed = checks.filter((c) => c.available && c.actual === null);
-          const outdated = checks.filter((c) => c.actual !== null && !c.ok);
-          const notifs = useNotifs.getState();
-
-          if (installed.length === 0) {
-            notifs.upsert({
-              id: BINARY_NOTIF_ID,
-              kind: "error",
-              title: "No harness installed",
-              message: "Install Claude Code, OpenCode or Codex, or point cw-code at its executable in Settings.",
-              sticky: true,
-              actions: [
-                { label: "Configure Claude", primary: true, onClick: () => openSettings("claude") },
-                { label: "Recheck", onClick: recheckVersions }
-              ]
-            });
-          } else if (missing.length === 0) {
-            notifs.dismiss(BINARY_NOTIF_ID);
-          } else {
-            notifs.upsert({
-              id: BINARY_NOTIF_ID,
-              kind: "error",
-              title: "CLI binary unavailable",
-              message: missing
-                .map((c) => `${c.binary}: could not run '${c.binaryPath}'. Change its executable in Settings.`)
-                .join("\n"),
-              sticky: true,
-              actions: [
-                ...missing.map((c, index) => ({
-                  label: `Configure ${c.binary === "claude" ? "Claude" : c.binary === "codex" ? "Codex" : "OpenCode"}`,
-                  primary: index === 0,
-                  onClick: () => openSettings(c.binary)
-                })),
-                { label: "Recheck", onClick: recheckVersions }
-              ]
-            });
-          }
-
-          if (failed.length === 0 && outdated.length === 0) {
-            notifs.dismiss(VERSION_NOTIF_ID);
-          } else {
-            notifs.upsert({
-              id: VERSION_NOTIF_ID,
-              kind: "warning",
-              title: failed.length > 0 ? "CLI version check failed" : "CLI out of date",
-              message: [
-                ...failed.map((c) => `${c.binary}: could not read the version from '${c.binaryPath}'`),
-                ...outdated.map((c) => `${c.binary}: needs >= ${c.minimum}, found ${c.actual}`)
-              ].join("\n"),
-              sticky: true,
-              actions: [
-                { label: "Recheck", primary: true, onClick: recheckVersions },
-                { label: "Dismiss", onClick: () => notifs.dismiss(VERSION_NOTIF_ID) }
-              ]
-            });
-          }
-
-          if (installed.length > 0 && missing.length === 0 && failed.length === 0 && outdated.length === 0 && settingsVersion > 0) {
-            notifs.push({ kind: "success", title: "CLI settings verified" });
-          }
-        })
-        .catch((err) => {
-          if (!isLatest()) return;
-          const notifs = useNotifs.getState();
-          notifs.upsert({
-            id: BINARY_NOTIF_ID,
-            kind: "error",
-            title: "CLI binary check failed",
-            message: err instanceof Error ? err.message : "Could not validate the configured CLI executables.",
-            sticky: true,
-            actions: [
-              { label: "Configure Claude", primary: true, onClick: () => openSettings("claude") },
-              { label: "Configure OpenCode", onClick: () => openSettings("opencode") },
-              { label: "Configure Codex", onClick: () => openSettings("codex") },
-              { label: "Recheck", onClick: recheckVersions }
-            ]
-          });
-        });
-    };
-    recheckVersions();
-    return () => {
-      active = false;
-    };
-  }, [settingsVersion]);
-
-  useEffect(() => {
     if (!activeSessionId) return;
     const onOpenAgents = () => {
       setRightVisible(activeSessionId, true);
@@ -450,6 +342,7 @@ export function App() {
       style={shellStyle}
     >
       <ThemeSync />
+      <HarnessNotices />
       {preloadError && <div className="preload-error">{preloadError}</div>}
       {!preloadError && (
         <>

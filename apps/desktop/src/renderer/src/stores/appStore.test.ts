@@ -2,6 +2,7 @@ import "../../../../tests/dom.js";
 import { beforeEach, describe, expect, it, vi } from "bun:test";
 import type { HistoryMessage, TaskSnapshot, UpdateActionResult, UpdateState } from "@cw-code/contracts";
 import { DEFAULT_COMPOSER, useAppStore } from "./appStore.js";
+import { applyInstalledHarnesses } from "../server/appBridge.js";
 import { getLastModel, setLastModel } from "../components/lastModel.js";
 
 describe("appStore tool.result", () => {
@@ -493,7 +494,7 @@ describe("appStore pending model per harness", () => {
   });
 
   it("moves the pending harness when availability drops it", () => {
-    useAppStore.getState().setInstalledHarnesses(["claude", "codex"]);
+    applyInstalledHarnesses(["claude", "codex"]);
     expect(useAppStore.getState().pendingDriver).toBe("claude");
     expect(useAppStore.getState().lastDriver).toBe("claude");
   });

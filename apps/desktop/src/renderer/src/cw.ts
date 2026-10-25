@@ -6,6 +6,7 @@ import type {
   AccountUsageUnavailableReason,
   AttentionState,
   CliBinary,
+  HarnessAvailability,
   CliDiscoveredCandidate,
   CliDiscoverResult,
   CommandInvocation,
@@ -604,17 +605,7 @@ export interface CwApi {
     onRequested(cb: (event: ShutdownRequestedEvent) => void): () => void;
     onExpired(cb: (event: ShutdownExpiredEvent) => void): () => void;
   };
-  checkVersions(): Promise<Array<{
-    binary: DriverName;
-    binaryPath: string;
-    minimum: string;
-    actual: string | null;
-    configured: boolean;
-    found: boolean;
-    available: boolean;
-    error: string | null;
-    ok: boolean;
-  }>>;
+  recheckClis(): Promise<HarnessAvailability>;
   discoverBinaries(binaries?: CliBinary[]): Promise<CliDiscoverResult>;
   verifyBinaryPath(binary: CliBinary, path: string): Promise<CliDiscoveredCandidate>;
   isDev: boolean;
@@ -622,7 +613,6 @@ export interface CwApi {
   listProjects(): Promise<Project[]>;
   addProject(rootPath: string): Promise<Project>;
   updateProjectSettings(projectId: string, settings: ProjectSettings): Promise<Project>;
-  getHomeDir(): Promise<string>;
   listSessions(projectId: string): Promise<Session[]>;
   createSession(projectId: string, driver: DriverName, options?: CreateSessionOptions): Promise<Session>;
   listImportableSessions(driver: DriverName): Promise<ImportableSession[]>;
@@ -653,7 +643,6 @@ export interface CwApi {
   listPermissionsForHarness(driver: DriverName): Promise<PermissionOption[]>;
   getComposer(sessionId: string): Promise<ComposerPrefs>;
   setComposer(sessionId: string, prefs: ComposerPrefs): Promise<ComposerPrefs>;
-  getSettings(): Promise<AppSettings>;
   setSettings(patch: SettingsPatch): Promise<AppSettings>;
   getDefaultPrWorkflows(): Promise<PrWorkflow[]>;
   skills: {
@@ -707,7 +696,6 @@ export interface CwApi {
   onSessionTitle(cb: (msg: { sessionId: string; title: string }) => void): () => void;
   onSessionUpdated(cb: (session: Session) => void): () => void;
   onProjectChanged(cb: (project: Project) => void): () => void;
-  onSettingsChanged(cb: (settings: AppSettings) => void): () => void;
   onSkillsChanged(cb: (result: SkillsListResult) => void): () => void;
   onComposerChanged(cb: (event: ComposerChangedEvent) => void): () => void;
   readFile(sessionId: string, path: string): Promise<string>;

@@ -1,3 +1,4 @@
+import { homedir } from "node:os";
 import type { ShutdownReason } from "@cw-code/contracts";
 import { prKey } from "@cw-code/shared/prRef";
 import { ptyTopic } from "@cw-code/shared/topics";
@@ -12,6 +13,7 @@ import { snapshotOf } from "../github/prTracking.js";
 import { PullRequestService } from "../github/PullRequestService.js";
 import { RunsService } from "../github/RunsService.js";
 import { RunWatcher } from "../github/RunWatcher.js";
+import { HarnessMonitor } from "../cli/HarnessMonitor.js";
 import { PrStore } from "../prEngine/PrStore.js";
 import { PtyPool } from "../pty/PtyPool.js";
 import { SessionManager } from "../sessions/SessionManager.js";
@@ -20,7 +22,9 @@ import type { SettingsStore } from "../settings/SettingsStore.js";
 import { ShutdownCoordinator } from "../shutdown/ShutdownCoordinator.js";
 import { SkillsStore } from "../skills/SkillsStore.js";
 import { SourceControlService } from "../sourceControl/SourceControlService.js";
+import type { TopicHub } from "../topics/TopicHub.js";
 import { AccountUsageService } from "../usage/AccountUsageService.js";
+import { AppTopic } from "./AppTopic.js";
 
 export type Emit = (channel: string, payload?: unknown) => void;
 
@@ -40,10 +44,13 @@ export interface Services {
   ptys: PtyPool;
   accountUsage: AccountUsageService;
   shutdown: ShutdownCoordinator;
+  appTopic: AppTopic;
+  harnessMonitor: HarnessMonitor;
 }
 
 export interface ServiceHooks {
   emit: Emit;
+  topics: TopicHub;
   dropTopic: (topic: string) => void;
   legacyAppRoots: string[];
   onShutdownRecovered: (failure: string | null) => void;
@@ -130,6 +137,23 @@ export function createServices(stores: { sessionStore: SessionStore; settingsSto
     emit: (update) => emit("git.statusChanged", update)
   });
   const ptys = new PtyPool(() => sessions.getSettings());
+  const shutdown = new ShutdownCoordinator({ sessions, ptys, onRecovered: hooks.onShutdownRecovered, onExpired: hooks.onShutdownExpired });
+  const appTopic = new AppTopic(hooks.topics, {
+    settings: sessions.getSettings(),
+    homeDir: homedir(),
+    shutdown: {
+      status: { idle: shutdown.isIdle(), committed: shutdown.isCommitted(), reason: shutdown.currentReason() },
+      assessment: shutdown.assess()
+    }
+  });
+  const harnessMonitor = new HarnessMonitor({
+    binaries: () => {
+      const settings = sessions.getSettings();
+      return { claudeBinary: settings.claudeBinaryPath, opencodeBinary: settings.opencodeBinaryPath, codexBinary: settings.codexBinaryPath };
+    },
+    current: () => appTopic.harnesses,
+    publish: (availability) => appTopic.setHarnesses(availability)
+  });
   const services: Services = {
     sessions,
     skills: new SkillsStore(),
@@ -145,7 +169,9 @@ export function createServices(stores: { sessionStore: SessionStore; settingsSto
     runWatcher: new RunWatcher(() => sessions.getSettings()),
     ptys,
     accountUsage: new AccountUsageService(() => sessions.driversForProbe()),
-    shutdown: new ShutdownCoordinator({ sessions, ptys, onRecovered: hooks.onShutdownRecovered, onExpired: hooks.onShutdownExpired })
+    shutdown,
+    appTopic,
+    harnessMonitor
   };
   wireServiceEvents(services, hooks);
   return services;

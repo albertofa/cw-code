@@ -76,7 +76,6 @@ function historyAheadOfLive(history: ChatMessage[], current: ChatMessage[]): Cha
 let pendingSeq = 0;
 let lastUpdateAppliedAt = 0;
 let pendingPromptInFlight = false;
-let appliedSettingsJson: string | null = null;
 
 function nextPendingTurnId(): string {
   pendingSeq += 1;
@@ -233,7 +232,6 @@ interface AppState {
   pendingDriver: DriverName | null;
   lastDriver: DriverName;
   installedHarnesses: DriverName[] | null;
-  setInstalledHarnesses(installed: DriverName[]): void;
   pendingApprovals: Record<string, ApprovalRequest[]>;
   pendingQuestions: Record<string, QuestionRequest[]>;
   pendingPrefs: ComposerPrefs;
@@ -260,7 +258,6 @@ interface AppState {
   openPreview(sessionId: string, path: string, basePath: string): void;
   closePreview(sessionId: string): void;
   homeDir: string | null;
-  ensureHomeDir(): Promise<string>;
   loadProjects(): Promise<void>;
   addProject(rootPath: string): Promise<void>;
   addProjectForNewSession(rootPath: string): Promise<void>;
@@ -276,7 +273,6 @@ interface AppState {
   loadSubagentTools(sessionId: string, agentId: string): Promise<void>;
   ensureComposer(sessionId: string): Promise<void>;
   setComposerPrefs(sessionId: string, prefs: ComposerPrefs): Promise<void>;
-  settingsVersion: number;
   settingsLoaded: boolean;
   saveSettings(patch: SettingsPatch): Promise<AppSettings>;
   saveDefaultModel(driver: DriverName, id: string): Promise<void>;
@@ -481,7 +477,6 @@ export const useAppStore = create<AppState>((set, get) => ({
   turnStartedAt: {},
   turnDurations: {},
   composerBySession: {},
-  settingsVersion: 0,
   settingsLoaded: false,
   pendingDriver: null,
   lastDriver: "claude",
@@ -594,15 +589,6 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   homeDir: null,
 
-  async ensureHomeDir() {
-    const cached = get().homeDir;
-    if (cached) return cached;
-    const homeDir = await window.cw.getHomeDir();
-    if (typeof homeDir !== "string" || !homeDir) return "";
-    set({ homeDir });
-    return homeDir;
-  },
-
   openPreview(sessionId: string, path: string, basePath: string) {
     set((state) => ({
       previewBySession: {
@@ -626,23 +612,8 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   async loadProjects() {
-    const [projects, settings] = await Promise.all([window.cw.listProjects(), window.cw.getSettings()]);
-    appliedSettingsJson = JSON.stringify(settings);
-    void get().ensureHomeDir().catch(() => {});
-    set({
-      projects,
-      sourceControlRefreshIntervalSeconds: settings.sourceControlRefreshIntervalSeconds,
-      prRefreshIntervalSeconds: settings.prRefreshIntervalSeconds,
-      holdingAutoExpireEnabled: settings.holdingAutoExpireEnabled,
-      holdingHours: settings.holdingHours,
-      defaultUseWorktree: settings.defaultUseWorktree,
-      settingsLoaded: true,
-      appearance: appearanceOf(settings),
-      notificationSounds: settings.notificationSounds,
-      reasoningExpandedByDriver: reasoningExpandedFrom(settings),
-      defaultModelByDriver: defaultModelsFrom(settings),
-      pendingWorkspace: { ...get().pendingWorkspace, ...defaultWorkspace(settings.defaultUseWorktree) }
-    });
+    const projects = await window.cw.listProjects();
+    set({ projects });
     void get().hydrateActiveTurns();
     if (projects.length === 0 || get().activeProjectId) return;
     const lists = await Promise.all(
@@ -918,12 +889,6 @@ export const useAppStore = create<AppState>((set, get) => ({
     if (projectId && projectId !== currentProjectId) void get().setPendingProject(projectId);
   },
 
-  setInstalledHarnesses(installed: DriverName[]) {
-    const pending = get().pendingDriver;
-    set({ installedHarnesses: installed, lastDriver: fallbackHarness(get().lastDriver, installed) });
-    if (pending !== null) get().setPendingDriver(fallbackHarness(pending, installed));
-  },
-
   setPendingDriver(driver: DriverName) {
     const current = get().pendingDriver ?? get().lastDriver;
     if (current === driver && get().pendingDriver !== null) return;
@@ -1084,18 +1049,14 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   async saveSettings(patch: SettingsPatch) {
     const saved = await window.cw.setSettings(patch);
-    const version = get().settingsVersion;
     get().applySettings(saved);
-    if (get().settingsVersion === version) set({ settingsVersion: version + 1 });
     return saved;
   },
 
   applySettings(saved: AppSettings) {
-    const json = JSON.stringify(saved);
-    const changed = json !== appliedSettingsJson;
-    appliedSettingsJson = json;
+    const first = !get().settingsLoaded;
     set({
-      ...(changed ? { settingsVersion: get().settingsVersion + 1 } : {}),
+      ...(first ? { pendingWorkspace: { ...get().pendingWorkspace, ...defaultWorkspace(saved.defaultUseWorktree) } } : {}),
       sourceControlRefreshIntervalSeconds: saved.sourceControlRefreshIntervalSeconds,
       prRefreshIntervalSeconds: saved.prRefreshIntervalSeconds,
       holdingAutoExpireEnabled: saved.holdingAutoExpireEnabled,

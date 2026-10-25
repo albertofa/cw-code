@@ -1,5 +1,5 @@
 import type { GitStatusUpdate, ThreadEvent } from "@cw-code/contracts";
-import { APP_TOPIC, filesTopic, GITHUB_RUNS_TOPIC, SIDEBAR_TOPIC, topicId, USAGE_TOPIC } from "@cw-code/shared/topics";
+import { filesTopic, GITHUB_RUNS_TOPIC, SIDEBAR_TOPIC, topicId, USAGE_TOPIC } from "@cw-code/shared/topics";
 import type { ClientInputs } from "../app/clientInputs.js";
 import type { Services } from "../app/services.js";
 import { MAX_WATCHED_RUNS } from "../github/RunWatcher.js";
@@ -116,7 +116,6 @@ export function createWatchControls(hub: TopicHub, services: Services, { clientI
   };
 
   const providers: TopicProvider[] = [
-    emptyStoreProvider(hub, ownsExact(APP_TOPIC)),
     emptyStoreProvider(hub, ownsExact(SIDEBAR_TOPIC)),
     emptyStoreProvider(hub, ownsExact(USAGE_TOPIC)),
     emptyStoreProvider(hub, ownsPrefix(GIT_PREFIX), {

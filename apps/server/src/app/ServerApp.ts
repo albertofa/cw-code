@@ -314,6 +314,7 @@ export class ServerApp {
     initClaudeCommandsCache(claudeCommandsCachePath());
     const services = createServices(stores, {
       emit: (channel, payload) => this.emit(channel, payload),
+      topics: this.topics,
       dropTopic: (topic) => this.topics.dropTopic(topic),
       legacyAppRoots: this.args.legacyUserData,
       onShutdownRecovered: (failure) => this.handleShutdownRecovered(failure),
@@ -344,6 +345,7 @@ export class ServerApp {
       sendTo: (clientId, channel, payload) => this.sendTo(clientId, channel, payload)
     });
     this.topics.reacquireAll();
+    void services.harnessMonitor.check("startup");
   }
 
   private handleShutdownRecovered(failure: string | null): void {

@@ -1,10 +1,9 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
-import type { AppSettings, PrDetail, PrInboxResult, PrSummary, Session, SessionPrLink } from "../cw.js";
+import { useEffect, useMemo } from "react";
+import type { PrDetail, PrInboxResult, PrSummary, Session, SessionPrLink } from "../cw.js";
 import { useAppStore } from "../stores/appStore.js";
 import { usePrStore } from "../stores/prStore.js";
 import { prKey } from "./prInbox.js";
 import { detailNeedsRefresh, detailRefreshKey, hasUnseen } from "./prUpdates.js";
-import { errorMessage } from "./errorMessage.js";
 import { branchMismatch } from "./sessionBranch.js";
 import { sessionPrItems, withBranchSummary, type SessionPrItem } from "./sessionPrItems.js";
 import { mergeSummary, sessionLinks, type PrSummaryLookup } from "./sessionPrLinks.js";
@@ -126,31 +125,4 @@ export function useLinkedPrLoader(sessionId: string | undefined): void {
       void store.loadDetail(link.ref);
     }
   }, [detailSignature]);
-}
-
-export function usePrSettings(): { settings: AppSettings | null; error: string | null; reload: () => void } {
-  const settingsVersion = useAppStore((s) => s.settingsVersion);
-  const [settings, setSettings] = useState<AppSettings | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [reloadToken, setReloadToken] = useState(0);
-  const reload = useCallback(() => setReloadToken((n) => n + 1), []);
-
-  useEffect(() => {
-    let active = true;
-    window.cw
-      .getSettings()
-      .then((next) => {
-        if (!active) return;
-        setSettings(next);
-        setError(null);
-      })
-      .catch((err: unknown) => {
-        if (active) setError(errorMessage(err));
-      });
-    return () => {
-      active = false;
-    };
-  }, [settingsVersion, reloadToken]);
-
-  return { settings, error, reload };
 }

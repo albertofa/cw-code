@@ -24,6 +24,7 @@ function createPrsProvider(hub: TopicHub, services: Services, { sendTo }: TopicP
 
 export function registerTopicProviders(hub: TopicHub, services: Services, deps: TopicProviderDeps): TopicProviderControls {
   const watch = createWatchControls(hub, services, deps);
+  hub.register(services.appTopic);
   for (const provider of watch.providers) hub.register(provider);
   hub.register(createPrsProvider(hub, services, deps));
   return { syncWatchedRuns: watch.syncWatchedRuns, applyFiles: watch.applyFiles };

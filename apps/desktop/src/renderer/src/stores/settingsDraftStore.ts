@@ -1,12 +1,15 @@
 import { create } from "zustand";
-import type { AppSettings, CwApi, ProjectSettings } from "../cw.js";
+import type { AppTopicData, HarnessAvailability } from "@cw-code/contracts";
+import type { AppSettings, ProjectSettings } from "../cw.js";
+import { APP_TOPIC } from "@cw-code/shared/topics";
 import { errorMessage } from "../components/errorMessage.js";
 import { useNotifs } from "../components/Notifications.js";
 import { workflowsValidationError } from "../components/prWorkflowEditor.js";
 import { copySetting, SETTING_KEYS, sameValue, settingsPatch } from "../components/settingsSections.js";
+import { readTopic } from "../server/topics.js";
 import { useAppStore } from "./appStore.js";
 
-export type HarnessCheck = Awaited<ReturnType<CwApi["checkVersions"]>>[number];
+export type HarnessCheck = HarnessAvailability["checks"][number];
 
 export interface RepoDraft {
   projectId: string;
@@ -40,6 +43,7 @@ interface SettingsDraftState {
   load(): Promise<void>;
   set(patch: Partial<AppSettings>): void;
   applied(patch: Partial<AppSettings>): void;
+  applyStored(stored: AppSettings): void;
   setRepoBaseline(repo: RepoDraft | null): void;
   setRepo(patch: Partial<RepoDraft>): void;
   setProjectBaseline(project: ProjectDraft | null): void;
@@ -121,7 +125,8 @@ export const useSettingsDraftStore = create<SettingsDraftState>((set, get) => ({
     const request = ++loadSeq;
     set({ loading: true, loadError: null, saveError: null, invalidWorkflowId: null, saved: null, draft: null, repoSaved: null, repoDraft: null, projectSaved: null, projectDraft: null, dirty: false });
     try {
-      const settings = await window.cw.getSettings();
+      const settings = readTopic<Partial<AppTopicData>>(APP_TOPIC)?.data.settings;
+      if (!settings) throw new Error("Settings are not available yet");
       if (request !== loadSeq) return;
       set({ saved: settings, draft: settings, loading: false, dirty: false });
     } catch (err) {
@@ -144,6 +149,16 @@ export const useSettingsDraftStore = create<SettingsDraftState>((set, get) => ({
     if (!saved || !draft) return;
     const next = { ...get(), saved: { ...saved, ...patch }, draft: { ...draft, ...patch } };
     set({ saved: next.saved, draft: next.draft, dirty: isDirty(next) });
+  },
+
+  applyStored(stored: AppSettings) {
+    const { saved, draft, saving } = get();
+    if (!saved || !draft || saving) return;
+    const next = { saved: { ...stored }, draft: { ...stored } };
+    for (const key of SETTING_KEYS) {
+      if (!sameValue(draft[key], saved[key])) copySetting(next.draft, draft, key);
+    }
+    set({ saved: next.saved, draft: next.draft, dirty: isDirty({ ...get(), saved: next.saved, draft: next.draft }) });
   },
 
   setRepoBaseline(repo: RepoDraft | null) {
@@ -244,9 +259,10 @@ export const useSettingsDraftStore = create<SettingsDraftState>((set, get) => ({
     const request = ++checkSeq;
     set({ harnessChecksLoading: true, harnessChecksError: null });
     try {
-      const checks = await window.cw.checkVersions();
+      const availability = await window.cw.recheckClis();
       if (request !== checkSeq) return;
-      set({ harnessChecks: checks, harnessChecksLoading: false });
+      if (availability.error !== null) throw new Error(availability.error);
+      set({ harnessChecks: availability.checks, harnessChecksLoading: false });
     } catch (err) {
       if (request !== checkSeq) return;
       const message = errorMessage(err);

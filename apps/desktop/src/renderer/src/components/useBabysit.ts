@@ -4,7 +4,7 @@ import { useAppStore } from "../stores/appStore.js";
 import { usePrStore } from "../stores/prStore.js";
 import { babysitState, type BabysitState } from "./prSessionModel.js";
 import { prSummaryLookup } from "./sessionPrLinks.js";
-import { usePrSettings } from "./useLinkedPr.js";
+import { useAppSettings } from "./useAppSettings.js";
 
 const NO_WORKFLOWS: PrWorkflow[] = [];
 
@@ -15,7 +15,7 @@ export function useBabysitStates(): (session: Session) => BabysitState | null {
   const inboxItems = usePrStore((s) => s.inbox?.items);
   const detailByKey = usePrStore((s) => s.detailByKey);
   const trackedByKey = usePrStore((s) => s.trackedByKey);
-  const { settings } = usePrSettings();
+  const settings = useAppSettings();
   const workflows = settings?.prWorkflows ?? NO_WORKFLOWS;
   const summaryByKey = useMemo(() => prSummaryLookup(inboxItems ?? [], detailByKey, trackedByKey), [inboxItems, detailByKey, trackedByKey]);
   return useCallback(

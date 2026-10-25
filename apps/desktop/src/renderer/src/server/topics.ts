@@ -63,6 +63,10 @@ export function useOrderedEntries<T extends { seq: number }>(topic: string | nul
   return useMemo(() => (data ? orderedEntries<T>(data, prefix) : (NO_ENTRIES as readonly T[] as T[])), [data, prefix]);
 }
 
+export function readTopic<D = Record<string, unknown>>(topic: string): TopicState<D> | undefined {
+  return topicCache().state<D>(topic);
+}
+
 export function bindTopic<D = Record<string, unknown>>(topic: string, onState: (state: TopicState<D>) => void): () => void {
   const topics = topicCache();
   const release = topics.acquire(topic);

@@ -1,6 +1,6 @@
 import { memo, useMemo, type ReactNode } from "react";
 import { ChevronRight, GitBranch, MessageSquare, Timer } from "lucide-react";
-import type { IssueSummary, PrSummary, WorkflowRunSummary } from "../cw.js";
+import type { IssueSummary, PrSummary, PrWorkflow, WorkflowRunSummary } from "../cw.js";
 import { useAppStore } from "../stores/appStore.js";
 import { usePrStore } from "../stores/prStore.js";
 import { prKey } from "./prInbox.js";
@@ -30,9 +30,10 @@ import {
 } from "./githubRowModel.js";
 import { formatRelativeAge } from "./prInboxModel.js";
 import { useNow } from "./usageFormat.js";
-import { usePrWorkflows } from "./usePrWorkflows.js";
+import { useAppSettings, useAppSettingsError } from "./useAppSettings.js";
 
 const LIVE_TICK_MS = 1000;
+const NO_WORKFLOWS: PrWorkflow[] = [];
 
 export type GitHubRowProps = (
   | { kind: "pr"; item: PrSummary }
@@ -305,7 +306,8 @@ export const GitHubRow = memo(function GitHubRow(props: GitHubRowProps) {
   const { host, owner, repo } = props.item.ref;
   const cloned = usePrStore((s) => s.projectIdForRef({ host, owner, repo }) !== null);
   const inboxItems = usePrStore((s) => s.inbox?.items);
-  const { workflows, error: workflowsError, reload: reloadWorkflows } = usePrWorkflows();
+  const workflows = useAppSettings()?.prWorkflows ?? NO_WORKFLOWS;
+  const workflowsError = useAppSettingsError();
   const live = props.kind === "run" && props.item.status === "in_progress";
   const now = useNow(live ? LIVE_TICK_MS : undefined);
 
@@ -368,7 +370,6 @@ export const GitHubRow = memo(function GitHubRow(props: GitHubRowProps) {
         sessions={sessions}
         workflows={workflows}
         workflowsError={workflowsError}
-        onReloadWorkflows={reloadWorkflows}
         unseen={unseenIds}
         now={now}
       />

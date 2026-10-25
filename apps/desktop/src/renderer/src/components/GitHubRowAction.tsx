@@ -76,7 +76,6 @@ function ActionMenu({
   sessions,
   workflows,
   workflowsError,
-  onReloadWorkflows,
   unseen,
   now,
   anchor,
@@ -87,7 +86,6 @@ function ActionMenu({
   sessions: Session[];
   workflows: PrWorkflow[];
   workflowsError: string | null;
-  onReloadWorkflows: () => void;
   unseen: ReadonlySet<string>;
   now: number;
   anchor: AnchorRect;
@@ -210,10 +208,7 @@ function ActionMenu({
           </div>
           {workflowsError && (
             <div className="pr-inbox-popover-empty" role="alert">
-              Could not load workflows: {workflowsError}{" "}
-              <button type="button" className="pr-view-retry" onClick={onReloadWorkflows}>
-                Retry
-              </button>
+              Could not load workflows: {workflowsError}
             </div>
           )}
           {!workflowsError && ownWorkflows.length === 0 && prWorkflows.length === 0 && (
@@ -249,7 +244,6 @@ export function GitHubRowAction({
   sessions,
   workflows,
   workflowsError,
-  onReloadWorkflows,
   unseen,
   now
 }: {
@@ -258,7 +252,6 @@ export function GitHubRowAction({
   sessions: Session[];
   workflows: PrWorkflow[];
   workflowsError: string | null;
-  onReloadWorkflows: () => void;
   unseen: ReadonlySet<string>;
   now: number;
 }) {
@@ -292,7 +285,6 @@ export function GitHubRowAction({
       sessions={sessions}
       workflows={workflows}
       workflowsError={workflowsError}
-      onReloadWorkflows={onReloadWorkflows}
       unseen={unseen}
       now={now}
       anchor={menuAnchor}

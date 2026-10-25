@@ -16,7 +16,7 @@ import {
   Zap
 } from "lucide-react";
 import type { CommandOption } from "@cw-code/contracts";
-import type { ComposerPrefs, DriverName, ModelOption, PermissionMode, PermissionOption } from "../cw.js";
+import type { AppSettings, ComposerPrefs, DriverName, ModelOption, PermissionMode, PermissionOption } from "../cw.js";
 import { clearComposerDraft, loadComposerDraft, saveComposerDraft } from "./composerDrafts.js";
 import { getRecentModels, pushRecentModel } from "./lastModel.js";
 import { EffortMenu } from "./EffortMenu.js";
@@ -118,7 +118,7 @@ export function ComposerView({
   backend,
   driver,
   resetKey,
-  modelsRefreshKey = 0,
+  settings = null,
   resetStaleModel = false,
   recipePrefix,
   usageSlot,
@@ -128,7 +128,7 @@ export function ComposerView({
   backend: ComposerBackend;
   driver: DriverName;
   resetKey: string;
-  modelsRefreshKey?: number;
+  settings?: AppSettings | null;
   resetStaleModel?: boolean;
   recipePrefix?: ReactNode;
   usageSlot?: ReactNode;
@@ -344,7 +344,7 @@ export function ComposerView({
     return () => {
       cancelled = true;
     };
-  }, [resetKey, driver, prefs.model, modelsRefreshKey]);
+  }, [resetKey, driver, prefs.model, settings]);
 
   useEffect(() => {
     let cancelled = false;
@@ -363,7 +363,7 @@ export function ComposerView({
     return () => {
       cancelled = true;
     };
-  }, [resetKey, driver, modelsRefreshKey]);
+  }, [resetKey, driver, settings]);
 
   useEffect(() => {
     if (!pickerOpen) return;

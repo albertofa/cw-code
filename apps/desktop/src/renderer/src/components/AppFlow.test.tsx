@@ -2,7 +2,9 @@ import "../../../../tests/dom.js";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "bun:test";
+import type { TopicCache, TopicState } from "@cw-code/client";
 import { DEFAULT_APPEARANCE } from "../appearanceFonts.js";
+import { initTopics } from "../server/topics.js";
 import type { Session, TurnEvent } from "../cw.js";
 
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -33,11 +35,32 @@ function makeSession(overrides: Partial<Session> = {}): Session {
   };
 }
 
+function installTopics(): void {
+  const app: TopicState = {
+    status: "ready",
+    rev: 1,
+    error: null,
+    data: {
+      settings: { ...DEFAULT_APPEARANCE, sourceControlRefreshIntervalSeconds: 30, prRefreshIntervalSeconds: 120, defaultUseWorktree: true },
+      home: { homeDir: "C:\\Users\\test" },
+      harnesses: { checks: [], installed: [], issues: [], checkedAt: null, trigger: "startup", error: null }
+    }
+  };
+  const cache = {
+    epoch: 0,
+    acquire: () => () => {},
+    listen: () => () => {},
+    onEpoch: () => () => {},
+    state: (topic: string) => (topic === "app" ? app : undefined)
+  };
+  initTopics(cache as unknown as TopicCache);
+}
+
 function installBridge(): void {
+  installTopics();
   const noop = () => () => {};
   const explicit: Record<string, unknown> = {
     isDev: false,
-    checkVersions: async () => [],
     listProjects: async () => [{ id: "proj_1", rootPath: "C:\\proj", name: "proj" }],
     listSessions: async () => [],
     createSession: async (projectId: string, driver: "opencode") => {
@@ -55,7 +78,6 @@ function installBridge(): void {
     interrupt: async () => {},
     getComposer: async () => delayed({}, 400),
     setComposer: async (_id: string, prefs: unknown) => delayed(prefs, 200),
-    getSettings: async () => ({ ...DEFAULT_APPEARANCE, sourceControlRefreshIntervalSeconds: 30, prRefreshIntervalSeconds: 120, defaultUseWorktree: true }),
     getDefaultPrWorkflows: async () => [],
     getPrInbox: async () => ({ account: null, items: [], fetchedAt: 0, error: null }),
     getProjectGitHubRepos: async () => [],
@@ -67,7 +89,6 @@ function installBridge(): void {
     onGitHubRunsChanged: noop,
     onGitHubCiActivity: noop,
     markSessionRunSeen: async (sessionId: string) => makeSession({ id: sessionId }),
-    getHomeDir: async () => "C:\\Users\\test",
     getGitStatus: async () => {
       throw new Error("no git");
     },

@@ -14,7 +14,8 @@ import { PrPanelSkeleton } from "./GitHubSkeletons.js";
 import { branchMismatch } from "./sessionBranch.js";
 import { canLinkItem, sessionPrItemLabel, sessionPrItemsTitle, type SessionPrItem } from "./sessionPrItems.js";
 import { displayChip, mostUrgentLink, prRefLabel } from "./sessionPrLinks.js";
-import { useLinkedPrs, usePrSettings, useSessionPrItems } from "./useLinkedPr.js";
+import { useLinkedPrs, useSessionPrItems } from "./useLinkedPr.js";
+import { useAppSettings, useAppSettingsError } from "./useAppSettings.js";
 import { useNotifs } from "./Notifications.js";
 import { errorMessage } from "./errorMessage.js";
 
@@ -227,7 +228,8 @@ export function PrSessionPanel({ sessionId }: { sessionId: string }) {
   const openPr = usePrStore((s) => s.openPr);
   const openRunModal = usePrStore((s) => s.openRunModal);
   const loadDetail = usePrStore((s) => s.loadDetail);
-  const { settings, error: settingsError } = usePrSettings();
+  const settings = useAppSettings();
+  const settingsError = useAppSettingsError();
   const [unlinking, setUnlinking] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
 

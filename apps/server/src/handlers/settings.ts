@@ -13,7 +13,7 @@ export function registerSettingsHandlers(router: Router, app: ServerApp): void {
   handle(router, "settings.prWorkflowDefaults", () => defaultPrWorkflows());
   handle<SettingsPatch>(router, "settings.set", async (patch, ctx) => {
     if (patch.serverBindHost !== undefined) requireOwner(ctx, "changing serverBindHost");
-    const { sessions, accountUsage } = services();
+    const { sessions, accountUsage, appTopic, harnessMonitor } = services();
     const current = sessions.getSettings();
     const normalized = { ...patch };
     const checks: Array<Promise<CliVersionCheck>> = [];
@@ -49,8 +49,10 @@ export function registerSettingsHandlers(router: Router, app: ServerApp): void {
     }
     if (patch.opencodeGoUsage !== undefined) accountUsage.invalidate("opencode");
     const saved = sessions.setSettings(normalized);
+    appTopic.setSettings(saved);
     services().prStore.onSettingsChanged();
     app.emit("settings.changed", saved);
+    if (checks.length > 0) void harnessMonitor.check("settings");
     return saved;
   });
 }

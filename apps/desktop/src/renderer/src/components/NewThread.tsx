@@ -7,6 +7,7 @@ import { shortenHome } from "./pathDisplay.js";
 import { DriverIcon } from "./DriverIcon.js";
 import { pickableHarnesses } from "./harnessAvailability.js";
 import { ComposerView, type ComposerBackend } from "./ComposerView.js";
+import { useAppSettings } from "./useAppSettings.js";
 import { MenuSelect } from "./MenuSelect.js";
 import { NewSessionProjectPicker } from "./NewSessionProjectPicker.js";
 import { ImportSessionsModal } from "./ImportSessionsModal.js";
@@ -32,7 +33,7 @@ export function NewThread({
   onDriverChange: (d: DriverName) => void;
 }) {
   const prefs = useAppStore((s) => s.pendingPrefs);
-  const modelsRefreshKey = useAppStore((s) => s.settingsVersion);
+  const settings = useAppSettings();
   const workspace = useAppStore((s) => s.pendingWorkspace);
   const newSessionError = useAppStore((s) => s.newSessionError);
   const installed = useAppStore((s) => s.installedHarnesses);
@@ -244,7 +245,7 @@ export function NewThread({
           resetKey={`pending:${projectKey ?? ""}`}
           blockedReason={project ? undefined : NO_PROJECT_HINT}
           resetStaleModel
-          modelsRefreshKey={modelsRefreshKey}
+          settings={settings}
           recipePrefix={
             harnessOptions.length > 1 && (
               <>

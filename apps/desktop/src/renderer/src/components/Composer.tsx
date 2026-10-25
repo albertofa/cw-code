@@ -5,6 +5,7 @@ import { usePanelStore } from "../stores/panelStore.js";
 import { useBranchStore } from "../stores/branchStore.js";
 import { useSessionSkillsStore } from "../stores/sessionSkillsStore.js";
 import { ComposerView, type ComposerBackend } from "./ComposerView.js";
+import { useAppSettings } from "./useAppSettings.js";
 import { useBranchMismatch } from "./useBranchMismatch.js";
 import { ContextRing } from "./ContextRing.js";
 import { restoreConfirm } from "./sessionLifecycle.js";
@@ -27,7 +28,7 @@ export function Composer({ sessionId, driver, top }: { sessionId: string; driver
   });
   const effectivePermissionMode = session?.effectivePermissionMode;
 
-  const modelsRefreshKey = useAppStore((s) => s.settingsVersion);
+  const settings = useAppSettings();
   const { mismatch } = useBranchMismatch(sessionId);
 
   useEffect(() => {
@@ -79,7 +80,7 @@ export function Composer({ sessionId, driver, top }: { sessionId: string; driver
       backend={backend}
       driver={driver}
       resetKey={sessionId}
-      modelsRefreshKey={modelsRefreshKey}
+      settings={settings}
       usageSlot={<ContextRing sessionId={sessionId} driver={driver} />}
       top={top}
     />

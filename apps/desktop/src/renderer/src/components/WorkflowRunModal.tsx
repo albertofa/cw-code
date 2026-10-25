@@ -40,7 +40,8 @@ import { DriverIcon } from "./DriverIcon.js";
 import { MenuSelect } from "./MenuSelect.js";
 import { errorMessage } from "./errorMessage.js";
 import { ipcErrorMessage } from "./ipcError.js";
-import { findSession, usePrSettings } from "./useLinkedPr.js";
+import { findSession } from "./useLinkedPr.js";
+import { useAppSettings, useAppSettingsError } from "./useAppSettings.js";
 import { prKey } from "./prInbox.js";
 import { linkWithWorkflow } from "./sessionPrLinks.js";
 import { startsAutoFollowUp, withAutomatedWorkflowNote } from "./prSessionModel.js";
@@ -174,10 +175,10 @@ export function WorkflowRunModal({ request }: { request: RunModalState }) {
   const composerBySession = useAppStore((s) => s.composerBySession);
   const busyTurns = useAppStore((s) => s.busyTurns);
   const homeDir = useAppStore((s) => s.homeDir);
-  const settingsVersion = useAppStore((s) => s.settingsVersion);
   const installedHarnesses = useAppStore((s) => s.installedHarnesses);
 
-  const { settings, error: settingsError } = usePrSettings();
+  const settings = useAppSettings();
+  const settingsError = useAppSettingsError();
   const [reposReady, setReposReady] = useState(false);
   const [workflowId, setWorkflowId] = useState(request.workflowId);
   const [target, setTarget] = useState(request.continueSessionId ?? "");
@@ -315,7 +316,7 @@ export function WorkflowRunModal({ request }: { request: RunModalState }) {
     return () => {
       active = false;
     };
-  }, [driver, driverMissing, projectId, continueSession?.id, settingsVersion]);
+  }, [driver, driverMissing, projectId, continueSession?.id, settings]);
 
   const resolved = useMemo(() => {
     if (!data.vars || !workflow) return null;

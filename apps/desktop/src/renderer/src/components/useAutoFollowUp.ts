@@ -18,7 +18,7 @@ import { detailNeedsRefresh, detailRefreshKey, seenThrough } from "./prUpdates.j
 import { loadFailedLogs } from "./prWorkflows.js";
 import { prRefLabel, prSummaryLookup } from "./sessionPrLinks.js";
 import { harnessLabel } from "./toolTabs.js";
-import { usePrSettings } from "./useLinkedPr.js";
+import { useAppSettings } from "./useAppSettings.js";
 import { errorMessage } from "./errorMessage.js";
 import { ipcErrorMessage } from "./ipcError.js";
 
@@ -81,7 +81,7 @@ export function useAutoFollowUp(): void {
   const detailByKey = usePrStore((s) => s.detailByKey);
   const trackedByKey = usePrStore((s) => s.trackedByKey);
   const loadingByKey = usePrStore((s) => s.detailLoadingByKey);
-  const { settings } = usePrSettings();
+  const settings = useAppSettings();
   const attempts = useRef(new Map<string, DetailAttempt>());
   const started = useRef(new Set<string>());
   const inFlight = useRef(new Set<string>());
