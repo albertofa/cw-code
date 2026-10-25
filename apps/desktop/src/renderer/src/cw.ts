@@ -628,6 +628,8 @@ export interface CwApi {
   restoreSession(sessionId: string): Promise<Session>;
   markTurnSeen(sessionId: string): Promise<void>;
   openSession(sessionId: string, reason: SessionOpenReason): Promise<void>;
+  pauseAutoFollowUp(sessionId: string): Promise<void>;
+  resumeAutoFollowUp(sessionId: string): Promise<void>;
   resolveSession(sessionId: string, status: SessionStatus, removeWorktree?: boolean, forceBranch?: boolean): Promise<SessionCleanupResult>;
   pruneStaleWorktrees(): Promise<WorktreePruneSummary>;
   getHistory(sessionId: string): Promise<HistoryMessage[]>;

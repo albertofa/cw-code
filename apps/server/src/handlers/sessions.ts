@@ -48,6 +48,12 @@ export function registerSessionHandlers(router: Router, app: ServerApp): void {
   handle<{ sessionId: string; reason: SessionOpenReason }>(router, "sessions.open", (args) =>
     services().sessions.openSession(args.sessionId, args.reason)
   );
+  handle<{ sessionId: string }>(router, "sessions.pauseAutoFollowUp", (args) => {
+    if (!services().autoFollowUp.pause(args.sessionId)) throw new Error(`unknown session ${args.sessionId}`);
+  });
+  handle<{ sessionId: string }>(router, "sessions.resumeAutoFollowUp", (args) => {
+    if (!services().autoFollowUp.resume(args.sessionId)) throw new Error(`unknown session ${args.sessionId}`);
+  });
   handle<{ sessionId: string; status: SessionStatus; removeWorktree?: boolean; forceBranch?: boolean }>(
     router,
     "sessions.resolve",

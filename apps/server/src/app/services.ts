@@ -16,6 +16,7 @@ import { RunWatcher } from "../github/RunWatcher.js";
 import { HarnessMonitor } from "../cli/HarnessMonitor.js";
 import { PreferencesStore } from "../prefs/PreferencesStore.js";
 import { preferencesFilePath } from "../paths/appPaths.js";
+import { AutoFollowUpEngine } from "../prEngine/AutoFollowUpEngine.js";
 import { PrStore } from "../prEngine/PrStore.js";
 import { PtyPool } from "../pty/PtyPool.js";
 import { SessionManager } from "../sessions/SessionManager.js";
@@ -53,6 +54,7 @@ export interface Services {
   harnessMonitor: HarnessMonitor;
   threads: ThreadService;
   turns: TurnService;
+  autoFollowUp: AutoFollowUpEngine;
 }
 
 export interface ServiceHooks {
@@ -66,7 +68,20 @@ export interface ServiceHooks {
 
 const PR_STATE_REUSE_MS = 60_000;
 
-function wireServiceEvents({ sessions, sourceControl, prTracker, prStore, ptys, runWatcher, threads }: Services, { emit, dropTopic }: ServiceHooks): void {
+function wireAutoFollowUp({ autoFollowUp, prStore, threads, turns }: Services): void {
+  threads.registerExtras((sessionId) => ({ babysit: autoFollowUp.babysit(sessionId) }));
+  autoFollowUp.onChanged((sessionId) => threads.refreshExtras(sessionId));
+  prStore.onChanged(() => autoFollowUp.reevaluate());
+  threads.onRuntimeChanged(() => autoFollowUp.reevaluate());
+  threads.onTurnSettled((sessionId, _turnId, event) => autoFollowUp.turnSettled(sessionId, event));
+  turns.onTurnStarted((sessionId, auto) => autoFollowUp.turnStarted(sessionId, auto));
+  turns.onTurnStopped((sessionId) => autoFollowUp.turnStopped(sessionId));
+}
+
+function wireServiceEvents(
+  { sessions, sourceControl, prTracker, prStore, ptys, runWatcher, threads, autoFollowUp }: Services,
+  { emit, dropTopic }: ServiceHooks
+): void {
   sessions.setEmitter((sessionId, event) => {
     emit("turn.event", { sessionId, event });
     threads.onDriverEvent(sessionId, event);
@@ -77,6 +92,7 @@ function wireServiceEvents({ sessions, sourceControl, prTracker, prStore, ptys, 
     emit("session.updated", session);
     prTracker.setTracked(sessions.trackedPrRefs());
     prStore.onSessionsChanged();
+    autoFollowUp.reevaluate();
   });
   sessions.setProjectEmitter((project) => {
     emit("projects.changed", project);
@@ -176,6 +192,22 @@ export function createServices(stores: { sessionStore: SessionStore; settingsSto
     pendingRequests: (sessionId) => sessions.listPendingRequests(sessionId),
     loadHistoryOnSubscribe: false
   });
+  const turns = new TurnService({ sessions, threads });
+  const autoFollowUp = new AutoFollowUpEngine({
+    sessions: () => sessions.listAllSessions(),
+    settings: () => sessions.getSettings(),
+    runtime: (sessionId) => threads.runtime(sessionId),
+    summaryLookup: () => prStore.summaryLookup(),
+    detail: (key) => prStore.detail(key),
+    failedCheckLog: (ref, runId) => pullRequests.failedCheckLog(ref, runId),
+    startTurn: (sessionId, prompt, input) => turns.start(sessionId, prompt, input),
+    markPrSeen: (sessionId, ref, headSha, seenAt) => {
+      sessions.markPrSeen(sessionId, ref, headSha, seenAt);
+    },
+    updateAutoFollowUp: (sessionId, update) => sessions.updateAutoFollowUp(sessionId, update) !== null,
+    postNotice: (sessionId, notice) => sessions.emitNotice(sessionId, notice.noticeId, notice.text, notice.severity),
+    enabled: false
+  });
   const services: Services = {
     sessions,
     skills: new SkillsStore(),
@@ -196,8 +228,10 @@ export function createServices(stores: { sessionStore: SessionStore; settingsSto
     preferences,
     harnessMonitor,
     threads,
-    turns: new TurnService({ sessions, threads })
+    turns,
+    autoFollowUp
   };
   wireServiceEvents(services, hooks);
+  wireAutoFollowUp(services);
   return services;
 }

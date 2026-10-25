@@ -454,6 +454,7 @@ export class ServerApp {
     } catch (err) {
       console.warn(`flush before exit failed: ${(err as Error).message}`);
     }
+    services.autoFollowUp.dispose();
     services.prStore.dispose();
     services.threads.dispose();
     services.preferences.dispose();

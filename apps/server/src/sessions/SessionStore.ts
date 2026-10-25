@@ -1,7 +1,17 @@
 import { randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
-import type { ComposerPrefs, DriverKind, Project, ProjectSettings, ResolvedCheckout, SessionMeta, SessionPrLink, SessionStatus } from "@cw-code/contracts";
+import type {
+  AutoFollowUpPause,
+  ComposerPrefs,
+  DriverKind,
+  Project,
+  ProjectSettings,
+  ResolvedCheckout,
+  SessionMeta,
+  SessionPrLink,
+  SessionStatus
+} from "@cw-code/contracts";
 import { traceSessionStatus, type SessionStatusReason } from "../debug/sessionStatusTrace.js";
 import { isValidPrLink, upsertLink } from "../github/prLinks.js";
 import { expandHome } from "../skills/skillPaths.js";
@@ -10,6 +20,10 @@ import { writeFileAtomic } from "../storage/atomicFile.js";
 import { backupBeforeRepair } from "../storage/backups.js";
 import { isMetadataDocument, type MetadataDocument, type MetadataMigration, type MetadataSchema } from "../storage/metadataDocument.js";
 import { LastGoodRefresher, loadVersionedJson } from "../storage/versionedJson.js";
+
+export type AutoFollowUpMeta = NonNullable<SessionMeta["autoFollowUp"]>;
+
+const AUTO_FOLLOW_UP_PAUSES: ReadonlySet<AutoFollowUpPause> = new Set(["user", "interrupted", "error"]);
 
 interface StoreShape {
   projects: Project[];
@@ -138,6 +152,10 @@ function resetRuntimeStatuses(sessions: SessionMeta[]): boolean {
       delete session.resolvedCheckout;
       changed = true;
     }
+    if (session.autoFollowUp !== undefined && !isAutoFollowUpMeta(session.autoFollowUp)) {
+      delete session.autoFollowUp;
+      changed = true;
+    }
     if (session.status === "idle" && session.idleSince === undefined && Number.isFinite(session.updatedAt)) {
       session.idleSince = session.updatedAt;
       changed = true;
@@ -151,6 +169,18 @@ function isResolvedCheckout(value: unknown): value is ResolvedCheckout {
   const checkout = value as Partial<{ kind: string; path: unknown }>;
   if (checkout.kind === "root") return true;
   return checkout.kind === "worktree" && typeof checkout.path === "string" && checkout.path.length > 0;
+}
+
+function isAutoFollowUpMeta(value: unknown): value is AutoFollowUpMeta {
+  if (!value || typeof value !== "object") return false;
+  const meta = value as Partial<Record<keyof AutoFollowUpMeta, unknown>>;
+  if (typeof meta.turns !== "number" || !Number.isInteger(meta.turns) || meta.turns < 0) return false;
+  return meta.paused === undefined || AUTO_FOLLOW_UP_PAUSES.has(meta.paused as AutoFollowUpPause);
+}
+
+function normalizedAutoFollowUp(meta: AutoFollowUpMeta | undefined): AutoFollowUpMeta | undefined {
+  if (!meta || (meta.turns === 0 && meta.paused === undefined)) return undefined;
+  return meta.paused === undefined ? { turns: meta.turns } : { paused: meta.paused, turns: meta.turns };
 }
 
 function copyProject(project: Project): Project {
@@ -392,6 +422,17 @@ export class SessionStore {
     if (prs.length === 0) delete current.prs;
     else current.prs = prs;
     this.persist();
+  }
+
+  updateAutoFollowUp(id: string, update: (current: AutoFollowUpMeta | undefined) => AutoFollowUpMeta | undefined): boolean {
+    const current = this.getSession(id);
+    if (!current) return false;
+    const next = normalizedAutoFollowUp(update(current.autoFollowUp));
+    if (next?.turns === current.autoFollowUp?.turns && next?.paused === current.autoFollowUp?.paused) return false;
+    if (next === undefined) delete current.autoFollowUp;
+    else current.autoFollowUp = next;
+    this.persist();
+    return true;
   }
 
   expireHolding(id: string): SessionMeta | null {

@@ -52,7 +52,7 @@ import { type SessionStatusReason } from "../debug/sessionStatusTrace.js";
 import { isWorkingSetStatus } from "@cw-code/shared/workingSet";
 import { expiredHoldingIds } from "../sidebar/workingSet.js";
 import { autoFollowUpWorkflow, babysitsOpenPr } from "@cw-code/shared/autoFollowUp";
-import { SessionStore } from "./SessionStore.js";
+import { SessionStore, type AutoFollowUpMeta } from "./SessionStore.js";
 import {
   addUnlinkedKey,
   applyFinalReview,
@@ -1126,6 +1126,12 @@ export class SessionManager {
     const link = findLink(session.prs, ref);
     if (link) this.store.updateSession(sessionId, { prs: upsertLink(session.prs, markSeen(link, headSha, seenAt ?? Date.now())) });
     return this.emitSession(sessionId);
+  }
+
+  updateAutoFollowUp(sessionId: string, update: (current: AutoFollowUpMeta | undefined) => AutoFollowUpMeta | undefined): SessionMeta | null {
+    const session = this.store.getSession(sessionId);
+    if (!session) return null;
+    return this.store.updateAutoFollowUp(sessionId, update) ? this.emitSession(sessionId) : session;
   }
 
   linkIssue(sessionId: string, link: SessionIssueLink): SessionMeta {
@@ -2617,7 +2623,7 @@ export class SessionManager {
     });
   }
 
-  private emitNotice(sessionId: string, noticeId: string, text: string, severity: "info" | "warning" | "error"): void {
+  emitNotice(sessionId: string, noticeId: string, text: string, severity: "info" | "warning" | "error"): void {
     this.onEvent(sessionId, { type: "session.notice", turnId: noticeId, sessionId, noticeId, text, severity });
   }
 

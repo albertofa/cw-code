@@ -158,6 +158,8 @@ export function createCwApi(client: ServerClient, topics: TopicCache, desktop: D
     restoreSession: (sessionId) => call<Session>("sessions.restore", { sessionId }),
     markTurnSeen: (sessionId) => callVoid("sessions.markTurnSeen", { sessionId }),
     openSession: (sessionId, reason) => callVoid("sessions.open", { sessionId, reason }),
+    pauseAutoFollowUp: (sessionId) => callVoid("sessions.pauseAutoFollowUp", { sessionId }),
+    resumeAutoFollowUp: (sessionId) => callVoid("sessions.resumeAutoFollowUp", { sessionId }),
     resolveSession: (sessionId, status, removeWorktree, forceBranch) =>
       call<SessionCleanupResult>("sessions.resolve", { sessionId, status, removeWorktree, forceBranch }),
     pruneStaleWorktrees: () => call<WorktreePruneSummary>("worktrees.prune"),
