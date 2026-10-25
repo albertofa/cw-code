@@ -34,6 +34,13 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+export class TopicDriftError extends Error {
+  constructor(readonly key: string, readonly field: string) {
+    super(`cannot append to "${field}" of "${key}": entry or string field is missing`);
+    this.name = "TopicDriftError";
+  }
+}
+
 export function applyTopicOps<D extends Record<string, unknown>>(data: D, ops: TopicOp[]): D {
   let next: Record<string, unknown> = data;
   let owned = false;
@@ -58,9 +65,9 @@ export function applyTopicOps<D extends Record<string, unknown>>(data: D, ops: T
         break;
       case "append": {
         const entry = next[op.key];
-        if (!isRecord(entry)) break;
-        const current = entry[op.field];
-        writable()[op.key] = { ...entry, [op.field]: (typeof current === "string" ? current : "") + op.text };
+        const current = isRecord(entry) ? entry[op.field] : undefined;
+        if (!isRecord(entry) || typeof current !== "string") throw new TopicDriftError(op.key, op.field);
+        writable()[op.key] = { ...entry, [op.field]: current + op.text };
         break;
       }
     }
@@ -148,7 +155,9 @@ export class TopicCache {
     this.offState();
     const subscribed = [...this.entries].filter(([, entry]) => entry.subscribed).map(([topic]) => topic);
     this.unsubscribe(subscribed);
+    const topics = [...this.entries.keys()];
     this.entries.clear();
+    for (const topic of topics) this.notify(topic);
     this.dirty.clear();
     this.listeners.clear();
     this.epochListeners.clear();
@@ -189,6 +198,7 @@ export class TopicCache {
       if (entry.refs === 0) {
         this.entries.delete(topic);
         if (entry.subscribed) removed.push(topic);
+        this.notify(topic);
       } else if (!entry.subscribed && !entry.invalid) added.push(topic);
     }
     if (this.client.state !== "open") return;
@@ -205,12 +215,13 @@ export class TopicCache {
     return Promise.all(chunk(topics).map((batch) => this.subscribeBatch(batch))).then(() => undefined);
   }
 
-  private async subscribeBatch(topics: string[]): Promise<void> {
+  private async subscribeBatch(topics: string[], wasSubscribed = new Map<string, boolean>()): Promise<void> {
     const token = {};
     const live: string[] = [];
     for (const topic of topics) {
       const entry = this.entries.get(topic);
       if (!entry) continue;
+      if (!wasSubscribed.has(topic)) wasSubscribed.set(topic, entry.subscribed);
       entry.subscribed = true;
       entry.inflight = token;
       entry.buffer = [];
@@ -220,23 +231,24 @@ export class TopicCache {
     if (live.length === 0) return;
     try {
       const result = await this.client.call<TopicsSubscribeResult>("topics.subscribe", { topics: live });
-      for (const topic of live) this.applySnapshot(topic, token, result[topic]);
+      for (const topic of live) this.applySnapshot(topic, token, result[topic], wasSubscribed.get(topic) === true);
     } catch (error) {
       if (error instanceof ServerCallError && error.code === "disconnected") {
         for (const topic of live) this.abandon(topic, token);
       } else if (live.length > 1) {
-        await Promise.all(live.map((topic) => this.subscribeBatch([topic])));
+        await Promise.all(live.map((topic) => this.subscribeBatch([topic], wasSubscribed)));
       } else {
-        this.fail(live[0] as string, token, describe(error));
+        const topic = live[0] as string;
+        this.fail(topic, token, describe(error), wasSubscribed.get(topic) === true);
       }
     }
   }
 
-  private applySnapshot(topic: string, token: object, snapshot: TopicsSubscribeResult[string] | undefined): void {
+  private applySnapshot(topic: string, token: object, snapshot: TopicsSubscribeResult[string] | undefined, wasSubscribed: boolean): void {
     const entry = this.entries.get(topic);
     if (!entry || entry.inflight !== token) return;
     if (!snapshot) {
-      this.fail(topic, token, `server returned no snapshot for "${topic}"`);
+      this.fail(topic, token, `server returned no snapshot for "${topic}"`, wasSubscribed);
       return;
     }
     entry.inflight = null;
@@ -250,7 +262,12 @@ export class TopicCache {
         gap = true;
         break;
       }
-      state = { ...state, rev: patch.rev, data: applyTopicOps(state.data, patch.ops) };
+      const data = this.tryApply(state.data, patch.ops);
+      if (!data) {
+        gap = true;
+        break;
+      }
+      state = { ...state, rev: patch.rev, data };
     }
     this.update(topic, entry, state);
     if (gap) void this.subscribeBatch([topic]);
@@ -264,12 +281,12 @@ export class TopicCache {
     entry.subscribed = false;
   }
 
-  private fail(topic: string, token: object, message: string): void {
+  private fail(topic: string, token: object, message: string, keepSubscribed: boolean): void {
     const entry = this.entries.get(topic);
     if (!entry || entry.inflight !== token) return;
     entry.inflight = null;
     entry.buffer = [];
-    entry.subscribed = false;
+    entry.subscribed = keepSubscribed;
     this.update(topic, entry, { ...entry.state, status: "error", error: message });
   }
 
@@ -285,7 +302,21 @@ export class TopicCache {
       void this.subscribeBatch([patch.topic]);
       return;
     }
-    this.update(patch.topic, entry, { ...entry.state, rev: patch.rev, data: applyTopicOps(entry.state.data, patch.ops) });
+    const data = this.tryApply(entry.state.data, patch.ops);
+    if (!data) {
+      void this.subscribeBatch([patch.topic]);
+      return;
+    }
+    this.update(patch.topic, entry, { ...entry.state, rev: patch.rev, data });
+  }
+
+  private tryApply(data: Record<string, unknown>, ops: TopicOp[]): Record<string, unknown> | null {
+    try {
+      return applyTopicOps(data, ops);
+    } catch (error) {
+      if (error instanceof TopicDriftError) return null;
+      throw error;
+    }
   }
 
   private handleState(state: ConnectionState, previous: ConnectionState): void {
@@ -309,10 +340,14 @@ export class TopicCache {
     this.dirty.clear();
     const topics: string[] = [];
     for (const [topic, entry] of [...this.entries]) {
-      if (entry.refs === 0) this.entries.delete(topic);
-      else if (!entry.invalid) topics.push(topic);
+      if (entry.refs === 0) {
+        this.entries.delete(topic);
+        this.notify(topic);
+      } else if (!entry.invalid) topics.push(topic);
     }
-    void this.subscribe(topics).then(() => this.bumpEpoch());
+    void this.subscribe(topics).then(() => {
+      if (this.client.state === "open") this.bumpEpoch();
+    });
   }
 
   private bumpEpoch(): void {

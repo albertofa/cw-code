@@ -2,7 +2,7 @@ import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import type { ClientMessage, ServerMessage, TopicOp, TopicPatch, TopicsSubscribeResult } from "@cw-code/contracts";
 import { PROTOCOL_VERSION } from "@cw-code/shared/protocol";
 import { ServerClient } from "./ServerClient.js";
-import { applyTopicOps, orderedEntries, TopicCache } from "./TopicCache.js";
+import { applyTopicOps, orderedEntries, TopicCache, TopicDriftError } from "./TopicCache.js";
 
 type CallMessage = Extract<ClientMessage, { t: "call" }>;
 
@@ -12,6 +12,8 @@ interface FakeServer {
   snapshots: TopicsSubscribeResult;
   failTopics: Set<string>;
   beforeResult: ((topics: string[]) => void) | null;
+  hold: boolean;
+  held: Array<() => void>;
   patch(patch: TopicPatch): void;
   closeClients(): void;
   hellos(): number;
@@ -31,6 +33,8 @@ function startServer(): FakeServer {
     snapshots: {},
     failTopics: new Set(),
     beforeResult: null,
+    hold: false,
+    held: [],
     patch: (patch) => {
       for (const ws of sockets) send(ws, { t: "patch", ...patch });
     },
@@ -62,10 +66,15 @@ function startServer(): FakeServer {
           send(ws, { t: "result", id: message.id, ok: false, error: { message: `unknown topic ${bad}`, code: "unknown-topic" } });
           return;
         }
-        fake.beforeResult?.(topics);
-        const value: TopicsSubscribeResult = {};
-        for (const topic of topics) value[topic] = fake.snapshots[topic] ?? { rev: 0, data: {} };
-        send(ws, { t: "result", id: message.id, ok: true, value });
+        const id = message.id;
+        const reply = () => {
+          fake.beforeResult?.(topics);
+          const value: TopicsSubscribeResult = {};
+          for (const topic of topics) value[topic] = fake.snapshots[topic] ?? { rev: 0, data: {} };
+          send(ws, { t: "result", id, ok: true, value });
+        };
+        if (fake.hold) fake.held.push(reply);
+        else reply();
       }
     }
   });
@@ -119,20 +128,19 @@ describe("applyTopicOps", () => {
     expect(base).toEqual({ "item:a": entryA, "item:b": entryB });
   });
 
-  test("append extends a string field and creates it when absent", () => {
+  test("append extends a string field", () => {
     const next = applyTopicOps(base, [
       { op: "append", key: "item:a", field: "text", text: "1" },
-      { op: "append", key: "item:a", field: "text", text: "2" },
-      { op: "append", key: "item:b", field: "note", text: "n" }
+      { op: "append", key: "item:a", field: "text", text: "2" }
     ]);
     expect(next["item:a"]).toEqual({ seq: 1, text: "a12" });
-    expect(next["item:b"]).toEqual({ seq: 2, text: "b", note: "n" });
     expect(entryA.text).toBe("a");
   });
 
-  test("append on a missing key is ignored", () => {
-    const next = applyTopicOps(base, [{ op: "append", key: "item:zzz", field: "text", text: "x" }]);
-    expect(next).toBe(base);
+  test("append on a missing entry or a non-string field signals drift", () => {
+    expect(() => applyTopicOps(base, [{ op: "append", key: "item:zzz", field: "text", text: "x" }])).toThrow(TopicDriftError);
+    expect(() => applyTopicOps(base, [{ op: "append", key: "item:a", field: "note", text: "x" }])).toThrow(TopicDriftError);
+    expect(() => applyTopicOps({ "item:a": "plain" }, [{ op: "append", key: "item:a", field: "text", text: "x" }])).toThrow(TopicDriftError);
   });
 
   test("replace swaps the whole data and later ops build on it", () => {
@@ -249,8 +257,155 @@ describe("TopicCache", () => {
     expect((resubscribes[0]?.params as { topics: string[] }).topics.sort()).toEqual(["app", "session/s1"]);
     expect(cache.state("app")).toEqual({ status: "ready", rev: 9, data: { v: 9 }, error: null });
     expect(cache.state("session/s1")?.data).toEqual({ x: 2 });
-    expect(notifications).toBeGreaterThanOrEqual(1);
+    expect(notifications).toBe(1);
     expect(epochs).toEqual([1]);
+  });
+
+  test("patches during the reconnect resubscribe are buffered and stale revs dropped", async () => {
+    const server = startServer();
+    server.snapshots.app = { rev: 1, data: { v: 1 } };
+    const { cache } = await connect(server, true);
+    cache.acquire("app");
+    await waitFor(() => cache.state("app")?.status === "ready");
+    let notifications = 0;
+    cache.listen("app", () => void (notifications += 1));
+
+    server.snapshots.app = { rev: 10, data: { v: 10 } };
+    server.beforeResult = () => {
+      server.patch({ topic: "app", rev: 10, ops: [{ op: "upsert", key: "stale", value: true }] });
+      server.patch({ topic: "app", rev: 11, ops: [{ op: "upsert", key: "fresh", value: true }] });
+    };
+    server.closeClients();
+    await waitFor(() => cache.epoch === 1);
+
+    expect(cache.state("app")).toEqual({ status: "ready", rev: 11, data: { v: 10, fresh: true }, error: null });
+    expect(notifications).toBe(1);
+  });
+
+  test("the epoch is not bumped when the resubscribe is dropped by another disconnect", async () => {
+    const server = startServer();
+    server.snapshots.app = { rev: 1, data: {} };
+    const { client, cache } = await connect(server, true);
+    cache.acquire("app");
+    await waitFor(() => cache.state("app")?.status === "ready");
+    const epochs: number[] = [];
+    cache.onEpoch((epoch) => epochs.push(epoch));
+
+    server.hold = true;
+    server.closeClients();
+    await waitFor(() => topicCalls(server, "topics.subscribe").length === 2);
+    server.held.length = 0;
+    server.closeClients();
+    await waitFor(() => client.state === "reconnecting");
+    await Bun.sleep(30);
+    expect(cache.epoch).toBe(0);
+
+    server.hold = false;
+    await waitFor(() => cache.epoch === 1);
+    expect(epochs).toEqual([1]);
+  });
+
+  test("a gap inside buffered patches resubscribes the topic", async () => {
+    const server = startServer();
+    server.snapshots.app = { rev: 5, data: { v: 5 } };
+    let first = true;
+    server.beforeResult = () => {
+      if (!first) return;
+      first = false;
+      queueMicrotask(() => {
+        server.snapshots.app = { rev: 8, data: { v: 8 } };
+      });
+      server.patch({ topic: "app", rev: 6, ops: [{ op: "upsert", key: "six", value: true }] });
+      server.patch({ topic: "app", rev: 8, ops: [{ op: "upsert", key: "eight", value: true }] });
+    };
+    const { cache } = await connect(server);
+
+    cache.acquire("app");
+    await waitFor(() => cache.state("app")?.rev === 8);
+
+    expect(cache.state("app")?.data).toEqual({ v: 8 });
+    expect(topicCalls(server, "topics.subscribe")).toHaveLength(2);
+  });
+
+  test("acquire, release and acquire in one tick sends exactly one subscribe", async () => {
+    const server = startServer();
+    server.snapshots.app = { rev: 1, data: {} };
+    const { cache } = await connect(server);
+
+    cache.acquire("app")();
+    const release = cache.acquire("app");
+    await waitFor(() => cache.state("app")?.status === "ready");
+    await Bun.sleep(30);
+
+    expect(topicCalls(server)).toHaveLength(1);
+    release();
+    await waitFor(() => topicCalls(server, "topics.unsubscribe").length === 1);
+  });
+
+  test("releasing while a subscribe is in flight sends subscribe then unsubscribe and ignores the late snapshot", async () => {
+    const server = startServer();
+    server.snapshots.app = { rev: 1, data: { v: 1 } };
+    server.hold = true;
+    const { cache } = await connect(server);
+    const seen: Array<string | undefined> = [];
+    cache.listen("app", () => void seen.push(cache.state("app")?.status));
+
+    const release = cache.acquire("app");
+    await waitFor(() => topicCalls(server, "topics.subscribe").length === 1);
+    release();
+    await waitFor(() => topicCalls(server, "topics.unsubscribe").length === 1);
+    server.hold = false;
+    for (const reply of server.held.splice(0)) reply();
+    await Bun.sleep(30);
+
+    expect(topicCalls(server).map((call) => call.method)).toEqual(["topics.subscribe", "topics.unsubscribe"]);
+    expect(cache.state("app")).toBeUndefined();
+    expect(seen).toEqual(["subscribing", undefined]);
+  });
+
+  test("a failed resubscribe keeps the original subscription so release still unsubscribes", async () => {
+    const server = startServer();
+    server.snapshots.app = { rev: 1, data: { v: 1 } };
+    const { cache } = await connect(server);
+    const release = cache.acquire("app");
+    await waitFor(() => cache.state("app")?.status === "ready");
+
+    server.failTopics.add("app");
+    server.patch({ topic: "app", rev: 5, ops: [] });
+    await waitFor(() => cache.state("app")?.status === "error");
+    expect(cache.state("app")?.data).toEqual({ v: 1 });
+
+    release();
+    await waitFor(() => topicCalls(server, "topics.unsubscribe").length === 1);
+    expect(topicCalls(server, "topics.unsubscribe")[0]?.params).toEqual({ topics: ["app"] });
+  });
+
+  test("a failed first subscribe is not unsubscribed on release", async () => {
+    const server = startServer();
+    server.failTopics.add("session/missing");
+    const { cache } = await connect(server);
+    const release = cache.acquire("session/missing");
+    await waitFor(() => cache.state("session/missing")?.status === "error");
+
+    release();
+    await Bun.sleep(30);
+
+    expect(topicCalls(server, "topics.unsubscribe")).toHaveLength(0);
+  });
+
+  test("an append that cannot be applied resubscribes the topic", async () => {
+    const server = startServer();
+    server.snapshots.app = { rev: 1, data: {} };
+    const { cache } = await connect(server);
+    cache.acquire("app");
+    await waitFor(() => cache.state("app")?.status === "ready");
+
+    server.snapshots.app = { rev: 2, data: { "item:a": { text: "full" } } };
+    server.patch({ topic: "app", rev: 2, ops: [{ op: "append", key: "item:a", field: "text", text: "x" }] });
+    await waitFor(() => cache.state("app")?.rev === 2);
+
+    expect(cache.state("app")?.data).toEqual({ "item:a": { text: "full" } });
+    expect(topicCalls(server, "topics.subscribe")).toHaveLength(2);
   });
 
   test("acquire and release in the same tick send nothing", async () => {
@@ -381,7 +536,7 @@ describe("TopicCache", () => {
     const { cache } = await connect(server);
     const errorSpy = spyOn(console, "error").mockImplementation(() => undefined);
     let notified = 0;
-    cache.listen("app", () => {
+    const offThrowing = cache.listen("app", () => {
       throw new Error("listener boom");
     });
     cache.listen("app", () => void (notified += 1));
@@ -391,6 +546,7 @@ describe("TopicCache", () => {
 
     expect(notified).toBeGreaterThanOrEqual(2);
     expect(errorSpy).toHaveBeenCalled();
+    offThrowing();
     errorSpy.mockRestore();
   });
 });
