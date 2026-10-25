@@ -26,6 +26,7 @@ import type { SettingsStore } from "../settings/SettingsStore.js";
 import { ShutdownCoordinator } from "../shutdown/ShutdownCoordinator.js";
 import { SidebarService } from "../sidebar/SidebarService.js";
 import { SkillsStore } from "../skills/SkillsStore.js";
+import { GitTopic } from "../sourceControl/GitTopic.js";
 import { SourceControlService } from "../sourceControl/SourceControlService.js";
 import { ThreadService } from "../threads/ThreadService.js";
 import { TurnService } from "../threads/TurnService.js";
@@ -45,6 +46,7 @@ export interface Services {
   prTracker: PrTracker;
   prStore: PrStore;
   sourceControl: SourceControlService;
+  gitTopic: GitTopic;
   githubSearch: GitHubSearchService;
   runs: RunsService;
   runWatcher: RunWatcher;
@@ -96,12 +98,20 @@ function wireSidebar({ sidebar, threads, sourceControl, prStore, autoFollowUp, p
   );
 }
 
+function wireGitTopic({ gitTopic, sourceControl, sessions }: Services): void {
+  sourceControl.onPublished((update) => gitTopic.statusChanged(update.sessionId));
+  sourceControl.onFailureChanged((sessionId) => gitTopic.stateChanged(sessionId));
+  sessions.onCheckoutChanged((sessionIds) => {
+    for (const sessionId of sessionIds) void sourceControl.refresh(sessionId, { forcePullRequest: true });
+  });
+}
+
 function wireGitHubViews({ githubViews, prStore }: Services): void {
   prStore.onChanged(() => githubViews.reevaluate());
 }
 
 function wireServiceEvents(
-  { sessions, sourceControl, prTracker, prStore, ptys, runWatcher, githubViews, threads, autoFollowUp, sidebar }: Services,
+  { sessions, sourceControl, gitTopic, prTracker, prStore, ptys, runWatcher, githubViews, threads, autoFollowUp, sidebar }: Services,
   { emit, dropTopic }: ServiceHooks
 ): void {
   sessions.setEmitter((sessionId, event) => {
@@ -124,6 +134,7 @@ function wireServiceEvents(
     prStore.onSessionsChanged();
     autoFollowUp.reevaluate();
     sidebar.invalidate();
+    gitTopic.stateChanged(session.id);
   });
   sessions.setProjectEmitter((project) => {
     emit("projects.changed", project);
@@ -198,6 +209,12 @@ export function createServices(stores: { sessionStore: SessionStore; settingsSto
     settings: () => sessions.getSettings(),
     emit: (update) => emit("git.statusChanged", update)
   });
+  const gitTopic = new GitTopic(hooks.topics, {
+    status: (sessionId) => sourceControl.status(sessionId),
+    failure: (sessionId) => sourceControl.failure(sessionId),
+    session: (sessionId) => sessions.findSession(sessionId),
+    setWatched: (sessionIds) => sourceControl.setWatched(sessionIds)
+  });
   const ptys = new PtyPool(() => sessions.getSettings());
   const shutdown = new ShutdownCoordinator({ sessions, ptys, onRecovered: hooks.onShutdownRecovered, onExpired: hooks.onShutdownExpired });
   const preferences = new PreferencesStore(preferencesFilePath());
@@ -229,7 +246,7 @@ export function createServices(stores: { sessionStore: SessionStore; settingsSto
     liveTasks: (sessionId) => sessions.liveTasks(sessionId),
     pendingRequests: (sessionId) => sessions.listPendingRequests(sessionId)
   });
-  const turns = new TurnService({ sessions, threads });
+  const turns = new TurnService({ sessions, threads, git: gitTopic });
   const autoFollowUp = new AutoFollowUpEngine({
     sessions: () => sessions.listAllSessions(),
     settings: () => sessions.getSettings(),
@@ -286,6 +303,7 @@ export function createServices(stores: { sessionStore: SessionStore; settingsSto
     prTracker,
     prStore,
     sourceControl,
+    gitTopic,
     githubSearch,
     runs,
     runWatcher,
@@ -304,6 +322,7 @@ export function createServices(stores: { sessionStore: SessionStore; settingsSto
   wireServiceEvents(services, hooks);
   wireAutoFollowUp(services);
   wireSidebar(services);
+  wireGitTopic(services);
   wireGitHubViews(services);
   return services;
 }

@@ -21,7 +21,7 @@ afterEach(async () => {
   service = null;
 });
 
-function setup() {
+function setup(failing = new Set<string>()) {
   const statusCalls: string[] = [];
   const emitted: GitStatusUpdate[] = [];
   const published: GitStatusUpdate[] = [];
@@ -30,6 +30,7 @@ function setup() {
     git: {
       status: async (root: string) => {
         statusCalls.push(root);
+        if (failing.has(root)) throw new Error("boom");
         return { branch: root.split("/").at(-1), pullRequest: null } as GitStatus;
       },
       gitLocations: async () => null,
@@ -51,7 +52,9 @@ function setup() {
   });
   created.onPublished((update) => published.push(update));
   service = created;
-  return { service: created, statusCalls, emitted, published };
+  const failureChanges: string[] = [];
+  created.onFailureChanged((sessionId) => failureChanges.push(sessionId));
+  return { service: created, statusCalls, emitted, published, failureChanges };
 }
 
 describe("SourceControlService", () => {
@@ -79,5 +82,22 @@ describe("SourceControlService", () => {
     service.setWorkingSet(["a", "b"]);
     await until(() => statusCalls.length === 2);
     expect(statusCalls).toEqual(["/w/a", "/w/b"]);
+  });
+
+  test("notifies when a session's failure appears and when a refresh clears it", async () => {
+    const failing = new Set(["/w/a"]);
+    const { service, failureChanges, published } = setup(failing);
+    service.start();
+    await service.refresh("a");
+    expect(service.failure("a")).toBe("git status failed for /w/a: boom");
+    expect(failureChanges).toEqual(["a"]);
+
+    await service.refresh("a");
+    expect(failureChanges).toEqual(["a"]);
+
+    failing.clear();
+    await service.refresh("a");
+    expect(service.failure("a")).toBeNull();
+    expect(published.map((update) => update.sessionId)).toEqual(["a"]);
   });
 });

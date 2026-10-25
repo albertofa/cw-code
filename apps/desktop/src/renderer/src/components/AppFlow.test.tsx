@@ -148,10 +148,9 @@ function installBridge(): void {
     githubViewCounts: async () => ({}),
     getRunLog: async () => "",
     markSessionRunSeen: async (sessionId: string) => makeSession({ id: sessionId }),
-    getGitStatus: async () => {
-      throw new Error("no git");
-    },
-    onGitStatus: noop,
+    refreshGit: async () => {},
+    checkBranchMismatch: async () => null,
+    keepFolderHead: async () => null,
     listGitBranches: async () => [],
     listProjectBranches: async () =>
       delayed([{ name: "main", label: "main", current: true }], 600),

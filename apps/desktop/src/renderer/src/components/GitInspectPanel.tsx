@@ -9,6 +9,7 @@ import { usePanelStore } from "../stores/panelStore.js";
 import { shortenHome } from "./pathDisplay.js";
 import { findSession } from "./useLinkedPr.js";
 import { snapshotKey, splitRepoPath } from "./turnChanges.js";
+import { refreshGit, useGitStatus } from "./useGit.js";
 
 const MODE_LABEL: Record<GitDiffMode, string> = {
   working: "Changes",
@@ -126,8 +127,7 @@ export function GitInspectPanel({ sessionId }: { sessionId: string }) {
   const [branches, setBranches] = useState<GitBranchInfo[]>([]);
   const [baseRef, setBaseRef] = useState<string>();
   const homeDir = useAppStore((s) => s.homeDir);
-  const status = useAppStore((s) => s.gitStatusBySession[sessionId] ?? null);
-  const refreshGitStatus = useAppStore((s) => s.refreshGitStatus);
+  const status = useGitStatus(sessionId);
   const snapshot = useAppStore((s) => findSession(s.sessionsByProject, sessionId)?.lastTurnSnapshot);
   const diffModeRequest = usePanelStore((s) => s.diffModeRequest);
   const clearDiffModeRequest = usePanelStore((s) => s.clearDiffModeRequest);
@@ -159,7 +159,7 @@ export function GitInspectPanel({ sessionId }: { sessionId: string }) {
     setAutoApplied(false);
     setBaseRef(undefined);
     setBranches([]);
-    void refreshGitStatus(sessionId);
+    refreshGit(sessionId);
     window.cw.listGitBranches(sessionId).then((items) => {
       if (!active) return;
       setBranches(items);
@@ -176,7 +176,7 @@ export function GitInspectPanel({ sessionId }: { sessionId: string }) {
       if (active) setError(reason.message);
     });
     return () => { active = false; };
-  }, [sessionId, refreshGitStatus]);
+  }, [sessionId]);
 
   useEffect(() => {
     if (!diffModeRequest) return;

@@ -102,6 +102,8 @@ import { cwCodeHome, opencodeServerDir, sessionDbPath, settingsFilePath, titleGe
 import { UsageLedger } from "../usage/UsageLedger.js";
 import { shutdownReservedError } from "../shutdown/shutdownReservation.js";
 import { BRANCH_MISMATCH_MARKER } from "./branchMismatch.js";
+import { currentCheckoutSessionIds } from "../sourceControl/branchMismatch.js";
+import { notifyAll } from "../events/notifyAll.js";
 import { overlayLiveTasks } from "../tasks/overlayLiveTasks.js";
 import { SessionBusyError } from "./SessionBusyError.js";
 import { PendingRequests, type PendingRequest } from "./PendingRequests.js";
@@ -229,6 +231,7 @@ export class SessionManager {
   private settings: SettingsStore;
   private drivers: Record<DriverKind, CliDriver>;
   private readonly driverActivityListeners = new Set<() => void>();
+  private readonly checkoutListeners = new Set<(sessionIds: string[]) => void>();
   private unwatchDriverActivity: () => void = () => {};
   private driverFactory: DriverFactory;
   private driverGeneration = 0;
@@ -308,6 +311,26 @@ export class SessionManager {
   onDriverActivityChanged(listener: () => void): () => void {
     this.driverActivityListeners.add(listener);
     return () => this.driverActivityListeners.delete(listener);
+  }
+
+  onCheckoutChanged(listener: (sessionIds: string[]) => void): () => void {
+    this.checkoutListeners.add(listener);
+    return () => this.checkoutListeners.delete(listener);
+  }
+
+  private notifyCheckoutChanged(sessionIds: string[]): void {
+    if (sessionIds.length > 0) notifyAll(this.checkoutListeners, "checkout", sessionIds);
+  }
+
+  private liveProjectSessions(projectId: string): SessionMeta[] {
+    return this.store.listSessions(projectId).filter((session) => session.status !== "resolved" && session.status !== "archived");
+  }
+
+  private notifySessionCheckoutChanged(sessionId: string): void {
+    const session = this.store.getSession(sessionId);
+    if (!session) return;
+    const siblings = session.worktreePath ? [] : currentCheckoutSessionIds(this.liveProjectSessions(session.projectId));
+    this.notifyCheckoutChanged([sessionId, ...siblings.filter((id) => id !== sessionId)]);
   }
 
   private notifyDriverActivity(): void {
@@ -676,7 +699,9 @@ export class SessionManager {
   setProjectGitHubAccount(projectId: string, account: { host: string; login: string } | null): Project {
     const project = this.store.updateProject(projectId, { githubAccount: account ?? undefined }, account === null);
     void this.refreshGitHubToken(project);
-    return this.emitProject(project);
+    this.emitProject(project);
+    this.notifyCheckoutChanged(this.liveProjectSessions(project.id).map((session) => session.id));
+    return project;
   }
 
   updateProjectSettings(projectId: string, settings: ProjectSettings): Project {
@@ -2056,10 +2081,19 @@ export class SessionManager {
       return { turnId, files: restored, endSha, undoable: false, reason: "This turn was already undone", conflicts: [] };
     } finally {
       this.pendingUndos.delete(sessionId);
+      this.notifySessionCheckoutChanged(sessionId);
     }
   }
 
   async switchBranch(sessionId: string, branch: string): Promise<GitStatus> {
+    try {
+      return await this.switchSessionBranch(sessionId, branch);
+    } finally {
+      this.notifySessionCheckoutChanged(sessionId);
+    }
+  }
+
+  private switchSessionBranch(sessionId: string, branch: string): Promise<GitStatus> {
     return this.withBranchSwitch(sessionId, async () => {
       const session = this.requireSession(sessionId);
       const project = this.projectForSession(sessionId);
@@ -2108,6 +2142,10 @@ export class SessionManager {
 
   hasSession(sessionId: string): boolean {
     return this.store.getSession(sessionId) !== undefined;
+  }
+
+  findSession(sessionId: string): SessionMeta | undefined {
+    return this.store.getSession(sessionId);
   }
 
   assertCanStartTurn(sessionId: string): { session: SessionMeta; project: Project } {

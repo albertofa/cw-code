@@ -2,6 +2,7 @@ import type { ServerClient, TopicCache } from "@cw-code/client";
 import type {
   AccountUsageSnapshot,
   AppSettings,
+  BranchMismatch,
   CliBinary,
   CliDiscoveredCandidate,
   CliDiscoverResult,
@@ -189,8 +190,9 @@ export function createCwApi(client: ServerClient, topics: TopicCache, desktop: D
       setEnabled: (name, harness, on) => call<SkillMeta>("skills.setEnabled", { name, harness, on }),
       importAll: () => call<SkillsListResult>("skills.importAll")
     },
-    getGitStatus: (sessionId) => call<GitStatus>("git.status", { sessionId }),
-    onGitStatus: (cb) => subscribe("git.statusChanged", cb),
+    refreshGit: (sessionId) => callVoid("git.refresh", { sessionId }),
+    checkBranchMismatch: (sessionId) => call<BranchMismatch | null>("git.checkMismatch", { sessionId }),
+    keepFolderHead: (sessionId) => call<string | null>("git.keepFolderHead", { sessionId }),
     listGitBranches: (sessionId) => call<GitBranchInfo[]>("git.branches", { sessionId }),
     listProjectBranches: (projectId) => call<GitBranchInfo[]>("git.projectBranches", { projectId }),
     switchGitBranch: (sessionId, branch) => call<GitStatus>("git.switchBranch", { sessionId, branch }),

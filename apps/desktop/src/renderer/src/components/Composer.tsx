@@ -2,11 +2,10 @@ import { useEffect, type ReactNode } from "react";
 import type { DriverName } from "../cw.js";
 import { useAppStore, DEFAULT_COMPOSER } from "../stores/appStore.js";
 import { usePanelStore } from "../stores/panelStore.js";
-import { useBranchStore } from "../stores/branchStore.js";
 import { useSessionSkillsStore } from "../stores/sessionSkillsStore.js";
 import { ComposerView, type ComposerBackend } from "./ComposerView.js";
 import { useAppSettings } from "./useAppSettings.js";
-import { useBranchMismatch } from "./useBranchMismatch.js";
+import { useBranchMismatch } from "./useGit.js";
 import { ContextRing } from "./ContextRing.js";
 import { restoreConfirm } from "./sessionLifecycle.js";
 import { useThreadEntry } from "./useThread.js";
@@ -31,7 +30,7 @@ export function Composer({ sessionId, driver, top }: { sessionId: string; driver
   const effectivePermissionMode = session?.effectivePermissionMode;
 
   const settings = useAppSettings();
-  const { mismatch } = useBranchMismatch(sessionId);
+  const mismatch = useBranchMismatch(sessionId);
 
   useEffect(() => {
     void useAppStore.getState().ensureComposer(sessionId);
@@ -46,10 +45,10 @@ export function Composer({ sessionId, driver, top }: { sessionId: string; driver
     branchGuard: {
       mismatch,
       switchBranch: async () => {
-        if (mismatch) await useBranchStore.getState().switchToSessionBranch(sessionId, mismatch.sessionBranch);
+        if (mismatch) await window.cw.switchGitBranch(sessionId, mismatch.sessionBranch);
       },
-      acceptFolderHead: () => useBranchStore.getState().acceptFolderHead(sessionId),
-      refreshMismatch: () => useBranchStore.getState().refreshMismatch(sessionId)
+      acceptFolderHead: () => window.cw.keepFolderHead(sessionId),
+      refreshMismatch: () => window.cw.checkBranchMismatch(sessionId)
     },
     loadModels: () => window.cw.listModels(sessionId),
     loadPermissions: () => window.cw.listPermissions(sessionId),

@@ -1,13 +1,12 @@
 import { Fragment, type MouseEvent as ReactMouseEvent } from "react";
 import type { DockableTabId } from "@cw-code/contracts";
 import type { DriverName } from "../cw.js";
-import { useAppStore } from "../stores/appStore.js";
 import { resolveBottomActive, rightOpenTabs } from "../stores/panelLayout.js";
 import { selectSessionPanel, usePanelStore } from "../stores/panelStore.js";
 import { DriverIcon } from "./DriverIcon.js";
 import { PanelToggles } from "./PanelToggles.js";
 import { endTabDrag, startTabDrag, useDockDrop } from "./useDockDrop.js";
-import { branchMismatch } from "./sessionBranch.js";
+import { useBranchMismatch, useGitStatus } from "./useGit.js";
 import { useLinkedPrs } from "./useLinkedPr.js";
 import { TOOL_TABS, isHarnessTabId } from "./toolTabs.js";
 import { checkCountsTone, checksTone, railGroups, type RailDotTone } from "./railTools.js";
@@ -19,9 +18,10 @@ export interface SubagentStats {
 }
 
 function PrDot({ sessionId }: { sessionId: string }) {
-  const { items, session } = useLinkedPrs(sessionId);
-  const gitStatus = useAppStore((s) => s.gitStatusBySession[sessionId]);
-  const fallback = branchMismatch(session, gitStatus) ? undefined : gitStatus?.pullRequest?.checks;
+  const { items } = useLinkedPrs(sessionId);
+  const gitStatus = useGitStatus(sessionId);
+  const mismatch = useBranchMismatch(sessionId);
+  const fallback = mismatch ? undefined : gitStatus?.pullRequest?.checks;
   const linked = checksTone(items.flatMap((item) => (item.summary ?? item.detail)?.ci ?? []));
   const tone: RailDotTone | null = linked ?? checkCountsTone(fallback);
   if (tone === null) return null;
@@ -29,7 +29,7 @@ function PrDot({ sessionId }: { sessionId: string }) {
 }
 
 function DiffBadge({ sessionId }: { sessionId: string }) {
-  const dirtyCount = useAppStore((s) => s.gitStatusBySession[sessionId]?.dirtyCount ?? 0);
+  const dirtyCount = useGitStatus(sessionId)?.dirtyCount ?? 0;
   if (dirtyCount === 0) return null;
   return <span className="rail-badge" aria-hidden="true">{dirtyCount > 99 ? "99+" : dirtyCount}</span>;
 }

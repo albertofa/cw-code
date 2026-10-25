@@ -1,5 +1,6 @@
 import type { CommandInvocation, ComposerPrefs, PrRef } from "@cw-code/contracts";
 import type { SessionManager } from "../sessions/SessionManager.js";
+import type { GitTopic } from "../sourceControl/GitTopic.js";
 import { notifyAll, type ThreadService } from "./ThreadService.js";
 
 export interface StartTurnInput {
@@ -16,6 +17,7 @@ export interface StartTurnInput {
 export interface TurnServiceDeps {
   sessions: Pick<SessionManager, "assertCanStartTurn" | "startTurn" | "interrupt" | "listActiveTurns">;
   threads: ThreadService;
+  git: Pick<GitTopic, "keptFolderHead">;
 }
 
 interface StartingTurn {
@@ -31,6 +33,7 @@ export class TurnService {
 
   async start(sessionId: string, prompt: string, input: StartTurnInput = {}): Promise<string> {
     const { auto = false, ...options } = input;
+    options.acceptFolderHead ??= this.deps.git.keptFolderHead(sessionId) ?? undefined;
     this.deps.sessions.assertCanStartTurn(sessionId);
     const begun = this.deps.threads.beginTurn(sessionId, prompt, auto);
     const starting: StartingTurn = { stopRequested: false };

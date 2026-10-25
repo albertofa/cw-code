@@ -16,6 +16,7 @@ import { harnessLabel } from "./toolTabs.js";
 import { findSession, useSessionPrItems } from "./useLinkedPr.js";
 import { formatCostUsd, useNow } from "./usageFormat.js";
 import { totals } from "./usageModel.js";
+import { useGitStatus } from "./useGit.js";
 import { useThreadEntry, useThreadItemsSelect } from "./useThread.js";
 import { sameItems } from "../server/sidebarData.js";
 import "./sessionOverview.css";
@@ -138,7 +139,7 @@ function PullRequestRow({ sessionId, githubError }: { sessionId: string; githubE
 }
 
 function WorkspaceSection({ sessionId }: { sessionId: string }) {
-  const status = useAppStore((s) => s.gitStatusBySession[sessionId]);
+  const status = useGitStatus(sessionId);
   const summary = status?.available ? (status.isWorktree ? "worktree" : "checkout") : undefined;
   return (
     <Section icon={<GitBranch size={14} aria-hidden="true" />} title="Workspace" summary={summary}>

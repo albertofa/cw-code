@@ -8,7 +8,7 @@ import { TurnService, type TurnServiceDeps } from "./TurnService.js";
 
 type Sessions = TurnServiceDeps["sessions"];
 
-function setup(startTurn: Sessions["startTurn"]) {
+function setup(startTurn: Sessions["startTurn"], keptHeads: Record<string, string> = {}) {
   const log: string[] = [];
   const hub = new TopicHub((_clientIds, frame) => {
     const { ops } = JSON.parse(frame) as { ops: TopicOp[] };
@@ -41,7 +41,7 @@ function setup(startTurn: Sessions["startTurn"]) {
     },
     listActiveTurns: () => [...active]
   };
-  const turns = new TurnService({ sessions, threads });
+  const turns = new TurnService({ sessions, threads, git: { keptFolderHead: (sessionId) => keptHeads[sessionId] ?? null } });
   const topic = sessionTopic("s1");
   hub.subscribe({ clientId: "c1", client: "web", auth: { kind: "owner" } }, [topic]);
   const snapshot = (): ThreadTopicData => hub.subscribe({ clientId: "c1", client: "web", auth: { kind: "owner" } }, [topic])[topic].data as ThreadTopicData;
@@ -158,6 +158,35 @@ describe("TurnService", () => {
     expect(calls).toBe(0);
     expect(ctx.log.length).toBe(before);
     expect(ctx.threads.runtime("missing").busy).toBe(false);
+  });
+
+  test("start accepts the kept folder head unless the caller passes one", async () => {
+    const accepted: Array<string | undefined> = [];
+    const ctx = setup(
+      async (_sessionId, prompt, options) => {
+        accepted.push(options?.acceptFolderHead);
+        const turnId = `turn-${accepted.length}`;
+        ctx.markStarted(turnId, prompt);
+        ctx.threads.onDriverEvent("s1", {
+          type: "turn.done",
+          turnId,
+          sessionId: "s1",
+          resumeCursor: "c",
+          resultText: "",
+          usage: [],
+          numTurns: 1,
+          isError: false,
+          backgroundTasks: 0
+        });
+        return turnId;
+      },
+      { s1: "feature" }
+    );
+
+    await ctx.turns.start("s1", "kept", {});
+    await ctx.turns.start("s1", "explicit", { acceptFolderHead: "main" });
+
+    expect(accepted).toEqual(["feature", "main"]);
   });
 
   test("stop interrupts a running turn and does nothing when idle", async () => {

@@ -3,7 +3,7 @@ import type { ServerApp } from "../app/ServerApp.js";
 import type { GitService } from "../fs/GitService.js";
 import type { SessionManager } from "../sessions/SessionManager.js";
 import type { Router } from "../transport/Router.js";
-import { handle, parseArgs, parseString } from "./shared.js";
+import { handle, knownSessionId, parseArgs, parseString } from "./shared.js";
 
 async function sessionDiffBase(sessions: SessionManager, git: GitService, sessionId: string): Promise<string | undefined> {
   const { root, baseRef } = await sessions.sessionStatusContext(sessionId);
@@ -27,6 +27,22 @@ export function registerGitHandlers(router: Router, app: ServerApp): void {
     if (!status) throw new Error(sourceControl.failure(sessionId) ?? `git status is not available for session ${sessionId}`);
     return status;
   });
+  handle(router, "git.refresh", async (raw) => {
+    const { sessions, sourceControl } = services();
+    await sourceControl.refresh(knownSessionId(sessions, parseArgs(raw, "git.refresh").sessionId));
+  });
+  handle(router, "git.checkMismatch", async (raw) => {
+    const { sessions, sourceControl, gitTopic } = services();
+    const sessionId = knownSessionId(sessions, parseArgs(raw, "git.checkMismatch").sessionId);
+    await sourceControl.refresh(sessionId);
+    return gitTopic.mismatch(sessionId);
+  });
+  handle(router, "git.keepFolderHead", async (raw) => {
+    const { sessions, sourceControl, gitTopic } = services();
+    const sessionId = knownSessionId(sessions, parseArgs(raw, "git.keepFolderHead").sessionId);
+    await sourceControl.refresh(sessionId);
+    return gitTopic.keepFolderHead(sessionId);
+  });
   handle<{ sessionId: string }>(router, "git.branches", (args) => {
     const { sessions, git } = services();
     return sessions.ensureWorktree(args.sessionId).then((root) => git.branches(root));
@@ -35,12 +51,7 @@ export function registerGitHandlers(router: Router, app: ServerApp): void {
     const { sessions, git } = services();
     return git.branches(sessions.rootForProject(args.projectId));
   });
-  handle<{ sessionId: string; branch: string }>(router, "git.switchBranch", async (args) => {
-    const { sessions, sourceControl } = services();
-    const result = await sessions.switchBranch(args.sessionId, args.branch);
-    void sourceControl.refresh(args.sessionId, { forcePullRequest: true });
-    return result;
-  });
+  handle<{ sessionId: string; branch: string }>(router, "git.switchBranch", (args) => services().sessions.switchBranch(args.sessionId, args.branch));
   handle<{ sessionId: string; mode: GitDiffMode; baseRef?: string }>(router, "git.diff", async (args) => {
     const { sessions, git } = services();
     const root = await sessions.ensureWorktree(args.sessionId);
@@ -53,10 +64,7 @@ export function registerGitHandlers(router: Router, app: ServerApp): void {
   handle<{ sessionId: string; turnId: string; expectedEndSha: string }>(router, "git.undoTurn", async (args) => {
     if (typeof args.turnId !== "string" || !args.turnId) throw new Error("invalid turnId");
     if (typeof args.expectedEndSha !== "string" || !args.expectedEndSha) throw new Error("invalid expectedEndSha");
-    const { sessions, sourceControl } = services();
-    const result = await sessions.undoTurn(args.sessionId, args.turnId, args.expectedEndSha);
-    void sourceControl.refresh(args.sessionId, { forcePullRequest: true });
-    return result;
+    return services().sessions.undoTurn(args.sessionId, args.turnId, args.expectedEndSha);
   });
   handle<{ projectId?: string }>(router, "git.health", (args) => {
     const { sessions, git } = services();
@@ -64,16 +72,9 @@ export function registerGitHandlers(router: Router, app: ServerApp): void {
     const project = sessions.getProject(args.projectId);
     return git.health(project.rootPath, project);
   });
-  handle<{ projectId: string; account: { host: string; login: string } | null }>(router, "git.setProjectAccount", (args) => {
-    const { sessions, sourceControl } = services();
-    const project = sessions.setProjectGitHubAccount(args.projectId, args.account);
-    for (const session of sessions.listAllSessions()) {
-      if (session.projectId === project.id && session.status !== "resolved" && session.status !== "archived") {
-        void sourceControl.refresh(session.id, { forcePullRequest: true });
-      }
-    }
-    return project;
-  });
+  handle<{ projectId: string; account: { host: string; login: string } | null }>(router, "git.setProjectAccount", (args) =>
+    services().sessions.setProjectGitHubAccount(args.projectId, args.account)
+  );
   handle<{ projectId: string; name: string; email: string }>(router, "git.setIdentity", (args) => {
     const { sessions, git } = services();
     return git.setRepositoryIdentity(sessions.rootForProject(args.projectId), args.name, args.email);

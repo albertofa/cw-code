@@ -234,7 +234,6 @@ export function TurnChangesCard({ sessionId, snapshot }: { sessionId: string; sn
     } finally {
       setPhase("idle");
       refetch();
-      void useAppStore.getState().refreshGitStatus(sessionId);
     }
   };
 

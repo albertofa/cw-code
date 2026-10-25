@@ -465,7 +465,8 @@ describe("AutoFollowUpEngine with the real thread and turn services", () => {
         interrupt: () => {},
         listActiveTurns: () => []
       },
-      threads
+      threads,
+      git: { keptFolderHead: () => null }
     });
     let sneak = options.sneakInUserTurn ?? false;
     let userTurn: BegunTurn | null = null;

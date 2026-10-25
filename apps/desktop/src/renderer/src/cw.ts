@@ -4,6 +4,7 @@ import type {
   AccountUsageSnapshot,
   AccountUsageState,
   AccountUsageUnavailableReason,
+  BranchMismatch,
   CliBinary,
   HarnessAvailability,
   LegacyPreferences,
@@ -658,8 +659,9 @@ export interface CwApi {
     setEnabled(name: string, harness: HarnessId, on: boolean): Promise<SkillMeta>;
     importAll(): Promise<SkillsListResult>;
   };
-  getGitStatus(sessionId: string): Promise<GitStatus>;
-  onGitStatus(cb: (update: GitStatusUpdate) => void): () => void;
+  refreshGit(sessionId: string): Promise<void>;
+  checkBranchMismatch(sessionId: string): Promise<BranchMismatch | null>;
+  keepFolderHead(sessionId: string): Promise<string | null>;
   listGitBranches(sessionId: string): Promise<GitBranchInfo[]>;
   listProjectBranches(projectId: string): Promise<GitBranchInfo[]>;
   switchGitBranch(sessionId: string, branch: string): Promise<GitStatus>;

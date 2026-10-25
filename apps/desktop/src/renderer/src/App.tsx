@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
 import { applyAppearance } from "./appearanceFonts.js";
 import { ThemeSync } from "./components/ThemeSync.js";
 import { HarnessNotices } from "./components/HarnessNotices.js";
@@ -36,10 +36,9 @@ import { usePrStore } from "./stores/prStore.js";
 import { useSkillsStore } from "./stores/skillsStore.js";
 import { projectDirty, useSettingsDraftStore } from "./stores/settingsDraftStore.js";
 import { prKey } from "./components/prInbox.js";
-import { gitTopic } from "@cw-code/shared/topics";
 import { startAppBridge } from "./server/appBridge.js";
 import { startSidebarBridge } from "./server/sidebarBridge.js";
-import { useDocumentVisible, useTopics } from "./server/useTopics.js";
+import { useHoldGit } from "./components/useGit.js";
 
 const RIGHT_WIDTH_DEFAULT = 520;
 const SIDE_WIDTH_DEFAULT = 320;
@@ -121,7 +120,6 @@ export function App() {
     const offSidebar = startSidebarBridge();
     const offSkills = window.cw.onSkillsChanged((result) => useSkillsStore.getState().applyList(result));
     const offComposer = window.cw.onComposerChanged(({ sessionId, prefs }) => useAppStore.getState().applyComposer(sessionId, prefs));
-    const offGitStatus = window.cw.onGitStatus(({ sessionId, status }) => useAppStore.getState().applyGitStatus(sessionId, status));
     const offUpdates = useAppStore.getState().subscribeUpdates();
     const offShutdown = window.cw.shutdown.onRequested(() => void handleQuitRequest());
     const offShutdownExpired = window.cw.shutdown.onExpired(() => handleShutdownExpired());
@@ -158,7 +156,6 @@ export function App() {
       offSidebar();
       offSkills();
       offComposer();
-      offGitStatus();
       offUpdates();
       offShutdown();
       offShutdownExpired();
@@ -167,21 +164,7 @@ export function App() {
   }, []);
 
 
-  const documentVisible = useDocumentVisible();
-  const gitTopics = useMemo(
-    () => (documentVisible && activeSessionId ? [gitTopic(activeSessionId)] : []),
-    [documentVisible, activeSessionId]
-  );
-  useTopics(gitTopics);
-
-  useEffect(() => {
-    const onFocus = () => {
-      const { activeSessionId: sessionId, refreshGitStatus } = useAppStore.getState();
-      if (sessionId) void refreshGitStatus(sessionId);
-    };
-    window.addEventListener("focus", onFocus);
-    return () => window.removeEventListener("focus", onFocus);
-  }, []);
+  useHoldGit(activeSessionId);
 
   useEffect(() => {
     if (!activeSessionId) return;

@@ -93,10 +93,7 @@ describe("appStore applySidebar", () => {
       openSession: async (sessionId: string, reason: string) => {
         opened.push(`${sessionId}:${reason}`);
       },
-      getComposer: async () => ({}),
-      getGitStatus: async () => {
-        throw new Error("no git");
-      }
+      getComposer: async () => ({})
     };
     useAppStore.setState({
       projects: [],

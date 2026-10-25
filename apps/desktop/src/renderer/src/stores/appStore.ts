@@ -7,7 +7,6 @@ import type {
   CreateSessionOptions,
   CustomTheme,
   DriverName,
-  GitStatus,
   ImportSessionRequest,
   PrRef,
   Project,
@@ -32,13 +31,10 @@ import { fallbackHarness } from "../components/harnessAvailability.js";
 import { projectDriver, withProjectPrefs } from "../components/projectDefaults.js";
 import { useNotifs } from "../components/Notifications.js";
 import { ipcErrorMessage } from "../components/ipcError.js";
-import { currentCheckoutSessionIds } from "../components/sessionBranch.js";
 import { sameItems, sessionsByProjectOf } from "../server/sidebarData.js";
 import { isThreadBusy } from "../components/useThread.js";
-import { useBranchStore } from "./branchStore.js";
 import { shouldApplyUpdateState } from "./updateThrottle.js";
 
-const GIT_REFRESH_BATCH = 6;
 let lastUpdateAppliedAt = 0;
 let pendingPromptInFlight = false;
 
@@ -46,20 +42,6 @@ export class NewSessionRefusedError extends Error {
   constructor(message: string) {
     super(message);
     this.name = "NewSessionRefusedError";
-  }
-}
-
-interface GitStatusTracker {
-  issued: number;
-  applied: number;
-  latest: Promise<void>;
-}
-
-const gitStatusTrackers = new Map<string, GitStatusTracker>();
-
-async function refreshGitStatusInBatches(ids: string[], refresh: (id: string) => Promise<void>): Promise<void> {
-  for (let i = 0; i < ids.length; i += GIT_REFRESH_BATCH) {
-    await Promise.all(ids.slice(i, i + GIT_REFRESH_BATCH).map((id) => refresh(id)));
   }
 }
 
@@ -186,10 +168,6 @@ interface AppState {
   newSessionError: string | null;
   setPendingPrefs(prefs: ComposerPrefs): void;
   setPendingWorkspace(options: CreateSessionOptions): void;
-  gitStatusBySession: Record<string, GitStatus>;
-  refreshGitStatus(sessionId: string): Promise<void>;
-  applyGitStatus(sessionId: string, status: GitStatus): void;
-  refreshProjectCheckoutGitStatus(sessionId: string): Promise<void>;
   sourceControlRefreshIntervalSeconds: number;
   prRefreshIntervalSeconds: number;
   defaultUseWorktree: boolean;
@@ -275,7 +253,6 @@ export const useAppStore = create<AppState>((set, get) => ({
   pendingPrefs: { ...DEFAULT_COMPOSER },
   pendingWorkspace: defaultWorkspace(true),
   newSessionError: null,
-  gitStatusBySession: {},
   sourceControlRefreshIntervalSeconds: 30,
   prRefreshIntervalSeconds: 120,
   defaultUseWorktree: true,
@@ -333,45 +310,6 @@ export const useAppStore = create<AppState>((set, get) => ({
     set({ pendingWorkspace: { ...get().pendingWorkspace, ...options }, newSessionError: null });
   },
 
-  applyGitStatus(sessionId: string, status: GitStatus) {
-    const tracker = gitStatusTrackers.get(sessionId);
-    if (tracker) tracker.applied = tracker.issued;
-    set({ gitStatusBySession: { ...get().gitStatusBySession, [sessionId]: status } });
-    useBranchStore.getState().reconcileKeptHead(sessionId, status);
-  },
-
-  async refreshGitStatus(sessionId: string) {
-    const tracker = gitStatusTrackers.get(sessionId) ?? { issued: 0, applied: 0, latest: Promise.resolve() };
-    const sequence = tracker.issued + 1;
-    const run = (async () => {
-      try {
-        const status = await window.cw.getGitStatus(sessionId);
-        if (sequence <= tracker.applied) return;
-        tracker.applied = sequence;
-        set({ gitStatusBySession: { ...get().gitStatusBySession, [sessionId]: status } });
-        useBranchStore.getState().reconcileKeptHead(sessionId, status);
-      } catch (err) {
-        console.warn(`git status refresh failed for ${sessionId}: ${ipcErrorMessage(err)}`);
-      }
-    })();
-    tracker.issued = sequence;
-    tracker.latest = run;
-    gitStatusTrackers.set(sessionId, tracker);
-    await run;
-    if (tracker.issued !== sequence) await tracker.latest;
-  },
-
-  async refreshProjectCheckoutGitStatus(sessionId: string) {
-    const session = Object.values(get().sessionsByProject)
-      .flat()
-      .find((item) => item.id === sessionId);
-    const siblings = session && !session.worktreePath
-      ? currentCheckoutSessionIds(get().sessionsByProject[session.projectId] ?? []).filter((id) => id !== sessionId)
-      : [];
-    void refreshGitStatusInBatches(siblings, (id) => get().refreshGitStatus(id));
-    await get().refreshGitStatus(sessionId);
-  },
-
   previewBySession: {},
 
   homeDir: null,
@@ -427,7 +365,6 @@ export const useAppStore = create<AppState>((set, get) => ({
       );
     }
     void get().ensureComposer(picked.id);
-    void get().refreshGitStatus(picked.id);
   },
 
   async addProject(rootPath: string) {
@@ -498,7 +435,6 @@ export const useAppStore = create<AppState>((set, get) => ({
       ...(ownerId && ownerId !== get().activeProjectId ? { activeProjectId: ownerId } : {})
     });
     void get().ensureComposer(sessionId);
-    void get().refreshGitStatus(sessionId);
   },
 
   startNewSession(driver?: DriverName) {
@@ -644,8 +580,6 @@ export const useAppStore = create<AppState>((set, get) => ({
   async setProjectGitHubAccount(projectId: string, account: { host: string; login: string } | null) {
     const updated = await window.cw.setProjectGitHubAccount(projectId, account);
     set({ projects: get().projects.map((project) => project.id === projectId ? updated : project) });
-    const ids = (get().sessionsByProject[projectId] ?? []).map((session) => session.id);
-    void refreshGitStatusInBatches(ids, (id) => get().refreshGitStatus(id));
   },
 
   async updateProjectSettings(projectId: string, settings: ProjectSettings) {
@@ -682,7 +616,6 @@ export const useAppStore = create<AppState>((set, get) => ({
     await selectWhenListed(session.id, () => set({ activeProjectId: projectId, activeSessionId: session.id, pendingDriver: null }));
     await get().ensureComposer(session.id);
     if (prefs) await get().setComposerPrefs(session.id, { ...prefs });
-    void get().refreshProjectCheckoutGitStatus(session.id);
     return session;
   },
 
@@ -709,7 +642,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   async sendPromptTo(sessionId: string, prompt: string, attachments?: string[], opts?: SendPromptOptions) {
     if (!prompt.trim()) return;
     const prefs = get().composerBySession[sessionId] ?? DEFAULT_COMPOSER;
-    const acceptFolderHead = opts?.acceptFolderHead ?? useBranchStore.getState().keptFolderHeadBySession[sessionId];
+    const acceptFolderHead = opts?.acceptFolderHead;
     await window.cw.startTurn(sessionId, prompt, {
       prefs,
       attachments,

@@ -1,4 +1,4 @@
-import type { GitStatusUpdate, ThreadEvent } from "@cw-code/contracts";
+import type { ThreadEvent } from "@cw-code/contracts";
 import { filesTopic, GITHUB_RUNS_TOPIC, topicId, USAGE_TOPIC } from "@cw-code/shared/topics";
 import type { ClientInputs } from "../app/clientInputs.js";
 import type { Services } from "../app/services.js";
@@ -6,7 +6,6 @@ import { MAX_WATCHED_RUNS } from "../github/RunWatcher.js";
 import { createThreadTopicProvider, THREAD_TOPIC_PREFIX } from "../threads/threadTopic.js";
 import type { TopicHub, TopicProvider } from "./TopicHub.js";
 
-const GIT_PREFIX = "git/";
 const FILES_PREFIX = "files/";
 const PTY_PREFIX = "pty/";
 
@@ -53,11 +52,6 @@ export function createWatchControls(hub: TopicHub, services: Services, { clientI
   let filesGeneration = 0;
   const latestFilesGeneration = new Map<string, number>();
 
-  const syncWatchedGit = (): void => {
-    const sessionIds = hub.activeTopics(GIT_PREFIX).flatMap((topic) => topicId(topic, GIT_PREFIX) ?? []);
-    services.sourceControl.setWatched(sessionIds);
-  };
-
   const syncWatchedRuns = (): void => {
     const clientIds = [...hub.subscriberIds(GITHUB_RUNS_TOPIC)];
     services.githubViews.setLegacyRunRefs(clientInputs.runRefsUnion(clientIds, MAX_WATCHED_RUNS));
@@ -89,15 +83,6 @@ export function createWatchControls(hub: TopicHub, services: Services, { clientI
     if (sessionId) applyFiles(sessionId);
   };
 
-  const pushGitStatus = (clientId: string, topic: string): void => {
-    const sessionId = topicId(topic, GIT_PREFIX);
-    if (!sessionId) return;
-    const status = services.sourceControl.status(sessionId);
-    if (!status) return;
-    const update: GitStatusUpdate = { sessionId, status };
-    sendTo(clientId, "git.statusChanged", update);
-  };
-
   const pushPendingRequests = (clientId: string, topic: string): void => {
     const sessionId = topicId(topic, THREAD_TOPIC_PREFIX);
     if (!sessionId) return;
@@ -112,12 +97,7 @@ export function createWatchControls(hub: TopicHub, services: Services, { clientI
 
   const providers: TopicProvider[] = [
     emptyStoreProvider(hub, ownsExact(USAGE_TOPIC)),
-    emptyStoreProvider(hub, ownsPrefix(GIT_PREFIX), {
-      onAcquire: syncWatchedGit,
-      onRelease: syncWatchedGit,
-      onSubscribe: (clientId, topic) => pushGitStatus(clientId, topic),
-      resync: syncWatchedGit
-    }),
+    services.gitTopic,
     emptyStoreProvider(hub, ownsPrefix(FILES_PREFIX), {
       onSubscribe: (_clientId, topic) => applyFilesTopic(topic),
       onUnsubscribe: (clientId, topic) => {

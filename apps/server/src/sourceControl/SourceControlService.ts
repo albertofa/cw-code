@@ -1,5 +1,6 @@
 import type { AppSettings, GitStatus, GitStatusUpdate, PrRef, SessionMeta, ThreadEvent } from "@cw-code/contracts";
 import { prKey } from "@cw-code/shared/prRef";
+import { notifyAll } from "../events/notifyAll.js";
 import type { GitService } from "../fs/GitService.js";
 import type { PrTracker } from "../github/PrTracker.js";
 import type { SessionManager } from "../sessions/SessionManager.js";
@@ -51,6 +52,7 @@ export class SourceControlService {
   private subscribed: string[] = [];
   private workingSet: string[] = [];
   private readonly publishedListeners = new Set<(update: GitStatusUpdate) => void>();
+  private readonly failureListeners = new Set<(sessionId: string) => void>();
   private pollTimer: ReturnType<typeof setTimeout> | null = null;
   private watchGeneration = 0;
 
@@ -89,6 +91,11 @@ export class SourceControlService {
   onPublished(cb: (update: GitStatusUpdate) => void): () => void {
     this.publishedListeners.add(cb);
     return () => this.publishedListeners.delete(cb);
+  }
+
+  onFailureChanged(cb: (sessionId: string) => void): () => void {
+    this.failureListeners.add(cb);
+    return () => this.failureListeners.delete(cb);
   }
 
   refresh(sessionId: string, request: { forcePullRequest?: boolean } = {}): Promise<void> {
@@ -271,10 +278,13 @@ export class SourceControlService {
   }
 
   private publish(sessionId: string, status: GitStatus): void {
-    this.failures.delete(sessionId);
+    const recovered = this.failures.delete(sessionId);
     this.statuses.set(sessionId, status);
     const fingerprint = JSON.stringify(status);
-    if (this.fingerprints.get(sessionId) === fingerprint) return;
+    if (this.fingerprints.get(sessionId) === fingerprint) {
+      if (recovered) this.notifyFailureChanged(sessionId);
+      return;
+    }
     this.fingerprints.set(sessionId, fingerprint);
     const update: GitStatusUpdate = { sessionId, status };
     try {
@@ -292,12 +302,15 @@ export class SourceControlService {
   }
 
   private recordFailure(sessionIds: string[], message: string): void {
-    let fresh = false;
-    for (const sessionId of sessionIds) {
-      if (this.failures.get(sessionId) !== message) fresh = true;
-      this.failures.set(sessionId, message);
-    }
-    if (fresh) this.warn(`${LOG_PREFIX} ${message}`);
+    const changed = sessionIds.filter((sessionId) => this.failures.get(sessionId) !== message);
+    for (const sessionId of changed) this.failures.set(sessionId, message);
+    if (changed.length === 0) return;
+    this.warn(`${LOG_PREFIX} ${message}`);
+    for (const sessionId of changed) this.notifyFailureChanged(sessionId);
+  }
+
+  private notifyFailureChanged(sessionId: string): void {
+    notifyAll(this.failureListeners, `${LOG_PREFIX} failure`, sessionId);
   }
 
   private applyWatched(): void {

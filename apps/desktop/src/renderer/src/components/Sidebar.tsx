@@ -18,6 +18,7 @@ import { anyLinkUnseen, sessionLinks, type PrSummaryLookup } from "./sessionPrLi
 import { usePrInboxItems, usePrSummaries } from "./usePrs.js";
 import { matchesQuickFilter, matchesSessionQuery, toggleQuickFilter, type QuickFilter, type QuickFilterFacts } from "./sidebarQuickFilters.js";
 import { useSessions, useSidebarLayout } from "./useSessions.js";
+import { useGitStatus } from "./useGit.js";
 import { ipcErrorMessage } from "./ipcError.js";
 import { peekTopic } from "../server/topics.js";
 import { useMenuPosition } from "./menuPosition.js";
@@ -281,7 +282,7 @@ export function Sidebar({ onOpenSkills, skillsOpen = false, hidden = false }: { 
   const rows = useSessions();
   const layout = useSidebarLayout() ?? EMPTY_LAYOUT;
   const activeSessionId = useAppStore((s) => s.activeSessionId);
-  const gitStatusBySession = useAppStore((s) => s.gitStatusBySession);
+  const activeGitStatus = useGitStatus(activeSessionId);
   const homeDir = useAppStore((s) => s.homeDir);
   const pendingDriver = useAppStore((s) => s.pendingDriver);
   const selectStoreSession = useAppStore((s) => s.selectSession);
@@ -839,7 +840,7 @@ export function Sidebar({ onOpenSkills, skillsOpen = false, hidden = false }: { 
   };
 
   const renderFlatRow = (s: Session, section: SidebarSection) => {
-    const git = gitStatusBySession[s.id];
+    const git = s.id === activeSessionId ? activeGitStatus : null;
     const chipTitle = rowById.get(s.id)?.prBadge?.title ?? null;
     const projectName = projectNameById[s.projectId] ?? "";
     const branch = branchOf(s);

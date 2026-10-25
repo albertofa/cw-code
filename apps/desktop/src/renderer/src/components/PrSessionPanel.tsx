@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { CircleCheck, CircleX, ExternalLink, GitPullRequest, History, Link2, MessageSquare, RefreshCw, Send, Unlink } from "lucide-react";
 import type { PrDetail, PrReviewThread } from "../cw.js";
-import { useAppStore } from "../stores/appStore.js";
 import { usePrStore } from "../stores/prStore.js";
 import { PrChipBadge } from "./PrChipBadge.js";
 import { mergeBoxState, threadQuoteText, type MergeRow } from "./prDetailModel.js";
@@ -12,7 +11,7 @@ import { defaultFollowUpWorkflowId, followUpWorkflow } from "./prWorkflows.js";
 import { updatesSince } from "./prUpdates.js";
 import { PrUpdateIcon } from "./PrUpdateIcon.js";
 import { PrPanelSkeleton } from "./GitHubSkeletons.js";
-import { branchMismatch } from "./sessionBranch.js";
+import { useBranchMismatch, useGitStatus } from "./useGit.js";
 import { canLinkItem, sessionPrItemLabel, sessionPrItemsTitle, type SessionPrItem } from "./sessionPrItems.js";
 import { displayChip, mostUrgentLink, prRefLabel } from "./sessionPrLinks.js";
 import { useLinkedPrs, useSessionPrItems } from "./useLinkedPr.js";
@@ -62,8 +61,9 @@ function ThreadRow({ thread, onSend }: { thread: PrReviewThread; onSend: () => v
 function useSelectedLinkedPr(sessionId: string) {
   const linked = useLinkedPrs(sessionId);
   const selectedKey = usePrStore((s) => s.selectedPrKeyBySession[sessionId] ?? null);
-  const gitStatus = useAppStore((s) => s.gitStatusBySession[sessionId]);
-  const gitPr = branchMismatch(linked.session, gitStatus) ? null : (gitStatus?.pullRequest ?? null);
+  const gitStatus = useGitStatus(sessionId);
+  const mismatch = useBranchMismatch(sessionId);
+  const gitPr = mismatch ? null : (gitStatus?.pullRequest ?? null);
   const links = useMemo(() => linked.items.map((item) => item.link), [linked.items]);
   const urgent = useMemo(() => mostUrgentLink(links, linked.summaryByKey, gitPr), [links, linked.summaryByKey, gitPr]);
   const urgentKey = urgent ? prKey(urgent.ref) : null;
