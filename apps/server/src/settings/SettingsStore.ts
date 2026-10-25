@@ -55,10 +55,10 @@ const VALID_PR_CONDITIONS: readonly PrSuggestCondition[] = [
   "run-failed"
 ];
 const VALID_WORKFLOW_TARGETS: readonly PrWorkflow["target"][] = ["pr", "issue", "run"];
-const VALID_PR_WORKSPACES: readonly PrWorkspaceChoice[] = ["checkout", "worktree", "linked"];
+export const VALID_PR_WORKSPACES: readonly PrWorkspaceChoice[] = ["checkout", "worktree", "linked"];
 const VALID_DRIVERS: readonly DriverKind[] = ["claude", "opencode", "codex"];
-const VALID_EFFORTS: readonly EffortLevel[] = ["minimal", "low", "medium", "high", "xhigh", "max"];
-const VALID_PERMISSION_MODES: readonly PermissionMode[] = ["auto", "acceptEdits", "bypassPermissions", "manual"];
+export const VALID_EFFORTS: readonly EffortLevel[] = ["minimal", "low", "medium", "high", "xhigh", "max"];
+export const VALID_PERMISSION_MODES: readonly PermissionMode[] = ["auto", "acceptEdits", "bypassPermissions", "manual"];
 const VALID_VIEW_KINDS: readonly GitHubKind[] = ["pr", "issue", "run"];
 const VALID_VIEW_GROUPS: readonly GitHubViewGroup[] = ["triage", "repo", "none"];
 const VALID_THEME_BASES: readonly ThemeBase[] = ["dark", "light"];
@@ -92,7 +92,7 @@ function oneOf<T extends string>(value: unknown, allowed: readonly T[]): T | nul
   return allowed.includes(value as T) ? (value as T) : null;
 }
 
-function sanitizeWorkflowHarness(raw: unknown): PrWorkflowHarness {
+export function sanitizeWorkflowHarness(raw: unknown): PrWorkflowHarness {
   const o = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
   const driver = oneOf(o.driver, VALID_DRIVERS);
   return {

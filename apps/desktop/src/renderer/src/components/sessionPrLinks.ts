@@ -17,3 +17,8 @@ export function linkFor(session: LinkedSession | undefined, ref: PrRef): Session
   const key = prKey(ref);
   return sessionLinks(session).find((link) => prKey(link.ref) === key);
 }
+
+export function linkWithWorkflow(session: LinkedSession | undefined, ref: PrRef, workflowId: string): SessionPrLink | null {
+  const link = linkFor(session, ref);
+  return link && link.workflowId !== workflowId ? { ...link, workflowId } : null;
+}

@@ -80,6 +80,7 @@ function dockItem(session: SessionMeta, link: SessionPrLink, { sources, settings
     detail && workflow && !logsNeeded && updates.length > 0
       ? followUpPrompt(detail, link, workflow, updates, settings, harnessLabel(session.driver))
       : null;
+  const mode = followUpMode(session, link, pr, workflow, workflows, babysit);
   return {
     entry: {
       key,
@@ -92,7 +93,8 @@ function dockItem(session: SessionMeta, link: SessionPrLink, { sources, settings
       prompt,
       unseen: pr !== null && hasUnseen(pr, link),
       error: sources.detailError(key),
-      autoHint: autoHint(followUpMode(session, link, pr, workflow, workflows, babysit), updates)
+      autoHint: autoHint(mode, updates),
+      mode: mode.kind
     },
     seenHead: detail?.headRefOid ?? summary?.headRefOid ?? null,
     seenAt: seenThrough(detail ?? summary, updates)

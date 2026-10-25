@@ -1,5 +1,5 @@
-import type { WorkflowSubject } from "./github.js";
-import type { PrWorkflowHarness, PrWorkspaceChoice } from "./pullRequests.js";
+import type { IssueDetail, WorkflowRunSummary, WorkflowSubject } from "./github.js";
+import type { PrRef, PrSummary, PrWorkflowHarness, PrWorkspaceChoice } from "./pullRequests.js";
 import type { ComposerPrefs, DriverKind, EffortLevel, PermissionMode } from "./session.js";
 
 export interface ResolvedWorkflowHarness {
@@ -46,6 +46,9 @@ export interface WorkflowPreviewRequest {
 export interface WorkflowPreview {
   activeWorkflowId: string;
   pickableWorkflowIds: string[];
+  babysitLocked: boolean;
+  startsContinuous: boolean;
+  adoptsLink: boolean;
   subject: WorkflowSubject;
   subjectLabel: string;
   updateMode: boolean;
@@ -55,10 +58,13 @@ export interface WorkflowPreview {
   projectId: string | null;
   needsClone: boolean;
   workspace: PrWorkspaceChoice;
-  linkedWorktreeAvailable: boolean;
+  linkedWorktreeSessionId: string | null;
   driverMissing: boolean;
   harness: WorkflowHarnessResult | null;
   base: WorkflowBase | null;
+  pr: PrSummary | null;
+  issue: IssueDetail | null;
+  run: WorkflowRunSummary | null;
   loaded: boolean;
   error: string | null;
   logsNeeded: boolean;
@@ -66,6 +72,22 @@ export interface WorkflowPreview {
   logsError: string | null;
   prompt: string | null;
   revision: string;
+}
+
+export interface WorkflowTemplatePreviewRequest {
+  template: string;
+  ref: PrRef;
+  driver: DriverKind;
+  attribution: string;
+}
+
+export interface WorkflowTemplatePreview {
+  text: string | null;
+  loaded: boolean;
+  error: string | null;
+  logsNeeded: boolean;
+  logsReady: boolean;
+  logsError: string | null;
 }
 
 export interface WorkflowRunResume {

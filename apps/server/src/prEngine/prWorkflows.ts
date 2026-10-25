@@ -1,11 +1,9 @@
 import type {
-  AppSettings,
   IssueComment,
   IssueDetail,
   PrCheck,
   PrDetail,
   PrRef,
-  PrSuggestCondition,
   PrSummary,
   PrUpdate,
   PrWorkflow,
@@ -17,6 +15,7 @@ import type {
   WorkflowRunSummary
 } from "@cw-code/contracts";
 import { autoFollowUpWorkflow } from "@cw-code/shared/autoFollowUp";
+import { suggestedWorkflow } from "@cw-code/shared/workflowSuggestions";
 import { linkFor, pickMainSession } from "./sessionPrLinks.js";
 
 const ISSUE_COMMENTS_LIMIT = 10;
@@ -28,10 +27,6 @@ const ISSUE_COMMENT_MAX_CHARS = 2_000;
 const TRUNCATION_MARKER = "[…truncated]";
 
 const FAILED_JOB_CONCLUSIONS: ReadonlySet<RunJob["conclusion"]> = new Set(["failure", "timed_out", "startup_failure"]);
-
-export function resolveTemplate(template: string, vars: Record<string, string>): string {
-  return template.replace(/\{\{\s*([\w.]+)\s*\}\}/g, (match, name: string) => (name in vars ? vars[name] : match));
-}
 
 function formatThreads(threads: PrDetail["threads"]): string {
   return threads
@@ -189,36 +184,6 @@ export async function loadRunFailedLogs(ref: RunRef, fetchLog: RunLogFetcher): P
 function capFailedLogs(sections: string[]): string {
   const joined = sections.join("\n\n");
   return joined.length > FAILED_LOGS_TOTAL_CHARS ? `${joined.slice(0, FAILED_LOGS_TOTAL_CHARS)}\n[…more logs truncated]` : joined;
-}
-
-export function attributionText(settings: Pick<AppSettings, "prAttributionEnabled" | "prAttributionText">, harness: string): string {
-  if (!settings.prAttributionEnabled) return "";
-  return resolveTemplate(settings.prAttributionText, { harness });
-}
-
-export function matchesCondition(pr: PrSummary, c: PrSuggestCondition): boolean {
-  switch (c) {
-    case "review-requested":
-      return !pr.viewerIsAuthor && pr.reviewRequestedFromViewer;
-    case "author":
-      return pr.viewerIsAuthor;
-    case "checks-failing":
-      return pr.ci === "failing";
-    case "changes-requested":
-      return pr.review === "changes_requested";
-    case "conflicts":
-      return pr.mergeable === "CONFLICTING";
-    case "bot-author":
-      return pr.author.isBot;
-    case "draft":
-      return pr.isDraft;
-    default:
-      return false;
-  }
-}
-
-export function suggestedWorkflow(pr: PrSummary, workflows: PrWorkflow[]): PrWorkflow | null {
-  return workflows.find((w) => w.enabled && w.suggestWhen.some((c) => matchesCondition(pr, c))) ?? null;
 }
 
 export function babysittingSession<S extends Pick<SessionMeta, "status" | "prs">>(

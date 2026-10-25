@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { orderedEntries, type TopicState } from "@cw-code/client";
 import type { GitHubRow, GitHubViewTopicData } from "@cw-code/contracts";
 import { addQualifier, normalizeQuery, queryProblems } from "@cw-code/shared/githubQueryDsl";
+import { projectIdFor } from "@cw-code/shared/prRef";
 import { githubViewTopic } from "@cw-code/shared/topics";
 import type { GitHubKind, GitHubViewGroup, IssueSummary, PrSummary, RepoRef, WorkflowRunSummary } from "../cw.js";
 import { useTopic } from "../server/topics.js";
@@ -15,7 +16,7 @@ import { GitHubToolbar } from "./GitHubToolbar.js";
 import { GitHubViewMenu } from "./GitHubViewMenu.js";
 import { KIND_NOUNS, buildSuggestionSource, currentViewOf, githubProjectRepos, isViewEdited, type TabBadge } from "./githubViewModel.js";
 import { useGitHubBadges, useGitHubMetaContext, useGitHubViews } from "./useGitHubMeta.js";
-import { projectIdFor, usePrInboxItems } from "./usePrs.js";
+import { usePrInboxItems } from "./usePrs.js";
 
 type ViewTopicState = TopicState<Partial<GitHubViewTopicData>>;
 

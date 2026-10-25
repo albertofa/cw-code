@@ -1,4 +1,4 @@
-import type { PrWorkflow } from "@cw-code/contracts";
+import type { AppSettings, PrWorkflow } from "@cw-code/contracts";
 
 export const TEMPLATE_VARS = [
   "pr.number",
@@ -53,3 +53,12 @@ export const TEMPLATE_VARS_BY_TARGET: Record<PrWorkflow["target"], readonly stri
   issue: ISSUE_TEMPLATE_VARS,
   run: RUN_TEMPLATE_VARS
 };
+
+export function resolveTemplate(template: string, vars: Record<string, string>): string {
+  return template.replace(/\{\{\s*([\w.]+)\s*\}\}/g, (match, name: string) => (name in vars ? vars[name] : match));
+}
+
+export function attributionText(settings: Pick<AppSettings, "prAttributionEnabled" | "prAttributionText">, harness: string): string {
+  if (!settings.prAttributionEnabled) return "";
+  return resolveTemplate(settings.prAttributionText, { harness });
+}

@@ -147,7 +147,6 @@ function installBridge(): void {
     refreshPrInbox: async () => {},
     refreshGitHubView: async () => {},
     githubViewCounts: async () => ({}),
-    getRunLog: async () => "",
     markSessionRunSeen: async (sessionId: string) => makeSession({ id: sessionId }),
     refreshGit: async () => {},
     checkBranchMismatch: async () => null,

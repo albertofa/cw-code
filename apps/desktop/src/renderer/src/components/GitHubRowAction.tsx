@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { ChevronDown, Copy, ExternalLink, FileText, GitPullRequest } from "lucide-react";
 import type { SubjectAction, SubjectRelations, SubjectSessionActivity } from "@cw-code/contracts";
-import type { PrWorkflow, Session, WorkflowRunSummary, WorkflowSubject } from "../cw.js";
+import type { PrWorkflow, Session, WorkflowSubject } from "../cw.js";
 import { useAppStore } from "../stores/appStore.js";
 import { usePrStore } from "../stores/prStore.js";
 import { AnchoredPopover, anchorRectOf, type AnchorRect } from "./AnchoredPopover.js";
@@ -59,10 +59,6 @@ function modalSubject(subject: RowSubject, target: PrWorkflow["target"]): Workfl
   }
   if (target === "issue") return subject.kind === "issue" ? { kind: "issue", ref: subject.issue.ref } : null;
   return subject.kind === "run" ? { kind: "run", ref: subject.run.ref } : null;
-}
-
-function modalRun(subject: RowSubject, target: WorkflowSubject): WorkflowRunSummary | undefined {
-  return target.kind === "run" && subject.kind === "run" ? subject.run : undefined;
 }
 
 function suggestionSubject(subject: RowSubject, viewer: string | null): SuggestionSubject {
@@ -147,7 +143,7 @@ function ActionMenu({
     if (!target) return;
     const session = mode === "continue" ? continueSessionFor(subject, workflow.target, sessions) : null;
     onClose();
-    openRunModal({ workflowId: workflow.id, subject: target, continueSessionId: session?.id, run: modalRun(subject, target) });
+    openRunModal({ workflowId: workflow.id, subject: target, continueSessionId: session?.id });
   };
 
   const openLink = (target: string) => {
@@ -386,7 +382,7 @@ export function GitHubRowAction({
           type="button"
           className="hub-action-main"
           title={`Start a session with the ${workflow.label} workflow`}
-          onClick={() => target && openRunModal({ workflowId: workflow.id, subject: target, run: modalRun(subject, target) })}
+          onClick={() => target && openRunModal({ workflowId: workflow.id, subject: target })}
         >
           <Icon size={13} aria-hidden="true" />
           <span className="hub-action-label">{workflow.label}</span>

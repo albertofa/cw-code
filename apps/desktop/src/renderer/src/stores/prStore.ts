@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import type { DriverName, GitHubKind, PrRef, WorkflowRunSummary, WorkflowSubject } from "../cw.js";
+import type { DriverName, GitHubKind, PrRef, WorkflowSubject } from "../cw.js";
 import { prKey } from "../components/prInbox.js";
 import type { SettingsSection } from "../components/settingsSections.js";
 import { errorMessage } from "../components/errorMessage.js";
@@ -20,7 +20,6 @@ export interface RunModalState {
   subject: WorkflowSubject;
   continueSessionId?: string;
   promptOverride?: string;
-  run?: WorkflowRunSummary;
 }
 
 interface PrState {

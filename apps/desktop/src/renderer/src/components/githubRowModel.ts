@@ -15,7 +15,7 @@ import type {
   SubjectRelations,
   WorkflowRunSummary
 } from "@cw-code/contracts";
-import { suggestedWorkflow } from "./prWorkflows.js";
+import { suggestedWorkflow } from "@cw-code/shared/workflowSuggestions";
 import { formatRelativeAge } from "./prInboxModel.js";
 import { linkFor } from "./sessionPrLinks.js";
 

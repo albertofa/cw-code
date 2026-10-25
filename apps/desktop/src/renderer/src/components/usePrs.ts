@@ -7,8 +7,6 @@ import type {
   PrInboxState,
   PrRef,
   PrSummary,
-  ProjectGitHubRepo,
-  RepoRef,
   SubjectRelations
 } from "@cw-code/contracts";
 import { PRS_TOPIC, sessionTopic } from "@cw-code/shared/topics";
@@ -141,20 +139,16 @@ export function usePrInboxItems(): PrSummary[] {
   return useDerived(inboxItems);
 }
 
+export function usePrsTopicError(): string | null {
+  return useTopicSelect<string | null>(PRS_TOPIC, (state: TopicState | undefined) => (state?.status === "error" ? (state.error ?? "unknown error") : null));
+}
+
 export function useHoldPrs(): void {
   useTopicSelect(PRS_TOPIC, () => null);
 }
 
 export function useSessionBabysit(sessionId: string | null | undefined): BabysitState | null {
   return useTopicEntry<BabysitState | null>(sessionId ? sessionTopic(sessionId) : null, "babysit") ?? null;
-}
-
-export function projectIdFor(repos: ProjectGitHubRepo[], ref: RepoRef): string | null {
-  const host = ref.host.toLowerCase();
-  const owner = ref.owner.toLowerCase();
-  const repo = ref.repo.toLowerCase();
-  const match = repos.find((item) => item.host.toLowerCase() === host && item.owner.toLowerCase() === owner && item.repo.toLowerCase() === repo);
-  return match?.projectId ?? null;
 }
 
 export async function requestPrDetail(ref: PrRef): Promise<void> {

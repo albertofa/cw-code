@@ -13,8 +13,9 @@ import type {
 } from "@cw-code/contracts";
 import { AUTO_FOLLOW_UP_LIMIT, autoFollowUpWorkflow, runsContinuously, withAutomatedWorkflowNote } from "@cw-code/shared/autoFollowUp";
 import { prKey } from "@cw-code/shared/prRef";
+import { attributionText, resolveTemplate } from "@cw-code/shared/workflowTemplates";
 import { detailNeedsRefresh, seenThrough, updatesSince } from "./prUpdates.js";
-import { attributionText, resolveTemplate, templateVars } from "./prWorkflows.js";
+import { templateVars } from "./prWorkflows.js";
 import { sessionLinks, type PrSummaryLookup } from "./sessionPrLinks.js";
 
 export { AUTO_FOLLOW_UP_LIMIT };

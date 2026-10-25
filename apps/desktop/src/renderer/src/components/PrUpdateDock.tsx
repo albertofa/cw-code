@@ -8,8 +8,7 @@ import { peekTopic } from "../server/topics.js";
 import { prKey } from "./prInbox.js";
 import { formatRelativeAge } from "./prInboxModel.js";
 import { PrUpdateIcon } from "./PrUpdateIcon.js";
-import { followUpMode } from "./prWorkflows.js";
-import { linkFor, prRefLabel } from "./sessionPrLinks.js";
+import { prRefLabel } from "./sessionPrLinks.js";
 import { harnessLabel } from "./toolTabs.js";
 import { workflowIcon } from "./workflowIcons.js";
 import { useAppSettings, useAppSettingsError } from "./useAppSettings.js";
@@ -192,10 +191,9 @@ export function PrUpdateDock({ sessionId }: { sessionId: string }) {
   };
 
   const singleBabysat = single !== null && babysat(single);
-  const singleLink = single ? linkFor(session, single.entry.ref) : undefined;
-  const mode = single && singleLink ? followUpMode(session, singleLink, single.pr, single.workflow, settings?.prWorkflows ?? [], babysit) : null;
-  const continuous = mode?.kind === "start" ? mode.workflow : null;
-  const auto = mode?.kind === "auto" ? mode : null;
+  const mode = single ? single.entry.mode : null;
+  const continuous = mode === "start" ? (single?.workflow ?? null) : null;
+  const auto = mode === "auto" ? (babysit?.workflow ?? single?.workflow ?? null) : null;
 
   const send = async () => {
     if (!prompt || busy || working || alreadySent) return;
@@ -254,7 +252,7 @@ export function PrUpdateDock({ sessionId }: { sessionId: string }) {
       : continuous && single
         ? `Send this update now, then let ${continuous.label} follow up on ${prRefLabel(single.entry.ref)} by itself until it is merged or closed`
         : auto
-          ? `Send this update without waiting for ${auto.workflow.label}`
+          ? `Send this update without waiting for ${auto.label}`
           : undefined;
   const primaryDisabled = singleLogs ? busy : busy || prompt === null || working !== null || alreadySent;
   const now = Date.now();
@@ -266,13 +264,13 @@ export function PrUpdateDock({ sessionId }: { sessionId: string }) {
         : settings && sendable.length === 0
           ? "None of the changed pull requests has a prompt that can be sent together. Send each one from its section."
           : "Resolving prompt…"));
-  const footWorkflow = mode && (mode.kind === "start" || mode.kind === "once") ? mode.workflow : null;
+  const footWorkflow = mode === "start" || mode === "once" ? (single?.workflow ?? null) : null;
   const hint = single && mode ? (
-    mode.kind === "auto" ? (
-      autoHintText(single.entry.autoHint, mode.workflow)
-    ) : mode.kind === "start" ? (
+    mode === "auto" ? (
+      auto && autoHintText(single.entry.autoHint, auto)
+    ) : mode === "start" ? (
       "sends this now, then keeps following up by itself until the PR is merged or closed"
-    ) : mode.kind === "once" ? (
+    ) : mode === "once" ? (
       "sends its follow-up prompt once"
     ) : (
       "follow-up prompt unavailable"

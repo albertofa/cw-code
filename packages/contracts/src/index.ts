@@ -225,6 +225,8 @@ export type {
   WorkflowBase,
   WorkflowPreviewRequest,
   WorkflowPreview,
+  WorkflowTemplatePreviewRequest,
+  WorkflowTemplatePreview,
   WorkflowRunResume,
   WorkflowRunRequest,
   WorkflowRunStage,

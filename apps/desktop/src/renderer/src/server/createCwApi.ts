@@ -18,7 +18,6 @@ import type {
   ImportableSession,
   LegacyPreferences,
   SidebarReorderRequest,
-  IssueDetail,
   PrDetail,
   PrWorkflow,
   SavedGitHubView,
@@ -35,6 +34,9 @@ import type {
   TextSearchResult,
   TurnChanges,
   UsageReport,
+  WorkflowHarnessResult,
+  WorkflowPreview,
+  WorkflowTemplatePreview,
   WorktreePruneSummary
 } from "@cw-code/contracts";
 import { assertPasteImageSize } from "@cw-code/shared/protocol";
@@ -213,8 +215,9 @@ export function createCwApi(client: ServerClient, topics: TopicCache, desktop: D
     saveGitHubView: (input) => call<SavedGitHubView>("github.saveView", input),
     renameGitHubView: (id, name) => callVoid("github.renameView", { id, name }),
     deleteGitHubView: (id) => callVoid("github.deleteView", { id }),
-    getIssueDetail: (ref) => call<IssueDetail>("github.issueDetail", { ref }),
-    getRunLog: (ref) => call<string>("github.runLog", { ref }),
+    workflowPreview: (req) => call<WorkflowPreview>("workflows.preview", req),
+    workflowHarness: (req) => call<WorkflowHarnessResult>("workflows.resolveHarness", req),
+    workflowTemplatePreview: (req) => call<WorkflowTemplatePreview>("workflows.previewTemplate", req),
     cloneGitHubRepo: (repo) => call<Project>("github.clone", { repo }),
     linkSessionPr: (sessionId, link) => call<Session>("sessions.linkPr", { sessionId, link }),
     unlinkSessionPr: (sessionId, ref) => call<Session>("sessions.unlinkPr", { sessionId, ref }),

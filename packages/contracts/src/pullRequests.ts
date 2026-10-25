@@ -248,6 +248,7 @@ export interface PrDockEntry {
   unseen: boolean;
   error: string | null;
   autoHint: "paused" | "not-actionable" | "after-turn" | "sending" | null;
+  mode: "auto" | "start" | "once" | "none";
 }
 
 export interface PrDetailEntry {

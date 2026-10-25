@@ -18,6 +18,7 @@ import { registerStartupHandlers } from "./startup.js";
 import { registerTopicHandlers } from "./topics.js";
 import { registerTurnHandlers } from "./turns.js";
 import { registerUsageHandlers } from "./usage.js";
+import { registerWorkflowHandlers } from "./workflows.js";
 
 export function registerHandlers(router: Router, app: ServerApp): void {
   registerSessionHandlers(router, app);
@@ -32,6 +33,7 @@ export function registerHandlers(router: Router, app: ServerApp): void {
   registerSkillHandlers(router, app);
   registerCliHandlers(router, app);
   registerUsageHandlers(router, app);
+  registerWorkflowHandlers(router, app);
   registerShutdownHandlers(router, app);
   registerStartupHandlers(router, app);
   registerDebugHandlers(router);

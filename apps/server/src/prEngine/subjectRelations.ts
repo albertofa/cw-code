@@ -17,7 +17,8 @@ import type {
   WorkflowRunSummary
 } from "@cw-code/contracts";
 import { hasUnseen } from "./prUpdates.js";
-import { babysittingSession, primaryAction, suggestedWorkflow } from "./prWorkflows.js";
+import { suggestedWorkflow } from "@cw-code/shared/workflowSuggestions";
+import { babysittingSession, primaryAction } from "./prWorkflows.js";
 import { linkFor, pickMainSession, sessionsLinkedTo } from "./sessionPrLinks.js";
 
 export type IssueBucket = "assigned" | "mentioned" | "created" | "other" | "closed";

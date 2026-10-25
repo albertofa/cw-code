@@ -13,7 +13,7 @@ import type {
   SessionMeta,
   SubjectRelations
 } from "@cw-code/contracts";
-import { suggestedWorkflow } from "./prWorkflows.js";
+import { suggestedWorkflow } from "@cw-code/shared/workflowSuggestions";
 import { linkFor } from "./sessionPrLinks.js";
 
 export interface MergeRow {

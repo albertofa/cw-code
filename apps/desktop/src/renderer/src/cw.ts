@@ -122,7 +122,13 @@ import type {
   UsageSeverity,
   UsageTopicData,
   UsageTotals,
-  UsageWindow
+  UsageWindow,
+  WorkflowHarnessRequest,
+  WorkflowHarnessResult,
+  WorkflowPreview,
+  WorkflowPreviewRequest,
+  WorkflowTemplatePreview,
+  WorkflowTemplatePreviewRequest
 } from "@cw-code/contracts";
 
 export type {
@@ -694,8 +700,9 @@ export interface CwApi {
   saveGitHubView(input: SaveGitHubViewInput): Promise<SavedGitHubView>;
   renameGitHubView(id: string, name: string): Promise<void>;
   deleteGitHubView(id: string): Promise<void>;
-  getIssueDetail(ref: IssueRef): Promise<IssueDetail>;
-  getRunLog(ref: RunRef): Promise<string>;
+  workflowPreview(req: WorkflowPreviewRequest): Promise<WorkflowPreview>;
+  workflowHarness(req: WorkflowHarnessRequest): Promise<WorkflowHarnessResult>;
+  workflowTemplatePreview(req: WorkflowTemplatePreviewRequest): Promise<WorkflowTemplatePreview>;
   cloneGitHubRepo(repo: RepoRef): Promise<Project>;
   linkSessionPr(sessionId: string, link: SessionPrLink): Promise<Session>;
   unlinkSessionPr(sessionId: string, ref: PrRef): Promise<Session>;

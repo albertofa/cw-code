@@ -78,7 +78,7 @@ function isDetail(summary: PrSummary): summary is PrDetail {
   return "timeline" in summary;
 }
 
-function summaryOf(summary: PrSummary): PrSummary {
+export function summaryOf(summary: PrSummary): PrSummary {
   if (!isDetail(summary)) return summary;
   const { body, createdAt, timeline, threads, checkRuns, commits, viewerLogin, ...rest } = summary;
   return rest;
@@ -99,6 +99,7 @@ export class PrStore {
   private touchedAt = new Map<string, number>();
   private explicitAt = new Map<string, number>();
   private repos: ProjectGitHubRepo[] = [];
+  private reposLoaded = false;
   private reposRequest: Promise<ProjectGitHubRepo[]> | null = null;
   private lookupCache: Map<string, PrSummary> | null = null;
   private summaryCache = new Map<string, CachedSummary>();
@@ -167,6 +168,10 @@ export class PrStore {
     return promise;
   }
 
+  projectRepos(): Promise<ProjectGitHubRepo[]> {
+    return this.reposLoaded ? Promise.resolve(this.repos) : this.refreshProjectRepos();
+  }
+
   refreshProjectRepos(): Promise<ProjectGitHubRepo[]> {
     if (this.reposRequest) return this.reposRequest;
     const generation = this.generation;
@@ -174,6 +179,7 @@ export class PrStore {
       .then((repos) => {
         if (generation === this.generation) {
           this.repos = repos;
+          this.reposLoaded = true;
           this.scheduleChanged();
         }
         return repos;

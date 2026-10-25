@@ -30,7 +30,7 @@ import { PrFilesPanel } from "./PrFilesPanel.js";
 import { CheckLogSkeleton, PrDetailSkeleton } from "./GitHubSkeletons.js";
 import { prKey } from "./prInbox.js";
 import { useAppSettings, useAppSettingsError } from "./useAppSettings.js";
-import { suggestedWorkflow } from "./prWorkflows.js";
+import { suggestedWorkflow } from "@cw-code/shared/workflowSuggestions";
 import { groupCommitsByDay, linkedBarState, mergeBoxState, relativeTime, threadQuoteText, threadSendTarget, type LinkedBarState } from "./prDetailModel.js";
 import { linkFor } from "./sessionPrLinks.js";
 import { requestPrDetail, usePrDetail, usePrRelations } from "./usePrs.js";

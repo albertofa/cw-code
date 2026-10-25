@@ -283,6 +283,16 @@ describe("session PR dock", () => {
       expect(hintFor({ kind: "watching" }, quiet)).toBe("not-actionable");
     });
   });
+
+  it("reports the follow-up mode of each entry", () => {
+    const auto = workflow("babysit", { autoFollowUp: true });
+    const modeFor = (babysit: BabysitState | null) => {
+      const { deps } = harness({ details: [detail(42)], workflows: [auto], babysit });
+      return sessionDockItems(deps.sessions()[0], deps)[0].entry.mode;
+    };
+    expect(modeFor(babysitState({ kind: "watching" }, auto))).toBe("auto");
+    expect(modeFor(null)).toBe("once");
+  });
 });
 
 describe("session PR items", () => {

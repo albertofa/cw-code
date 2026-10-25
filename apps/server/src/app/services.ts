@@ -22,6 +22,7 @@ import { preferencesFilePath } from "../paths/appPaths.js";
 import { AutoFollowUpEngine } from "../prEngine/AutoFollowUpEngine.js";
 import { PrStore } from "../prEngine/PrStore.js";
 import { SessionPrModel } from "../prEngine/sessionPrModel.js";
+import { WorkflowPreviewService } from "../prEngine/WorkflowPreview.js";
 import { PtyPool } from "../pty/PtyPool.js";
 import { SessionManager } from "../sessions/SessionManager.js";
 import type { SessionStore } from "../sessions/SessionStore.js";
@@ -72,6 +73,7 @@ export interface Services {
   sessionPrs: SessionPrModel;
   turnChanges: TurnChangesModel;
   sidebar: SidebarService;
+  workflowPreview: WorkflowPreviewService;
 }
 
 export interface ServiceHooks {
@@ -370,6 +372,24 @@ export function createServices(stores: { sessionStore: SessionStore; settingsSto
     watch: (sessionId, root, paths) => fileWatcher.setWatched(sessionId, root, paths),
     unwatch: (sessionId) => void fileWatcher.unwatch(sessionId)
   });
+  const workflowPreview = new WorkflowPreviewService({
+    settings: () => sessions.getSettings(),
+    sessions: () => sessions.listAllSessions(),
+    projects: () => sessions.listProjects(),
+    projectRepos: () => prStore.projectRepos(),
+    installedHarnesses: () => appTopic.harnesses.installed,
+    recentModels: (driver) => preferences.recentModels()[driver] ?? [],
+    listModels: (driver, projectId) => (projectId ? sessions.listModelsFor(projectId, driver) : sessions.listModelsForHarness(driver)),
+    listPermissions: (driver, projectId) =>
+      projectId ? sessions.listPermissionModesFor(projectId, driver) : sessions.listPermissionModesForHarness(driver),
+    prSummary: (key) => prStore.summaryLookup().get(key),
+    prDetail: (key) => prStore.detail(key),
+    loadPrDetail: (ref) => prStore.loadDetail(ref),
+    issueDetail: (ref) => githubSearch.issueDetail(ref),
+    cachedRun: (ref) => githubViews.cachedRun(ref),
+    checkLog: (ref, runId) => pullRequests.failedCheckLog(ref, runId),
+    runLog: (ref) => runs.runLog(ref)
+  });
   const services: Services = {
     sessions,
     skills: new SkillsStore(),
@@ -398,7 +418,8 @@ export function createServices(stores: { sessionStore: SessionStore; settingsSto
     autoFollowUp,
     sessionPrs,
     turnChanges,
-    sidebar
+    sidebar,
+    workflowPreview
   };
   wireServiceEvents(services, hooks);
   wireAutoFollowUp(services);

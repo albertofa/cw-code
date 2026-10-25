@@ -311,6 +311,8 @@ describe("GitHubViews", () => {
     const [row] = rows(h.view(topic));
     expect(row.bucket).toBe("failing");
     expect(row.subject.kind === "run" ? [row.subject.run.title, row.subject.run.updatedAt] : null).toEqual(["Run 1", 200]);
+    expect(h.views.cachedRun(run(1).ref)?.updatedAt).toBe(200);
+    expect(h.views.cachedRun(run(2).ref)).toBeUndefined();
   });
 
   it("derives the run watch set from open run topics, capped at 30", async () => {

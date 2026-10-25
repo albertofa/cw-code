@@ -1,17 +1,15 @@
 import { describe, expect, it } from "bun:test";
 import type { IssueDetail, PrCheck, PrDetail, PrRef, PrSummary, PrWorkflow, SessionMeta, WorkflowRunSummary } from "@cw-code/contracts";
-import { TEMPLATE_VARS, TEMPLATE_VARS_BY_TARGET } from "@cw-code/shared/workflowTemplates";
+import { suggestedWorkflow } from "@cw-code/shared/workflowSuggestions";
+import { attributionText, resolveTemplate, TEMPLATE_VARS, TEMPLATE_VARS_BY_TARGET } from "@cw-code/shared/workflowTemplates";
 import {
-  attributionText,
   failedJobNames,
   issueTemplateVars,
   loadFailedLogs,
   loadRunFailedLogs,
   primaryAction,
-  resolveTemplate,
   runRefTemplateVars,
   runTemplateVars,
-  suggestedWorkflow,
   templateVars
 } from "./prWorkflows.js";
 

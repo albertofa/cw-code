@@ -265,6 +265,17 @@ export class GitHubViews {
     return promise;
   }
 
+  cachedRun(ref: RunRef): WorkflowRunSummary | undefined {
+    const key = runKey(ref);
+    let found: { run: WorkflowRunSummary; at: number } | null = null;
+    for (const entry of this.entries.values()) {
+      if (entry.result?.kind !== "run") continue;
+      const run = entry.result.items.find((item) => runKey(item.ref) === key);
+      if (run && (!found || entry.completedAt > found.at)) found = { run, at: entry.completedAt };
+    }
+    return found?.run;
+  }
+
   setLegacyRunRefs(refs: RunRef[]): void {
     this.legacyRunRefs = refs;
     this.syncRunWatch();
