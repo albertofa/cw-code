@@ -7,6 +7,7 @@ import type {
   AttentionState,
   CliBinary,
   HarnessAvailability,
+  LegacyPreferences,
   CliDiscoveredCandidate,
   CliDiscoverResult,
   CommandInvocation,
@@ -606,6 +607,9 @@ export interface CwApi {
     onExpired(cb: (event: ShutdownExpiredEvent) => void): () => void;
   };
   recheckClis(): Promise<HarnessAvailability>;
+  importLegacyPrefs(legacy: LegacyPreferences): Promise<void>;
+  pushRecentModel(driver: DriverName, model: string): Promise<void>;
+  setComposerDraft(key: string, text: string, attachments: readonly string[]): Promise<void>;
   discoverBinaries(binaries?: CliBinary[]): Promise<CliDiscoverResult>;
   verifyBinaryPath(binary: CliBinary, path: string): Promise<CliDiscoveredCandidate>;
   isDev: boolean;

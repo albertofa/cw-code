@@ -17,8 +17,8 @@ import {
 } from "lucide-react";
 import type { CommandOption } from "@cw-code/contracts";
 import type { AppSettings, ComposerPrefs, DriverName, ModelOption, PermissionMode, PermissionOption } from "../cw.js";
-import { clearComposerDraft, loadComposerDraft, saveComposerDraft } from "./composerDrafts.js";
-import { getRecentModels, pushRecentModel } from "./lastModel.js";
+import { clearComposerDraft, flushComposerDraft, loadComposerDraft, saveComposerDraft } from "./composerDrafts.js";
+import { getRecentModels, pushRecentModel, useRecentModels } from "./lastModel.js";
 import { EffortMenu } from "./EffortMenu.js";
 import { MenuSelect } from "./MenuSelect.js";
 import { ModelPicker } from "./ModelPicker.js";
@@ -140,9 +140,12 @@ export function ComposerView({
   const backendRef = useRef(backend);
   backendRef.current = backend;
   const imageTarget = backend.imageTarget;
-  const [draft, setDraft] = useState(() => loadComposerDraft(resetKey)?.text ?? "");
-  const [caret, setCaret] = useState<number | null>(() => loadComposerDraft(resetKey)?.text.length ?? 0);
-  const [attachments, setAttachments] = useState<string[]>(() => loadComposerDraft(resetKey)?.attachments ?? []);
+  const [initialDraft] = useState(() => loadComposerDraft(resetKey));
+  const [draft, setDraft] = useState(initialDraft?.text ?? "");
+  const [caret, setCaret] = useState<number | null>(initialDraft?.text.length ?? 0);
+  const [attachments, setAttachments] = useState<string[]>(initialDraft?.attachments ?? []);
+  const resetKeyRef = useRef(resetKey);
+  resetKeyRef.current = resetKey;
   const draftRef = useRef(draft);
   draftRef.current = draft;
   const attachmentsRef = useRef(attachments);
@@ -252,9 +255,15 @@ export function ComposerView({
     setAddOpen(false);
     setPickerOpen(false);
     invalidateBranchChoice();
-    // Leaving this composer (another session, or the view unmounting) keeps what was written for when you come back.
-    return () => saveComposerDraft(resetKey, draftRef.current, attachmentsRef.current);
+    return () => {
+      saveComposerDraft(resetKey, draftRef.current, attachmentsRef.current);
+      flushComposerDraft(resetKey);
+    };
   }, [resetKey]);
+
+  useEffect(() => {
+    saveComposerDraft(resetKeyRef.current, draft, attachments);
+  }, [draft, attachments]);
 
   useEffect(() => {
     setShowCustom(false);
@@ -409,7 +418,7 @@ export function ComposerView({
     setPickerOpen(true);
   };
 
-  const recentModels = useMemo(() => getRecentModels(driver), [driver, models, prefs.model]);
+  const recentModels = useRecentModels(driver);
   const modelDisplay = showCustom
     ? customModel.trim() || "Custom"
     : (models.find((m) => m.id === baseModelId)?.label ?? "Select model");
@@ -457,10 +466,9 @@ export function ComposerView({
   }, [highlightMentions]);
 
   const clearComposer = () => {
-    // The refs feed the unmount save; a command that swaps this composer out (/new, /clear)
-    // never renders the cleared state, so drop them here instead of waiting for a commit.
     draftRef.current = "";
     attachmentsRef.current = [];
+    clearComposerDraft(resetKeyRef.current);
     setDraft("");
     setCaret(0);
     setAttachments([]);

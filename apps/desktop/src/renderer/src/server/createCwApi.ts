@@ -17,6 +17,7 @@ import type {
   GitStatus,
   HarnessAvailability,
   ImportableSession,
+  LegacyPreferences,
   IssueDetail,
   IssueSummary,
   PrDetail,
@@ -127,6 +128,9 @@ export function createCwApi(client: ServerClient, topics: TopicCache, desktop: D
       onExpired: (cb) => subscribe("shutdown.expired", cb)
     },
     recheckClis: () => call<HarnessAvailability>("cli.recheck", {}),
+    importLegacyPrefs: (legacy: LegacyPreferences) => callVoid("prefs.importLegacy", legacy),
+    pushRecentModel: (driver, model) => callVoid("prefs.pushRecentModel", { driver, model }),
+    setComposerDraft: (key, text, attachments) => callVoid("prefs.setDraft", { key, text, attachments }),
     discoverBinaries: (binaries?: CliBinary[]) => call<CliDiscoverResult>("cli.discover", { binaries }),
     verifyBinaryPath: (binary, path) => call<CliDiscoveredCandidate>("cli.verifyPath", { binary, path }),
     isDev: desktop.isDev,

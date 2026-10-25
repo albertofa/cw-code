@@ -3,7 +3,6 @@ import { beforeEach, describe, expect, it, vi } from "bun:test";
 import type { HistoryMessage, TaskSnapshot, UpdateActionResult, UpdateState } from "@cw-code/contracts";
 import { DEFAULT_COMPOSER, useAppStore } from "./appStore.js";
 import { applyInstalledHarnesses } from "../server/appBridge.js";
-import { getLastModel, setLastModel } from "../components/lastModel.js";
 
 describe("appStore tool.result", () => {
   beforeEach(() => {
@@ -446,9 +445,16 @@ describe("appStore task snapshots", () => {
   });
 });
 
+const pushRecentModel = vi.fn(async () => {});
+
+function installPushRecentModel(): void {
+  pushRecentModel.mockClear();
+  (window as unknown as { cw: unknown }).cw = { ...(window as unknown as { cw: object }).cw, pushRecentModel };
+}
+
 describe("appStore pending model per harness", () => {
   beforeEach(() => {
-    window.localStorage.clear();
+    installPushRecentModel();
     useAppStore.setState({
       activeProjectId: "proj_1",
       pendingDriver: "opencode",
@@ -459,12 +465,11 @@ describe("appStore pending model per harness", () => {
   });
 
   it("remembers the outgoing model and leaves the next harness model for the composer to pick", () => {
-    setLastModel("claude", "sonnet");
     useAppStore.setState({ pendingPrefs: { ...DEFAULT_COMPOSER, model: "alpha/m1" } });
     useAppStore.getState().setPendingDriver("claude");
     expect(useAppStore.getState().pendingDriver).toBe("claude");
     expect(useAppStore.getState().pendingPrefs.model).toBeUndefined();
-    expect(getLastModel("opencode")).toBe("alpha/m1");
+    expect(pushRecentModel).toHaveBeenCalledWith("opencode", "alpha/m1");
   });
 
   it("clears the model when the next harness has no remembered model", () => {
@@ -474,7 +479,6 @@ describe("appStore pending model per harness", () => {
   });
 
   it("does not seed a recent model over the harness default when opening a new session", () => {
-    setLastModel("opencode", "alpha/m1");
     useAppStore.setState({
       pendingDriver: "claude",
       lastDriver: "claude",
@@ -484,7 +488,7 @@ describe("appStore pending model per harness", () => {
     useAppStore.getState().startNewSession("opencode");
     expect(useAppStore.getState().pendingDriver).toBe("opencode");
     expect(useAppStore.getState().pendingPrefs.model).toBeUndefined();
-    expect(getLastModel("claude")).toBe("sonnet");
+    expect(pushRecentModel).toHaveBeenCalledWith("claude", "sonnet");
   });
 
   it("opens a new session on an installed harness when the requested one is not installed", () => {
@@ -748,7 +752,7 @@ describe("appStore project defaults", () => {
   };
 
   beforeEach(() => {
-    window.localStorage.clear();
+    installPushRecentModel();
     useAppStore.setState({
       projects: [plain, tuned],
       sessionsByProject: { proj_1: [], proj_2: [] },

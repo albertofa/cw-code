@@ -86,6 +86,25 @@ export function readTopic<D = Record<string, unknown>>(topic: string): TopicStat
   return topicCache().state<D>(topic);
 }
 
+export function peekTopic<D = Record<string, unknown>>(topic: string): TopicState<D> | undefined {
+  return cache?.state<D>(topic);
+}
+
+export function waitForTopicSettled<D = Record<string, unknown>>(topic: string): Promise<TopicState<D> | undefined> {
+  const topics = topicCache();
+  return new Promise((resolve) => {
+    let stopListening = (): void => undefined;
+    const check = (): void => {
+      const state = topics.state<D>(topic);
+      if (state && state.status === "subscribing") return;
+      stopListening();
+      resolve(state);
+    };
+    stopListening = topics.listen(topic, check);
+    check();
+  });
+}
+
 export function bindTopic<D = Record<string, unknown>>(topic: string, onState: (state: TopicState<D>) => void): () => void {
   const topics = topicCache();
   const release = topics.acquire(topic);

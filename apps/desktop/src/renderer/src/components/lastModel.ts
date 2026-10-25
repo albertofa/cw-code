@@ -1,53 +1,30 @@
+import type { AppTopicData } from "@cw-code/contracts";
+import type { TopicState } from "@cw-code/client";
+import { APP_TOPIC } from "@cw-code/shared/topics";
 import type { DriverName } from "../cw.js";
-import { stripContextSuffix } from "./modelMenus.js";
+import { peekTopic, useTopicSelect } from "../server/topics.js";
 
-const RECENT_MODELS_MAX = 3;
+type AppState = TopicState<Partial<AppTopicData>> | undefined;
 
-function recentKey(driver: DriverName): string {
-  return `cw:recentModels:${driver}`;
-}
+const NO_MODELS: string[] = [];
 
-function recentId(driver: DriverName, id: string): string {
-  return driver === "claude" ? stripContextSuffix(id) : id;
-}
-
-function readStoredRecents(driver: DriverName): string[] {
-  const raw = window.localStorage.getItem(recentKey(driver));
-  if (raw === null) {
-    const legacy = window.localStorage.getItem(`cw:lastModel:${driver}`);
-    return legacy ? [recentId(driver, legacy)] : [];
-  }
-  const parsed: unknown = JSON.parse(raw);
-  if (!Array.isArray(parsed)) return [];
-  const ids = parsed
-    .filter((id): id is string => typeof id === "string" && id.length > 0)
-    .map((id) => recentId(driver, id));
-  return [...new Set(ids)].slice(0, RECENT_MODELS_MAX);
+function recentsOf(state: AppState, driver: DriverName): string[] {
+  return state?.data.recentModels?.[driver] ?? NO_MODELS;
 }
 
 export function getRecentModels(driver: DriverName): string[] {
-  try {
-    return readStoredRecents(driver);
-  } catch {
-    return [];
-  }
+  return recentsOf(peekTopic<Partial<AppTopicData>>(APP_TOPIC), driver);
 }
 
-export function pushRecentModel(driver: DriverName, id: string): void {
-  const normalized = recentId(driver, id);
-  if (!normalized) return;
-  try {
-    const next = [normalized, ...getRecentModels(driver).filter((existing) => existing !== normalized)].slice(0, RECENT_MODELS_MAX);
-    window.localStorage.setItem(recentKey(driver), JSON.stringify(next));
-  } catch {
-  }
+export function useRecentModels(driver: DriverName): string[] {
+  return useTopicSelect<string[], Partial<AppTopicData>>(APP_TOPIC, (state) => recentsOf(state, driver));
 }
 
 export function getLastModel(driver: DriverName): string | null {
   return getRecentModels(driver)[0] ?? null;
 }
 
-export function setLastModel(driver: DriverName, id: string): void {
-  pushRecentModel(driver, id);
+export function pushRecentModel(driver: DriverName, model: string): void {
+  if (!model) return;
+  window.cw.pushRecentModel(driver, model).catch((err: unknown) => console.warn("[cw-code] could not save the recent model", err));
 }
-

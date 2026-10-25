@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { ServerClient, TopicCache } from "@cw-code/client";
 import type { DesktopApi } from "@cw-code/contracts";
+import { APP_TOPIC } from "@cw-code/shared/topics";
 import { ipcErrorMessage } from "../components/ipcError.js";
 import { useEditorBuffers } from "../stores/editorBuffers.js";
 import { createCwApi, type ShutdownHandlers } from "./createCwApi.js";
-import { initTopics } from "./topics.js";
+import { migrateLegacyPreferences } from "./legacyPrefs.js";
+import { initTopics, waitForTopicSettled } from "./topics.js";
 
 type Phase = { kind: "connecting" } | { kind: "failed"; message: string } | { kind: "ready" };
 type Link = "up" | "reconnecting" | "stale" | "lost";
@@ -19,20 +21,23 @@ export function ServerGate({ desktop, children }: { desktop: DesktopApi; childre
   const [client] = useState(() => new ServerClient({ endpoint: () => desktop.serverEndpoint(), client: "desktop-ui", reconnect: true }));
   const [shutdownHandlers] = useState<ShutdownHandlers>(() => new Set());
   const topicCache = useRef<TopicCache | null>(null);
+  const appHold = useRef<(() => void) | null>(null);
   const [phase, setPhase] = useState<Phase>({ kind: "connecting" });
   const [link, setLink] = useState<Link>("up");
 
   const connect = useCallback(() => {
     setPhase({ kind: "connecting" });
-    client.connect().then(
-      () => {
-        topicCache.current ??= new TopicCache(client);
-        initTopics(topicCache.current);
-        window.cw = createCwApi(client, topicCache.current, desktop, shutdownHandlers);
-        setPhase({ kind: "ready" });
-      },
-      (err) => setPhase({ kind: "failed", message: ipcErrorMessage(err) })
-    );
+    const open = async (): Promise<void> => {
+      await client.connect();
+      topicCache.current ??= new TopicCache(client);
+      initTopics(topicCache.current);
+      window.cw = createCwApi(client, topicCache.current, desktop, shutdownHandlers);
+      appHold.current ??= topicCache.current.acquire(APP_TOPIC);
+      const app = await waitForTopicSettled(APP_TOPIC);
+      if (app?.status === "ready") void migrateLegacyPreferences(window.cw);
+      setPhase({ kind: "ready" });
+    };
+    open().catch((err: unknown) => setPhase({ kind: "failed", message: ipcErrorMessage(err) }));
   }, [client, desktop, shutdownHandlers]);
 
   useEffect(

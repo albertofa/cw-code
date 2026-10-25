@@ -32,7 +32,7 @@ import { usePrStore, type RunModalState } from "../stores/prStore.js";
 import { babysittingSession, resolveTemplate } from "./prWorkflows.js";
 import { harnessLabel } from "./toolTabs.js";
 import { pickableHarnesses } from "./harnessAvailability.js";
-import { getRecentModels } from "./lastModel.js";
+import { useRecentModels } from "./lastModel.js";
 import { harnessSummary, INHERITED_HARNESS, resolveWorkflowHarness, workflowDriver } from "./workflowHarness.js";
 import { workflowIcon } from "./workflowIcons.js";
 import { shortenHome } from "./pathDisplay.js";
@@ -253,13 +253,14 @@ export function WorkflowRunModal({ request }: { request: RunModalState }) {
   const needsClone = !continueSession && reposReady && projectId === null;
   const harnessConfig = workflow?.harness ?? INHERITED_HARNESS;
   const driver = workflowDriver(harnessConfig, composerDriver);
+  const recentModels = useRecentModels(driver);
   const driverMissing = !continueSession && !created && !pickableHarnesses(installedHarnesses).includes(driver);
   const resolveHarness = (lists: { models: ModelOption[]; permissions: PermissionOption[] }) =>
     resolveWorkflowHarness(harnessConfig, {
       composerDriver,
       pendingPrefs,
       defaultModel: defaultModelByDriver[driver],
-      recentModels: getRecentModels(driver),
+      recentModels,
       models: lists.models,
       permissions: lists.permissions
     });

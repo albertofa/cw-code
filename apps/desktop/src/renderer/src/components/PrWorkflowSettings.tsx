@@ -38,7 +38,7 @@ import {
 import { attributionText, loadFailedLogs, resolveTemplate, TEMPLATE_VARS_BY_TARGET, templateVars } from "./prWorkflows.js";
 import { SettingsPageHead, SettingsSwitch } from "./SettingsLayout.js";
 import { HARNESS_IDS, HARNESS_NAMES } from "./settingsSections.js";
-import { getRecentModels } from "./lastModel.js";
+import { useRecentModels } from "./lastModel.js";
 import { harnessLabel } from "./toolTabs.js";
 import { PERMISSION_LABELS, PERMISSION_MODES, workflowDriver, workflowModel } from "./workflowHarness.js";
 import { WORKFLOW_ICONS, workflowIcon } from "./workflowIcons.js";
@@ -572,11 +572,12 @@ function WorkflowHarnessFields({ workflow, onChange }: { workflow: PrWorkflow; o
   const config = workflow.harness;
   const driver = workflowDriver(config, composerDriver);
   const defaultModel = useAppStore((s) => s.defaultModelByDriver[driver]);
+  const recentModels = useRecentModels(driver);
   const models = useHarnessOptions(driver, (d) => window.cw.listModelsForHarness(d));
   const permissions = useHarnessOptions(driver, (d) => window.cw.listPermissionsForHarness(d));
   const driverModels = models.list ?? [];
   const modelList = config.driver ? driverModels : [];
-  const effectiveModel = workflowModel(config, { defaultModel, recentModels: getRecentModels(driver), models: driverModels });
+  const effectiveModel = workflowModel(config, { defaultModel, recentModels, models: driverModels });
   const efforts = effortOptionsFor(driver, driverModels, effectiveModel);
   const permissionList = permissions.list && permissions.list.length > 0 ? permissions.list : null;
   const permissionsLoading = permissions.list === null;

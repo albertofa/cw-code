@@ -37,7 +37,7 @@ import type { DirtyBuffer } from "./editorBuffers.js";
 import { usePanelStore } from "./panelStore.js";
 import { appendAssistantText, appendReasoningText, closeReasoning, upsertToolCall } from "../components/chatMessages.js";
 import { DEFAULT_APPEARANCE, appearanceOf, type AppearancePrefs } from "../appearanceFonts.js";
-import { getLastModel, setLastModel } from "../components/lastModel.js";
+import { getLastModel, pushRecentModel } from "../components/lastModel.js";
 import { defaultModelPatch } from "../components/modelMenus.js";
 import { fallbackHarness } from "../components/harnessAvailability.js";
 import { formatDuration, mergeToolPairs } from "../components/toolSummaries.js";
@@ -146,16 +146,6 @@ function defaultModelsFrom(settings: AppSettings): Record<DriverName, string> {
     opencode: settings.opencodeDefaultModel,
     codex: settings.codexDefaultModel
   };
-}
-
-function readComposerMirror(sessionId: string): ComposerPrefs | null {
-  try {
-    const raw = window.localStorage.getItem(`cw:composer:${sessionId}`);
-    if (!raw) return null;
-    return JSON.parse(raw) as ComposerPrefs;
-  } catch {
-    return null;
-  }
 }
 
 export interface TurnUsage {
@@ -799,12 +789,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     const target = fallbackHarness(driver ?? projectDriver(settings, get().lastDriver), get().installedHarnesses);
     const previous = get().pendingDriver ?? get().lastDriver;
     const currentModel = get().pendingPrefs.model;
-    if (currentModel && previous !== target) {
-      try {
-        setLastModel(previous, currentModel);
-      } catch {
-      }
-    }
+    if (currentModel && previous !== target) pushRecentModel(previous, currentModel);
     set({
       pendingDriver: target,
       activeSessionId: null,
@@ -819,12 +804,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     const current = get().pendingDriver ?? get().lastDriver;
     if (current === driver && get().pendingDriver !== null) return;
     const currentModel = get().pendingPrefs.model;
-    if (currentModel) {
-      try {
-        setLastModel(current, currentModel);
-      } catch {
-      }
-    }
+    if (currentModel) pushRecentModel(current, currentModel);
     set({ pendingDriver: driver, pendingPrefs: { ...get().pendingPrefs, model: undefined } });
   },
 
@@ -944,12 +924,7 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   async ensureComposer(sessionId: string) {
     if (get().composerBySession[sessionId]) return;
-    const mirror = readComposerMirror(sessionId);
-    if (mirror) {
-      set({ composerBySession: { ...get().composerBySession, [sessionId]: { ...DEFAULT_COMPOSER, ...mirror } } });
-    } else {
-      set({ composerBySession: { ...get().composerBySession, [sessionId]: { ...DEFAULT_COMPOSER } } });
-    }
+    set({ composerBySession: { ...get().composerBySession, [sessionId]: { ...DEFAULT_COMPOSER } } });
     try {
       const prefs = await window.cw.getComposer(sessionId);
       set({
@@ -962,10 +937,6 @@ export const useAppStore = create<AppState>((set, get) => ({
   async setComposerPrefs(sessionId: string, prefs: ComposerPrefs) {
     const merged = { ...(get().composerBySession[sessionId] ?? DEFAULT_COMPOSER), ...prefs };
     set({ composerBySession: { ...get().composerBySession, [sessionId]: merged } });
-    try {
-      window.localStorage.setItem(`cw:composer:${sessionId}`, JSON.stringify(merged));
-    } catch {
-    }
     try {
       const saved = await window.cw.setComposer(sessionId, merged);
       set({ composerBySession: { ...get().composerBySession, [sessionId]: { ...DEFAULT_COMPOSER, ...saved } } });
