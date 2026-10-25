@@ -425,6 +425,7 @@ export class ServerApp {
       console.warn(`flush before exit failed: ${(err as Error).message}`);
     }
     services.prStore.dispose();
+    services.preferences.dispose();
     void services.sourceControl.dispose();
     services.runWatcher.dispose();
     void services.fileWatcher.dispose();

@@ -63,4 +63,43 @@ describe("AppTopic", () => {
     expect((snapshot?.data as AppTopicData).attention).toEqual({ count: 3 });
     expect((snapshot?.data as AppTopicData).settings).toEqual(saved);
   });
+
+  test("the first snapshot includes stored recent models and drafts", () => {
+    const hub = new TopicHub(() => {});
+    const draft = { text: "hi", attachments: ["a"], updatedAt: 7 };
+    const app = new AppTopic(hub, {
+      settings: DEFAULT_SETTINGS,
+      homeDir: "/home/me",
+      shutdown: SHUTDOWN,
+      recentModels: { claude: ["opus"], opencode: [], codex: [] },
+      drafts: { "session:1": draft }
+    });
+    hub.register(app);
+    const data = hub.subscribe(ctx, [APP_TOPIC])[APP_TOPIC]?.data as AppTopicData;
+    expect(data.recentModels.claude).toEqual(["opus"]);
+    expect(data["draft/session:1"]).toEqual(draft);
+  });
+
+  test("setDraft upserts and removes draft entries", () => {
+    const { hub, app, patches } = setup();
+    hub.subscribe(ctx, [APP_TOPIC]);
+    const draft = { text: "hi", attachments: [], updatedAt: 3 };
+    app.setDraft("k", draft);
+    app.setDraft("k", null);
+    expect(patches).toMatchObject([
+      { rev: 1, ops: [{ op: "upsert", key: "draft/k", value: draft }] },
+      { rev: 2, ops: [{ op: "remove", key: "draft/k" }] }
+    ]);
+    const data = hub.subscribe({ ...ctx, clientId: "b" }, [APP_TOPIC])[APP_TOPIC]?.data as AppTopicData;
+    expect(Object.keys(data)).not.toContain("draft/k");
+  });
+
+  test("setRecentModels publishes the per-driver lists", () => {
+    const { hub, app, patches } = setup();
+    hub.subscribe(ctx, [APP_TOPIC]);
+    app.setRecentModels("codex", ["gpt-5"]);
+    expect(patches).toMatchObject([
+      { ops: [{ op: "upsert", key: "recentModels", value: { claude: [], opencode: [], codex: ["gpt-5"] } }] }
+    ]);
+  });
 });

@@ -14,6 +14,8 @@ import { PullRequestService } from "../github/PullRequestService.js";
 import { RunsService } from "../github/RunsService.js";
 import { RunWatcher } from "../github/RunWatcher.js";
 import { HarnessMonitor } from "../cli/HarnessMonitor.js";
+import { PreferencesStore } from "../prefs/PreferencesStore.js";
+import { preferencesFilePath } from "../paths/appPaths.js";
 import { PrStore } from "../prEngine/PrStore.js";
 import { PtyPool } from "../pty/PtyPool.js";
 import { SessionManager } from "../sessions/SessionManager.js";
@@ -45,6 +47,7 @@ export interface Services {
   accountUsage: AccountUsageService;
   shutdown: ShutdownCoordinator;
   appTopic: AppTopic;
+  preferences: PreferencesStore;
   harnessMonitor: HarnessMonitor;
 }
 
@@ -138,13 +141,20 @@ export function createServices(stores: { sessionStore: SessionStore; settingsSto
   });
   const ptys = new PtyPool(() => sessions.getSettings());
   const shutdown = new ShutdownCoordinator({ sessions, ptys, onRecovered: hooks.onShutdownRecovered, onExpired: hooks.onShutdownExpired });
+  const preferences = new PreferencesStore(preferencesFilePath());
   const appTopic = new AppTopic(hooks.topics, {
     settings: sessions.getSettings(),
     homeDir: homedir(),
+    recentModels: preferences.recentModels(),
+    drafts: preferences.drafts(),
     shutdown: {
       status: { idle: shutdown.isIdle(), committed: shutdown.isCommitted(), reason: shutdown.currentReason() },
       assessment: shutdown.assess()
     }
+  });
+  preferences.onChanged((change) => {
+    if (change.kind === "recentModels") appTopic.setRecentModels(change.driver, preferences.recentModels()[change.driver]);
+    else if (change.kind === "draft") appTopic.setDraft(change.key, change.draft);
   });
   const harnessMonitor = new HarnessMonitor({
     binaries: () => {
@@ -171,6 +181,7 @@ export function createServices(stores: { sessionStore: SessionStore; settingsSto
     accountUsage: new AccountUsageService(() => sessions.driversForProbe()),
     shutdown,
     appTopic,
+    preferences,
     harnessMonitor
   };
   wireServiceEvents(services, hooks);

@@ -1,4 +1,4 @@
-import type { AppSettings, AppTopicData, DriverKind, HarnessAvailability, ShutdownAssessment, ShutdownStatus } from "@cw-code/contracts";
+import type { AppSettings, AppTopicData, ComposerDraft, DriverKind, HarnessAvailability, ShutdownAssessment, ShutdownStatus } from "@cw-code/contracts";
 import { APP_TOPIC } from "@cw-code/shared/topics";
 import type { TopicHub, TopicProvider } from "../topics/TopicHub.js";
 import type { TopicStore } from "../topics/TopicStore.js";
@@ -9,6 +9,8 @@ export interface AppTopicInit {
   settings: AppSettings;
   homeDir: string;
   shutdown: AppTopicData["shutdown"];
+  recentModels?: Record<DriverKind, string[]>;
+  drafts?: Record<string, ComposerDraft>;
 }
 
 export const PENDING_HARNESSES: HarnessAvailability = {
@@ -24,9 +26,14 @@ function emptyRecentModels(): Record<DriverKind, string[]> {
   return { claude: [], opencode: [], codex: [] };
 }
 
+function draftEntryKey(key: string): `draft/${string}` {
+  return `draft/${key}`;
+}
+
 export class AppTopic implements TopicProvider {
   private data: AppTopicData;
   private store: AppStore | null = null;
+  readonly exactTopics = [APP_TOPIC];
 
   constructor(
     private readonly hub: TopicHub,
@@ -38,8 +45,9 @@ export class AppTopic implements TopicProvider {
       harnesses: PENDING_HARNESSES,
       attention: { count: 0 },
       shutdown: init.shutdown,
-      recentModels: emptyRecentModels()
+      recentModels: init.recentModels ?? emptyRecentModels()
     };
+    for (const [key, draft] of Object.entries(init.drafts ?? {})) this.data[draftEntryKey(key)] = draft;
   }
 
   owns(topic: string): boolean {
@@ -82,5 +90,16 @@ export class AppTopic implements TopicProvider {
   setRecentModels(driver: DriverKind, models: string[]): void {
     this.data.recentModels = { ...this.data.recentModels, [driver]: models };
     this.store?.upsert("recentModels", this.data.recentModels);
+  }
+
+  setDraft(key: string, draft: ComposerDraft | null): void {
+    const entryKey = draftEntryKey(key);
+    if (draft) {
+      this.data[entryKey] = draft;
+      this.store?.upsert(entryKey, draft);
+      return;
+    }
+    delete this.data[entryKey];
+    this.store?.remove(entryKey);
   }
 }

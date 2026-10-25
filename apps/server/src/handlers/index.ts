@@ -6,6 +6,7 @@ import { registerDeviceHandlers } from "./devices.js";
 import { registerFileHandlers } from "./files.js";
 import { registerGitHandlers } from "./git.js";
 import { registerGitHubHandlers } from "./github.js";
+import { registerPrefsHandlers } from "./prefs.js";
 import { registerPrHandlers } from "./prs.js";
 import { registerPtyHandlers } from "./pty.js";
 import { registerServerHandlers } from "./server.js";
@@ -27,6 +28,7 @@ export function registerHandlers(router: Router, app: ServerApp): void {
   registerFileHandlers(router, app);
   registerPtyHandlers(router, app);
   registerSettingsHandlers(router, app);
+  registerPrefsHandlers(router, app);
   registerSkillHandlers(router, app);
   registerCliHandlers(router, app);
   registerUsageHandlers(router, app);
