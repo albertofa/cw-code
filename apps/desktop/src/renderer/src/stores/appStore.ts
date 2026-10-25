@@ -285,6 +285,8 @@ interface AppState {
   renameSession(sessionId: string, title: string): Promise<void>;
   regenerateSessionTitle(sessionId: string): Promise<void>;
   setSessionStatus(sessionId: string, status: SessionStatus, reason?: SessionStatusReason): Promise<void>;
+  markSessionWorking(sessionId: string): Promise<void>;
+  restoreSession(sessionId: string): Promise<void>;
   expireHoldingSessions(): Promise<void>;
   appendSystemNotice(sessionId: string, text: string, isError?: boolean): void;
   clearSessionWorktrees(sessionIds: string[]): void;
@@ -688,11 +690,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         activeSessionId: picked.id,
         pendingDriver: null
       });
-      if (picked.status === "resolved") {
-        void get().setSessionStatus(picked.id, "idle", "reopen-on-restore").catch((err) =>
-          console.warn(`setSessionStatus failed for ${picked.id} -> idle: ${(err as Error).message}`)
-        );
-      } else if (picked.status === "done") {
+      if (picked.status === "done") {
         void get().setSessionStatus(picked.id, "holding", "reopen-on-restore").catch((err) =>
           console.warn(`setSessionStatus failed for ${picked.id} -> holding: ${(err as Error).message}`)
         );
@@ -799,6 +797,16 @@ export const useAppStore = create<AppState>((set, get) => ({
     });
   },
 
+  async markSessionWorking(sessionId: string) {
+    get().applySession(await window.cw.markSessionWorking(sessionId));
+  },
+
+  async restoreSession(sessionId: string) {
+    const restored = await window.cw.restoreSession(sessionId);
+    get().applySession(restored);
+    if (restored.createNotice) get().appendSystemNotice(sessionId, restored.createNotice);
+  },
+
   async expireHoldingSessions() {
     if (!get().holdingAutoExpireEnabled) return;
     const sessions = Object.values(get().sessionsByProject).flat();
@@ -871,14 +879,6 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   selectSession(sessionId: string) {
     const byProject = get().sessionsByProject;
-    const current = Object.values(byProject)
-      .flat()
-      .find((s) => s.id === sessionId);
-    if (current?.status === "resolved") {
-      void get().setSessionStatus(sessionId, "idle", "reopen-on-select").catch((err) =>
-        console.warn(`setSessionStatus failed for ${sessionId} -> idle: ${(err as Error).message}`)
-      );
-    }
     const ownerId = Object.entries(byProject).find(([, list]) =>
       list.some((s) => s.id === sessionId)
     )?.[0];

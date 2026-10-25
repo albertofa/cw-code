@@ -149,6 +149,8 @@ export function createCwApi(client: ServerClient, desktop: DesktopApi, shutdownH
     renameSession: (sessionId, title) => callVoid("sessions.rename", { sessionId, title }),
     regenerateSessionTitle: (sessionId) => call<string>("sessions.regenerateTitle", { sessionId }),
     setSessionStatus: (sessionId, status, reason) => call<Session>("sessions.setStatus", { sessionId, status, reason }),
+    markSessionWorking: (sessionId) => call<Session>("sessions.markWorking", { sessionId }),
+    restoreSession: (sessionId) => call<Session>("sessions.restore", { sessionId }),
     expireHolding: (sessionIds) => call<Session[]>("sessions.expireHolding", sessionIds),
     resolveSession: (sessionId, status, removeWorktree, forceBranch) =>
       call<SessionCleanupResult>("sessions.resolve", { sessionId, status, removeWorktree, forceBranch }),

@@ -231,7 +231,7 @@ export interface Project {
   settings?: ProjectSettings;
 }
 
-import type { SessionStatusReason } from "@cw-code/contracts";
+import type { ResolvedCheckout, SessionStatusReason } from "@cw-code/contracts";
 
 export type DriverName = "claude" | "opencode" | "codex";
 
@@ -256,6 +256,7 @@ export interface Session {
   runs?: SessionRunLink[];
   prUnlinked?: string[];
   autoResolved?: boolean;
+  resolvedCheckout?: ResolvedCheckout;
   effectivePermissionMode?: string;
   lastTurnSnapshot?: TurnSnapshot;
   createNotice?: string;
@@ -625,6 +626,8 @@ export interface CwApi {
   renameSession(sessionId: string, title: string): Promise<void>;
   regenerateSessionTitle(sessionId: string): Promise<string>;
   setSessionStatus(sessionId: string, status: SessionStatus, reason?: SessionStatusReason): Promise<Session>;
+  markSessionWorking(sessionId: string): Promise<Session>;
+  restoreSession(sessionId: string): Promise<Session>;
   expireHolding(sessionIds: string[]): Promise<Session[]>;
   resolveSession(sessionId: string, status: SessionStatus, removeWorktree?: boolean, forceBranch?: boolean): Promise<SessionCleanupResult>;
   pruneStaleWorktrees(): Promise<WorktreePruneSummary>;

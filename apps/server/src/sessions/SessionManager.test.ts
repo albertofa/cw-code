@@ -2670,6 +2670,45 @@ describe("SessionManager", () => {
     }
   });
 
+  it("marks an idle session as working and drops its finished pull requests so it is not settled again", async () => {
+    const merged = { host: "github.com", owner: "acme", repo: "widgets", number: 42 };
+    const open = { host: "github.com", owner: "acme", repo: "widgets", number: 43 };
+    const { manager, project } = makePrManager({ prState: (ref) => (ref.number === 42 ? "MERGED" : "OPEN") });
+    const session = await manager.createSession(project.id, "claude", { mode: "current" });
+    manager.linkPr(session.id, { ref: merged, origin: "linked", lastSeenSha: "old", lastSeenAt: 0 });
+    manager.linkPr(session.id, { ref: open, origin: "linked", lastSeenSha: "old", lastSeenAt: 0 });
+    manager.setSettings({ prFinishedSessionStatus: "idle" });
+
+    const updated = await manager.markWorking(session.id);
+
+    expect(updated.status).toBe("holding");
+    expect(updated.prs?.map((link) => link.ref.number)).toEqual([43]);
+    expect(updated.prUnlinked).toContain(prKey(merged));
+    expect(await manager.settleFinishedPrSessions()).toEqual([]);
+    await expect(manager.markWorking(session.id)).rejects.toThrow("only idle sessions can be marked as working");
+    manager.dispose();
+  });
+
+  it("drops finished pull requests when a turn starts on an idle session that already ran, keeping the ones the turn names", async () => {
+    const merged = { host: "github.com", owner: "acme", repo: "widgets", number: 42 };
+    const named = { host: "github.com", owner: "acme", repo: "widgets", number: 44 };
+    const { manager, fake, project } = makePrManager({ prState: () => "MERGED" });
+    const fresh = await manager.createSession(project.id, "claude", { mode: "current" });
+    manager.linkPr(fresh.id, { ref: merged, origin: "linked", lastSeenSha: "old", lastSeenAt: 0 });
+    const ran = await manager.createSession(project.id, "claude", { mode: "current" });
+    manager.linkPr(ran.id, { ref: merged, origin: "linked", lastSeenSha: "old", lastSeenAt: 0 });
+    manager.linkPr(ran.id, { ref: named, origin: "linked", lastSeenSha: "old", lastSeenAt: 0 });
+    const store = (manager as unknown as { store: SessionStore }).store;
+    store.updateSession(ran.id, { resumeCursor: "cursor-1" });
+
+    for (const session of [fresh, ran]) await manager.startTurn(session.id, "go", { prRefs: [named] });
+    fake.completeAll();
+
+    expect(store.getSession(fresh.id)?.prs?.map((link) => link.ref.number)).toEqual([42]);
+    expect(store.getSession(ran.id)?.prs?.map((link) => link.ref.number)).toEqual([44]);
+    manager.dispose();
+  });
+
   it("ends a turn as babysit while an automatic workflow owns an open linked PR", async () => {
     const widgets = { host: "github.com", owner: "acme", repo: "widgets", number: 42 };
     const gadgets = { host: "github.com", owner: "acme", repo: "gadgets", number: 7 };
@@ -3556,6 +3595,73 @@ describe("SessionManager", () => {
     expect(existsSync(worktreePath)).toBe(false);
     const cwBranches = execFileSync("git", ["-C", repository, "branch", "--list", "cw/*"], { encoding: "utf8" }).trim();
     expect(cwBranches).toBe(branch);
+    manager.dispose();
+  });
+
+  it("restores a resolved session into a fresh worktree on a new branch when its branch was deleted", async () => {
+    const { manager, project, repository } = makeGitSandboxManager("cw-restore-fresh-");
+    const session = await manager.createSession(project.id, "claude", { baseBranch: "main" });
+    const worktreePath = session.worktreePath;
+    if (!worktreePath || !session.branch) throw new Error("expected a worktree-backed session with a branch");
+    const resolved = await manager.resolveSession(session.id, "resolved", { removeWorktree: true });
+    expect(resolved.branchDeleted).toBe(true);
+    const store = (manager as unknown as { store: SessionStore }).store;
+    expect(store.getSession(session.id)?.resolvedCheckout).toEqual({ kind: "worktree", path: worktreePath });
+
+    const restored = await manager.restoreSession(session.id);
+
+    expect(restored.status).toBe("idle");
+    expect(restored.worktreePath).toBe(worktreePath);
+    expect(restored.resolvedCheckout).toBeUndefined();
+    expect(existsSync(join(worktreePath, "README.md"))).toBe(true);
+    expect(restored.branch).toBeTruthy();
+    expect(gitOut(worktreePath, "rev-parse", "--abbrev-ref", "HEAD")).toBe(restored.branch ?? "");
+    expect(gitOut(repository, "branch", "--list", restored.branch ?? "")).not.toBe("");
+    manager.dispose();
+  });
+
+  it("restores a resolved session onto its surviving branch so committed work comes back", async () => {
+    const { manager, project } = makeGitSandboxManager("cw-restore-attach-");
+    const session = await manager.createSession(project.id, "claude", { baseBranch: "main" });
+    const worktreePath = session.worktreePath;
+    const branch = session.branch;
+    if (!worktreePath || !branch) throw new Error("expected a worktree-backed session with a branch");
+    writeFileSync(join(worktreePath, "work.txt"), "work\n", "utf8");
+    gitOut(worktreePath, "add", "work.txt");
+    gitOut(worktreePath, "-c", "user.name=cw-code", "-c", "user.email=test@cw-code.local", "commit", "-m", "work");
+    const resolved = await manager.resolveSession(session.id, "resolved", { removeWorktree: true });
+    expect(resolved.worktreeRemoved).toBe(true);
+    expect(resolved.branchDeleted).toBe(false);
+
+    const restored = await manager.restoreSession(session.id);
+
+    expect(restored.branch).toBe(branch);
+    expect(restored.worktreePath).toBe(worktreePath);
+    expect(readFileSync(join(worktreePath, "work.txt"), "utf8")).toBe("work\n");
+    manager.dispose();
+  });
+
+  it("restores a resolved project-folder session without creating a worktree", async () => {
+    const { manager, project } = makeGitSandboxManager("cw-restore-root-");
+    const session = await manager.createSession(project.id, "claude", { mode: "current" });
+    await manager.resolveSession(session.id, "resolved", { removeWorktree: true });
+    const store = (manager as unknown as { store: SessionStore }).store;
+    expect(store.getSession(session.id)?.resolvedCheckout).toEqual({ kind: "root" });
+
+    const restored = await manager.restoreSession(session.id);
+
+    expect(restored.status).toBe("idle");
+    expect(restored.worktreePath).toBeUndefined();
+    await expect(manager.ensureWorktree(session.id)).resolves.toBe(project.rootPath);
+    manager.dispose();
+  });
+
+  it("only restores resolved sessions", async () => {
+    const { manager, project } = makeGitSandboxManager("cw-restore-gate-");
+    const session = await manager.createSession(project.id, "claude", { baseBranch: "main" });
+    await expect(manager.restoreSession(session.id)).rejects.toThrow("only resolved sessions can be restored");
+    await manager.resolveSession(session.id, "archived", { removeWorktree: true });
+    await expect(manager.restoreSession(session.id)).rejects.toThrow("only resolved sessions can be restored");
     manager.dispose();
   });
 

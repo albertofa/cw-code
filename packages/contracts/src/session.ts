@@ -19,6 +19,8 @@ export type SessionStatusReason =
   | "retry-idle"
   | "resolve"
   | "archive"
+  | "restore"
+  | "mark-working"
   | "user-set-status"
   | "reopen-on-select"
   | "reopen-on-restore"
@@ -78,6 +80,8 @@ export interface SessionMeta {
   idleSince?: number;
   /** True when the session was resolved by an automatic sweep rather than by the user. */
   autoResolved?: boolean;
+  /** Checkout the session ran in when it was resolved or archived, so a restore rebuilds the same one. */
+  resolvedCheckout?: ResolvedCheckout;
   /** Last known branch. Live Git status remains the source of truth. */
   branch?: string;
   /** Branch name cw-code generated for this session, so cleanup may delete it like its own `cw/` branches. */
@@ -92,6 +96,8 @@ export interface SessionMeta {
   lastTurnSnapshot?: TurnSnapshot;
   createNotice?: string;
 }
+
+export type ResolvedCheckout = { kind: "worktree"; path: string } | { kind: "root" };
 
 export interface TurnSnapshot {
   turnId: string;

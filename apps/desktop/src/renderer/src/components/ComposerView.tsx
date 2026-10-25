@@ -35,7 +35,7 @@ import { BranchSendChoice } from "./BranchMismatchNotice.js";
 import { ImageThumb } from "./ImageThumb.js";
 import { displayImagePath, type ImageTarget } from "./imagePreview.js";
 import { NewSessionRefusedError, useAppStore, type ComposerSendOptions } from "../stores/appStore.js";
-import { useConfirm } from "./ConfirmDialog.js";
+import { useConfirm, type ConfirmRequest } from "./ConfirmDialog.js";
 import { useNotifs } from "./Notifications.js";
 import { SlashMenu, slashOptionId, type SlashMenuItem } from "./SlashMenu.js";
 import {
@@ -82,6 +82,7 @@ export interface ComposerBackend {
   loadCommands(): Promise<CommandOption[]>;
   savePrefs(prefs: ComposerPrefs): void;
   send(body: string, attachments: string[], opts?: ComposerSendOptions & { acceptFolderHead?: string }): Promise<void>;
+  restore?: { confirm: ConfirmRequest | null; run(): Promise<void> };
   newSession?(): void;
   rename?(title: string): Promise<void>;
   openTerminal?(): void;
@@ -689,7 +690,28 @@ export function ComposerView({
   const send = () => {
     const body = draft.trim();
     if ((!body && attachments.length === 0) || busy || sending || blockedReason) return;
-    void sendMessage(body);
+    const restore = backendRef.current.restore;
+    if (!restore) {
+      void sendMessage(body);
+      return;
+    }
+    void restoreThenSend(restore, body);
+  };
+
+  const restoreThenSend = async (restore: NonNullable<ComposerBackend["restore"]>, body: string): Promise<void> => {
+    const key = commandsKey;
+    if (restore.confirm && !(await confirm(restore.confirm))) return;
+    if (!isCurrent(key)) return;
+    setSending(true);
+    try {
+      await restore.run();
+    } catch (err) {
+      notifyError("Restore failed", err);
+      return;
+    } finally {
+      setSending(false);
+    }
+    if (isCurrent(key)) await sendMessage(body);
   };
 
   const openBranchChoice = (action: HeldSend) => {

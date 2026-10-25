@@ -42,6 +42,8 @@ export function registerSessionHandlers(router: Router, app: ServerApp): void {
     }
     return updated;
   });
+  handle<{ sessionId: string }>(router, "sessions.markWorking", (args) => services().sessions.markWorking(args.sessionId));
+  handle<{ sessionId: string }>(router, "sessions.restore", (args) => services().sessions.restoreSession(args.sessionId));
   handle<string[]>(router, "sessions.expireHolding", (sessionIds) => services().sessions.expireHoldingSessions(sessionIds));
   handle<{ sessionId: string; status: SessionStatus; removeWorktree?: boolean; forceBranch?: boolean }>(
     router,
