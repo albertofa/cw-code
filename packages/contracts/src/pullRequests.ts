@@ -192,3 +192,104 @@ export interface PrWorkflow {
   /** Sends the follow-up prompt on its own when a linked PR gets actionable updates, until the PR closes. */
   autoFollowUp?: boolean;
 }
+
+export type PrChipTone = "bad" | "ok" | "info" | "warn" | "neutral";
+
+export type PrChipIcon = "x" | "message" | "check" | "draft" | "eye" | "clock" | "merge" | "pr";
+
+export interface PrChip {
+  tone: PrChipTone;
+  icon: PrChipIcon;
+  label: string;
+  reason: string;
+  title: string;
+}
+
+export type AutoFollowUpPause = "user" | "interrupted" | "error";
+
+export type BabysitPhase =
+  | { kind: "working" }
+  | { kind: "watching" }
+  | { kind: "done"; pr: PrSummary }
+  | { kind: "paused"; reason: AutoFollowUpPause | "limit" };
+
+export interface BabysitState {
+  link: SessionPrLink;
+  workflow: PrWorkflow;
+  phase: BabysitPhase;
+  autoTurns: number;
+}
+
+export interface SessionPrItem {
+  key: string;
+  ref: PrRef;
+  source: "linked" | "branch";
+  link?: SessionPrLink;
+  chip: PrChip;
+  title: string | null;
+  url: string;
+  state: "OPEN" | "CLOSED" | "MERGED";
+  headSha: string;
+  unseen: boolean;
+  urgency: number;
+  updatedAt: number;
+  canLink: boolean;
+}
+
+export interface PrDockEntry {
+  key: string;
+  ref: PrRef;
+  updates: PrUpdate[];
+  workflowId: string;
+  workflowLabel: string | null;
+  isReview: boolean;
+  logsNeeded: boolean;
+  prompt: string | null;
+  unseen: boolean;
+  error: string | null;
+  autoHint: "paused" | "not-actionable" | "after-turn" | "sending" | null;
+}
+
+export interface PrDetailEntry {
+  detail: PrDetail | null;
+  loading: boolean;
+  error: string | null;
+}
+
+export interface PrInboxState {
+  keys: string[];
+  account: { host: string; login: string } | null;
+  fetchedAt: number;
+  error: string | null;
+  truncated: boolean;
+  limit: number | null;
+  loading: boolean;
+}
+
+export interface GitHubContext {
+  viewer: string | null;
+  org: string | null;
+  projectRepos: ProjectGitHubRepo[];
+}
+
+export type SubjectSessionActivity = "working" | "new" | "unseen" | "idle";
+
+export type SubjectAction =
+  | { kind: "session"; sessionId: string; mode: "open" | "continue"; workflowId: string | null; label: string; meta: SubjectSessionActivity; count: number }
+  | { kind: "workflow"; workflowId: string; urgent: boolean }
+  | { kind: "logs" }
+  | { kind: "github" };
+
+export interface SubjectRelations {
+  linkedSessionIds: string[];
+  unseenSessionIds: string[];
+  mainSessionId: string | null;
+  babysitter: { sessionId: string; workflowId: string } | null;
+  action: SubjectAction;
+  delta: { kind: "commits" } | { kind: "updated"; at: number } | { kind: "activity" } | null;
+}
+
+export type PrsTopicData = { inbox: PrInboxState; context: GitHubContext }
+  & { [key: `summary/${string}`]: PrSummary }
+  & { [key: `detail/${string}`]: PrDetailEntry }
+  & { [key: `rel/${string}`]: SubjectRelations };

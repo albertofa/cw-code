@@ -18,6 +18,8 @@ export type {
   GitPullRequest,
   GitPullRequestChecks,
   GitStatusUpdate,
+  BranchMismatch,
+  GitTopicData,
   GitBranchInfo,
   GitDiffMode,
   GitDiffResult,
@@ -74,7 +76,22 @@ export type {
   PrWorkspaceChoice,
   PrWorkflowIcon,
   PrWorkflowHarness,
-  PrWorkflow
+  PrWorkflow,
+  PrChipTone,
+  PrChipIcon,
+  PrChip,
+  AutoFollowUpPause,
+  BabysitPhase,
+  BabysitState,
+  SessionPrItem,
+  PrDockEntry,
+  PrDetailEntry,
+  PrInboxState,
+  GitHubContext,
+  SubjectSessionActivity,
+  SubjectAction,
+  SubjectRelations,
+  PrsTopicData
 } from "./pullRequests.js";
 export type {
   RepoRef,
@@ -97,7 +114,14 @@ export type {
   RunsResult,
   SessionIssueLink,
   SessionRunLink,
-  WorkflowSubject
+  WorkflowSubject,
+  GitHubViewDef,
+  GitHubTabBadge,
+  GitHubMetaTopicData,
+  GitHubSubject,
+  GitHubRow,
+  GitHubViewState,
+  GitHubViewTopicData
 } from "./github.js";
 export type { PanelId, DockLocation, DockableTabId, MainTabId, TabDockState, TabAutoLocation, PanelLayoutSnapshot } from "./panels.js";
 export type { CliBinary, BinarySource, CliDiscoveredCandidate, CliDiscoverResult, CliVersionCheck, NodePtyProbeOutcome, ServerPackageProbe } from "./cli.js";
@@ -116,7 +140,16 @@ export type {
   AccountUsageState,
   AccountUsageSnapshot,
   UsageLedgerRow,
-  UsageLedgerQuery
+  UsageLedgerQuery,
+  UsageTotals,
+  UsageMetric,
+  DailyDriverPoint,
+  ModelUsageRow,
+  SessionUsageRow,
+  AccountUsageEntry,
+  UsageTopicData,
+  UsageReportQuery,
+  UsageReport
 } from "./usage.js";
 export type { MetadataStore, MetadataIssueKind, MetadataBackup, MetadataIssue, StartupState } from "./startup.js";
 export type {
@@ -154,8 +187,47 @@ export type {
   TextSearchMatch,
   TextSearchResult,
   GitBaseline,
-  FsChangeEvent
+  FsChangeEvent,
+  FilesTopicData
 } from "./files.js";
 export type { NativeSession, ImportableSession, ImportSessionRequest, ImportSessionResult } from "./importer.js";
 export type { ClientKind, RpcError, ClientMessage, ServerMessage, ServerEndpoint, ServerReady, TopicsParams, TopicSubscribeResult, DeviceInfo, DeviceCreateResult } from "./protocol.js";
 export type { DesktopApi } from "./desktop.js";
+export type { TopicOp, TopicSnapshot, TopicsSubscribeResult, TopicPatch } from "./topics.js";
+export type {
+  ThreadItem,
+  ThreadTurn,
+  ThreadHistory,
+  ThreadLastTurn,
+  ContextMeter,
+  ThreadUsage,
+  ThreadTurnChanges,
+  ThreadTopicData
+} from "./threads.js";
+export type {
+  AttentionKind,
+  Attention,
+  NeedsYouSlot,
+  SessionRow,
+  SidebarLayout,
+  SidebarDefaults,
+  WorktreeCandidate,
+  SidebarTopicData,
+  SidebarSection,
+  SidebarReorderRequest,
+  SidebarOrderPrefs
+} from "./sidebar.js";
+export type { HarnessIssue, HarnessAvailability, ComposerDraft, AppTopicData, LegacyPreferences } from "./app.js";
+export type {
+  ResolvedWorkflowHarness,
+  HarnessSummaryPart,
+  WorkflowHarnessRequest,
+  WorkflowHarnessResult,
+  WorkflowBase,
+  WorkflowPreviewRequest,
+  WorkflowPreview,
+  WorkflowRunResume,
+  WorkflowRunRequest,
+  WorkflowRunStage,
+  WorkflowRunResult
+} from "./workflows.js";

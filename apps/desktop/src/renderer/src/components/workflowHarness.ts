@@ -1,4 +1,4 @@
-import type { PrWorkflowHarness } from "@cw-code/contracts";
+import type { HarnessSummaryPart, PrWorkflowHarness, ResolvedWorkflowHarness } from "@cw-code/contracts";
 import type { ComposerPrefs, DriverName, EffortLevel, ModelOption, PermissionMode, PermissionOption } from "../cw.js";
 import { DEFAULT_EFFORT, effortLabel, effortOptionsFor, fallbackEffort, pickInitialModel } from "./modelMenus.js";
 import { harnessLabel } from "./toolTabs.js";
@@ -23,12 +23,7 @@ export interface WorkflowHarnessContext {
   permissions: PermissionOption[];
 }
 
-export interface ResolvedWorkflowHarness {
-  driver: DriverName;
-  model: string | undefined;
-  effort: EffortLevel;
-  permissionMode: PermissionMode;
-}
+export type { HarnessSummaryPart, ResolvedWorkflowHarness };
 
 export function workflowDriver(config: PrWorkflowHarness, composerDriver: DriverName): DriverName {
   return config.driver ?? composerDriver;
@@ -41,12 +36,6 @@ export function workflowModel(
   ctx: Pick<WorkflowHarnessContext, "defaultModel" | "recentModels" | "models">
 ): string | undefined {
   return (config.driver && config.model) || (pickInitialModel(ctx.models, ctx.defaultModel, ctx.recentModels) ?? undefined);
-}
-
-export interface HarnessSummaryPart {
-  key: "driver" | "model" | "effort" | "permission";
-  label: string;
-  source: HarnessValueSource;
 }
 
 function requestedValues(config: PrWorkflowHarness, pendingPrefs: ComposerPrefs): { effort: EffortLevel; permissionMode: PermissionMode } {

@@ -1,4 +1,4 @@
-import type { PrLinkOrigin, PrRef } from "./pullRequests.js";
+import type { GitHubContext, PrLinkOrigin, PrRef, PrSummary, SubjectRelations } from "./pullRequests.js";
 
 export interface RepoRef {
   host: string;
@@ -158,3 +158,50 @@ export type WorkflowSubject =
   | { kind: "pr"; ref: PrRef }
   | { kind: "issue"; ref: IssueRef }
   | { kind: "run"; ref: RunRef };
+
+export interface GitHubViewDef {
+  id: string;
+  kind: GitHubKind;
+  name: string;
+  icon: string;
+  query: string;
+  group: GitHubViewGroup;
+  saved: boolean;
+}
+
+export interface GitHubTabBadge {
+  count: number;
+  tone: "default" | "quiet" | "bad";
+}
+
+export type GitHubMetaTopicData = {
+  context: GitHubContext;
+  views: Record<GitHubKind, GitHubViewDef[]>;
+  badges: Record<GitHubKind, GitHubTabBadge | null>;
+};
+
+export type GitHubSubject = { kind: "pr"; pr: PrSummary } | { kind: "issue"; issue: IssueSummary } | { kind: "run"; run: WorkflowRunSummary };
+
+export interface GitHubRow {
+  seq: number;
+  subject: GitHubSubject;
+  bucket: string;
+  relations: SubjectRelations;
+}
+
+export interface GitHubViewState {
+  kind: GitHubKind;
+  query: string;
+  sort: string;
+  problems: string[];
+  loading: boolean;
+  error: string | null;
+  account: GitHubAccountRef | null;
+  openCount: number | null;
+  closedCount: number | null;
+  truncated: boolean;
+  limit: number | null;
+  fetchedAt: number | null;
+}
+
+export type GitHubViewTopicData = { view: GitHubViewState } & { [key: `row/${string}`]: GitHubRow };

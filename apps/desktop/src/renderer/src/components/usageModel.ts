@@ -1,49 +1,16 @@
+import type {
+  ContextMeter,
+  DailyDriverPoint,
+  ModelUsageRow,
+  SessionUsageRow,
+  UsageMetric,
+  UsageTotals
+} from "@cw-code/contracts";
 import type { ContextUsage, DriverName, TokenCounts, UsageLedgerRow } from "../cw.js";
 
-export type UsageMetric = "all" | "fresh";
+export type ContextSeverity = ContextMeter["severity"];
 
-export interface DailyDriverPoint {
-  day: string;
-  byDriver: Record<DriverName, number>;
-  turns: number;
-}
-
-export interface ModelUsageRow {
-  id: string;
-  driver: DriverName | null;
-  value: number;
-  freshTokens: number;
-  cacheReadTokens: number;
-  turns: number;
-  costUsd: number | null;
-}
-
-export interface SessionUsageRow {
-  sessionId: string;
-  projectId: string;
-  driver: DriverName;
-  turns: number;
-  tokens: number;
-  costUsd: number | null;
-}
-
-export type ContextSeverity = "warn" | "danger" | null;
-
-export interface ContextMeter {
-  percent: number;
-  severity: ContextSeverity;
-}
-
-export interface UsageTotals {
-  totalTokens: number;
-  inputTokens: number;
-  cacheReadTokens: number;
-  outputTokens: number;
-  costUsd: number | null;
-  turns: number;
-  sessions: number;
-  unpricedTurns: number;
-}
+export type { ContextMeter, DailyDriverPoint, ModelUsageRow, SessionUsageRow, UsageMetric, UsageTotals };
 
 function metricValue(row: UsageLedgerRow, metric: UsageMetric): number {
   return metric === "all"

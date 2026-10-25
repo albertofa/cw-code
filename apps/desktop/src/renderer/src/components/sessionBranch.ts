@@ -1,10 +1,7 @@
+import type { BranchMismatch } from "@cw-code/contracts";
 import type { GitStatus } from "../cw.js";
 
-export interface BranchMismatch {
-  sessionBranch: string;
-  folderBranch: string;
-  folderHead: string;
-}
+export type { BranchMismatch };
 
 interface BranchSession {
   branch?: string;

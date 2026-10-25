@@ -1,11 +1,7 @@
+import type { WorktreeCandidate } from "@cw-code/contracts";
 import type { Session } from "../cw.js";
 
-export interface WorktreeCandidate {
-  sessionId: string;
-  title: string;
-  branch?: string;
-  worktreePath: string;
-}
+export type { WorktreeCandidate };
 
 export function worktreeCandidates(sessions: Session[]): WorktreeCandidate[] {
   const candidates: WorktreeCandidate[] = [];

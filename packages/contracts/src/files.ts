@@ -57,3 +57,5 @@ export interface FsChangeEvent {
   sessionId: string;
   paths: string[];
 }
+
+export type FilesTopicData = { decorations: GitDecorations };

@@ -1,17 +1,16 @@
-import type { AppSettings, PrDetail, PrRef, PrSummary, PrUpdate, PrWorkflow, SessionMeta, SessionPrLink } from "@cw-code/contracts";
+import type { AppSettings, AutoFollowUpPause, BabysitPhase, PrDetail, PrRef, PrSummary, PrUpdate, PrWorkflow, SessionMeta, SessionPrLink } from "@cw-code/contracts";
 import { autoFollowUpWorkflow, runsContinuously, withAutomatedWorkflowNote } from "@cw-code/shared/autoFollowUp";
 import { prKey } from "./prInbox.js";
 import { detailNeedsRefresh, seenThrough, updatesSince } from "./prUpdates.js";
 
 export { autoFollowUpWorkflow, runsContinuously, withAutomatedWorkflowNote };
+export type { AutoFollowUpPause, BabysitPhase };
 import { attributionText, resolveTemplate, templateVars } from "./prWorkflows.js";
 import { sessionLinks, type PrSummaryLookup } from "./sessionPrLinks.js";
 
 export const AUTO_FOLLOW_UP_LIMIT = 8;
 
 const AUTO_FOLLOW_UP_STATUSES: ReadonlySet<SessionMeta["status"]> = new Set(["done", "idle", "holding", "babysit"]);
-
-export type AutoFollowUpPause = "user" | "interrupted" | "error";
 
 const FAILED_LOGS_PATTERN = /\{\{\s*checks\.failedLogs\s*\}\}/;
 
@@ -76,12 +75,6 @@ export interface AutoFollowUpSession {
   paused: boolean;
   autoTurns: number;
 }
-
-export type BabysitPhase =
-  | { kind: "working" }
-  | { kind: "watching" }
-  | { kind: "done"; pr: PrSummary }
-  | { kind: "paused"; reason: AutoFollowUpPause | "limit" };
 
 export interface BabysitState {
   link: SessionPrLink;

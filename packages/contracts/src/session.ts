@@ -1,4 +1,4 @@
-import type { SessionPrLink } from "./pullRequests.js";
+import type { AutoFollowUpPause, SessionPrLink } from "./pullRequests.js";
 import type { SessionIssueLink, SessionRunLink } from "./github.js";
 import type { CommandInvocation } from "./commands.js";
 
@@ -31,6 +31,7 @@ export type SessionStatusReason =
   | "app-restart-idle"
   | "holding-expired"
   | "idle-expired"
+  | "turn-start-failed"
   | "unknown";
 
 export interface ProjectSettings {
@@ -95,6 +96,7 @@ export interface SessionMeta {
   prUnlinked?: string[];
   lastTurnSnapshot?: TurnSnapshot;
   createNotice?: string;
+  autoFollowUp?: { paused?: AutoFollowUpPause; turns: number };
 }
 
 export type ResolvedCheckout = { kind: "worktree"; path: string } | { kind: "root" };
@@ -345,3 +347,11 @@ export interface TurnChanges {
   reason?: string;
   conflicts: string[];
 }
+
+export interface BranchMismatch {
+  sessionBranch: string;
+  folderBranch: string;
+  folderHead: string;
+}
+
+export type GitTopicData = { status: GitStatus | null; error: string | null; mismatch: BranchMismatch | null; keptFolderHead: string | null };

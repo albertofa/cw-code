@@ -1,16 +1,11 @@
-import type { PrUpdate, PrUpdateKind } from "@cw-code/contracts";
+import type { Attention, AttentionKind, NeedsYouSlot, PrUpdate, PrUpdateKind } from "@cw-code/contracts";
 import type { ApprovalRequest, PrDetail, PrSummary, QuestionRequest, Session } from "../cw.js";
 import { prKey } from "./prInbox.js";
 import type { BabysitPhase } from "./prSessionModel.js";
 import { hasUnseen, updatesSince } from "./prUpdates.js";
 import { compareUrgency, prUrgency, sessionLinks, type PrSummaryLookup } from "./sessionPrLinks.js";
 
-export type AttentionKind = "approval" | "question" | "update";
-
-export interface Attention {
-  kind: AttentionKind;
-  line: string;
-}
+export type { Attention, AttentionKind, NeedsYouSlot };
 
 export interface UnseenPr {
   number: number;
@@ -18,8 +13,6 @@ export interface UnseenPr {
   updates?: PrUpdate[];
   more?: number;
 }
-
-export type NeedsYouSlot = AttentionKind | "done" | "running";
 
 export interface NeedsYouEntry {
   session: Session;

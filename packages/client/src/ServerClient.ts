@@ -352,7 +352,7 @@ export class ServerClient {
           return;
         }
         if (message.t === "result") this.settle(message);
-        else this.dispatch(message.channel, message.payload);
+        else if (message.t === "event") this.dispatch(message.channel, message.payload);
       };
       socket.onclose = (event) => {
         if (this.socket !== socket) return;
