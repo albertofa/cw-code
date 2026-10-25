@@ -3,6 +3,7 @@ import type { PrWorkflow, RunRef, WorkflowRunSummary, WorkflowSubject } from "@c
 import {
   effectiveSubject,
   isLinkedTo,
+  issueDataTime,
   otherSessionCandidates,
   prRefForRun,
   resolveIssueBase,
@@ -182,5 +183,13 @@ describe("otherSessionCandidates", () => {
   it("pins an archived preselected session", () => {
     const sessions = [session("a", { updatedAt: 3 }), session("gone", { status: "archived" })];
     expect(otherSessionCandidates(sessions, subject, "p1", "gone").map((s) => s.id)).toEqual(["gone", "a"]);
+  });
+});
+
+describe("issueDataTime", () => {
+  it("returns the newest of the issue update and its comments", () => {
+    expect(issueDataTime({ updatedAt: 100, comments: [{ author: "a", body: "", createdAt: 300 }, { author: "b", body: "", createdAt: 200 }] })).toBe(300);
+    expect(issueDataTime({ updatedAt: 500, comments: [{ author: "a", body: "", createdAt: 300 }] })).toBe(500);
+    expect(issueDataTime({ updatedAt: 100, comments: [] })).toBe(100);
   });
 });

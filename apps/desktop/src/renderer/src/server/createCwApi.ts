@@ -36,6 +36,7 @@ import type {
   UsageReport,
   WorkflowHarnessResult,
   WorkflowPreview,
+  WorkflowRunResult,
   WorkflowTemplatePreview,
   WorktreePruneSummary
 } from "@cw-code/contracts";
@@ -218,7 +219,7 @@ export function createCwApi(client: ServerClient, topics: TopicCache, desktop: D
     workflowPreview: (req) => call<WorkflowPreview>("workflows.preview", req),
     workflowHarness: (req) => call<WorkflowHarnessResult>("workflows.resolveHarness", req),
     workflowTemplatePreview: (req) => call<WorkflowTemplatePreview>("workflows.previewTemplate", req),
-    cloneGitHubRepo: (repo) => call<Project>("github.clone", { repo }),
+    runWorkflow: (req) => call<WorkflowRunResult>("workflows.run", req),
     linkSessionPr: (sessionId, link) => call<Session>("sessions.linkPr", { sessionId, link }),
     unlinkSessionPr: (sessionId, ref) => call<Session>("sessions.unlinkPr", { sessionId, ref }),
     markSessionPrSeen: (sessionId, ref, headSha, seenAt) => call<Session>("sessions.markPrSeen", { sessionId, ref, headSha, seenAt }),

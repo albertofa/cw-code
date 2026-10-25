@@ -88,7 +88,7 @@ function waitForSession(sessionId: string, timeoutMs = SESSION_ROW_WAIT_MS): Pro
   });
 }
 
-async function selectWhenListed(sessionId: string, select: () => void): Promise<void> {
+export async function selectWhenListed(sessionId: string, select: () => void): Promise<void> {
   const selectedBefore = useAppStore.getState().activeSessionId;
   if (await waitForSession(sessionId)) {
     select();

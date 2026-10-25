@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { parseHarnessRequest, parsePreviewRequest } from "./workflows.js";
+import { parseHarnessRequest, parsePreviewRequest, parseRunRequest } from "./workflows.js";
 
 const ref = { host: "github.com", owner: "acme", repo: "widgets", number: 42 };
 
@@ -37,5 +37,18 @@ describe("workflow request parsing", () => {
       pendingPrefs: {},
       projectId: null
     });
+  });
+
+  it("parses a run request with its resume state", () => {
+    const base = { workflowId: "review", subject: { kind: "pr", ref }, composerDriver: "claude", prompt: "go" };
+    expect(parseRunRequest(base)).toMatchObject({ prompt: "go", resume: null, continueSessionId: null });
+    expect(parseRunRequest({ ...base, resume: { sessionId: "sess_1", linked: true, sent: false, note: null } }).resume).toEqual({
+      sessionId: "sess_1",
+      linked: true,
+      sent: false,
+      note: null
+    });
+    expect(() => parseRunRequest({ ...base, prompt: "  " })).toThrow("prompt");
+    expect(() => parseRunRequest({ ...base, resume: { sessionId: "sess_1", linked: "yes", sent: false } })).toThrow("resume.linked");
   });
 });

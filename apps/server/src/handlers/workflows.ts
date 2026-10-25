@@ -5,6 +5,8 @@ import type {
   PrWorkspaceChoice,
   WorkflowHarnessRequest,
   WorkflowPreviewRequest,
+  WorkflowRunRequest,
+  WorkflowRunResume,
   WorkflowSubject,
   WorkflowTemplatePreviewRequest
 } from "@cw-code/contracts";
@@ -14,7 +16,7 @@ import { assertPrRef } from "../github/PullRequestService.js";
 import { DRIVER_KINDS } from "../prefs/PreferencesStore.js";
 import { sanitizeWorkflowHarness, VALID_EFFORTS, VALID_PERMISSION_MODES, VALID_PR_WORKSPACES } from "../settings/SettingsStore.js";
 import type { Router } from "../transport/Router.js";
-import { handle, parseArgs, parseString } from "./shared.js";
+import { handle, parseArgs, parseBoolean, parseString } from "./shared.js";
 
 const MAX_ID_LENGTH = 200;
 const MAX_TEXT_LENGTH = 200_000;
@@ -108,9 +110,28 @@ export function parseTemplatePreviewRequest(args: unknown): WorkflowTemplatePrev
   };
 }
 
+function parseResume(value: unknown): WorkflowRunResume | null {
+  if (value === null || value === undefined) return null;
+  const raw = parseArgs(value, "resume");
+  return {
+    sessionId: parseBounded(raw.sessionId, "resume.sessionId", MAX_ID_LENGTH),
+    linked: parseBoolean(raw.linked, "resume.linked"),
+    sent: parseBoolean(raw.sent, "resume.sent"),
+    note: parseNullable(raw.note, "resume.note", MAX_TEXT_LENGTH)
+  };
+}
+
+export function parseRunRequest(args: unknown): WorkflowRunRequest {
+  const raw = parseArgs(args, "workflows.run");
+  const prompt = parseBounded(raw.prompt, "prompt", MAX_TEXT_LENGTH);
+  if (!prompt.trim()) throw new Error("prompt must not be empty");
+  return { ...parsePreviewRequest(raw), prompt, resume: parseResume(raw.resume) };
+}
+
 export function registerWorkflowHandlers(router: Router, app: ServerApp): void {
   const previews = () => app.requireServices().workflowPreview;
   handle(router, "workflows.preview", (args) => previews().preview(parsePreviewRequest(args)));
   handle(router, "workflows.resolveHarness", (args) => previews().resolveHarness(parseHarnessRequest(args)));
   handle(router, "workflows.previewTemplate", (args) => previews().previewTemplate(parseTemplatePreviewRequest(args)));
+  handle(router, "workflows.run", (args) => app.requireServices().workflowRunner.run(parseRunRequest(args)));
 }

@@ -23,6 +23,7 @@ import { AutoFollowUpEngine } from "../prEngine/AutoFollowUpEngine.js";
 import { PrStore } from "../prEngine/PrStore.js";
 import { SessionPrModel } from "../prEngine/sessionPrModel.js";
 import { WorkflowPreviewService } from "../prEngine/WorkflowPreview.js";
+import { WorkflowRunner } from "../prEngine/WorkflowRunner.js";
 import { PtyPool } from "../pty/PtyPool.js";
 import { SessionManager } from "../sessions/SessionManager.js";
 import type { SessionStore } from "../sessions/SessionStore.js";
@@ -74,6 +75,7 @@ export interface Services {
   turnChanges: TurnChangesModel;
   sidebar: SidebarService;
   workflowPreview: WorkflowPreviewService;
+  workflowRunner: WorkflowRunner;
 }
 
 export interface ServiceHooks {
@@ -393,6 +395,38 @@ export function createServices(stores: { sessionStore: SessionStore; settingsSto
     checkLog: (ref, runId) => pullRequests.failedCheckLog(ref, runId),
     runLog: (ref) => runs.runLog(ref)
   });
+  const workflowRunner = new WorkflowRunner({
+    preview: (req) => workflowPreview.preview(req),
+    resolveHarness: (req) => workflowPreview.resolveHarness(req),
+    workflows: () => sessions.getSettings().prWorkflows,
+    sessions: () => sessions.listAllSessions(),
+    clone: (repo) => pullRequests.clone(repo),
+    refreshProjectRepos: () => prStore.refreshProjectRepos(),
+    createSession: (projectId, driver, options) => sessions.createSession(projectId, driver, options),
+    setComposer: (sessionId, prefs) => {
+      sessions.setComposer(sessionId, prefs);
+    },
+    linkPr: (sessionId, link) => {
+      sessions.linkPr(sessionId, link);
+    },
+    linkIssue: (sessionId, link) => {
+      sessions.linkIssue(sessionId, link);
+    },
+    linkRun: (sessionId, link) => {
+      sessions.linkRun(sessionId, link);
+    },
+    markPrSeen: (sessionId, ref, headSha, seenAt) => {
+      sessions.markPrSeen(sessionId, ref, headSha, seenAt);
+    },
+    markIssueSeen: (sessionId, ref, seenAt) => {
+      sessions.markIssueSeen(sessionId, ref, seenAt);
+    },
+    markRunSeen: (sessionId, ref, seenAt) => {
+      sessions.markRunSeen(sessionId, ref, seenAt);
+    },
+    startTurn: (sessionId, prompt, input) => turns.start(sessionId, prompt, input),
+    postNotice: (sessionId, noticeId, text, severity) => sessions.emitNotice(sessionId, noticeId, text, severity)
+  });
   const services: Services = {
     sessions,
     skills: new SkillsStore(),
@@ -422,7 +456,8 @@ export function createServices(stores: { sessionStore: SessionStore; settingsSto
     sessionPrs,
     turnChanges,
     sidebar,
-    workflowPreview
+    workflowPreview,
+    workflowRunner
   };
   wireServiceEvents(services, hooks);
   wireAutoFollowUp(services);

@@ -127,6 +127,8 @@ import type {
   WorkflowHarnessResult,
   WorkflowPreview,
   WorkflowPreviewRequest,
+  WorkflowRunRequest,
+  WorkflowRunResult,
   WorkflowTemplatePreview,
   WorkflowTemplatePreviewRequest
 } from "@cw-code/contracts";
@@ -703,7 +705,7 @@ export interface CwApi {
   workflowPreview(req: WorkflowPreviewRequest): Promise<WorkflowPreview>;
   workflowHarness(req: WorkflowHarnessRequest): Promise<WorkflowHarnessResult>;
   workflowTemplatePreview(req: WorkflowTemplatePreviewRequest): Promise<WorkflowTemplatePreview>;
-  cloneGitHubRepo(repo: RepoRef): Promise<Project>;
+  runWorkflow(req: WorkflowRunRequest): Promise<WorkflowRunResult>;
   linkSessionPr(sessionId: string, link: SessionPrLink): Promise<Session>;
   unlinkSessionPr(sessionId: string, ref: PrRef): Promise<Session>;
   markSessionPrSeen(sessionId: string, ref: PrRef, headSha: string | null, seenAt: number | null): Promise<Session>;

@@ -93,6 +93,7 @@ export interface WorkflowTemplatePreview {
 export interface WorkflowRunResume {
   sessionId: string;
   linked: boolean;
+  sent: boolean;
   note: string | null;
 }
 

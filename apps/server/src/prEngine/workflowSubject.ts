@@ -1,4 +1,4 @@
-import type { IssueRef, PrRef, PrWorkflow, RepoRef, RunRef, WorkflowBase, WorkflowRunSummary, WorkflowSubject } from "@cw-code/contracts";
+import type { IssueDetail, IssueRef, PrRef, PrWorkflow, RepoRef, RunRef, WorkflowBase, WorkflowRunSummary, WorkflowSubject } from "@cw-code/contracts";
 import { prKey } from "@cw-code/shared/prRef";
 import { issueKey, runKey } from "../github/prLinks.js";
 
@@ -98,4 +98,8 @@ export function resolveRunBase(run: Pick<WorkflowRunSummary, "branch"> | undefin
   if (!run) return { baseBranch: null, label: `${DEFAULT_BASE_LABEL} — the run's branch is unknown` };
   if (!run.branch) return { baseBranch: null, label: `${DEFAULT_BASE_LABEL} — the run has no branch` };
   return { baseBranch: run.branch, label: `${run.branch} (fetched from origin; ${RUN_BASE_FALLBACK})` };
+}
+
+export function issueDataTime(issue: Pick<IssueDetail, "updatedAt" | "comments">): number {
+  return issue.comments.reduce((latest, comment) => Math.max(latest, comment.createdAt), issue.updatedAt);
 }

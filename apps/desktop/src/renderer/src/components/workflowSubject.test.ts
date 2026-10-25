@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import type { WorkflowBase } from "@cw-code/contracts";
 import type { RunRef, WorkflowSubject } from "../cw.js";
-import { baseWorkspaceHint, isLinkedTo, issueDataTime, issueKey, prWorkspaceHint, runKey, subjectLink } from "./workflowSubject.js";
+import { baseWorkspaceHint, issueKey, prWorkspaceHint, runKey, subjectLink } from "./workflowSubject.js";
 
 const runRef: RunRef = { host: "github.com", owner: "acme", repo: "widgets", runId: 99 };
 const runSubject: WorkflowSubject = { kind: "run", ref: runRef };
@@ -53,26 +53,5 @@ describe("workspace hints", () => {
     expect(prWorkspaceHint("fix/x", "checkout", "widgets")).toBe(
       "switches widgets to the PR branch (or a new branch from the PR head)"
     );
-  });
-});
-
-describe("issueDataTime", () => {
-  it("returns the latest of the issue update and its newest comment", () => {
-    expect(issueDataTime({ updatedAt: 100, comments: [{ author: "a", body: "", createdAt: 300 }, { author: "b", body: "", createdAt: 200 }] })).toBe(300);
-    expect(issueDataTime({ updatedAt: 500, comments: [{ author: "a", body: "", createdAt: 300 }] })).toBe(500);
-    expect(issueDataTime({ updatedAt: 100, comments: [] })).toBe(100);
-  });
-});
-
-describe("isLinkedTo", () => {
-  const prRef = { host: "github.com", owner: "acme", repo: "widgets", number: 5 };
-  const issueRef = { host: "github.com", owner: "acme", repo: "widgets", number: 3 };
-
-  it("reports whether a session is linked to the subject", () => {
-    const session = { prs: [{ ref: prRef, origin: "opened" as const }] };
-    expect(isLinkedTo(session, { kind: "pr", ref: prRef })).toBe(true);
-    expect(isLinkedTo(session, { kind: "pr", ref: { ...prRef, number: 6 } })).toBe(false);
-    expect(isLinkedTo(session, { kind: "issue", ref: issueRef })).toBe(false);
-    expect(isLinkedTo({}, runSubject)).toBe(false);
   });
 });

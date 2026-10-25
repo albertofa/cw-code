@@ -1,5 +1,5 @@
 import type { WorkflowBase } from "@cw-code/contracts";
-import type { IssueDetail, IssueRef, PrLinkOrigin, PrRef, RepoRef, RunRef, WorkflowSubject } from "../cw.js";
+import type { IssueRef, PrLinkOrigin, PrRef, RepoRef, RunRef, WorkflowSubject } from "../cw.js";
 import { prKey } from "./prInbox.js";
 
 interface SessionWithLinks {
@@ -53,10 +53,6 @@ export function subjectLink(
   }
 }
 
-export function isLinkedTo(session: SessionWithLinks, subject: WorkflowSubject): boolean {
-  return subjectLink(session, subject) !== undefined;
-}
-
 export type WorkflowWorkspaceMode = "worktree" | "checkout";
 
 export function baseWorkspaceHint(base: WorkflowBase, mode: WorkflowWorkspaceMode, projectName: string | null): string {
@@ -69,8 +65,4 @@ export function prWorkspaceHint(headRefName: string | null, mode: WorkflowWorksp
     return `switches ${projectName ?? "the project"} to the PR branch (or a new branch from the PR head)`;
   }
   return `isolated, from ${headRefName ?? "the PR head"}`;
-}
-
-export function issueDataTime(issue: Pick<IssueDetail, "updatedAt" | "comments">): number {
-  return issue.comments.reduce((latest, comment) => Math.max(latest, comment.createdAt), issue.updatedAt);
 }
