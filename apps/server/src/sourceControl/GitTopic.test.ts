@@ -40,6 +40,7 @@ describe("GitTopic", () => {
       status: status("main"),
       error: null,
       mismatch: { sessionBranch: "cw/a", folderBranch: "main", folderHead: "main" },
+      branchMismatched: true,
       keptFolderHead: null
     });
     expect(ctx.watched.at(-1)).toEqual(["s1"]);
@@ -57,8 +58,18 @@ describe("GitTopic", () => {
     ctx.setStatus(status("main"));
     expect(ctx.git.keepFolderHead("s1")).toBe("main");
     expect(ctx.git.mismatch("s1")).toBeNull();
-    expect(ctx.data()).toMatchObject({ mismatch: null, keptFolderHead: "main" });
+    expect(ctx.data()).toMatchObject({ mismatch: null, branchMismatched: true, keptFolderHead: "main" });
     expect(ctx.git.keptFolderHead("s1")).toBe("main");
+  });
+
+  test("forgetting the kept head republishes the mismatch", () => {
+    const ctx = setup();
+    ctx.setStatus(status("main"));
+    ctx.git.keepFolderHead("s1");
+    ctx.git.forgetKeptHead("s1");
+    expect(ctx.git.keptFolderHead("s1")).toBeNull();
+    expect(ctx.data()).toMatchObject({ keptFolderHead: null, branchMismatched: true });
+    expect(ctx.data().mismatch).not.toBeNull();
   });
 
   test("a kept head clears when the folder head changes", () => {
@@ -72,6 +83,7 @@ describe("GitTopic", () => {
     expect(ctx.git.keptFolderHead("s1")).toBeNull();
     expect(ctx.data()).toMatchObject({
       keptFolderHead: null,
+      branchMismatched: true,
       mismatch: { sessionBranch: "cw/a", folderBranch: "feature", folderHead: "feature" }
     });
   });

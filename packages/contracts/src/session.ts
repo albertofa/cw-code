@@ -356,4 +356,4 @@ export interface BranchMismatch {
   folderHead: string;
 }
 
-export type GitTopicData = { status: GitStatus | null; error: string | null; mismatch: BranchMismatch | null; keptFolderHead: string | null };
+export type GitTopicData = { status: GitStatus | null; error: string | null; mismatch: BranchMismatch | null; branchMismatched: boolean; keptFolderHead: string | null };

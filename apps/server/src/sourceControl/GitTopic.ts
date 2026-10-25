@@ -2,7 +2,7 @@ import type { BranchMismatch, GitStatus, GitTopicData, SessionMeta } from "@cw-c
 import { topicId } from "@cw-code/shared/topics";
 import type { TopicHub, TopicProvider } from "../topics/TopicHub.js";
 import type { TopicStore } from "../topics/TopicStore.js";
-import { activeBranchMismatch, folderHeadValue, shouldResetKeptHead } from "./branchMismatch.js";
+import { activeBranchMismatch, branchMismatch, folderHeadValue, shouldResetKeptHead } from "./branchMismatch.js";
 
 export const GIT_TOPIC_PREFIX = "git/";
 
@@ -77,11 +77,24 @@ export class GitTopic implements TopicProvider {
     return activeBranchMismatch(this.deps.session(sessionId), this.deps.status(sessionId), this.keptHeads.get(sessionId));
   }
 
+  branchMismatched(sessionId: string): boolean {
+    return this.rawMismatch(sessionId) !== null;
+  }
+
+  rawMismatch(sessionId: string): BranchMismatch | null {
+    return branchMismatch(this.deps.session(sessionId), this.deps.status(sessionId));
+  }
+
+  forgetKeptHead(sessionId: string): void {
+    if (this.keptHeads.delete(sessionId)) this.publish(sessionId);
+  }
+
   private data(sessionId: string): GitTopicData {
     return {
       status: this.deps.status(sessionId),
       error: this.deps.failure(sessionId),
       mismatch: this.mismatch(sessionId),
+      branchMismatched: this.branchMismatched(sessionId),
       keptFolderHead: this.keptFolderHead(sessionId)
     };
   }

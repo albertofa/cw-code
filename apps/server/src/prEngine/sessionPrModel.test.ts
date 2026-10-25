@@ -13,7 +13,7 @@ import type {
 } from "@cw-code/contracts";
 import { prKey } from "@cw-code/shared/prRef";
 import { DEFAULT_SETTINGS } from "../settings/SettingsStore.js";
-import { activeBranchMismatch } from "../sourceControl/branchMismatch.js";
+import { activeBranchMismatch, branchMismatch } from "../sourceControl/branchMismatch.js";
 import { SessionPrModel, sessionDockItems, sessionPrItemsFor, updatesToSend, type SessionPrModelDeps } from "./sessionPrModel.js";
 
 function ref(number: number): PrRef {
@@ -291,22 +291,23 @@ describe("session PR items", () => {
   it("adds the branch PR when the folder is on the session's branch", () => {
     const owner = session([link(42)], { branch: "feature" });
     const current = status();
-    const items = sessionPrItemsFor(owner, current, activeBranchMismatch(owner, current, undefined), new Map(), () => undefined);
+    const items = sessionPrItemsFor(owner, current, branchMismatch(owner, current), new Map(), () => undefined);
     expect(items.map((item) => [item.key, item.source, item.canLink])).toContainEqual([branchKey, "branch", true]);
   });
 
   it("skips the branch PR when the folder is on another branch", () => {
     const owner = session([link(42)], { branch: "feature" });
     const other = status({ branch: "other" });
-    const items = sessionPrItemsFor(owner, other, activeBranchMismatch(owner, other, undefined), new Map(), () => undefined);
+    const items = sessionPrItemsFor(owner, other, branchMismatch(owner, other), new Map(), () => undefined);
     expect(items.map((item) => item.key)).toEqual([prKey(ref(42))]);
   });
 
-  it("keeps the branch PR while the user kept the other folder head", () => {
+  it("skips the branch PR while the session branch differs, even with a kept folder head", () => {
     const owner = session([link(42)], { branch: "feature" });
     const other = status({ branch: "other" });
-    const items = sessionPrItemsFor(owner, other, activeBranchMismatch(owner, other, "other"), new Map(), () => undefined);
-    expect(items.map((item) => item.key)).toContain(branchKey);
+    expect(activeBranchMismatch(owner, other, "other")).toBeNull();
+    const items = sessionPrItemsFor(owner, other, branchMismatch(owner, other), new Map(), () => undefined);
+    expect(items.map((item) => item.key)).not.toContain(branchKey);
   });
 });
 

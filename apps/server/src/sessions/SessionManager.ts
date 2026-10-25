@@ -169,6 +169,11 @@ interface TitleTurn {
   resolve: (title: string | null) => void;
 }
 
+export interface CheckoutChange {
+  sessionIds: string[];
+  forced: string[];
+}
+
 interface BranchOutcome {
   deleted: boolean;
   unmergedCommits?: boolean;
@@ -232,7 +237,7 @@ export class SessionManager {
   private settings: SettingsStore;
   private drivers: Record<DriverKind, CliDriver>;
   private readonly driverActivityListeners = new Set<() => void>();
-  private readonly checkoutListeners = new Set<(sessionIds: string[]) => void>();
+  private readonly checkoutListeners = new Set<(change: CheckoutChange) => void>();
   private readonly usageRecordedListeners = new Set<(sessionId: string) => void>();
   private unwatchDriverActivity: () => void = () => {};
   private driverFactory: DriverFactory;
@@ -315,24 +320,24 @@ export class SessionManager {
     return () => this.driverActivityListeners.delete(listener);
   }
 
-  onCheckoutChanged(listener: (sessionIds: string[]) => void): () => void {
+  onCheckoutChanged(listener: (change: CheckoutChange) => void): () => void {
     this.checkoutListeners.add(listener);
     return () => this.checkoutListeners.delete(listener);
   }
 
-  private notifyCheckoutChanged(sessionIds: string[]): void {
-    if (sessionIds.length > 0) notifyAll(this.checkoutListeners, "checkout", sessionIds);
+  private notifyCheckoutChanged(change: CheckoutChange): void {
+    if (change.sessionIds.length > 0) notifyAll(this.checkoutListeners, "checkout", change);
   }
 
   private liveProjectSessions(projectId: string): SessionMeta[] {
     return this.store.listSessions(projectId).filter((session) => session.status !== "resolved" && session.status !== "archived");
   }
 
-  private notifySessionCheckoutChanged(sessionId: string): void {
+  private notifySessionCheckoutChanged(sessionId: string, forced: string[]): void {
     const session = this.store.getSession(sessionId);
     if (!session) return;
     const siblings = session.worktreePath ? [] : currentCheckoutSessionIds(this.liveProjectSessions(session.projectId));
-    this.notifyCheckoutChanged([sessionId, ...siblings.filter((id) => id !== sessionId)]);
+    this.notifyCheckoutChanged({ sessionIds: [sessionId, ...siblings.filter((id) => id !== sessionId)], forced });
   }
 
   private notifyDriverActivity(): void {
@@ -709,7 +714,8 @@ export class SessionManager {
     const project = this.store.updateProject(projectId, { githubAccount: account ?? undefined }, account === null);
     void this.refreshGitHubToken(project);
     this.emitProject(project);
-    this.notifyCheckoutChanged(this.liveProjectSessions(project.id).map((session) => session.id));
+    const sessionIds = this.liveProjectSessions(project.id).map((session) => session.id);
+    this.notifyCheckoutChanged({ sessionIds, forced: sessionIds });
     return project;
   }
 
@@ -2086,12 +2092,14 @@ export class SessionManager {
     const endSha = snapshot.endSha;
     if (!endSha || endSha !== expectedEndSha) throw new Error("The turn's end snapshot changed since it was reviewed; refresh and try again");
     this.pendingUndos.add(sessionId);
+    let touched = false;
     try {
       const root = this.rootFor(sessionId);
       const { files, gitlinks } = await this.git.snapshotChanges(root, startSha, endSha);
       if (gitlinks.length > 0) throw new Error(gitlinkReason(gitlinks));
       const conflicts = await this.git.snapshotConflicts(root, startSha, endSha, files.map((file) => file.path));
       if (conflicts.length > 0) throw new Error(conflictReason(conflicts));
+      touched = true;
       const restored = await this.git.restoreSnapshot(root, startSha, files);
       const current = this.store.getSession(sessionId)?.lastTurnSnapshot;
       if (current?.turnId === turnId) {
@@ -2101,7 +2109,7 @@ export class SessionManager {
       return { turnId, files: restored, endSha, undoable: false, reason: "This turn was already undone", conflicts: [] };
     } finally {
       this.pendingUndos.delete(sessionId);
-      this.notifySessionCheckoutChanged(sessionId);
+      if (touched) this.notifySessionCheckoutChanged(sessionId, []);
     }
   }
 
@@ -2109,7 +2117,7 @@ export class SessionManager {
     try {
       return await this.switchSessionBranch(sessionId, branch);
     } finally {
-      this.notifySessionCheckoutChanged(sessionId);
+      this.notifySessionCheckoutChanged(sessionId, [sessionId]);
     }
   }
 

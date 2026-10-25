@@ -23,11 +23,17 @@ export function useGitStatus(sessionId: string | null | undefined): GitStatus | 
 }
 
 export function useGitError(sessionId: string | null | undefined): string | null {
-  return useGitEntry(sessionId, "error");
+  return useTopicSelect<string | null, GitTopicData>(topicOf(sessionId), (state) =>
+    state?.status === "error" ? (state.error ?? "Git topic unavailable") : (state?.data.error ?? null)
+  );
 }
 
 export function useBranchMismatch(sessionId: string | null | undefined): BranchMismatch | null {
   return useGitEntry(sessionId, "mismatch");
+}
+
+export function useBranchMismatched(sessionId: string | null | undefined): boolean {
+  return useGitEntry(sessionId, "branchMismatched") ?? false;
 }
 
 export function useKeptFolderHead(sessionId: string | null | undefined): string | null {

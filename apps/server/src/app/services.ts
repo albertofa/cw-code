@@ -124,8 +124,8 @@ function wireSidebar({ sidebar, threads, sourceControl, prStore, autoFollowUp, p
 function wireGitTopic({ gitTopic, sourceControl, sessions }: Services): void {
   sourceControl.onPublished((update) => gitTopic.statusChanged(update.sessionId));
   sourceControl.onFailureChanged((sessionId) => gitTopic.stateChanged(sessionId));
-  sessions.onCheckoutChanged((sessionIds) => {
-    for (const sessionId of sessionIds) void sourceControl.refresh(sessionId, { forcePullRequest: true });
+  sessions.onCheckoutChanged(({ sessionIds, forced }) => {
+    for (const sessionId of sessionIds) void sourceControl.refresh(sessionId, { forcePullRequest: forced.includes(sessionId) });
   });
 }
 
@@ -162,7 +162,8 @@ function wireServiceEvents(
     autoFollowUp.reevaluate();
     sessionPrs.invalidate();
     sidebar.invalidate();
-    gitTopic.stateChanged(session.id);
+    if (session.status === "archived" || session.status === "resolved") gitTopic.forgetKeptHead(session.id);
+    else gitTopic.stateChanged(session.id);
   });
   sessions.setProjectEmitter((project) => {
     emit("projects.changed", project);
@@ -300,7 +301,7 @@ export function createServices(stores: { sessionStore: SessionStore; settingsSto
     refresh: (sessionId) => threads.refreshExtras(sessionId),
     settings: () => sessions.getSettings(),
     gitStatus: (sessionId) => sourceControl.status(sessionId),
-    branchMismatch: (sessionId) => gitTopic.mismatch(sessionId),
+    branchMismatch: (sessionId) => gitTopic.rawMismatch(sessionId),
     summaryLookup: () => prStore.summaryLookup(),
     detail: (key) => prStore.detail(key),
     detailError: (key) => prStore.detailError(key),
