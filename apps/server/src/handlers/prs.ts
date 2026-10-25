@@ -20,13 +20,10 @@ export function parseUpdateKeys(
 
 export function registerPrHandlers(router: Router, app: ServerApp): void {
   const services = () => app.requireServices();
-  handle(router, "prs.tracked", () => services().prTracker.summaries());
-  handle<{ force?: boolean } | undefined>(router, "prs.inbox", (args) => services().pullRequests.inbox(args?.force));
   handle<{ force?: boolean } | undefined>(router, "prs.refresh", (args) => services().prStore.refreshInbox(args?.force === true));
   handle<{ ref: PrRef }>(router, "prs.detail", (args) => services().prStore.loadDetail(args.ref));
   handle<{ ref: PrRef }>(router, "prs.diff", (args) => services().pullRequests.diff(args.ref));
   handle<{ ref: PrRef; runId: number }>(router, "prs.checkLog", (args) => services().pullRequests.failedCheckLog(args.ref, args.runId));
-  handle(router, "prs.projectRepos", () => services().prStore.refreshProjectRepos());
   handle(router, "prs.sendUpdates", (args) => {
     const { sessionId, keys } = parseUpdateKeys(args, "prs.sendUpdates", services().sessions);
     return services().sessionPrs.sendUpdates(sessionId, keys);
@@ -57,11 +54,5 @@ export function registerPrHandlers(router: Router, app: ServerApp): void {
   handle<{ sessionId: string; ref: PrRef }>(router, "sessions.unlinkPr", (args) => {
     assertPrRef(args.ref);
     return services().sessions.unlinkPr(args.sessionId, args.ref);
-  });
-  handle<{ sessionId: string; ref: PrRef; headSha: string | null; seenAt: number | null }>(router, "sessions.markPrSeen", (args) => {
-    assertPrRef(args.ref);
-    if (args.headSha !== null && typeof args.headSha !== "string") throw new Error("invalid headSha");
-    if (args.seenAt !== null && !Number.isFinite(args.seenAt)) throw new Error("invalid seenAt");
-    return services().sessions.markPrSeen(args.sessionId, args.ref, args.headSha, args.seenAt);
   });
 }

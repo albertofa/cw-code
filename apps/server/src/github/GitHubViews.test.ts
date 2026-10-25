@@ -16,7 +16,7 @@ import type {
   WorkflowRunSummary
 } from "@cw-code/contracts";
 import { prKey } from "@cw-code/shared/prRef";
-import { GITHUB_META_TOPIC, GITHUB_RUNS_TOPIC, githubViewTopic, parseGithubViewTopic } from "@cw-code/shared/topics";
+import { GITHUB_META_TOPIC, githubViewTopic, parseGithubViewTopic } from "@cw-code/shared/topics";
 import { advanceTimersByTimeAsync } from "../../tests/testing.js";
 import { DEFAULT_SETTINGS } from "../settings/SettingsStore.js";
 import { TopicHub, type TopicProvider } from "../topics/TopicHub.js";
@@ -189,7 +189,6 @@ function createHarness() {
   });
   hub.register(capture(views.metaProvider));
   hub.register(capture(views.viewProvider));
-  hub.register({ owns: (topic) => topic === GITHUB_RUNS_TOPIC, acquire: (topic, owner) => owner.createStore(topic, {}), release: () => undefined });
   return {
     state,
     calls,
@@ -331,15 +330,7 @@ describe("GitHubViews", () => {
     await flush();
     expect(h.active.at(-1)).toBe(true);
     expect(h.watched.at(-1)?.map(runKey)).toEqual([runKey(run(1).ref)]);
-    h.subscribe(GITHUB_RUNS_TOPIC);
-    h.views.setLegacyRunRefs([run(1).ref, run(3).ref]);
-    expect(h.watched.at(-1)?.map((ref) => ref.runId)).toEqual([1, 3]);
-    h.views.setLegacyRunRefs([run(3).ref]);
-    expect(h.watched.at(-1)?.map((ref) => ref.runId)).toEqual([1, 3]);
     h.unsubscribe(topic);
-    expect(h.watched.at(-1)?.map((ref) => ref.runId)).toEqual([3]);
-    h.views.setLegacyRunRefs([]);
-    h.unsubscribe(GITHUB_RUNS_TOPIC);
     h.views.syncRunWatch();
     expect(h.watched.at(-1)).toEqual([]);
     expect(h.active.at(-1)).toBe(false);

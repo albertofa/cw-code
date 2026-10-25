@@ -194,6 +194,7 @@ interface AppState {
   subagentToolsLoading: Record<string, boolean>;
   loadSubagentTools(sessionId: string, agentId: string): Promise<void>;
   ensureComposer(sessionId: string): Promise<void>;
+  reloadComposers(): Promise<void>;
   setComposerPrefs(sessionId: string, prefs: ComposerPrefs): Promise<void>;
   settingsLoaded: boolean;
   saveSettings(patch: SettingsPatch): Promise<AppSettings>;
@@ -530,6 +531,19 @@ export const useAppStore = create<AppState>((set, get) => ({
     })();
     composerLoads.set(sessionId, load);
     return load;
+  },
+
+  async reloadComposers() {
+    const sessionIds = Object.keys(get().composerLoadedBySession).filter((sessionId) => !composerLoads.has(sessionId));
+    await Promise.all(
+      sessionIds.map(async (sessionId) => {
+        try {
+          get().applyComposer(sessionId, await window.cw.getComposer(sessionId));
+        } catch (err) {
+          console.warn(`[cw-code] could not reload composer settings for ${sessionId}: ${ipcErrorMessage(err)}`);
+        }
+      })
+    );
   },
 
   async setComposerPrefs(sessionId: string, prefs: ComposerPrefs) {

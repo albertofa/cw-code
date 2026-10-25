@@ -62,4 +62,39 @@ describe("createPtyAttachments", () => {
     await tick();
     expect(wire).toEqual(["open", "open", `detach ${PTY_ID}`]);
   });
+
+  it("keeps one hold across a reattach so a single detach releases the terminal", async () => {
+    const { attachments, wire, open, resolveNext } = harness();
+    const first = open();
+    await resolveNext();
+    await first;
+    const reattached = await attachments.reattach(async () => {
+      wire.push("reattach");
+      return { ptyId: PTY_ID, token: "pty-1", replay: "again" };
+    });
+    expect(reattached?.replay).toBe("again");
+    attachments.detach(PTY_ID);
+    await tick();
+    expect(wire).toEqual(["open", "reattach", `detach ${PTY_ID}`]);
+  });
+
+  it("defers a detach until an in-flight reattach settles", async () => {
+    const { attachments, wire, open, resolveNext } = harness();
+    const first = open();
+    await resolveNext();
+    await first;
+    let finish: (result: PtyOpenResult | null) => void = () => {};
+    const reattached = attachments.reattach(
+      () =>
+        new Promise<PtyOpenResult | null>((resolve) => {
+          finish = resolve;
+        })
+    );
+    attachments.detach(PTY_ID);
+    expect(wire).toEqual(["open"]);
+    finish(null);
+    expect(await reattached).toBeNull();
+    await tick();
+    expect(wire).toEqual(["open", `detach ${PTY_ID}`]);
+  });
 });

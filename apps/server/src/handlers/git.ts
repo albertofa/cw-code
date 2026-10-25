@@ -3,7 +3,7 @@ import type { ServerApp } from "../app/ServerApp.js";
 import type { GitService } from "../fs/GitService.js";
 import type { SessionManager } from "../sessions/SessionManager.js";
 import type { Router } from "../transport/Router.js";
-import { handle, knownSessionId, parseArgs, parseString } from "./shared.js";
+import { handle, knownSessionId, parseArgs } from "./shared.js";
 
 async function sessionDiffBase(sessions: SessionManager, git: GitService, sessionId: string): Promise<string | undefined> {
   const { root, baseRef } = await sessions.sessionStatusContext(sessionId);
@@ -19,14 +19,6 @@ async function sessionDiffBase(sessions: SessionManager, git: GitService, sessio
 
 export function registerGitHandlers(router: Router, app: ServerApp): void {
   const services = () => app.requireServices();
-  handle(router, "git.status", async (raw) => {
-    const { sourceControl } = services();
-    const sessionId = parseString(parseArgs(raw, "git.status").sessionId, "sessionId");
-    await sourceControl.refresh(sessionId, { forcePullRequest: false });
-    const status = sourceControl.status(sessionId);
-    if (!status) throw new Error(sourceControl.failure(sessionId) ?? `git status is not available for session ${sessionId}`);
-    return status;
-  });
   handle(router, "git.refresh", async (raw) => {
     const { sessions, sourceControl } = services();
     await sourceControl.refresh(knownSessionId(sessions, parseArgs(raw, "git.refresh").sessionId));

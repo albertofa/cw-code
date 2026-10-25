@@ -86,9 +86,20 @@ function isTransient(err: unknown): boolean {
 function handleSaveFailure(key: string, entry: Unsent, err: unknown): void {
   if (unsent.get(key) !== entry) return;
   baseline.delete(key);
-  if (isTransient(err) && entry.attempts < MAX_SAVE_ATTEMPTS) {
+  if (isTransient(err)) {
     entry.sent = false;
-    entry.timer = setTimeout(() => flushComposerDraft(key), RETRY_DELAY_MS);
+    if (entry.attempts < MAX_SAVE_ATTEMPTS) {
+      entry.timer = setTimeout(() => flushComposerDraft(key), RETRY_DELAY_MS);
+      return;
+    }
+    entry.attempts = 0;
+    console.warn("[cw-code] could not save the composer draft; retrying after the server reconnects", err);
+    useNotifs.getState().push({
+      id: SAVE_FAILED_NOTIF_ID,
+      kind: "warning",
+      title: "Draft not saved yet",
+      message: "It will be saved when the cw-code server reconnects."
+    });
     return;
   }
   unsent.delete(key);

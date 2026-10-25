@@ -120,7 +120,6 @@ function installBridge(): void {
   const noop = () => () => {};
   const explicit: Record<string, unknown> = {
     isDev: false,
-    listProjects: async () => [{ id: "proj_1", rootPath: "C:\\proj", name: "proj" }],
     createSession: async (projectId: string, driver: "opencode") => {
       sessionSeq += 1;
       const session = makeSession({ id: `sess_${sessionSeq}`, projectId, driver });

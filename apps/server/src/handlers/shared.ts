@@ -1,7 +1,4 @@
-import type { RepoRef, RunSources, TextSearchQuery } from "@cw-code/contracts";
-import { assertSearchQuery } from "../github/GitHubSearchService.js";
-import { assertOwnerLogin, assertRepoRef } from "../github/githubRefs.js";
-import { MAX_RUN_ORGS, MAX_RUN_REPOS } from "../github/runQueries.js";
+import type { TextSearchQuery } from "@cw-code/contracts";
 import type { ServerApp } from "../app/ServerApp.js";
 import type { SessionManager } from "../sessions/SessionManager.js";
 import type { CallContext, Router } from "../transport/Router.js";
@@ -81,18 +78,4 @@ export function parseList<T>(value: unknown, max: number, name: string, assertIt
     items.push(item);
   }
   return items;
-}
-
-export function parseRunSources(value: unknown): RunSources {
-  const { prSearchQuery, repos, orgs } = parseArgs(value, "github.runs sources");
-  let query: string | null = null;
-  if (prSearchQuery !== null) {
-    assertSearchQuery(prSearchQuery);
-    query = prSearchQuery;
-  }
-  return {
-    prSearchQuery: query,
-    repos: parseList<RepoRef>(repos, MAX_RUN_REPOS, "repos", assertRepoRef),
-    orgs: parseList<string>(orgs, MAX_RUN_ORGS, "orgs", assertOwnerLogin)
-  };
 }

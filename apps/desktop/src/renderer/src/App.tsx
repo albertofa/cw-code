@@ -38,6 +38,7 @@ import { projectDirty, useSettingsDraftStore } from "./stores/settingsDraftStore
 import { prKey } from "./components/prInbox.js";
 import { startAppBridge } from "./server/appBridge.js";
 import { startSidebarBridge } from "./server/sidebarBridge.js";
+import { useConnectionEpoch } from "./server/topics.js";
 import { useHoldGit } from "./components/useGit.js";
 
 const RIGHT_WIDTH_DEFAULT = 520;
@@ -166,6 +167,15 @@ export function App() {
 
   useHoldGit(activeSessionId);
   useHoldRecentThreads(activeSessionId);
+
+  const connectionEpoch = useConnectionEpoch();
+  const resyncedEpoch = useRef(connectionEpoch);
+  useEffect(() => {
+    if (resyncedEpoch.current === connectionEpoch) return;
+    resyncedEpoch.current = connectionEpoch;
+    void useAppStore.getState().reloadComposers();
+    if (useSkillsStore.getState().status !== "idle") void useSkillsStore.getState().load();
+  }, [connectionEpoch]);
 
   useEffect(() => {
     if (!activeSessionId) return;

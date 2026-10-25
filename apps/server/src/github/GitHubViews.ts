@@ -207,7 +207,6 @@ export class GitHubViews {
   private readonly entries = new Map<string, SearchEntry>();
   private readonly counts = new Map<GitHubKind, CountsEntry>();
   private meta: MetaTopic | null = null;
-  private legacyRunRefs: RunRef[] = [];
   private watchSignature: string | null = null;
   private watchActive: boolean | null = null;
   private searchViewer: string | null = null;
@@ -274,11 +273,6 @@ export class GitHubViews {
       if (run && (!found || entry.completedAt > found.at)) found = { run, at: entry.completedAt };
     }
     return found?.run;
-  }
-
-  setLegacyRunRefs(refs: RunRef[]): void {
-    this.legacyRunRefs = refs;
-    this.syncRunWatch();
   }
 
   syncRunWatch(): void {
@@ -546,13 +540,7 @@ export class GitHubViews {
 
   private watchSet(): RunRef[] {
     const listings = [...this.topics.values()].filter((state) => state.kind === "run").map((state) => state.listing);
-    const picked = new Map<string, RunRef>();
-    for (const ref of [...watchedRunRefs(listings, MAX_WATCHED_RUNS), ...this.legacyRunRefs]) {
-      if (picked.size >= MAX_WATCHED_RUNS) break;
-      const key = runKey(ref);
-      if (!picked.has(key)) picked.set(key, ref);
-    }
-    return [...picked.values()];
+    return watchedRunRefs(listings, MAX_WATCHED_RUNS);
   }
 
   private invalidate(): void {

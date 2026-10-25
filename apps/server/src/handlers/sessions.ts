@@ -9,7 +9,6 @@ import type {
   SidebarReorderRequest,
   SidebarSection
 } from "@cw-code/contracts";
-import { homedir } from "node:os";
 import type { ServerApp } from "../app/ServerApp.js";
 import type { Services } from "../app/services.js";
 import type { SessionStatusReason } from "../debug/sessionStatusTrace.js";
@@ -56,7 +55,6 @@ export function registerSessionHandlers(router: Router, app: ServerApp): void {
   handle<{ projectId: string; settings: ProjectSettings }>(router, "projects.updateSettings", (args) =>
     services().sessions.updateProjectSettings(args.projectId, args.settings)
   );
-  handle(router, "os.homeDir", () => homedir());
   handle<string>(router, "sessions.list", (projectId) => services().sessions.listSessions(projectId));
   handle<{ projectId: string; driver: DriverKind; options?: CreateSessionOptions }>(router, "sessions.create", (args) =>
     services().sessions.createSession(args.projectId, args.driver, args.options)
@@ -111,11 +109,9 @@ export function registerSessionHandlers(router: Router, app: ServerApp): void {
     await Promise.all(unpinned.map((session) => fileWatcher.unwatch(session.id)));
     return sessions.pruneStaleWorktrees();
   });
-  handle<{ sessionId: string }>(router, "sessions.history", (args) => services().sessions.getHistory(args.sessionId));
   handle<{ sessionId: string; agentId: string }>(router, "sessions.subagentTools", (args) =>
     services().sessions.getSubagentTools(args.sessionId, args.agentId)
   );
-  handle(router, "sessions.activeTurns", () => services().sessions.listActiveTurns());
   handle<{ sessionId: string }>(router, "sessions.retryConnection", async (args) => {
     const { sessions, threads } = services();
     const result = await sessions.retryConnection(args.sessionId);

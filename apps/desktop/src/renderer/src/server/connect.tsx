@@ -4,13 +4,12 @@ import type { DesktopApi } from "@cw-code/contracts";
 import { APP_TOPIC } from "@cw-code/shared/topics";
 import { flushAllComposerDrafts } from "../components/composerDrafts.js";
 import { ipcErrorMessage } from "../components/ipcError.js";
-import { useEditorBuffers } from "../stores/editorBuffers.js";
 import { createCwApi, type ShutdownHandlers } from "./createCwApi.js";
 import { migrateLegacyPreferences } from "./legacyPrefs.js";
 import { initTopics, waitForTopicSettled } from "./topics.js";
 
 type Phase = { kind: "connecting" } | { kind: "failed"; message: string } | { kind: "ready" };
-type Link = "up" | "reconnecting" | "stale" | "lost";
+type Link = "up" | "reconnecting" | "lost";
 
 const RECONNECTING_BANNER_DELAY_MS = 1_000;
 const APP_SETTLE_TIMEOUT_MS = 15_000;
@@ -59,7 +58,10 @@ export function ServerGate({ desktop, children }: { desktop: DesktopApi; childre
     setLink("up");
     const open = async (): Promise<void> => {
       await client.connect();
-      topicCache.current ??= new TopicCache(client);
+      if (!topicCache.current) {
+        topicCache.current = new TopicCache(client);
+        topicCache.current.onEpoch(flushAllComposerDrafts);
+      }
       initTopics(topicCache.current);
       window.cw = createCwApi(client, topicCache.current, desktop, shutdownHandlers);
       appHold.current ??= topicCache.current.acquire(APP_TOPIC);
@@ -94,10 +96,8 @@ export function ServerGate({ desktop, children }: { desktop: DesktopApi; childre
     const offState = client.onState((state, previous) => {
       if (state !== "reconnecting") clearBannerTimer();
       if (state === "reconnecting") bannerTimer ??= window.setTimeout(() => setLink("reconnecting"), RECONNECTING_BANNER_DELAY_MS);
-      else if (state === "open" && previous === "reconnecting") {
-        if (useEditorBuffers.getState().dirty().length === 0) reload();
-        else setLink("stale");
-      } else if (state === "closed" && previous !== "connecting") setLink("lost");
+      else if (state === "open") setLink("up");
+      else if (state === "closed" && previous !== "connecting") setLink("lost");
     });
     const offStartup = client.on("startup.changed", reload);
     window.addEventListener("pagehide", flushAllComposerDrafts);
@@ -143,14 +143,6 @@ export function ServerGate({ desktop, children }: { desktop: DesktopApi; childre
   return (
     <>
       {link === "reconnecting" && <div className="server-banner">Reconnecting to the cw-code server…</div>}
-      {link === "stale" && (
-        <div className="server-banner" role="status">
-          The cw-code server restarted — reload to resync
-          <button type="button" className="btn" onClick={reload}>
-            Reload
-          </button>
-        </div>
-      )}
       {lostOverlay}
       {children}
     </>

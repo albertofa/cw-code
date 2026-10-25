@@ -1,4 +1,5 @@
 import type { AppSettings, TerminalLaunch } from "@cw-code/contracts";
+import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
@@ -105,7 +106,6 @@ export class PtyPool {
   private ptys = new Map<string, PtyEntry>();
   private openings = new Map<string, Promise<PtyEntry>>();
   private pendingKills = new Set<string>();
-  private nextToken = 1;
   private disposed = false;
   private generation = 0;
   private shutdownReserved = false;
@@ -178,6 +178,12 @@ export class PtyPool {
     }
     const entry = await task;
     return this.attach(entry, ptyId);
+  }
+
+  reattach(sessionId: string, kind: PtyKind, token: string): PtyAttachResult | null {
+    const ptyId = `${sessionId}:${kind}`;
+    const entry = this.disposed ? undefined : this.ptys.get(ptyId);
+    return entry && entry.token === token ? this.attach(entry, ptyId) : null;
   }
 
   private attach(entry: PtyEntry, ptyId: string): PtyAttachResult {
@@ -306,7 +312,7 @@ export class PtyPool {
       this.killPty(proc);
       throw new Error("pty pool disposed");
     }
-    const entry: PtyEntry = { sessionId, kind, proc, replay: "", token: `pty-${this.nextToken++}`, sizes: new LatestClientSize(INITIAL_SIZE) };
+    const entry: PtyEntry = { sessionId, kind, proc, replay: "", token: `pty-${randomUUID()}`, sizes: new LatestClientSize(INITIAL_SIZE) };
     this.ptys.set(ptyId, entry);
     this.notifyChanged();
     proc.onData((data) => {

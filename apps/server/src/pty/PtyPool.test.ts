@@ -183,6 +183,28 @@ describe("PtyPool shutdown support", () => {
   });
 });
 
+describe("PtyPool reattach", () => {
+  it("reattaches only the terminal with the same token and replays its output", async () => {
+    const { pool, spawned } = makePool();
+    const opened = await pool.open("sess_a", ".", "shell", "", undefined, noData);
+    spawned[0].emit("hello");
+    expect(pool.reattach("sess_a", "shell", opened.token)).toEqual({ ptyId: "sess_a:shell", token: opened.token, replay: "hello" });
+    expect(pool.reattach("sess_a", "shell", "pty-other")).toBeNull();
+    expect(pool.reattach("sess_a", "codex", opened.token)).toBeNull();
+  });
+
+  it("does not respawn a terminal that exited or was replaced", async () => {
+    const { pool, spawned } = makePool();
+    const first = await pool.open("sess_a", ".", "shell", "", undefined, noData);
+    spawned[0].exit(0);
+    expect(pool.reattach("sess_a", "shell", first.token)).toBeNull();
+    const second = await pool.open("sess_a", ".", "shell", "", undefined, noData);
+    expect(second.token).not.toBe(first.token);
+    expect(pool.reattach("sess_a", "shell", first.token)).toBeNull();
+    expect(spawned).toHaveLength(2);
+  });
+});
+
 describe("PtyPool change notifications", () => {
   it("notifies when a terminal is added, exits, is killed or the pool is disposed", async () => {
     const { pool, spawned } = makePool();

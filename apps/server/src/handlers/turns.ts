@@ -20,7 +20,6 @@ interface StartTurnArgs {
   command?: CommandInvocation;
   skills?: string[];
   prRefs?: PrRef[];
-  finalReview?: { ref: PrRef; sha: string };
   acceptFolderHead?: string;
   auto?: boolean;
 }
@@ -39,22 +38,16 @@ export function registerTurnHandlers(router: Router, app: ServerApp): void {
     if (args.acceptFolderHead !== undefined && typeof args.acceptFolderHead !== "string") throw new Error("invalid acceptFolderHead");
     if (args.auto !== undefined && typeof args.auto !== "boolean") throw new Error("invalid auto");
     for (const ref of args.prRefs ?? []) assertPrRef(ref);
-    if (args.finalReview !== undefined) {
-      assertPrRef(args.finalReview.ref);
-      if (typeof args.finalReview.sha !== "string" || args.finalReview.sha === "") throw new Error("invalid finalReview sha");
-    }
     return turns().start(args.sessionId, args.prompt, {
       prefs: args.prefs,
       attachments: args.attachments,
       ...(args.command ? { command: args.command } : {}),
       ...(args.skills?.length ? { skills: args.skills } : {}),
       prRefs: args.prRefs,
-      ...(args.finalReview ? { finalReview: args.finalReview } : {}),
       ...(args.acceptFolderHead !== undefined ? { acceptFolderHead: args.acceptFolderHead } : {}),
       ...(args.auto ? { auto: true } : {})
     });
   });
-  handle<{ turnId: string }>(router, "turns.interrupt", (args) => sessions().interrupt(args.turnId));
   handle<{ sessionId: string }>(router, "turns.stop", (args) => turns().stop(knownSessionId(sessions(), args.sessionId)));
   handle<{ sessionId: string; requestId: string; decision: ApprovalDecision }>(router, "approvals.respond", (args) =>
     sessions().respondApproval(args.requestId, args.decision)

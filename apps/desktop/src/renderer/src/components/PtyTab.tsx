@@ -4,6 +4,7 @@ import { FitAddon } from "@xterm/addon-fit";
 import "@xterm/xterm/css/xterm.css";
 import { resolveTerminalFont } from "../appearanceFonts.js";
 import type { DriverName } from "../cw.js";
+import { useConnectionEpoch } from "../server/topics.js";
 import { useAppStore } from "../stores/appStore.js";
 import { terminalTheme, useTerminalColors } from "./terminalTheme.js";
 
@@ -13,14 +14,24 @@ function forceCellRemeasure(term: Terminal, font: { family: string; size: number
   term.options.fontSize = font.size;
 }
 
+function exitLabel(code: number | null): string {
+  if (code === null) return "Terminal is no longer running.";
+  return code === 0 ? "Terminal exited." : `Terminal exited with code ${code}.`;
+}
+
 export function PtyTab({ sessionId, kind }: { sessionId: string; kind: DriverName | "shell" }) {
   const divRef = useRef<HTMLDivElement>(null);
   const [error, setError] = useState<string | null>(null);
-  const [exitCode, setExitCode] = useState<number | null>(null);
+  const [exit, setExit] = useState<{ code: number | null } | null>(null);
   const [restartNonce, setRestartNonce] = useState(0);
   const termRef = useRef<Terminal | null>(null);
   const ptyIdRef = useRef<string | null>(null);
   const ptyTokenRef = useRef<string | null>(null);
+  const exitedRef = useRef(false);
+  const openFailedRef = useRef(false);
+  const reattachRef = useRef<() => void>(() => {});
+  const epoch = useConnectionEpoch();
+  const seenEpochRef = useRef(epoch);
   const appearance = useAppStore((s) => s.appearance);
   const terminalFont = resolveTerminalFont(appearance);
   const terminalFontRef = useRef(terminalFont);
@@ -80,6 +91,38 @@ export function PtyTab({ sessionId, kind }: { sessionId: string; kind: DriverNam
 
     refitRef.current = scheduleFit;
 
+    const markExited = (code: number | null) => {
+      exitedRef.current = true;
+      setExit({ code });
+    };
+
+    const showAttached = (ptyId: string, replay: string) => {
+      fitAndPush();
+      if (replay && term) {
+        term.write(replay);
+        nudgeRepaint(ptyId);
+      }
+    };
+
+    reattachRef.current = () => {
+      const token = ptyTokenRef.current;
+      if (disposed || !token || exitedRef.current) return;
+      window.cw
+        .reattachPty(sessionId, kind, token)
+        .then((result) => {
+          if (disposed || ptyTokenRef.current !== token || exitedRef.current) return;
+          if (!result) {
+            markExited(null);
+            return;
+          }
+          term?.reset();
+          showAttached(result.ptyId, result.replay);
+        })
+        .catch((err: unknown) => {
+          if (!disposed) console.warn(`[pty] could not reattach the terminal: ${err instanceof Error ? err.message : String(err)}`);
+        });
+    };
+
     const remeasureWhenFontLoads = (created: Terminal) => {
       const { family, size } = terminalFontRef.current;
       document.fonts
@@ -118,7 +161,7 @@ export function PtyTab({ sessionId, kind }: { sessionId: string; kind: DriverNam
           pendingExit.push(msg);
           return;
         }
-        if (msg.ptyId === ptyIdRef.current && msg.token === ptyTokenRef.current) setExitCode(msg.exitCode);
+        if (msg.ptyId === ptyIdRef.current && msg.token === ptyTokenRef.current) markExited(msg.exitCode);
       });
 
       window.cw.openPty(sessionId, kind).then(({ ptyId, token, replay }) => {
@@ -128,15 +171,13 @@ export function PtyTab({ sessionId, kind }: { sessionId: string; kind: DriverNam
         }
         ptyIdRef.current = ptyId;
         ptyTokenRef.current = token;
-        fitAndPush();
-        if (replay && term) {
-          term.write(replay);
-          nudgeRepaint(ptyId);
-        }
+        showAttached(ptyId, replay);
         const exited = pendingExit.find((entry) => entry.ptyId === ptyId && entry.token === token);
-        if (exited) setExitCode(exited.exitCode);
+        if (exited) markExited(exited.exitCode);
       }).catch((err: Error) => {
-        if (!disposed) setError(err.message);
+        if (disposed) return;
+        openFailedRef.current = true;
+        setError(err.message);
       });
 
       dataHandler = term.onData((data) => {
@@ -147,6 +188,8 @@ export function PtyTab({ sessionId, kind }: { sessionId: string; kind: DriverNam
       observer.observe(divRef.current);
     };
 
+    exitedRef.current = false;
+    openFailedRef.current = false;
     try {
       start();
     } catch (err) {
@@ -155,6 +198,7 @@ export function PtyTab({ sessionId, kind }: { sessionId: string; kind: DriverNam
 
     return () => {
       disposed = true;
+      reattachRef.current = () => {};
       cancelAnimationFrame(raf);
       cancelAnimationFrame(nudgeRaf);
       observer?.disconnect();
@@ -169,6 +213,19 @@ export function PtyTab({ sessionId, kind }: { sessionId: string; kind: DriverNam
     };
   }, [sessionId, kind, restartNonce]);
 
+  const restart = () => {
+    setError(null);
+    setExit(null);
+    setRestartNonce((nonce) => nonce + 1);
+  };
+
+  useEffect(() => {
+    if (seenEpochRef.current === epoch) return;
+    seenEpochRef.current = epoch;
+    if (openFailedRef.current) restart();
+    else reattachRef.current();
+  }, [epoch]);
+
   useEffect(() => {
     const term = termRef.current;
     if (!term) return;
@@ -181,17 +238,10 @@ export function PtyTab({ sessionId, kind }: { sessionId: string; kind: DriverNam
     <div className="pty-wrap">
       <div ref={divRef} />
       {error && <div className="pty-error">{error}</div>}
-      {exitCode !== null && (
+      {exit !== null && (
         <div className="pty-exit">
-          <span>{exitCode === 0 ? "Terminal exited." : `Terminal exited with code ${exitCode}.`}</span>
-          <button
-            className="btn"
-            onClick={() => {
-              setError(null);
-              setExitCode(null);
-              setRestartNonce((nonce) => nonce + 1);
-            }}
-          >
+          <span>{exitLabel(exit.code)}</span>
+          <button className="btn" onClick={restart}>
             Restart
           </button>
         </div>

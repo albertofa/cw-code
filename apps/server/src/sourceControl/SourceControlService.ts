@@ -21,7 +21,6 @@ export interface SourceControlDeps {
   tracker: PrTracker;
   watcher?: GitWatcher;
   settings: () => AppSettings;
-  emit: (update: GitStatusUpdate) => void;
   warn?: (msg: string) => void;
 }
 
@@ -38,7 +37,6 @@ export class SourceControlService {
   private readonly sessions: SessionManager;
   private readonly tracker: PrTracker;
   private readonly settings: () => AppSettings;
-  private readonly emit: (update: GitStatusUpdate) => void;
   private readonly warn: (msg: string) => void;
   private readonly watcher: GitWatcher;
   private scheduler: RefreshScheduler | null = null;
@@ -61,7 +59,6 @@ export class SourceControlService {
     this.sessions = deps.sessions;
     this.tracker = deps.tracker;
     this.settings = deps.settings;
-    this.emit = deps.emit;
     this.warn = deps.warn ?? ((msg) => console.warn(msg));
     this.watcher = deps.watcher ?? new GitWatcher((roots) => this.handleGitChange(roots), { warn: this.warn });
   }
@@ -287,11 +284,6 @@ export class SourceControlService {
     }
     this.fingerprints.set(sessionId, fingerprint);
     const update: GitStatusUpdate = { sessionId, status };
-    try {
-      this.emit(update);
-    } catch (error) {
-      this.warn(`${LOG_PREFIX} could not push the status of session ${sessionId}: ${describeError(error)}`);
-    }
     for (const listener of [...this.publishedListeners]) {
       try {
         listener(update);

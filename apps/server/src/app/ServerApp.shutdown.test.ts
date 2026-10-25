@@ -44,6 +44,16 @@ function publishes() {
   return { full, statusOnly, reset: () => (full.mockClear(), statusOnly.mockClear()) };
 }
 
+interface SessionEmitters {
+  onEvent(sessionId: string, event: { type: string; turnId: string; [key: string]: unknown }): void;
+  onTitle(sessionId: string, title: string): void;
+  onSession(session: { id: string }): void;
+}
+
+function sessionEvents(): SessionEmitters {
+  return services.sessions as unknown as SessionEmitters;
+}
+
 function changeRuntime(sessionId: string): void {
   const begun = services.threads.beginTurn(sessionId, "hello", false);
   services.threads.abortTurn(sessionId, begun);
@@ -55,27 +65,27 @@ describe("ServerApp shutdown assessment publishing", () => {
     const spy = publishes();
     spy.reset();
 
-    app.emit("turn.event", { sessionId: "s1", turnId: "t1", event: { type: "task.updated" } });
+    sessionEvents().onEvent("s1", { type: "task.updated", turnId: "t1", sessionId: "s1" });
     await settle();
     expect(spy.full).toHaveBeenCalledTimes(1);
 
-    app.emit("session.title", { sessionId: "s1", title: "renamed" });
+    sessionEvents().onTitle("s1", "renamed");
     await settle();
     expect(spy.full).toHaveBeenCalledTimes(2);
 
-    app.emit("session.updated", { id: "s1" });
+    sessionEvents().onSession({ id: "s1" });
     await settle();
     expect(spy.full).toHaveBeenCalledTimes(3);
 
     spy.reset();
-    app.emit("session.title", { sessionId: "s1", title: "a" });
-    app.emit("session.updated", { id: "s1" });
-    app.emit("turn.event", { sessionId: "s1", turnId: "t1", event: { type: "task.updated" } });
+    sessionEvents().onTitle("s1", "a");
+    sessionEvents().onSession({ id: "s1" });
+    sessionEvents().onEvent("s1", { type: "task.updated", turnId: "t1", sessionId: "s1" });
     await settle();
     expect(spy.full).toHaveBeenCalledTimes(1);
 
     spy.reset();
-    app.emit("turn.event", { sessionId: "s1", turnId: "t1", event: { type: "assistant.delta" } });
+    sessionEvents().onEvent("s1", { type: "assistant.delta", turnId: "t1", text: "" });
     await settle();
     expect(spy.full).not.toHaveBeenCalled();
   });
@@ -96,7 +106,7 @@ describe("ServerApp shutdown assessment publishing", () => {
     await settle();
 
     spy.reset();
-    app.emit("session.title", { sessionId: "s1", title: "while disposed" });
+    sessionEvents().onTitle("s1", "while disposed");
     app.emitShutdownChanged();
     await settle();
     expect(spy.full).not.toHaveBeenCalled();

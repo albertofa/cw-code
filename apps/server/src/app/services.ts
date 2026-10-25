@@ -83,6 +83,7 @@ export interface ServiceHooks {
   topics: TopicHub;
   clientInputs: ClientInputs;
   dropTopic: (topic: string) => void;
+  assessmentChanged: () => void;
   legacyAppRoots: string[];
   onShutdownRecovered: (failure: string | null) => void;
   onShutdownExpired: (reason: ShutdownReason) => void;
@@ -149,10 +150,10 @@ function wireGitHubViews({ githubViews, prStore }: Services): void {
 
 function wireServiceEvents(
   { sessions, sourceControl, gitTopic, filesTopic, prTracker, prStore, ptys, runWatcher, githubViews, threads, autoFollowUp, sessionPrs, sidebar }: Services,
-  { emit, dropTopic }: ServiceHooks
+  { emit, dropTopic, assessmentChanged }: ServiceHooks
 ): void {
   sessions.setEmitter((sessionId, event) => {
-    emit("turn.event", { sessionId, event });
+    if (event.type === "task.updated") assessmentChanged();
     try {
       threads.onDriverEvent(sessionId, event);
     } catch (error) {
@@ -161,12 +162,12 @@ function wireServiceEvents(
     if (event.type === "turn.interrupted") autoFollowUp.turnInterrupted(sessionId, event.reason);
     sourceControl.onThreadEvent(sessionId, event);
   });
-  sessions.setTitleEmitter((sessionId, title) => {
-    emit("session.title", { sessionId, title });
+  sessions.setTitleEmitter(() => {
+    assessmentChanged();
     sidebar.invalidate();
   });
   sessions.setSessionEmitter((session) => {
-    emit("session.updated", session);
+    assessmentChanged();
     prTracker.setTracked(sessions.trackedPrRefs());
     prStore.onSessionsChanged();
     autoFollowUp.reevaluate();
@@ -186,14 +187,8 @@ function wireServiceEvents(
     emit("pty.exit", { ptyId, token, exitCode });
     if (!ptys.has(ptyId)) dropTopic(ptyTopic(ptyId));
   });
-  runWatcher.onRunsChanged = (changed) => {
-    emit("github.runsChanged", changed);
-    githubViews.runsChanged(changed);
-  };
-  runWatcher.onCiActivity = () => {
-    emit("github.ciActivity");
-    githubViews.ciActivity();
-  };
+  runWatcher.onRunsChanged = (changed) => githubViews.runsChanged(changed);
+  runWatcher.onCiActivity = () => githubViews.ciActivity();
 }
 
 export function createServices(stores: { sessionStore: SessionStore; settingsStore: SettingsStore }, hooks: ServiceHooks): Services {
@@ -241,7 +236,6 @@ export function createServices(stores: { sessionStore: SessionStore; settingsSto
     (changed) => {
       const syncedAt = Date.now();
       sessions.applyPrSnapshots(new Map(changed.map((summary) => [prKey(summary.ref), snapshotOf(summary, syncedAt)])));
-      emit("prs.tracked", prTracker.summaries());
       prStore.onTracked(prTracker.summaries());
     }
   );
@@ -250,8 +244,7 @@ export function createServices(stores: { sessionStore: SessionStore; settingsSto
     git,
     sessions,
     tracker: prTracker,
-    settings: () => sessions.getSettings(),
-    emit: (update) => emit("git.statusChanged", update)
+    settings: () => sessions.getSettings()
   });
   const gitTopic = new GitTopic(hooks.topics, {
     status: (sessionId) => sourceControl.status(sessionId),

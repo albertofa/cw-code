@@ -23,7 +23,6 @@ afterEach(async () => {
 
 function setup(failing = new Set<string>()) {
   const statusCalls: string[] = [];
-  const emitted: GitStatusUpdate[] = [];
   const published: GitStatusUpdate[] = [];
   const sessions = [session("a"), session("b")];
   const created = new SourceControlService({
@@ -47,19 +46,18 @@ function setup(failing = new Set<string>()) {
     tracker: { setTracked: () => {}, refresh: async () => {} } as unknown as PrTracker,
     watcher: { setRoots: () => {}, dispose: async () => {} } as unknown as GitWatcher,
     settings: () => ({ sourceControlRefreshIntervalSeconds: 3600 }) as AppSettings,
-    emit: (update) => emitted.push(update),
     warn: () => {}
   });
   created.onPublished((update) => published.push(update));
   service = created;
   const failureChanges: string[] = [];
   created.onFailureChanged((sessionId) => failureChanges.push(sessionId));
-  return { service: created, statusCalls, emitted, published, failureChanges };
+  return { service: created, statusCalls, published, failureChanges };
 }
 
 describe("SourceControlService", () => {
   test("watches the union of topic subscribers and the working set and notifies publishes", async () => {
-    const { service, emitted, published } = setup();
+    const { service, published } = setup();
     service.start();
     service.setWatched(["a"]);
     service.setWorkingSet(["b"]);
@@ -68,7 +66,6 @@ describe("SourceControlService", () => {
       ["a", "a"],
       ["b", "b"]
     ]);
-    expect(emitted).toEqual(published);
   });
 
   test("a session leaving the topic stays watched while it is in the working set", async () => {

@@ -19,7 +19,7 @@ import {
 } from "lucide-react";
 import type { DirEntry, FsChangeEvent, GitBaseline, GitDecorations, GitFileState } from "@cw-code/contracts";
 import { filesTopic } from "@cw-code/shared/topics";
-import { useTopicEntry } from "../server/topics.js";
+import { useConnectionEpoch, useTopicEntry } from "../server/topics.js";
 import { useDocumentVisible } from "../server/useTopics.js";
 import { useConfirm } from "./ConfirmDialog.js";
 import { ipcErrorMessage } from "./ipcError.js";
@@ -402,6 +402,7 @@ function FileWorkspace({ sessionId }: { sessionId: string }) {
   const watchedKey = watched.join("\n");
 
   const documentVisible = useDocumentVisible();
+  const connectionEpoch = useConnectionEpoch();
   const topicDecorations = useTopicEntry<GitDecorations>(filesTopic(sessionId), "decorations");
   const lastDecorations = useRef<{ sessionId: string; value: GitDecorations } | null>(null);
   if (topicDecorations) lastDecorations.current = { sessionId, value: topicDecorations };
@@ -427,7 +428,7 @@ function FileWorkspace({ sessionId }: { sessionId: string }) {
       window.cw.setWatchedPaths(sessionId, watched).catch((err: unknown) => console.warn(`[files] live refresh unavailable: ${ipcErrorMessage(err)}`));
     }, WATCH_DEBOUNCE_MS);
     return () => clearTimeout(timer);
-  }, [watchedKey, sessionId, documentVisible]);
+  }, [watchedKey, sessionId, documentVisible, connectionEpoch]);
 
   useEffect(
     () =>
@@ -446,6 +447,17 @@ function FileWorkspace({ sessionId }: { sessionId: string }) {
       }),
     [sessionId, loadDir, loadTab]
   );
+
+  const resyncedEpoch = useRef(connectionEpoch);
+  useEffect(() => {
+    if (resyncedEpoch.current === connectionEpoch) return;
+    resyncedEpoch.current = connectionEpoch;
+    for (const dir of Object.keys(childrenRef.current)) loadDir(dir);
+    for (const tab of tabsRef.current.tabs) {
+      if (registered.has(bufferKey(sessionId, tab.path)) || viewsRef.current[tab.path]) loadTab(tab.path, true);
+    }
+    invalidateQuickOpenCache(sessionId);
+  }, [connectionEpoch, sessionId, loadDir, loadTab]);
 
   const toggleDir = useCallback(
     (path: string) => {

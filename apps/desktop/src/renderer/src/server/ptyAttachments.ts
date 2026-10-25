@@ -6,28 +6,37 @@ export interface PtyOpenResult {
 
 export interface PtyAttachments {
   open(request: () => Promise<PtyOpenResult>): Promise<PtyOpenResult>;
+  reattach(request: () => Promise<PtyOpenResult | null>): Promise<PtyOpenResult | null>;
   detach(ptyId: string): void;
 }
 
 export function createPtyAttachments(sendDetach: (ptyId: string) => void): PtyAttachments {
   const counts = new Map<string, number>();
-  const opening = new Set<Promise<PtyOpenResult>>();
+  const opening = new Set<Promise<unknown>>();
   const deferred = new Set<string>();
 
   const openingSettled = async (): Promise<void> => {
     while (opening.size > 0) await Promise.allSettled([...opening]);
   };
 
+  const track = <T>(pending: Promise<T>): Promise<T> => {
+    opening.add(pending);
+    const forget = () => opening.delete(pending);
+    pending.then(forget, forget);
+    return pending;
+  };
+
   return {
     open(request) {
-      const pending = request().then((result) => {
-        counts.set(result.ptyId, (counts.get(result.ptyId) ?? 0) + 1);
-        return result;
-      });
-      opening.add(pending);
-      const forget = () => opening.delete(pending);
-      pending.then(forget, forget);
-      return pending;
+      return track(
+        request().then((result) => {
+          counts.set(result.ptyId, (counts.get(result.ptyId) ?? 0) + 1);
+          return result;
+        })
+      );
+    },
+    reattach(request) {
+      return track(request());
     },
     detach(ptyId) {
       const count = (counts.get(ptyId) ?? 0) - 1;

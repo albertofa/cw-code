@@ -1,95 +1,34 @@
-import type { ThreadEvent } from "@cw-code/contracts";
-import { GITHUB_RUNS_TOPIC, topicId } from "@cw-code/shared/topics";
-import type { ClientInputs } from "../app/clientInputs.js";
+import { topicId } from "@cw-code/shared/topics";
 import type { Services } from "../app/services.js";
-import { MAX_WATCHED_RUNS } from "../github/RunWatcher.js";
 import { createThreadTopicProvider, THREAD_TOPIC_PREFIX } from "../threads/threadTopic.js";
 import type { TopicHub, TopicProvider } from "./TopicHub.js";
 
 const PTY_PREFIX = "pty/";
 
-export interface TopicProviderDeps {
-  clientInputs: ClientInputs;
-  sendTo(clientId: string, channel: string, payload?: unknown): void;
-}
-
-export interface WatchControls {
-  providers: TopicProvider[];
-  syncWatchedRuns(): void;
-}
-
-type ProviderHooks = Partial<Pick<TopicProvider, "onSubscribe" | "onUnsubscribe" | "resync">> & {
-  onAcquire?(topic: string): void;
-  onRelease?(topic: string): void;
-};
-
-function ownsExact(topic: string): TopicProvider["owns"] {
-  return (candidate) => candidate === topic;
-}
-
-function ownsPrefix(prefix: string): TopicProvider["owns"] {
-  return (candidate) => candidate.startsWith(prefix);
-}
-
-function emptyStoreProvider(hub: TopicHub, owns: TopicProvider["owns"], hooks: ProviderHooks = {}): TopicProvider {
-  const { onAcquire, onRelease, ...providerHooks } = hooks;
+function ptyProvider(hub: TopicHub, services: Services): TopicProvider {
   return {
-    owns,
-    acquire(topic) {
-      onAcquire?.(topic);
-      return hub.createStore<Record<string, unknown>>(topic, {});
-    },
-    release(topic) {
-      onRelease?.(topic);
-    },
-    ...providerHooks
-  };
-}
-
-export function createWatchControls(hub: TopicHub, services: Services, { clientInputs, sendTo }: TopicProviderDeps): WatchControls {
-  const syncWatchedRuns = (): void => {
-    const clientIds = [...hub.subscriberIds(GITHUB_RUNS_TOPIC)];
-    services.githubViews.setLegacyRunRefs(clientInputs.runRefsUnion(clientIds, MAX_WATCHED_RUNS));
-  };
-
-  const pushPendingRequests = (clientId: string, topic: string): void => {
-    const sessionId = topicId(topic, THREAD_TOPIC_PREFIX);
-    if (!sessionId) return;
-    for (const entry of services.sessions.listPendingRequests(sessionId)) {
-      const event: ThreadEvent =
-        entry.kind === "approval"
-          ? { type: "approval.request", turnId: entry.turnId, request: entry.request }
-          : { type: "question.request", turnId: entry.turnId, request: entry.request };
-      sendTo(clientId, "turn.event", { sessionId, event });
+    owns: (topic) => topic.startsWith(PTY_PREFIX),
+    acquire: (topic) => hub.createStore<Record<string, unknown>>(topic, {}),
+    release: () => undefined,
+    onUnsubscribe: (clientId, topic) => {
+      const ptyId = topicId(topic, PTY_PREFIX);
+      if (ptyId) services.ptys.detach(ptyId, clientId);
     }
   };
+}
 
+export function createWatchProviders(hub: TopicHub, services: Services): TopicProvider[] {
   const openTurnChanges = (topic: string): void => {
     const sessionId = topicId(topic, THREAD_TOPIC_PREFIX);
     if (sessionId) services.turnChanges.opened(sessionId);
   };
 
-  const providers: TopicProvider[] = [
+  return [
     services.gitTopic,
     services.filesTopic,
-    emptyStoreProvider(hub, ownsPrefix(PTY_PREFIX), {
-      onUnsubscribe: (clientId, topic) => {
-        const ptyId = topicId(topic, PTY_PREFIX);
-        if (ptyId) services.ptys.detach(ptyId, clientId);
-      }
-    }),
-    emptyStoreProvider(hub, ownsExact(GITHUB_RUNS_TOPIC), {
-      onSubscribe: syncWatchedRuns,
-      onUnsubscribe: (clientId) => {
-        clientInputs.clearRunRefs(clientId);
-        syncWatchedRuns();
-      },
-      onRelease: syncWatchedRuns,
-      resync: syncWatchedRuns
-    }),
+    ptyProvider(hub, services),
     createThreadTopicProvider(services.threads, {
-      onSubscribe: (clientId, topic) => {
-        pushPendingRequests(clientId, topic);
+      onSubscribe: (_clientId, topic) => {
         services.prStore.reevaluate();
         openTurnChanges(topic);
       },
@@ -104,6 +43,4 @@ export function createWatchControls(hub: TopicHub, services: Services, { clientI
       }
     })
   ];
-
-  return { providers, syncWatchedRuns };
 }

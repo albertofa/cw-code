@@ -6,7 +6,7 @@ import type { ServerApp } from "../app/ServerApp.js";
 import { IMAGE_MAX_BYTES, imageExtMime, resolveFileTarget } from "../fs/FileService.js";
 import { configuredGitBinary } from "../fs/GitService.js";
 import { moveToTrash } from "../fs/trash.js";
-import { gitBaseline, gitDecorations, listWorkspaceFiles, searchText } from "../fs/workspaceQueries.js";
+import { gitBaseline, listWorkspaceFiles, searchText } from "../fs/workspaceQueries.js";
 import { attachmentsDir } from "../paths/appPaths.js";
 import type { Router } from "../transport/Router.js";
 import { assertString, handle, parseArgs, parseList, parseOptionalNumber, parseString, parseTextSearchQuery } from "./shared.js";
@@ -117,7 +117,6 @@ export function registerFileHandlers(router: Router, app: ServerApp): void {
     const abs = services().files.resolveEntry(root, parseString(args.path, "path"));
     return gitBaseline(gitBinary(), root, relative(root, abs).split(sep).join("/"));
   });
-  handle(router, "fs.gitDecorations", async (raw) => gitDecorations(gitBinary(), await fsRoot(parseArgs(raw, "fs.gitDecorations"))));
   handle(router, "fs.searchText", async (raw) => {
     const args = parseArgs(raw, "fs.searchText");
     const query = parseTextSearchQuery(args.query);

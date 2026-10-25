@@ -5,7 +5,6 @@ export const APP_TOPIC = "app";
 export const SIDEBAR_TOPIC = "sidebar";
 export const PRS_TOPIC = "prs";
 export const USAGE_TOPIC = "usage";
-export const GITHUB_RUNS_TOPIC = "github/runs";
 export const GITHUB_META_TOPIC = "github/meta";
 export const MAX_TOPICS_PER_CALL = 1000;
 export const MAX_TOPICS_PER_CLIENT = 5000;

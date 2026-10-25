@@ -18,7 +18,7 @@ import { createOriginPolicy, createRejectedOriginLogger } from "../transport/ori
 import { loadOrCreateOwnerToken, tokensEqual } from "../transport/ownerToken.js";
 import { Router, type ClientAuth } from "../transport/Router.js";
 import { TopicHub } from "../topics/TopicHub.js";
-import { registerTopicProviders, type TopicProviderControls } from "../topics/providers.js";
+import { registerTopicProviders } from "../topics/providers.js";
 import { WsServer } from "../transport/WsServer.js";
 import { ClientInputs } from "./clientInputs.js";
 import { eventAudience } from "./eventAudience.js";
@@ -41,18 +41,10 @@ function isProcessGone(pid: number): boolean {
   }
 }
 
-function affectsShutdownAssessment(channel: string, payload: unknown): boolean {
-  if (channel === "session.title" || channel === "session.updated") return true;
-  if (channel !== "turn.event") return false;
-  const event = (payload as { event?: { type?: string } } | undefined)?.event;
-  return event?.type === "task.updated";
-}
-
 export class ServerApp {
   readonly router = new Router();
   readonly topics = new TopicHub((clientIds, frame) => this.ws?.sendTo(clientIds, frame));
   readonly clientInputs = new ClientInputs();
-  private topicControls: TopicProviderControls | null = null;
   private deviceTokens: DeviceTokens | null = null;
   private services: Services | null = null;
   private state: StartupState = { mode: "ready" };
@@ -82,7 +74,6 @@ export class ServerApp {
   }
 
   emit(channel: string, payload?: unknown): void {
-    if (affectsShutdownAssessment(channel, payload)) this.shutdownPublisher.schedule();
     const topic = eventTopic(channel, payload);
     if (topic === null) {
       this.ws?.broadcast(channel, payload, eventAudience(channel));
@@ -120,10 +111,6 @@ export class ServerApp {
     if (!this.devices.revoke(id)) throw Object.assign(new Error(`unknown device '${id}'`), { code: "not-found" });
     this.ws?.closeClients((ctx) => ctx.auth.kind === "device" && ctx.auth.deviceId === id, CLOSE_UNAUTHORIZED, "device revoked");
     this.emitDevicesChanged();
-  }
-
-  syncWatchedRuns(): void {
-    this.topicControls?.syncWatchedRuns();
   }
 
   applyWatchedFiles(sessionId: string): void {
@@ -349,6 +336,7 @@ export class ServerApp {
       topics: this.topics,
       clientInputs: this.clientInputs,
       dropTopic: (topic) => this.topics.dropTopic(topic),
+      assessmentChanged: () => this.shutdownPublisher.schedule(),
       legacyAppRoots: this.args.legacyUserData,
       onShutdownRecovered: (failure) => this.handleShutdownRecovered(failure),
       onShutdownExpired: (reason) => this.handleShutdownExpired(reason)
@@ -374,10 +362,7 @@ export class ServerApp {
       });
     this.startSessionSweeps();
     this.topics.clearProviders();
-    this.topicControls = registerTopicProviders(this.topics, services, {
-      clientInputs: this.clientInputs,
-      sendTo: (clientId, channel, payload) => this.sendTo(clientId, channel, payload)
-    });
+    registerTopicProviders(this.topics, services);
     this.topics.reacquireAll();
     void services.harnessMonitor.check("startup");
   }

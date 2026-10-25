@@ -1,12 +1,11 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { ServerClient } from "@cw-code/client";
+import { ServerClient, TopicCache } from "@cw-code/client";
 import type {
   AppNotice,
   AppSettings,
   ClientKind,
   DeviceCreateResult,
   DeviceInfo,
-  PrSummary,
   Project,
   ServerReady,
   SessionMeta,
@@ -73,6 +72,14 @@ async function connect(clientToken = token, kind: ClientKind = "desktop-ui", url
   clients.push(client);
   await client.connect();
   return client;
+}
+
+async function until(check: () => boolean | Promise<boolean>, timeoutMs = 5_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!(await check())) {
+    if (Date.now() > deadline) throw new Error(`condition not met within ${timeoutMs}ms`);
+    await Bun.sleep(25);
+  }
 }
 
 function exitWithin(proc: ServerProcess, ms: number): Promise<number> {
@@ -147,18 +154,13 @@ describe("server process", () => {
     expect(await client.call("topics.unsubscribe", { topics: ["sidebar", "app"] })).toBeNull();
   });
 
-  it("pushes tracked PRs only to the subscriber and still broadcasts settings", async () => {
+  it("serves the prs topic and still broadcasts settings", async () => {
     const subscriber = await connect();
     const bystander = await connect();
-    const pushed: PrSummary[][] = [];
-    const leaked: unknown[] = [];
-    subscriber.on("prs.tracked", (payload) => pushed.push(payload as PrSummary[]));
-    bystander.on("prs.tracked", (payload) => leaked.push(payload));
     await subscriber.call("settings.set", { githubCliBinaryPath: join(home, "no-gh") });
     type PrsSnapshot = Record<string, { data: { inbox?: { error: string | null } } & Record<string, unknown> }>;
     const snapshot = await subscriber.call<PrsSnapshot>("topics.subscribe", { topics: ["prs"] });
     expect(Object.keys(snapshot.prs.data).sort()).toEqual(["context", "inbox"]);
-    expect(pushed).toEqual([[]]);
     await subscriber.call("prs.refresh", { force: true });
     const refreshed = await subscriber.call<PrsSnapshot>("topics.subscribe", { topics: ["prs"] });
     expect(refreshed.prs.data.inbox?.error).not.toBeNull();
@@ -171,32 +173,112 @@ describe("server process", () => {
     const current = await subscriber.call<AppSettings>("settings.get");
     await subscriber.call("settings.set", { claudeReasoningExpanded: !current.claudeReasoningExpanded });
     for (const seen of await both) expect(seen.claudeReasoningExpanded).toBe(!current.claudeReasoningExpanded);
-    expect(leaked).toEqual([]);
   });
 
-  it("broadcasts project and session mutations only to sidebar subscribers", async () => {
+  it("sends project and session mutations only to sidebar subscribers", async () => {
     const watcher = await connect();
     const bystander = await connect();
     const projectsSeen: Project[] = [];
-    const sessionsSeen: SessionMeta[] = [];
+    const rowPatches: string[] = [];
     const leaked: unknown[] = [];
     watcher.on("projects.changed", (payload) => projectsSeen.push(payload as Project));
-    watcher.on("session.updated", (payload) => sessionsSeen.push(payload as SessionMeta));
+    watcher.onPatch((patch) => {
+      if (patch.topic !== "sidebar") return;
+      for (const op of patch.ops) if (op.op === "upsert" && op.key.startsWith("row/")) rowPatches.push(op.key);
+    });
     bystander.on("projects.changed", (payload) => leaked.push(payload));
-    bystander.on("session.updated", (payload) => leaked.push(payload));
+    bystander.onPatch((patch) => leaked.push(patch));
     await watcher.call("topics.subscribe", { topics: ["sidebar"] });
 
     const root = mkdtempSync(join(tmpdir(), "cw-sidebar-"));
     try {
       const project = await bystander.call<Project>("projects.add", root);
       const session = await bystander.call<SessionMeta>("sessions.create", { projectId: project.id, driver: "claude" });
-      await new Promise((resolve) => setTimeout(resolve, 300));
+      await until(() => rowPatches.includes(`row/${session.id}`));
       expect(projectsSeen.map((seen) => seen.id)).toEqual([project.id]);
-      expect(sessionsSeen.map((seen) => seen.id)).toEqual([session.id]);
       expect(leaked).toEqual([]);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
+  });
+
+  it("returns a fresh snapshot when a subscribed client subscribes again", async () => {
+    const client = await connect();
+    const writer = await connect();
+    type Snapshot = Record<string, { rev: number; data: Record<string, unknown> }>;
+    const first = await client.call<Snapshot>("topics.subscribe", { topics: ["sidebar"] });
+    const project = await writer.call<Project>("projects.add", mkdtempSync(join(home, "resubscribe-")));
+    let again = first;
+    await until(async () => {
+      again = await client.call<Snapshot>("topics.subscribe", { topics: ["sidebar"] });
+      return again.sidebar.data[`project/${project.id}`] !== undefined;
+    });
+    expect(first.sidebar.data[`project/${project.id}`]).toBeUndefined();
+    expect(again.sidebar.rev).toBeGreaterThan(first.sidebar.rev);
+  });
+
+  it("resyncs topic data after a forced socket drop without a reload", async () => {
+    const client = new ServerClient({ endpoint: { url: ready.url, token }, client: "desktop-ui", reconnect: true });
+    clients.push(client);
+    await client.connect();
+    const cache = new TopicCache(client);
+    const release = cache.acquire("sidebar");
+    try {
+      await until(() => cache.state("sidebar")?.status === "ready");
+      const epoch = cache.epoch;
+      const writer = await connect();
+      const dropped = new Promise<void>((resolve) => {
+        const off = client.onState((state) => {
+          if (state !== "reconnecting") return;
+          off();
+          resolve();
+        });
+      });
+      const resynced = new Promise<number>((resolve) => {
+        const off = cache.onEpoch((next) => {
+          off();
+          resolve(next);
+        });
+      });
+      (client as unknown as { socket: WebSocket | null }).socket?.close();
+      await dropped;
+      const project = await writer.call<Project>("projects.add", mkdtempSync(join(home, "reconnect-")));
+      expect(await resynced).toBe(epoch + 1);
+      await until(() => cache.state("sidebar")?.data[`project/${project.id}`] !== undefined);
+      expect(cache.state("sidebar")?.status).toBe("ready");
+    } finally {
+      release();
+      cache.dispose();
+    }
+  });
+
+  it("rejects the methods removed with the topic protocol as unknown", async () => {
+    const client = await connect();
+    const removed = [
+      "sessions.expireHolding",
+      "sessions.activeTurns",
+      "sessions.history",
+      "git.status",
+      "prs.inbox",
+      "prs.tracked",
+      "prs.projectRepos",
+      "usage.ledger",
+      "usage.account",
+      "os.homeDir",
+      "turns.interrupt",
+      "github.search",
+      "github.runs",
+      "github.counts",
+      "github.watchRuns",
+      "github.issueDetail",
+      "github.runLog",
+      "github.clone",
+      "fs.gitDecorations"
+    ];
+    const results = await Promise.allSettled(removed.map((method) => client.call(method, {})));
+    expect(results.map((result) => (result.status === "rejected" ? (result.reason as { code?: string }).code : "resolved"))).toEqual(
+      removed.map(() => "unknown-method")
+    );
   });
 
   it("lets only the owner manage device tokens and closes a revoked device with 4401", async () => {
