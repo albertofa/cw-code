@@ -25,46 +25,46 @@ describe("reorderSidebar", () => {
 
   it("moves within a section without touching pins or status", () => {
     const result = reorderSidebar(null, sections, new Set(), { sessionId: "a", from: "main", to: "main", targetId: "c", before: false });
-    expect(result.order).toEqual({ main: ["b", "c", "a"], resolved: ["r1", "r2"], pinned: [] });
-    expect(result.statusChange).toBeNull();
+    expect(result?.order).toEqual({ main: ["b", "c", "a"], resolved: ["r1", "r2"], pinned: [] });
+    expect(result?.statusChange).toBeNull();
   });
 
   it("inserts before the target and appends when the target is missing", () => {
     const before = reorderSidebar(null, sections, new Set(), { sessionId: "c", from: "main", to: "main", targetId: "a", before: true });
-    expect(before.order.main).toEqual(["c", "a", "b"]);
+    expect(before?.order.main).toEqual(["c", "a", "b"]);
     const appended = reorderSidebar(null, sections, new Set(), { sessionId: "a", from: "main", to: "main", targetId: null, before: true });
-    expect(appended.order.main).toEqual(["b", "c", "a"]);
+    expect(appended?.order.main).toEqual(["b", "c", "a"]);
   });
 
   it("pins and resolves a session moved from main to resolved", () => {
     const prev: SidebarOrderPrefs = { main: ["a", "b", "c"], resolved: ["r1", "r2"], pinned: ["old"] };
     const result = reorderSidebar(prev, sections, new Set(), { sessionId: "b", from: "main", to: "resolved", targetId: "r1", before: true });
-    expect(result.order).toEqual({ main: ["a", "c"], resolved: ["b", "r1", "r2"], pinned: ["old", "b"] });
-    expect(result.statusChange).toBe("resolved");
+    expect(result?.order).toEqual({ main: ["a", "c"], resolved: ["b", "r1", "r2"], pinned: ["old", "b"] });
+    expect(result?.statusChange).toBe("resolved");
   });
 
   it("restores a session moved from resolved to main", () => {
     const result = reorderSidebar(null, sections, new Set(), { sessionId: "r2", from: "resolved", to: "main", targetId: "b", before: false });
-    expect(result.order).toEqual({ main: ["a", "b", "r2", "c"], resolved: ["r1"], pinned: ["r2"] });
-    expect(result.statusChange).toBe("idle");
+    expect(result?.order).toEqual({ main: ["a", "b", "r2", "c"], resolved: ["r1"], pinned: ["r2"] });
+    expect(result?.statusChange).toBe("idle");
   });
 
   it("keeps away ids where they were stored", () => {
     const prev: SidebarOrderPrefs = { main: ["a", "w", "b", "c"], resolved: ["r1", "r2"], pinned: [] };
     const result = reorderSidebar(prev, sections, new Set(["w"]), { sessionId: "a", from: "main", to: "main", targetId: "c", before: false });
-    expect(result.order.main).toEqual(["b", "c", "a", "w"]);
+    expect(result?.order.main).toEqual(["b", "c", "a", "w"]);
   });
 
   it("ignores an unknown session and a drop onto itself", () => {
     const prev: SidebarOrderPrefs = { main: ["a", "b", "c"], resolved: ["r1", "r2"], pinned: ["a"] };
-    expect(reorderSidebar(prev, sections, new Set(), { sessionId: "x", from: "main", to: "main", targetId: null, before: true })).toEqual({
-      order: prev,
-      statusChange: null
-    });
-    expect(reorderSidebar(prev, sections, new Set(), { sessionId: "a", from: "main", to: "main", targetId: "a", before: true })).toEqual({
-      order: prev,
-      statusChange: null
-    });
+    expect(reorderSidebar(prev, sections, new Set(), { sessionId: "x", from: "main", to: "main", targetId: null, before: true })).toBeNull();
+    expect(reorderSidebar(prev, sections, new Set(), { sessionId: "a", from: "main", to: "main", targetId: "a", before: true })).toBeNull();
+  });
+
+  it("derives the source section from the server's sections, not the request", () => {
+    const result = reorderSidebar(null, sections, new Set(), { sessionId: "b", from: "resolved", to: "resolved", targetId: "r1", before: true });
+    expect(result?.statusChange).toBe("resolved");
+    expect(result?.order.pinned).toEqual(["b"]);
   });
 });
 

@@ -21,7 +21,6 @@ import { linkFor, pickMainSession } from "./sessionPrLinks.js";
 
 export { ISSUE_TEMPLATE_VARS, RUN_TEMPLATE_VARS, TEMPLATE_VARS, TEMPLATE_VARS_BY_TARGET } from "@cw-code/shared/workflowTemplates";
 
-
 const ISSUE_COMMENTS_LIMIT = 10;
 
 const ISSUE_BODY_MAX_CHARS = 8_000;

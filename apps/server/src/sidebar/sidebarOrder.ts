@@ -78,19 +78,20 @@ export function reorderSidebar(
   sections: SidebarSectionIds,
   away: Set<string>,
   req: SidebarReorderRequest
-): SidebarReorderResult {
-  const known = sections.main.includes(req.sessionId) || sections.resolved.includes(req.sessionId);
-  const droppedOnSelf = req.targetId === req.sessionId && req.from === req.to;
-  if (!known || droppedOnSelf) {
-    return { order: order ?? { main: sections.main, resolved: sections.resolved, pinned: [] }, statusChange: null };
-  }
+): SidebarReorderResult | null {
+  const from: SidebarSection | null = sections.main.includes(req.sessionId)
+    ? "main"
+    : sections.resolved.includes(req.sessionId)
+      ? "resolved"
+      : null;
+  if (from === null || (req.targetId === req.sessionId && from === req.to)) return null;
 
   const withoutMoving = (ids: string[]) => ids.filter((id) => id !== req.sessionId);
   const place = (section: SidebarSection, ids: string[]) =>
     req.to === section ? insertRelativeTo(withoutMoving(ids), req.sessionId, req.targetId, req.before) : withoutMoving(ids);
   const nextMain = place("main", sections.main);
   const nextResolved = place("resolved", sections.resolved);
-  const cross = req.from !== req.to;
+  const cross = from !== req.to;
   const pinned = cross ? Array.from(new Set([...(order?.pinned ?? []), req.sessionId])) : [];
   const statusChange = !cross ? null : req.to === "resolved" ? "resolved" : "idle";
   return {
