@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from "electron";
-import type { AttentionState, DesktopApi, ShutdownRequestedEvent, UpdateChannel, UpdateInstallRequest, UpdateState } from "@cw-code/contracts";
+import type { DesktopApi, ShutdownRequestedEvent, UpdateChannel, UpdateInstallRequest, UpdateState } from "@cw-code/contracts";
 
 function subscribe<T>(channel: string, cb: (payload: T) => void): () => void {
   const listener = (_e: IpcRendererEvent, payload: T): void => cb(payload);
@@ -20,7 +20,6 @@ const api: DesktopApi = {
   zoomIn: () => ipcRenderer.send("win.zoom-in"),
   zoomOut: () => ipcRenderer.send("win.zoom-out"),
   zoomReset: () => ipcRenderer.send("win.zoom-reset"),
-  setAttention: (state: AttentionState) => ipcRenderer.send("app.attention", state),
   pickDirectory: () => ipcRenderer.invoke("projects.pick"),
   openPath: (path: string) => ipcRenderer.invoke("shell.openPath", { path }),
   openExternal: (url: string) => ipcRenderer.invoke("shell.openExternal", { url }),

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { MAX_ATTENTION_COUNT, attentionDescription, parseAttentionState, resetsAttention, shouldFlash } from "./attention.js";
+import { attentionCountOf, attentionDescription, shouldFlash } from "./attention.js";
 
 describe("shouldFlash", () => {
   it("flashes when the count increases while unfocused", () => {
@@ -38,49 +38,22 @@ describe("attentionDescription", () => {
   });
 });
 
-describe("parseAttentionState", () => {
-  const png = "data:image/png;base64,AAAA";
-
-  it("accepts a count with a png badge or null", () => {
-    expect(parseAttentionState({ count: 3, badgeDataUrl: png })).toEqual({ count: 3, badgeDataUrl: png });
-    expect(parseAttentionState({ count: 0, badgeDataUrl: null })).toEqual({ count: 0, badgeDataUrl: null });
+describe("attentionCountOf", () => {
+  it("reads the count from a ready app topic", () => {
+    expect(attentionCountOf({ status: "ready", data: { attention: { count: 3 } } })).toBe(3);
+    expect(attentionCountOf({ status: "ready", data: { attention: { count: 0 } } })).toBe(0);
   });
 
-  it("forces a null badge when the count is zero", () => {
-    expect(parseAttentionState({ count: 0, badgeDataUrl: png })).toEqual({ count: 0, badgeDataUrl: null });
+  it("is null until the topic is ready", () => {
+    expect(attentionCountOf(undefined)).toBeNull();
+    expect(attentionCountOf({ status: "subscribing", data: {} })).toBeNull();
+    expect(attentionCountOf({ status: "error", data: { attention: { count: 2 } } })).toBeNull();
   });
 
-  it("caps the count", () => {
-    expect(parseAttentionState({ count: MAX_ATTENTION_COUNT, badgeDataUrl: null })).toEqual({ count: MAX_ATTENTION_COUNT, badgeDataUrl: null });
-    expect(parseAttentionState({ count: MAX_ATTENTION_COUNT + 1, badgeDataUrl: null })).toBeNull();
-  });
-
-  it("rejects invalid counts", () => {
-    expect(parseAttentionState({ count: -1, badgeDataUrl: null })).toBeNull();
-    expect(parseAttentionState({ count: 1.5, badgeDataUrl: null })).toBeNull();
-    expect(parseAttentionState({ count: Number.NaN, badgeDataUrl: null })).toBeNull();
-    expect(parseAttentionState({ count: Number.POSITIVE_INFINITY, badgeDataUrl: null })).toBeNull();
-    expect(parseAttentionState({ count: "2", badgeDataUrl: null })).toBeNull();
-  });
-
-  it("rejects invalid badges", () => {
-    expect(parseAttentionState({ count: 1, badgeDataUrl: "data:image/jpeg;base64,AAAA" })).toBeNull();
-    expect(parseAttentionState({ count: 1, badgeDataUrl: "https://example.com/a.png" })).toBeNull();
-    expect(parseAttentionState({ count: 1, badgeDataUrl: `${png}${"A".repeat(64 * 1024)}` })).toBeNull();
-    expect(parseAttentionState({ count: 1 })).toBeNull();
-  });
-
-  it("rejects non-objects", () => {
-    expect(parseAttentionState(null)).toBeNull();
-    expect(parseAttentionState("x")).toBeNull();
-  });
-});
-
-describe("resetsAttention", () => {
-  it("resets only on a cross-document main-frame navigation", () => {
-    expect(resetsAttention({ isMainFrame: true, isSameDocument: false })).toBe(true);
-    expect(resetsAttention({ isMainFrame: false, isSameDocument: false })).toBe(false);
-    expect(resetsAttention({ isMainFrame: true, isSameDocument: true })).toBe(false);
-    expect(resetsAttention({ isMainFrame: false, isSameDocument: true })).toBe(false);
+  it("is null when the count is missing or invalid", () => {
+    expect(attentionCountOf({ status: "ready", data: {} })).toBeNull();
+    expect(attentionCountOf({ status: "ready", data: { attention: { count: -1 } } })).toBeNull();
+    expect(attentionCountOf({ status: "ready", data: { attention: { count: 1.5 } } })).toBeNull();
+    expect(attentionCountOf({ status: "ready", data: { attention: { count: Number.NaN } } })).toBeNull();
   });
 });

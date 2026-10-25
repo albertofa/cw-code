@@ -174,7 +174,6 @@ export type {
   ShutdownRequestedEvent,
   ShutdownExpiredEvent
 } from "./shutdown.js";
-export type { AttentionState } from "./attention.js";
 export type { AppNotice } from "./notices.js";
 export type {
   DirEntry,

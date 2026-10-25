@@ -4,7 +4,6 @@ import type {
   AccountUsageSnapshot,
   AccountUsageState,
   AccountUsageUnavailableReason,
-  AttentionState,
   CliBinary,
   HarnessAvailability,
   LegacyPreferences,
@@ -740,7 +739,6 @@ export interface CwApi {
   zoomIn(): void;
   zoomOut(): void;
   zoomReset(): void;
-  setAttention(state: AttentionState): void;
   pickProjectDir(): Promise<string | null>;
   openPath(path: string): Promise<void>;
   openExternal(url: string): Promise<void>;

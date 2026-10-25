@@ -288,7 +288,6 @@ export function createCwApi(client: ServerClient, topics: TopicCache, desktop: D
     zoomIn: () => desktop.zoomIn(),
     zoomOut: () => desktop.zoomOut(),
     zoomReset: () => desktop.zoomReset(),
-    setAttention: (state) => desktop.setAttention(state),
     pickProjectDir: () => desktop.pickDirectory(),
     openPath: (path) => desktop.openPath(path),
     openExternal: (url) => desktop.openExternal(url),

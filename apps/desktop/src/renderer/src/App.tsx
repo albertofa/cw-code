@@ -26,7 +26,6 @@ import { useDockDrop } from "./components/useDockDrop.js";
 import { useResizableWidth } from "./components/useResizableWidth.js";
 import { usePanelAnimationMs, usePresence } from "./components/usePresence.js";
 import { Notifications } from "./components/Notifications.js";
-import { useAttentionBadge } from "./components/useAttentionBadge.js";
 import { useAutoFollowUp } from "./components/useAutoFollowUp.js";
 import { useNotificationSounds } from "./components/useNotificationSounds.js";
 import { visibleLayerOpen } from "./components/openLayer.js";
@@ -98,7 +97,6 @@ function handleTurnEvent(msg: { sessionId: string; event: TurnEvent }): void {
 }
 
 export function App() {
-  useAttentionBadge();
   useAutoFollowUp();
   useNotificationSounds();
   const activeSessionId = useAppStore((s) => s.activeSessionId);
