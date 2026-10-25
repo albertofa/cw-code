@@ -2689,6 +2689,26 @@ describe("SessionManager", () => {
     manager.dispose();
   });
 
+  it("does not overwrite a turn that started while mark as working was looking up pull requests", async () => {
+    const widgets = { host: "github.com", owner: "acme", repo: "widgets", number: 42 };
+    let release: (state: "OPEN") => void = () => {};
+    const { manager, fake, project } = makePrManager({
+      prState: () => null,
+      prStateRefresh: () => new Promise((resolve) => (release = resolve))
+    });
+    const session = await manager.createSession(project.id, "claude", { mode: "current" });
+    manager.linkPr(session.id, { ref: widgets, origin: "linked", lastSeenSha: "old", lastSeenAt: 0 });
+
+    const marking = manager.markWorking(session.id);
+    const turnId = await manager.startTurn(session.id, "go");
+    release("OPEN");
+    const result = await marking;
+
+    expect(result.status).toBe("working");
+    fake.complete(turnId);
+    manager.dispose();
+  });
+
   it("drops finished pull requests when a turn starts on an idle session that already ran, keeping the ones the turn names", async () => {
     const merged = { host: "github.com", owner: "acme", repo: "widgets", number: 42 };
     const named = { host: "github.com", owner: "acme", repo: "widgets", number: 44 };
@@ -3668,6 +3688,21 @@ describe("SessionManager", () => {
     const store = (manager as unknown as { store: SessionStore }).store;
     expect(store.getSession(session.id)?.status).toBe("resolved");
     expect(store.getSession(session.id)?.resolvedCheckout).toEqual({ kind: "worktree", path: worktreePath });
+    manager.dispose();
+  });
+
+  it("refuses to resolve or change the status of a session while its restore is running", async () => {
+    const { manager, project } = makeGitSandboxManager("cw-restore-race-");
+    const session = await manager.createSession(project.id, "claude", { baseBranch: "main" });
+    await manager.resolveSession(session.id, "resolved", { removeWorktree: true });
+
+    const restoring = manager.restoreSession(session.id);
+    await expect(manager.resolveSession(session.id, "archived", { removeWorktree: true })).rejects.toThrow("session busy (restore pending)");
+    expect(() => manager.setSessionStatus(session.id, "archived")).toThrow("session busy (restore pending)");
+
+    const restored = await restoring;
+    expect(restored.status).toBe("idle");
+    expect(restored.worktreePath).toBeTruthy();
     manager.dispose();
   });
 

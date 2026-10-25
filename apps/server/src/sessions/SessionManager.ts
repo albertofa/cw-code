@@ -958,6 +958,7 @@ export class SessionManager {
   setSessionStatus(sessionId: string, status: SessionStatus, reason: SessionStatusReason = "user-set-status"): SessionMeta {
     const session = this.store.getSession(sessionId);
     if (!session) throw new Error(`unknown session ${sessionId}`);
+    if (this.pendingRestores.has(sessionId)) throw new Error("session busy (restore pending)");
     this.store.updateSession(sessionId, { status }, reason);
     return this.emitSession(sessionId);
   }
@@ -967,6 +968,9 @@ export class SessionManager {
     if (!session) throw new Error(`unknown session ${sessionId}`);
     if (session.status !== "idle") throw new Error(`session is ${session.status}; only idle sessions can be marked as working`);
     await this.dropFinishedPrLinks(sessionId);
+    const current = this.store.getSession(sessionId);
+    if (!current) throw new Error(`unknown session ${sessionId}`);
+    if (current.status !== "idle" || this.sessionBusy(sessionId)) return this.emitSession(sessionId);
     this.store.updateSession(sessionId, { status: "holding" }, "mark-working");
     return this.emitSession(sessionId);
   }
@@ -1320,6 +1324,7 @@ export class SessionManager {
       if (entry.sessionId === sessionId) throw new Error("session busy (turn active)");
     }
     if (this.pendingTurns.has(sessionId)) throw new Error("session busy (turn pending)");
+    if (this.pendingRestores.has(sessionId)) throw new Error("session busy (restore pending)");
     const pending = this.pendingResolves.get(sessionId);
     if (pending) {
       if (pending.status === status) return pending.promise;
