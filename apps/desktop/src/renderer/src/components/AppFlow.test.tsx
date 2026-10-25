@@ -144,13 +144,9 @@ function installBridge(): void {
     setComposer: async (_id: string, prefs: unknown) => delayed(prefs, 200),
     getDefaultPrWorkflows: async () => [],
     refreshPrInbox: async () => {},
-    searchGitHub: async () => ({ account: null, items: [], openCount: null, closedCount: null, truncated: false, limit: 50, fetchedAt: 0, error: null }),
-    countGitHub: async () => [],
-    getGitHubRuns: async () => ({ account: null, items: [], fetchedAt: 0, error: null }),
+    refreshGitHubView: async () => {},
+    githubViewCounts: async () => ({}),
     getRunLog: async () => "",
-    watchGitHubRuns: async () => {},
-    onGitHubRunsChanged: noop,
-    onGitHubCiActivity: noop,
     markSessionRunSeen: async (sessionId: string) => makeSession({ id: sessionId }),
     getGitStatus: async () => {
       throw new Error("no git");

@@ -6,7 +6,6 @@ import type {
   PrWorkflow,
   RepoRef,
   RunRef,
-  RunsResult,
   WorkflowRunSummary,
   WorkflowSubject
 } from "../cw.js";
@@ -106,18 +105,6 @@ export function otherSessionCandidates<S extends CandidateSession>(
       ? undefined
       : sessions.find((s) => s.id === pinnedId && !isLinkedTo(s, subject));
   return pinned ? [pinned, ...inProject] : inProject;
-}
-
-export function findCachedRun(
-  caches: Record<string, { data: RunsResult | null }>,
-  ref: RunRef
-): WorkflowRunSummary | undefined {
-  const key = runKey(ref);
-  for (const entry of Object.values(caches)) {
-    const found = entry.data?.items.find((run) => runKey(run.ref) === key);
-    if (found) return found;
-  }
-  return undefined;
 }
 
 export function prRefForRun(run: WorkflowRunSummary | undefined): PrRef | null {

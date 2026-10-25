@@ -27,7 +27,6 @@ import type {
 } from "../cw.js";
 import type { PrWorkspaceChoice } from "@cw-code/contracts";
 import { useAppStore, DEFAULT_COMPOSER } from "../stores/appStore.js";
-import { useGitHubStore } from "../stores/githubStore.js";
 import { usePrStore, type RunModalState } from "../stores/prStore.js";
 import { babysittingSession, resolveTemplate, startsAutoFollowUp } from "./prWorkflows.js";
 import { harnessLabel } from "./toolTabs.js";
@@ -55,7 +54,6 @@ import { useWorkflowSubjectData } from "./useWorkflowSubjectData.js";
 import {
   baseWorkspaceHint,
   effectiveSubject,
-  findCachedRun,
   isLinkedTo,
   issueDataTime,
   otherSessionCandidates,
@@ -168,7 +166,6 @@ export function WorkflowRunModal({ request }: { request: RunModalState }) {
   const projectRepos = (githubContext ?? EMPTY_GITHUB_CONTEXT).projectRepos;
   const openSessionView = usePrStore((s) => s.openSessionView);
   const closeRunModal = usePrStore((s) => s.closeRunModal);
-  const runCaches = useGitHubStore((s) => s.runResults);
   const sessionsByProject = useAppStore((s) => s.sessionsByProject);
   const projects = useAppStore((s) => s.projects);
   const pendingPrefs = useAppStore((s) => s.pendingPrefs);
@@ -194,10 +191,7 @@ export function WorkflowRunModal({ request }: { request: RunModalState }) {
   const runningRef = useRef(false);
   const dialogRef = useRef<HTMLDivElement>(null);
 
-  const cachedRun = useMemo(
-    () => (baseSubject.kind === "run" ? findCachedRun(runCaches, baseSubject.ref) : undefined),
-    [runCaches, baseSubject]
-  );
+  const cachedRun = baseSubject.kind === "run" ? request.run : undefined;
   const workflows = useMemo(
     () => workflowsForSubject(settings?.prWorkflows ?? [], baseSubject, cachedRun),
     [settings, baseSubject, cachedRun]

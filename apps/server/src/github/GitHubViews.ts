@@ -640,6 +640,7 @@ export class GitHubViews {
       account: result?.account ?? env.inbox?.account ?? null,
       openCount: result?.openCount ?? null,
       closedCount: result?.closedCount ?? null,
+      countsUnavailable: (state.split?.local.length ?? 0) > 0,
       truncated: result?.truncated ?? false,
       limit: result?.limit ?? null,
       fetchedAt: result?.fetchedAt ?? null

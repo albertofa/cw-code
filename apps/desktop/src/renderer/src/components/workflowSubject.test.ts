@@ -3,7 +3,6 @@ import type { PrWorkflow, RunRef, WorkflowRunSummary, WorkflowSubject } from "..
 import {
   baseWorkspaceHint,
   effectiveSubject,
-  findCachedRun,
   isLinkedTo,
   issueKey,
   otherSessionCandidates,
@@ -89,18 +88,6 @@ describe("effectiveSubject", () => {
   it("never rewrites issue subjects", () => {
     const issue: WorkflowSubject = { kind: "issue", ref: { host: "github.com", owner: "a", repo: "b", number: 1 } };
     expect(effectiveSubject(issue, workflows[0], undefined)).toBe(issue);
-  });
-});
-
-describe("findCachedRun", () => {
-  it("searches across caches by run id", () => {
-    const caches = {
-      a: { data: { account: null, items: [run({ ref: { ...runRef, runId: 1 } })], fetchedAt: 0, error: null } },
-      b: { data: { account: null, items: [run()], fetchedAt: 0, error: null } },
-      c: { data: null }
-    };
-    expect(findCachedRun(caches, runRef)?.ref.runId).toBe(99);
-    expect(findCachedRun(caches, { ...runRef, runId: 7 })).toBeUndefined();
   });
 });
 

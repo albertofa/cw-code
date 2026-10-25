@@ -292,6 +292,8 @@ describe("GitHubViews", () => {
     expect(rows(h.view(plain))).toHaveLength(1);
     expect(rows(h.view(unread))).toHaveLength(0);
     expect(h.view(unread).view.loading).toBe(false);
+    expect(h.view(plain).view.countsUnavailable).toBe(false);
+    expect(h.view(unread).view.countsUnavailable).toBe(true);
     h.subscribe(plain, "c2");
     h.subscribe(githubViewTopic("pr", "is:pr author:@me "));
     await flush();

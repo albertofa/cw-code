@@ -1,23 +1,6 @@
 import { describe, expect, it } from "bun:test";
-import type { IssueSummary, PrSummary, WorkflowRunSummary } from "@cw-code/contracts";
-import { prKeyOf } from "./githubViewQueryLegacy.js";
-import {
-  ISSUE_BUCKETS,
-  PR_BUCKETS,
-  assignedOpenIssueCount,
-  buildLocalContext,
-  buildRunContext,
-  buildSuggestionSource,
-  failingInvolvedRunCount,
-  groupItems,
-  involvedPrKeysOf,
-  isViewEdited,
-  liveRunRefs,
-  mentionsMode,
-  retargetQuery,
-  runRefsSignature,
-  sortOf
-} from "./githubViewModel.js";
+import type { GitHubRow, GitHubSubject, IssueSummary, PrSummary, WorkflowRunSummary } from "@cw-code/contracts";
+import { ISSUE_BUCKETS, PR_BUCKETS, buildSuggestionSource, groupItems, isViewEdited, retargetQuery, sortOf } from "./githubViewModel.js";
 import { prBucket } from "./prInbox.js";
 
 function pr(overrides: Partial<PrSummary> = {}): PrSummary {
@@ -92,18 +75,33 @@ function run(overrides: Partial<WorkflowRunSummary> = {}): WorkflowRunSummary {
   };
 }
 
+const RELATIONS: GitHubRow["relations"] = {
+  linkedSessionIds: [],
+  unseenSessionIds: [],
+  mainSessionId: null,
+  babysitter: null,
+  action: { kind: "github" },
+  delta: null
+};
+
+function row(subject: GitHubSubject, bucket: string, seq = 0): GitHubRow {
+  return { seq, subject, bucket, relations: RELATIONS };
+}
+
+function prRow(item: PrSummary, seq = 0): GitHubRow {
+  return row({ kind: "pr", pr: item }, prBucket(item), seq);
+}
+
 const prOptions = {
   buckets: PR_BUCKETS,
-  bucketOf: prBucket,
-  repoOf: (item: PrSummary) => item.ref,
   isCloned: (repo: { owner: string; repo: string }) => repo.repo === "widgets"
 };
 
 describe("groupItems", () => {
   const items = [
-    pr({ ref: { host: "github.com", owner: "acme", repo: "widgets", number: 1 }, viewerIsAuthor: false, reviewRequestedFromViewer: true }),
-    pr({ ref: { host: "github.com", owner: "acme", repo: "gadgets", number: 2 }, state: "MERGED" }),
-    pr({ ref: { host: "github.com", owner: "acme", repo: "widgets", number: 3 }, state: "CLOSED" })
+    prRow(pr({ ref: { host: "github.com", owner: "acme", repo: "widgets", number: 1 }, viewerIsAuthor: false, reviewRequestedFromViewer: true }), 0),
+    prRow(pr({ ref: { host: "github.com", owner: "acme", repo: "gadgets", number: 2 }, state: "MERGED" }), 1),
+    prRow(pr({ ref: { host: "github.com", owner: "acme", repo: "widgets", number: 3 }, state: "CLOSED" }), 2)
   ];
 
   it("buckets by triage order and drops empty buckets", () => {
@@ -114,6 +112,11 @@ describe("groupItems", () => {
       ["closed", 1]
     ]);
     expect(groups.every((group) => !group.flat)).toBe(true);
+  });
+
+  it("groups by the server-provided bucket", () => {
+    const groups = groupItems([row({ kind: "pr", pr: pr() }, "ready")], "triage", prOptions);
+    expect(groups.map((group) => group.id)).toEqual(["ready"]);
   });
 
   it("groups by repo in first-seen order and flags cloned repos", () => {
@@ -132,29 +135,13 @@ describe("groupItems", () => {
   });
 
   it("keeps the closed issue bucket last", () => {
-    const issues = [issue({ state: "CLOSED" }), issue({ assignees: ["me"] })];
-    const groups = groupItems(issues, "triage", {
-      buckets: ISSUE_BUCKETS,
-      bucketOf: (item) => (item.state === "CLOSED" ? "closed" : "assigned"),
-      repoOf: (item) => item.ref,
-      isCloned: () => false
-    });
+    const issues = [row({ kind: "issue", issue: issue({ state: "CLOSED" }) }, "closed"), row({ kind: "issue", issue: issue({ assignees: ["me"] }) }, "assigned")];
+    const groups = groupItems(issues, "triage", { buckets: ISSUE_BUCKETS, isCloned: () => false });
     expect(groups.map((group) => group.id)).toEqual(["assigned", "closed"]);
   });
 });
 
 describe("query helpers", () => {
-  it("detects non-negated mentions:@me only", () => {
-    expect(mentionsMode("is:issue mentions:@me state:open")).toBe(true);
-    expect(mentionsMode("is:issue -mentions:@me")).toBe(false);
-    expect(mentionsMode("is:issue mentions:someone")).toBe(false);
-  });
-
-  it("treats a non-negated involves:@me like mentions:@me", () => {
-    expect(mentionsMode("is:issue involves:@me state:open")).toBe(true);
-    expect(mentionsMode("is:issue -involves:@me")).toBe(false);
-  });
-
   it("drops other kind tokens when retargeting a query", () => {
     expect(retargetQuery("is:pr author:@me is:issue ", "issue")).toBe("author:@me is:issue ");
     expect(retargetQuery("is:run -is:pr repo:acme/widgets", "run")).toBe("is:run -is:pr repo:acme/widgets ");
@@ -174,80 +161,6 @@ describe("query helpers", () => {
     expect(isViewEdited(view, "is:pr  involves:@me")).toBe(false);
     expect(isViewEdited(view, "is:pr author:@me")).toBe(true);
     expect(isViewEdited(null, "is:pr")).toBe(true);
-  });
-});
-
-describe("buildLocalContext", () => {
-  const sessions = [
-    {
-      id: "s1",
-      updatedAt: 1,
-      prs: [{ ref: { host: "github.com", owner: "acme", repo: "widgets", number: 42 }, origin: "linked" as const, lastSeenSha: "abc123", lastSeenAt: 2000 }]
-    },
-    {
-      id: "s2",
-      updatedAt: 1,
-      issues: [{ ref: { host: "github.com", owner: "acme", repo: "widgets", number: 7 }, origin: "linked" as const, lastSeenAt: 500 }]
-    }
-  ];
-  const context = buildLocalContext(sessions, (repo) => repo.repo === "widgets");
-
-  it("matches sessions by item kind", () => {
-    expect(context.hasSession(pr())).toBe(true);
-    expect(context.hasSession(pr({ ref: { host: "github.com", owner: "acme", repo: "widgets", number: 43 } }))).toBe(false);
-    expect(context.hasSession(issue())).toBe(true);
-    expect(context.hasSession(issue({ ref: { host: "github.com", owner: "acme", repo: "widgets", number: 8 } }))).toBe(false);
-  });
-
-  it("treats an item as unread when a linked session has not seen its latest update", () => {
-    expect(context.isUnread(pr({ updatedAt: 1000 }))).toBe(false);
-    expect(context.isUnread(pr({ updatedAt: 3000 }))).toBe(true);
-    expect(context.isUnread(issue({ updatedAt: 1000 }))).toBe(true);
-    expect(context.isUnread(issue({ updatedAt: 400 }))).toBe(false);
-  });
-
-  it("delegates cloned lookup", () => {
-    expect(context.isCloned({ host: "github.com", owner: "acme", repo: "widgets" })).toBe(true);
-    expect(context.isCloned({ host: "github.com", owner: "acme", repo: "other" })).toBe(false);
-  });
-});
-
-describe("run context and badges", () => {
-  const failing = run({ ref: { host: "github.com", owner: "acme", repo: "widgets", runId: 1 }, conclusion: "failure", prNumber: 42 });
-  const failingOnDefault = run({
-    ref: { host: "github.com", owner: "acme", repo: "widgets", runId: 2 },
-    conclusion: "timed_out",
-    actor: "someone",
-    onDefaultBranch: true
-  });
-  const failingElsewhere = run({ ref: { host: "github.com", owner: "acme", repo: "widgets", runId: 3 }, conclusion: "failure", actor: "someone", prNumber: 99 });
-  const passing = run({ ref: { host: "github.com", owner: "acme", repo: "widgets", runId: 4 }, actor: "me" });
-
-  it("collects PR keys from the inbox and viewer-involved cached PRs", () => {
-    const inboxPr = pr({ ref: { host: "github.com", owner: "acme", repo: "widgets", number: 1 } });
-    const involved = pr({ ref: { host: "github.com", owner: "acme", repo: "widgets", number: 2 }, assignees: ["me"] });
-    const stranger = pr({ ref: { host: "github.com", owner: "acme", repo: "widgets", number: 3 } });
-    const keys = involvedPrKeysOf([inboxPr], [involved, stranger], "me");
-    expect(keys).toEqual(new Set([prKeyOf(inboxPr.ref, 1), prKeyOf(involved.ref, 2)]));
-  });
-
-  it("counts failing runs that involve the viewer", () => {
-    const context = buildRunContext("me", new Set([prKeyOf(failing.ref, 42)]), []);
-    expect(failingInvolvedRunCount([failing, failingOnDefault, failingElsewhere, passing], context)).toBe(2);
-  });
-
-  it("counts open assigned issues only", () => {
-    const issues = [issue({ assignees: ["me"] }), issue({ assignees: ["me"], state: "CLOSED" }), issue({ assignees: ["other"] })];
-    expect(assignedOpenIssueCount(issues, "me")).toBe(1);
-  });
-
-  it("derives a stable signature from live runs only", () => {
-    const live = run({ ref: { host: "github.com", owner: "acme", repo: "widgets", runId: 5 }, status: "in_progress", conclusion: null });
-    const queued = run({ ref: { host: "github.com", owner: "acme", repo: "widgets", runId: 6 }, status: "queued", conclusion: null });
-    const refs = liveRunRefs([passing, live, queued]);
-    expect(refs.map((ref) => ref.runId)).toEqual([5, 6]);
-    expect(runRefsSignature(refs)).toBe("github.com/acme/widgets#5|github.com/acme/widgets#6");
-    expect(runRefsSignature([])).toBe("");
   });
 });
 

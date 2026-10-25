@@ -572,6 +572,13 @@ export interface AppSettings {
 
 export type SettingsPatch = Partial<AppSettings>;
 
+export interface SaveGitHubViewInput {
+  kind: GitHubKind;
+  name: string;
+  query: string;
+  group: GitHubViewGroup;
+}
+
 export interface CwApi {
   topics: TopicCache;
   getStartupState(): Promise<StartupState>;
@@ -668,15 +675,13 @@ export interface CwApi {
   getPrDetail(ref: PrRef): Promise<PrDetail>;
   getPrDiff(ref: PrRef): Promise<string>;
   getPrCheckLog(ref: PrRef, runId: number): Promise<string>;
-  searchGitHub(kind: "pr", query: string, countBase: string, force?: boolean): Promise<GitHubSearchResult<PrSummary>>;
-  searchGitHub(kind: "issue", query: string, countBase: string, force?: boolean): Promise<GitHubSearchResult<IssueSummary>>;
-  countGitHub(kind: "pr" | "issue", queries: string[]): Promise<Array<number | null>>;
+  refreshGitHubView(topic: string, force?: boolean): Promise<void>;
+  githubViewCounts(kind: GitHubKind): Promise<Record<string, number | null>>;
+  saveGitHubView(input: SaveGitHubViewInput): Promise<SavedGitHubView>;
+  renameGitHubView(id: string, name: string): Promise<void>;
+  deleteGitHubView(id: string): Promise<void>;
   getIssueDetail(ref: IssueRef): Promise<IssueDetail>;
-  getGitHubRuns(sources: RunSources, force?: boolean): Promise<RunsResult>;
   getRunLog(ref: RunRef): Promise<string>;
-  watchGitHubRuns(refs: RunRef[]): Promise<void>;
-  onGitHubRunsChanged(cb: (runs: WorkflowRunSummary[]) => void): () => void;
-  onGitHubCiActivity(cb: () => void): () => void;
   cloneGitHubRepo(repo: RepoRef): Promise<Project>;
   linkSessionPr(sessionId: string, link: SessionPrLink): Promise<Session>;
   unlinkSessionPr(sessionId: string, ref: PrRef): Promise<Session>;

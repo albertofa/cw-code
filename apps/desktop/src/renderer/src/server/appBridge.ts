@@ -3,7 +3,6 @@ import { APP_TOPIC } from "@cw-code/shared/topics";
 import type { AppSettings } from "../cw.js";
 import { fallbackHarness } from "../components/harnessAvailability.js";
 import { useAppStore } from "../stores/appStore.js";
-import { useGitHubStore } from "../stores/githubStore.js";
 import { useSettingsDraftStore } from "../stores/settingsDraftStore.js";
 import { bindTopic } from "./topics.js";
 
@@ -16,7 +15,6 @@ export function applyInstalledHarnesses(installed: DriverKind[]): void {
 
 function applySettings(settings: AppSettings): void {
   useAppStore.getState().applySettings(settings);
-  useGitHubStore.getState().applySavedViews(settings.githubSavedViews ?? []);
   useSettingsDraftStore.getState().applyStored(settings);
 }
 

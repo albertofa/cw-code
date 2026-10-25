@@ -13,18 +13,15 @@ import type {
   GitBranchInfo,
   GitDecorations,
   GitDiffResult,
-  GitHubSearchResult,
   GitStatus,
   HarnessAvailability,
   ImportableSession,
   LegacyPreferences,
   SidebarReorderRequest,
   IssueDetail,
-  IssueSummary,
   PrDetail,
-  PrSummary,
   PrWorkflow,
-  RunsResult,
+  SavedGitHubView,
   ShutdownAssessment,
   ShutdownCommitResult,
   ShutdownPrepareResult,
@@ -72,12 +69,6 @@ export function createCwApi(client: ServerClient, topics: TopicCache, desktop: D
   const callVoid = (method: string, params?: unknown): Promise<void> => client.call(method, params).then(() => undefined);
   const subscribe = <T>(channel: string, cb: (payload: T) => void): (() => void) => client.on(channel, (payload) => cb(payload as T));
   const ptyAttachments = createPtyAttachments((ptyId) => client.send("pty.detach", { ptyId }));
-
-  function searchGitHub(kind: "pr", query: string, countBase: string, force?: boolean): Promise<GitHubSearchResult<PrSummary>>;
-  function searchGitHub(kind: "issue", query: string, countBase: string, force?: boolean): Promise<GitHubSearchResult<IssueSummary>>;
-  function searchGitHub(kind: "pr" | "issue", query: string, countBase: string, force?: boolean): Promise<unknown> {
-    return call("github.search", { kind, query, countBase, force });
-  }
 
   return {
     topics,
@@ -215,14 +206,13 @@ export function createCwApi(client: ServerClient, topics: TopicCache, desktop: D
     getPrDetail: (ref) => call<PrDetail>("prs.detail", { ref }),
     getPrDiff: (ref) => call<string>("prs.diff", { ref }),
     getPrCheckLog: (ref, runId) => call<string>("prs.checkLog", { ref, runId }),
-    searchGitHub,
-    countGitHub: (kind, queries) => call<Array<number | null>>("github.counts", { kind, queries }),
+    refreshGitHubView: (topic, force) => callVoid("github.refresh", { topic, force }),
+    githubViewCounts: (kind) => call<Record<string, number | null>>("github.viewCounts", { kind }),
+    saveGitHubView: (input) => call<SavedGitHubView>("github.saveView", input),
+    renameGitHubView: (id, name) => callVoid("github.renameView", { id, name }),
+    deleteGitHubView: (id) => callVoid("github.deleteView", { id }),
     getIssueDetail: (ref) => call<IssueDetail>("github.issueDetail", { ref }),
-    getGitHubRuns: (sources, force) => call<RunsResult>("github.runs", { sources, force }),
     getRunLog: (ref) => call<string>("github.runLog", { ref }),
-    watchGitHubRuns: (refs) => callVoid("github.watchRuns", { refs }),
-    onGitHubRunsChanged: (cb) => subscribe("github.runsChanged", cb),
-    onGitHubCiActivity: (cb) => client.on("github.ciActivity", () => cb()),
     cloneGitHubRepo: (repo) => call<Project>("github.clone", { repo }),
     linkSessionPr: (sessionId, link) => call<Session>("sessions.linkPr", { sessionId, link }),
     unlinkSessionPr: (sessionId, ref) => call<Session>("sessions.unlinkPr", { sessionId, ref }),

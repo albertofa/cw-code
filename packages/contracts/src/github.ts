@@ -199,6 +199,7 @@ export interface GitHubViewState {
   account: GitHubAccountRef | null;
   openCount: number | null;
   closedCount: number | null;
+  countsUnavailable: boolean;
   truncated: boolean;
   limit: number | null;
   fetchedAt: number | null;
