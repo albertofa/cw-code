@@ -176,4 +176,9 @@ describe("Md raw html", () => {
     expect(rendered.innerHTML).not.toContain("onclick");
     expect(rendered.innerHTML).not.toContain("javascript:");
   });
+
+  it("keeps text nested inside a raw html code block", async () => {
+    const rendered = await renderMd("<pre><code><span>hello</span> world</code></pre>", true);
+    expect(rendered.querySelector("pre code")?.textContent).toBe("hello world");
+  });
 });

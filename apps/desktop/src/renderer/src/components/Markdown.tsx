@@ -125,12 +125,6 @@ function codeLanguage(children: ReactNode): string | null {
   return null;
 }
 
-function codeBlockText(children: ReactNode): string {
-  return Children.toArray(children)
-    .map((child) => (isValidElement<{ children?: ReactNode }>(child) ? reactText(child.props.children) : reactText(child)))
-    .join("");
-}
-
 function codeClassName(children: ReactNode): string | undefined {
   for (const child of Children.toArray(children)) {
     if (isValidElement<{ className?: string }>(child)) return child.props.className;
@@ -143,7 +137,7 @@ function Pre({ children }: { children?: ReactNode }) {
   const [copied, setCopied] = useState(false);
   const [wrapped, setWrapped] = useState(false);
   const info = codeLanguage(children);
-  const source = codeBlockText(children);
+  const source = reactText(children);
   const language = useMemo(() => resolveFenceLanguage(info), [info]);
 
   const copy = () => {
@@ -299,6 +293,7 @@ function MdLink({
 function reactText(node: ReactNode): string {
   if (typeof node === "string" || typeof node === "number") return String(node);
   if (Array.isArray(node)) return node.map(reactText).join("");
+  if (isValidElement<{ children?: ReactNode }>(node)) return reactText(node.props.children);
   return "";
 }
 
