@@ -9,9 +9,12 @@ import type {
   PrSummary,
   SubjectRelations
 } from "@cw-code/contracts";
+import { useRef } from "react";
+import { prKey } from "@cw-code/shared/prRef";
 import { PRS_TOPIC, sessionTopic } from "@cw-code/shared/topics";
-import { useTopicEntry, useTopicSelect } from "../server/topics.js";
+import { peekTopic, useTopicEntry, useTopicSelect } from "../server/topics.js";
 import { errorMessage } from "./errorMessage.js";
+import { useNotifs } from "./Notifications.js";
 import { prRefLabel } from "./sessionPrLinks.js";
 
 export type PrSummaryLookup = ReadonlyMap<string, PrSummary>;
@@ -44,25 +47,18 @@ function prefixedEntries<T>(data: TopicData, prefix: string): Map<string, T> {
   return entries;
 }
 
-interface Derived<T> {
-  derive(data: TopicData, previous: T | undefined): T;
-  cached: { data: TopicData; value: T } | null;
-}
+type Derive<T> = (data: TopicData, previous: T | undefined) => T;
 
-function derived<T>(derive: (data: TopicData, previous: T | undefined) => T): Derived<T> {
-  return { derive, cached: null };
-}
-
-function readDerived<T>(source: Derived<T>, data: TopicData): T {
-  const cached = source.cached;
-  if (cached && cached.data === data) return cached.value;
-  const value = source.derive(data, cached?.value);
-  source.cached = { data, value };
-  return value;
-}
-
-function useDerived<T>(source: Derived<T>): T {
-  return useTopicSelect<T>(PRS_TOPIC, (state: TopicState | undefined) => readDerived(source, state?.data));
+function useDerived<T>(derive: Derive<T>): T {
+  const cache = useRef<{ data: TopicData; value: T } | null>(null);
+  return useTopicSelect<T>(PRS_TOPIC, (state: TopicState | undefined) => {
+    const data = state?.data;
+    const cached = cache.current;
+    if (cached && cached.data === data) return cached.value;
+    const value = derive(data, cached?.value);
+    cache.current = { data, value };
+    return value;
+  });
 }
 
 function stableMap<T>(data: TopicData, prefix: string, previous: ReadonlyMap<string, T> | undefined, empty: ReadonlyMap<string, T>): ReadonlyMap<string, T> {
@@ -91,16 +87,16 @@ export function useGitHubContext(): GitHubContext | undefined {
   return useTopicEntry<GitHubContext>(PRS_TOPIC, "context");
 }
 
-const summaries = derived<PrSummaryLookup>((data, previous) => stableMap(data, SUMMARY_PREFIX, previous, NO_SUMMARIES));
+const deriveSummaries: Derive<PrSummaryLookup> = (data, previous) => stableMap(data, SUMMARY_PREFIX, previous, NO_SUMMARIES);
 
-const detailEntries = derived<ReadonlyMap<string, PrDetailEntry>>((data, previous) => stableMap(data, DETAIL_PREFIX, previous, NO_ENTRIES));
+const deriveDetailEntries: Derive<ReadonlyMap<string, PrDetailEntry>> = (data, previous) => stableMap(data, DETAIL_PREFIX, previous, NO_ENTRIES);
 
 export function usePrSummaries(): PrSummaryLookup {
-  return useDerived(summaries);
+  return useDerived(deriveSummaries);
 }
 
 export function usePrDetailEntries(): ReadonlyMap<string, PrDetailEntry> {
-  return useDerived(detailEntries);
+  return useDerived(deriveDetailEntries);
 }
 
 function sameRecord<T>(a: Readonly<Record<string, T>>, b: Readonly<Record<string, T>>): boolean {
@@ -108,24 +104,24 @@ function sameRecord<T>(a: Readonly<Record<string, T>>, b: Readonly<Record<string
   return keys.length === Object.keys(a).length && keys.every((key) => a[key] === b[key]);
 }
 
-const details = derived<Readonly<Record<string, PrDetail>>>((data, previous) => {
+const deriveDetails: Derive<Readonly<Record<string, PrDetail>>> = (data, previous) => {
   const next: Record<string, PrDetail> = {};
   for (const [key, entry] of prefixedEntries<PrDetailEntry>(data, DETAIL_PREFIX)) {
     if (entry.detail) next[key] = entry.detail;
   }
   if (Object.keys(next).length === 0) return NO_DETAILS;
   return previous && sameRecord(previous, next) ? previous : next;
-});
+};
 
 export function usePrDetails(): Readonly<Record<string, PrDetail>> {
-  return useDerived(details);
+  return useDerived(deriveDetails);
 }
 
 function sameItems<T>(a: readonly T[], b: readonly T[]): boolean {
   return a.length === b.length && a.every((item, index) => item === b[index]);
 }
 
-const inboxItems = derived<PrSummary[]>((data, previous) => {
+const deriveInboxItems: Derive<PrSummary[]> = (data, previous) => {
   const inbox = data?.inbox as PrInboxState | undefined;
   if (!inbox || inbox.keys.length === 0) return NO_ITEMS;
   const next = inbox.keys.flatMap((key) => {
@@ -133,10 +129,10 @@ const inboxItems = derived<PrSummary[]>((data, previous) => {
     return summary ? [summary] : [];
   });
   return previous && sameItems(previous, next) ? previous : next;
-});
+};
 
 export function usePrInboxItems(): PrSummary[] {
-  return useDerived(inboxItems);
+  return useDerived(deriveInboxItems);
 }
 
 export function usePrsTopicError(): string | null {
@@ -155,6 +151,11 @@ export async function requestPrDetail(ref: PrRef): Promise<void> {
   try {
     await window.cw.getPrDetail(ref);
   } catch (err) {
-    console.warn(`[pr] detail load failed for ${prRefLabel(ref)}: ${errorMessage(err)}`);
+    const message = errorMessage(err);
+    console.warn(`[pr] detail load failed for ${prRefLabel(ref)}: ${message}`);
+    const key = prKey(ref);
+    if (!peekTopic(PRS_TOPIC)?.data?.[`${DETAIL_PREFIX}${key}`]) {
+      useNotifs.getState().push({ id: `pr-detail:${key}`, kind: "error", title: `Could not load ${prRefLabel(ref)}`, message });
+    }
   }
 }

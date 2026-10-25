@@ -37,6 +37,7 @@ export interface SessionPrModelDeps extends SessionPrSources {
   branchMismatch(sessionId: string): BranchMismatch | null;
   startTurn(sessionId: string, prompt: string, input: { prRefs: PrRef[] }): Promise<string>;
   markPrSeen(sessionId: string, ref: PrRef, headSha: string | null, seenAt: number | null): void;
+  postNotice(sessionId: string, noticeId: string, text: string, severity: "info" | "warning" | "error"): void;
 }
 
 export interface DockItem {
@@ -46,6 +47,7 @@ export interface DockItem {
 }
 
 const LOG_PREFIX = "[session-prs]";
+const NOT_CLEARED_NOTICE = "The update was sent, but could not be cleared — use × to clear it";
 
 function describeError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -131,10 +133,10 @@ function isSendable(entry: PrDockEntry): boolean {
 }
 
 export function updatesToSend(items: DockItem[], keys: readonly string[]): { prompt: string; covered: DockItem[] } | null {
-  const changed = items.filter((item) => item.entry.updates.length > 0);
-  const requested = changed.filter((item) => keys.includes(item.entry.key));
-  const covered = changed.length === 1 ? requested : requested.filter((item) => isSendable(item.entry));
-  const prompt = changed.length === 1 ? (covered[0]?.entry.prompt ?? null) : combinedPrompt(covered.map((item) => item.entry));
+  const requested = items.filter((item) => item.entry.updates.length > 0 && keys.includes(item.entry.key));
+  const single = requested.length === 1;
+  const covered = single ? requested : requested.filter((item) => isSendable(item.entry));
+  const prompt = single ? (covered[0]?.entry.prompt ?? null) : combinedPrompt(covered.map((item) => item.entry));
   return covered.length > 0 && prompt ? { prompt, covered } : null;
 }
 
@@ -154,7 +156,7 @@ export class SessionPrModel {
       (key) => this.deps.detail(key)
     );
     const prDock = sessionDockItems(session, this.deps).map((item) => item.entry);
-    return JSON.parse(JSON.stringify({ prItems, prDock })) as ThreadExtras;
+    return { prItems, prDock };
   }
 
   watch(...sources: ChangeSource[]): () => void {
@@ -183,6 +185,7 @@ export class SessionPrModel {
         this.markSeen(sessionId, item);
       } catch (error) {
         console.warn(`${LOG_PREFIX} sent ${item.entry.key} to session ${sessionId} but could not mark it seen: ${describeError(error)}`);
+        this.deps.postNotice(sessionId, `pr-update-not-cleared:${sessionId}:${item.entry.key}:${Date.now()}`, NOT_CLEARED_NOTICE, "warning");
       }
     }
     return turnId;

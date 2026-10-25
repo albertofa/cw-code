@@ -1,4 +1,4 @@
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it, spyOn } from "bun:test";
 import type {
   BabysitPhase,
   BabysitState,
@@ -147,6 +147,7 @@ interface HarnessOptions {
   babysit?: BabysitState | null;
   errors?: Record<string, string>;
   open?: string[];
+  failMarkSeen?: boolean;
 }
 
 function harness(options: HarnessOptions = {}) {
@@ -159,6 +160,7 @@ function harness(options: HarnessOptions = {}) {
   let resolveTurn: (turnId: string) => void = () => {};
   let rejectTurn: (error: Error) => void = () => {};
   const started: Array<{ prompt: string; prRefs: PrRef[] }> = [];
+  const notices: Array<{ sessionId: string; text: string; severity: string }> = [];
   const deps: SessionPrModelDeps = {
     sessions: () => sessions,
     isOpen: (id) => (options.open ?? ["s1"]).includes(id),
@@ -178,7 +180,11 @@ function harness(options: HarnessOptions = {}) {
         rejectTurn = reject;
       });
     },
+    postNotice: (sessionId, _noticeId, text, severity) => {
+      notices.push({ sessionId, text, severity });
+    },
     markPrSeen: (_id, prRef, headSha, seenAt) => {
+      if (options.failMarkSeen) throw new Error("disk full");
       events.push(`seen ${prRef.number}`);
       seen.push({ key: prKey(prRef), headSha, seenAt });
     }
@@ -190,6 +196,7 @@ function harness(options: HarnessOptions = {}) {
     refreshed,
     seen,
     started,
+    notices,
     resolveTurn: (turnId: string) => resolveTurn(turnId),
     rejectTurn: (error: Error) => rejectTurn(error)
   };
@@ -332,6 +339,26 @@ describe("SessionPrModel", () => {
     expect(await sending).toBe("turn-1");
     expect(events).toEqual(["start", "seen 42"]);
     expect(seen).toEqual([{ key: prKey(ref(42)), headSha: "new-42", seenAt: 2_000 }]);
+  });
+
+  it("posts a thread notice when the sent update could not be cleared", async () => {
+    const warn = spyOn(console, "warn").mockImplementation(() => {});
+    const { model, notices, resolveTurn } = harness({ failMarkSeen: true });
+    const sending = model.sendUpdates("s1", [prKey(ref(42))]);
+    await Promise.resolve();
+    resolveTurn("turn-1");
+    expect(await sending).toBe("turn-1");
+    expect(notices).toEqual([{ sessionId: "s1", text: "The update was sent, but could not be cleared — use × to clear it", severity: "warning" }]);
+    warn.mockRestore();
+  });
+
+  it("sends a single prompt for one requested key even when other PRs changed", async () => {
+    const { model, started, resolveTurn } = harness({ sessions: [session([link(42), link(43)])], details: [detail(42), detail(43)] });
+    const sending = model.sendUpdates("s1", [prKey(ref(43))]);
+    await Promise.resolve();
+    expect(started).toEqual([{ prompt: "update 43", prRefs: [ref(43)] }]);
+    resolveTurn("turn-1");
+    await sending;
   });
 
   it("leaves the PRs unseen when the turn fails to start", async () => {

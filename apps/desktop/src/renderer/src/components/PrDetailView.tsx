@@ -33,7 +33,8 @@ import { useAppSettings, useAppSettingsError } from "./useAppSettings.js";
 import { suggestedWorkflow } from "@cw-code/shared/workflowSuggestions";
 import { groupCommitsByDay, linkedBarState, mergeBoxState, relativeTime, threadQuoteText, threadSendTarget, type LinkedBarState } from "./prDetailModel.js";
 import { linkFor } from "./sessionPrLinks.js";
-import { requestPrDetail, usePrDetail, usePrRelations } from "./usePrs.js";
+import { requestPrDetail, usePrDetail, usePrRelations, usePrsTopicError } from "./usePrs.js";
+import { useConnectionEpoch } from "../server/topics.js";
 
 const MAX_LOG_LINES = 2000;
 
@@ -155,9 +156,11 @@ export function PrDetailView({ prRef }: { prRef: PrRef }) {
   const key = prKey(prRef);
   const entry = usePrDetail(key);
   const relations = usePrRelations(key);
+  const topicError = usePrsTopicError();
+  const epoch = useConnectionEpoch();
   const detail = entry?.detail ?? undefined;
-  const loading = entry?.loading ?? !entry?.error;
-  const error = entry?.error ?? undefined;
+  const error = entry?.error ?? (detail ? undefined : (topicError ?? undefined));
+  const loading = !error && (entry?.loading ?? true);
   const activeTab = usePrStore((s) => (s.mainView.kind === "pr" ? s.mainView.tab : "conversation"));
   const openGitHub = usePrStore((s) => s.openGitHub);
   const setPrTab = usePrStore((s) => s.setPrTab);
@@ -194,7 +197,7 @@ export function PrDetailView({ prRef }: { prRef: PrRef }) {
     void requestPrDetail(prRef);
     const timer = window.setInterval(() => void requestPrDetail(prRef), DETAIL_INTEREST_MS);
     return () => window.clearInterval(timer);
-  }, [key]);
+  }, [key, epoch]);
 
   useEffect(() => {
     if (!detail) return;

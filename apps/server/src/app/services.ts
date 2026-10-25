@@ -90,7 +90,6 @@ const PR_STATE_REUSE_MS = 60_000;
 
 function wireAutoFollowUp({ autoFollowUp, prStore, threads, turns }: Services): void {
   threads.registerExtras((sessionId) => ({ babysit: autoFollowUp.babysit(sessionId) }));
-  autoFollowUp.onChanged((sessionId) => threads.refreshExtras(sessionId));
   prStore.onChanged(() => autoFollowUp.reevaluate());
   threads.onRuntimeChanged(() => autoFollowUp.reevaluate());
   threads.onTurnSettled((sessionId, _turnId, event) => autoFollowUp.turnSettled(sessionId, event));
@@ -320,7 +319,8 @@ export function createServices(stores: { sessionStore: SessionStore; settingsSto
     startTurn: (sessionId, prompt, input) => turns.start(sessionId, prompt, input),
     markPrSeen: (sessionId, ref, headSha, seenAt) => {
       sessions.markPrSeen(sessionId, ref, headSha, seenAt);
-    }
+    },
+    postNotice: (sessionId, noticeId, text, severity) => sessions.emitNotice(sessionId, noticeId, text, severity)
   });
   const turnChanges = new TurnChangesModel({
     sessions: () => sessions.listAllSessions(),
