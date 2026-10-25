@@ -49,6 +49,7 @@ import { IssueCard, PrCard, RunCard } from "./WorkflowSubjectCards.js";
 import { SubjectCardSkeleton } from "./GitHubSkeletons.js";
 import { Spinner } from "./Loading.js";
 import { useRestoreBeforeSend } from "./sessionLifecycle.js";
+import { useSessionRow } from "./useSessions.js";
 import { useWorkflowSubjectData } from "./useWorkflowSubjectData.js";
 import {
   baseWorkspaceHint,
@@ -173,7 +174,6 @@ export function WorkflowRunModal({ request }: { request: RunModalState }) {
   const composerDriver = useAppStore((s) => s.pendingDriver ?? s.lastDriver);
   const defaultModelByDriver = useAppStore((s) => s.defaultModelByDriver);
   const composerBySession = useAppStore((s) => s.composerBySession);
-  const busyTurns = useAppStore((s) => s.busyTurns);
   const homeDir = useAppStore((s) => s.homeDir);
   const installedHarnesses = useAppStore((s) => s.installedHarnesses);
 
@@ -285,7 +285,7 @@ export function WorkflowRunModal({ request }: { request: RunModalState }) {
   const base: WorkflowBase | null =
     subject.kind === "issue" ? resolveIssueBase() : subject.kind === "run" ? resolveRunBase(data.run) : null;
   const working = stage !== null;
-  const sessionBusy = continueSession ? busyTurns[continueSession.id] !== undefined : false;
+  const sessionBusy = useSessionRow(continueSession?.id)?.busy ?? false;
 
   useEffect(() => {
     void refreshProjectRepos().finally(() => setReposReady(true));
@@ -470,18 +470,17 @@ export function WorkflowRunModal({ request }: { request: RunModalState }) {
         if (!isLinkedTo(sent, subject)) {
           current = "link";
           setStage(current);
-          app.applySession(await linkSession(continueSession.id, workflow.id, true));
+          await linkSession(continueSession.id, workflow.id, true);
           setLinkedHere(continueLinkKey);
         } else if (adopt) {
           current = "link";
           setStage(current);
-          app.applySession(await window.cw.linkSessionPr(continueSession.id, adopt));
+          await window.cw.linkSessionPr(continueSession.id, adopt);
           setLinkedHere(continueLinkKey);
         }
         current = "seen";
         setStage(current);
-        const updated = await markSeen(continueSession.id);
-        if (updated) app.applySession(updated);
+        await markSeen(continueSession.id);
         finish(continueSession.id);
         return;
       }
@@ -494,7 +493,8 @@ export function WorkflowRunModal({ request }: { request: RunModalState }) {
           current = "clone";
           setStage(current);
           const project = await window.cw.cloneGitHubRepo(subject.ref);
-          await Promise.all([refreshProjectRepos(), app.loadProjects()]);
+          app.applyProject(project);
+          await refreshProjectRepos();
           targetProjectId = project.id;
           const [models, permissions] = await Promise.all([
             window.cw.listModelsFor(targetProjectId, driver),
@@ -527,8 +527,7 @@ export function WorkflowRunModal({ request }: { request: RunModalState }) {
       if (!created?.linked) {
         current = "link";
         setStage(current);
-        const linked = await linkSession(sessionId, workflow.id);
-        useAppStore.getState().applySession(linked);
+        await linkSession(sessionId, workflow.id);
         setCreated({ sessionId, linked: true, note });
       }
       current = "send";

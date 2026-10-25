@@ -54,6 +54,7 @@ function storageKeys(storage: Storage): string[] {
 }
 
 function removeMigratedKeys(storage: Storage): void {
+  storage.removeItem(ORDER_KEY);
   for (const driver of DRIVERS) {
     storage.removeItem(`cw:recentModels:${driver}`);
     storage.removeItem(`cw:lastModel:${driver}`);
@@ -93,10 +94,20 @@ async function importWithSanitizedRetry(api: Pick<CwApi, "importLegacyPrefs">, l
   }
 }
 
+async function pushLeftoverSidebarOrder(api: Pick<CwApi, "importLegacyPrefs">, storage: Storage): Promise<void> {
+  if (storage.getItem(ORDER_KEY) === null) return;
+  const sidebarOrder = readSidebarOrder(storage);
+  if (sidebarOrder) await importWithSanitizedRetry(api, { sidebarOrder });
+  storage.removeItem(ORDER_KEY);
+}
+
 export async function migrateLegacyPreferences(api: Pick<CwApi, "importLegacyPrefs">): Promise<void> {
   const storage = window.localStorage;
   try {
-    if (storage.getItem(MIGRATED_KEY) !== null) return;
+    if (storage.getItem(MIGRATED_KEY) !== null) {
+      await pushLeftoverSidebarOrder(api, storage);
+      return;
+    }
     await importWithSanitizedRetry(api, readLegacyPreferences(storage));
     removeMigratedKeys(storage);
     storage.setItem(MIGRATED_KEY, "1");

@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import type { CommandInvocation, SessionStatusReason } from "@cw-code/contracts";
+import type { CommandInvocation, SessionRow, SessionStatusReason, SidebarDefaults } from "@cw-code/contracts";
 import type {
   ActiveTurn,
   AppSettings,
@@ -41,12 +41,12 @@ import { getLastModel, pushRecentModel } from "../components/lastModel.js";
 import { defaultModelPatch } from "../components/modelMenus.js";
 import { fallbackHarness } from "../components/harnessAvailability.js";
 import { formatDuration, mergeToolPairs } from "../components/toolSummaries.js";
-import { defaultNewSessionProjectId } from "../components/projectRecency.js";
 import { projectDriver, withProjectPrefs } from "../components/projectDefaults.js";
 import { useNotifs } from "../components/Notifications.js";
 import type { AutoFollowUpPause } from "../components/prSessionModel.js";
 import { ipcErrorMessage } from "../components/ipcError.js";
 import { currentCheckoutSessionIds } from "../components/sessionBranch.js";
+import { sameItems, sessionsByProjectOf } from "../server/sidebarData.js";
 import { useBranchStore } from "./branchStore.js";
 import { shouldApplyUpdateState } from "./updateThrottle.js";
 
@@ -123,9 +123,42 @@ export const DEFAULT_COMPOSER: Required<Pick<ComposerPrefs, "effort" | "permissi
 };
 
 const composerLoads = new Map<string, Promise<void>>();
+const SESSION_ROW_WAIT_MS = 5000;
 
 function defaultWorkspace(defaultUseWorktree: boolean): CreateSessionOptions {
   return { mode: defaultUseWorktree ? "new" : "current" };
+}
+
+function sessionOwnerId(byProject: Record<string, Session[]>, sessionId: string | null): string | undefined {
+  if (!sessionId) return undefined;
+  return Object.entries(byProject).find(([, list]) => list.some((s) => s.id === sessionId))?.[0];
+}
+
+function recentProjectId(state: { projects: Project[]; projectsByRecency: string[] }): string | null {
+  const known = new Set(state.projects.map((p) => p.id));
+  return state.projectsByRecency.find((id) => known.has(id)) ?? state.projects[0]?.id ?? null;
+}
+
+function hasSession(byProject: Record<string, Session[]>, sessionId: string): boolean {
+  return sessionOwnerId(byProject, sessionId) !== undefined;
+}
+
+function waitForSession(sessionId: string): Promise<void> {
+  if (hasSession(useAppStore.getState().sessionsByProject, sessionId)) return Promise.resolve();
+  return new Promise((resolve) => {
+    const finish = (): void => {
+      window.clearTimeout(timer);
+      stop();
+      resolve();
+    };
+    const timer = window.setTimeout(() => {
+      console.warn(`[sidebar] session ${sessionId} did not reach the sidebar within ${SESSION_ROW_WAIT_MS}ms`);
+      finish();
+    }, SESSION_ROW_WAIT_MS);
+    const stop = useAppStore.subscribe((state) => {
+      if (hasSession(state.sessionsByProject, sessionId)) finish();
+    });
+  });
 }
 
 function withProject(projects: Project[], project: Project): Project[] {
@@ -237,8 +270,6 @@ interface AppState {
   refreshProjectCheckoutGitStatus(sessionId: string): Promise<void>;
   sourceControlRefreshIntervalSeconds: number;
   prRefreshIntervalSeconds: number;
-  holdingAutoExpireEnabled: boolean;
-  holdingHours: number;
   defaultUseWorktree: boolean;
   appearance: AppearancePrefs;
   themePreview: ThemePreview | null;
@@ -250,10 +281,12 @@ interface AppState {
   openPreview(sessionId: string, path: string, basePath: string): void;
   closePreview(sessionId: string): void;
   homeDir: string | null;
-  loadProjects(): Promise<void>;
+  sidebarLoaded: boolean;
+  projectsByRecency: string[];
+  applySidebar(projects: Project[], rows: SessionRow[], defaults: SidebarDefaults | null): void;
   addProject(rootPath: string): Promise<void>;
   addProjectForNewSession(rootPath: string): Promise<void>;
-  setPendingProject(projectId: string): Promise<void>;
+  setPendingProject(projectId: string): void;
   selectSession(sessionId: string): void;
   hydrateActiveTurns(): Promise<void>;
   startNewSession(driver?: DriverName): void;
@@ -275,11 +308,9 @@ interface AppState {
   setSessionStatus(sessionId: string, status: SessionStatus, reason?: SessionStatusReason): Promise<void>;
   markSessionWorking(sessionId: string): Promise<void>;
   restoreSession(sessionId: string): Promise<void>;
-  clearSessionWorktrees(sessionIds: string[]): void;
   createSession(driver: DriverName, prefs?: ComposerPrefs, workspace?: CreateSessionOptions): Promise<void>;
   createSessionIn(projectId: string, driver: DriverName, prefs?: ComposerPrefs, workspace?: CreateSessionOptions): Promise<Session>;
   importSession(request: ImportSessionRequest): Promise<Session>;
-  applySession(session: Session): void;
   applyProject(project: Project): void;
   applySettings(saved: AppSettings): void;
   applyComposer(sessionId: string, prefs: ComposerPrefs): void;
@@ -290,7 +321,6 @@ interface AppState {
   respondApproval(requestId: string, decision: ApprovalDecision): Promise<void>;
   respondQuestion(sessionId: string, requestId: string, answers: Record<string, string>): Promise<void>;
   applyEvent(sessionId: string, event: TurnEvent): void;
-  applySessionTitle(sessionId: string, title: string): void;
   updates: UpdateState | null;
   subscribeUpdates(): () => void;
   applyUpdateState(state: UpdateState): void;
@@ -369,37 +399,6 @@ function withAutoPause(
   return paused[sessionId] === "user" ? paused : { ...paused, [sessionId]: reason };
 }
 
-function patchSession(
-  byProject: Record<string, Session[]>,
-  sessionId: string,
-  patch: Partial<Session>
-): Record<string, Session[]> {
-  const next: Record<string, Session[]> = {};
-  for (const [pid, list] of Object.entries(byProject)) {
-    next[pid] = list.map((s) => (s.id === sessionId ? { ...s, ...patch } : s));
-  }
-  return next;
-}
-
-function upsertInList(list: Session[], session: Session): Session[] {
-  return list.some((s) => s.id === session.id) ? list.map((s) => (s.id === session.id ? session : s)) : [session, ...list];
-}
-
-function upsertSession(byProject: Record<string, Session[]>, session: Session): Record<string, Session[]> {
-  const known = Object.values(byProject).some((list) => list.some((s) => s.id === session.id));
-  if (known) return replaceSession(byProject, session);
-  const list = byProject[session.projectId];
-  return list ? { ...byProject, [session.projectId]: [session, ...list] } : byProject;
-}
-
-function replaceSession(byProject: Record<string, Session[]>, session: Session): Record<string, Session[]> {
-  const next: Record<string, Session[]> = {};
-  for (const [pid, list] of Object.entries(byProject)) {
-    next[pid] = list.map((s) => (s.id === session.id ? session : s));
-  }
-  return next;
-}
-
 interface TurnBookkeeping {
   busyTurns: Record<string, string>;
   turnStartedAt: Record<string, number>;
@@ -471,8 +470,6 @@ export const useAppStore = create<AppState>((set, get) => ({
   gitStatusBySession: {},
   sourceControlRefreshIntervalSeconds: 30,
   prRefreshIntervalSeconds: 120,
-  holdingAutoExpireEnabled: false,
-  holdingHours: 6,
   defaultUseWorktree: true,
   appearance: DEFAULT_APPEARANCE,
   themePreview: null,
@@ -571,6 +568,9 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   homeDir: null,
 
+  sidebarLoaded: false,
+  projectsByRecency: [],
+
   openPreview(sessionId: string, path: string, basePath: string) {
     set((state) => ({
       previewBySession: {
@@ -593,81 +593,47 @@ export const useAppStore = create<AppState>((set, get) => ({
     });
   },
 
-  async loadProjects() {
-    const projects = await window.cw.listProjects();
-    set({ projects });
-    void get().hydrateActiveTurns();
-    if (projects.length === 0 || get().activeProjectId) return;
-    const lists = await Promise.all(
-      projects.map((p) =>
-        window.cw.listSessions(p.id).catch((err: Error) => {
-          useNotifs.getState().push({
-            kind: "error",
-            title: "Could not load sessions",
-            message: `${p.name}: ${err.message}`
-          });
-          return [];
-        })
-      )
-    );
-    const sessionsByProject: Record<string, Session[]> = {};
-    projects.forEach((p, i) => {
-      sessionsByProject[p.id] = lists[i];
-    });
-    const all = Object.values(sessionsByProject).flat();
-    const candidates = all
-      .filter((s) => s.status !== "archived")
-      .sort((a, b) => b.updatedAt - a.updatedAt);
-    const picked = candidates.find((s) => !s.autoResolved) ?? null;
-    if (!picked) {
-      const fallback = candidates[0];
-      const fallbackOwnerId = fallback
-        ? fallback.projectId ??
-          projects.find((p) => (sessionsByProject[p.id] ?? []).some((s) => s.id === fallback.id))?.id ??
-          projects[0].id
-        : projects[0].id;
-      set({
-        sessionsByProject,
-        activeProjectId: fallbackOwnerId,
-        activeSessionId: null,
-        pendingDriver: get().lastDriver
-      });
-    } else {
-      const ownerId =
-        picked.projectId ??
-        projects.find((p) => (sessionsByProject[p.id] ?? []).some((s) => s.id === picked.id))?.id ??
-        projects[0].id;
-      set({
-        sessionsByProject,
-        activeProjectId: ownerId,
-        activeSessionId: picked.id,
-        pendingDriver: null
-      });
-      if (picked.status === "done") {
-        void window.cw.openSession(picked.id, "restore").catch((err: Error) =>
-          console.warn(`openSession failed for ${picked.id}: ${err.message}`)
-        );
-      }
-      void get().ensureHistory(picked.id);
-      void get().ensureComposer(picked.id);
-      const ordered = [picked.id, ...all.filter((s) => s.id !== picked.id).map((s) => s.id)];
-      void refreshGitStatusInBatches(ordered, (id) => get().refreshGitStatus(id));
+  applySidebar(projects: Project[], rows: SessionRow[], defaults: SidebarDefaults | null) {
+    const current = get();
+    const nextProjects = sameItems(current.projects, projects) ? current.projects : projects;
+    const sessionsByProject = sessionsByProjectOf(projects, rows, current.sessionsByProject);
+    const projectsByRecency =
+      defaults && !sameItems(current.projectsByRecency, defaults.projectsByRecency) ? defaults.projectsByRecency : current.projectsByRecency;
+    if (nextProjects !== current.projects || sessionsByProject !== current.sessionsByProject || projectsByRecency !== current.projectsByRecency) {
+      set({ projects: nextProjects, sessionsByProject, projectsByRecency });
     }
+    if (current.sidebarLoaded || !defaults) return;
+    set({ sidebarLoaded: true });
+    if (projects.length === 0 || get().activeProjectId) return;
+    const picked = defaults.restoreSessionId ? rows.find((row) => row.session.id === defaults.restoreSessionId)?.session : undefined;
+    if (!picked) {
+      set({ activeProjectId: defaults.restoreProjectId ?? projects[0].id, activeSessionId: null, pendingDriver: get().lastDriver });
+      return;
+    }
+    set({ activeProjectId: picked.projectId, activeSessionId: picked.id, pendingDriver: null });
+    if (picked.status === "done") {
+      void window.cw.openSession(picked.id, "restore").catch((err: Error) =>
+        console.warn(`openSession failed for ${picked.id}: ${err.message}`)
+      );
+    }
+    void get().ensureHistory(picked.id);
+    void get().ensureComposer(picked.id);
+    void get().refreshGitStatus(picked.id);
   },
 
   async addProject(rootPath: string) {
     const project = await window.cw.addProject(rootPath);
     set({ projects: withProject(get().projects, project) });
-    if (!get().activeProjectId) await get().setPendingProject(project.id);
+    if (!get().activeProjectId) get().setPendingProject(project.id);
   },
 
   async addProjectForNewSession(rootPath: string) {
     const project = await window.cw.addProject(rootPath);
     set({ projects: withProject(get().projects, project) });
-    await get().setPendingProject(project.id);
+    get().setPendingProject(project.id);
   },
 
-  async setPendingProject(projectId: string) {
+  setPendingProject(projectId: string) {
     const pendingDriver = get().pendingDriver;
     const settings = get().projects.find((p) => p.id === projectId)?.settings;
     const target = pendingDriver === null ? null : fallbackHarness(projectDriver(settings, pendingDriver), get().installedHarnesses);
@@ -680,37 +646,16 @@ export const useAppStore = create<AppState>((set, get) => ({
         ? { pendingDriver: target, pendingPrefs: withProjectPrefs(get().pendingPrefs, settings, target, target !== pendingDriver) }
         : {})
     });
-    if (get().sessionsByProject[projectId]) return;
-    try {
-      const sessions = await window.cw.listSessions(projectId);
-      if (!get().sessionsByProject[projectId]) {
-        set({ sessionsByProject: { ...get().sessionsByProject, [projectId]: sessions } });
-      }
-    } catch (err) {
-      const name = get().projects.find((p) => p.id === projectId)?.name ?? projectId;
-      useNotifs.getState().push({
-        kind: "error",
-        title: "Could not load sessions",
-        message: `${name}: ${(err as Error).message}`
-      });
-    }
   },
 
   async renameSession(sessionId: string, title: string) {
     const name = title.trim();
     if (!name) return;
     await window.cw.renameSession(sessionId, name);
-    const byProject = get().sessionsByProject;
-    const next: Record<string, Session[]> = {};
-    for (const [pid, list] of Object.entries(byProject)) {
-      next[pid] = list.map((s) => (s.id === sessionId ? { ...s, title: name } : s));
-    }
-    set({ sessionsByProject: next });
   },
 
   async regenerateSessionTitle(sessionId: string) {
-    const title = await window.cw.regenerateSessionTitle(sessionId);
-    get().applySessionTitle(sessionId, title);
+    await window.cw.regenerateSessionTitle(sessionId);
   },
 
   async setSessionStatus(sessionId: string, status: SessionStatus, reason?: SessionStatusReason) {
@@ -729,17 +674,11 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   async markSessionWorking(sessionId: string) {
-    get().applySession(await window.cw.markSessionWorking(sessionId));
+    await window.cw.markSessionWorking(sessionId);
   },
 
   async restoreSession(sessionId: string) {
-    get().applySession(await window.cw.restoreSession(sessionId));
-  },
-
-  clearSessionWorktrees(sessionIds: string[]) {
-    let sessionsByProject = get().sessionsByProject;
-    for (const id of sessionIds) sessionsByProject = patchSession(sessionsByProject, id, { worktreePath: undefined });
-    set({ sessionsByProject });
+    await window.cw.restoreSession(sessionId);
   },
 
   async hydrateActiveTurns() {
@@ -770,10 +709,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   selectSession(sessionId: string) {
-    const byProject = get().sessionsByProject;
-    const ownerId = Object.entries(byProject).find(([, list]) =>
-      list.some((s) => s.id === sessionId)
-    )?.[0];
+    const ownerId = sessionOwnerId(get().sessionsByProject, sessionId);
     set({
       activeSessionId: sessionId,
       pendingDriver: null,
@@ -787,9 +723,7 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   startNewSession(driver?: DriverName) {
     const currentProjectId = get().activeProjectId;
-    const projectId =
-      currentProjectId ??
-      defaultNewSessionProjectId(get().projects, get().sessionsByProject, get().activeSessionId);
+    const projectId = currentProjectId ?? sessionOwnerId(get().sessionsByProject, get().activeSessionId) ?? recentProjectId(get());
     const settings = projectId ? get().projects.find((p) => p.id === projectId)?.settings : undefined;
     const target = fallbackHarness(driver ?? projectDriver(settings, get().lastDriver), get().installedHarnesses);
     const previous = get().pendingDriver ?? get().lastDriver;
@@ -802,7 +736,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       newSessionError: null,
       pendingPrefs: withProjectPrefs(get().pendingPrefs, settings, target, true)
     });
-    if (projectId && projectId !== currentProjectId) void get().setPendingProject(projectId);
+    if (projectId && projectId !== currentProjectId) get().setPendingProject(projectId);
   },
 
   setPendingDriver(driver: DriverName) {
@@ -967,8 +901,6 @@ export const useAppStore = create<AppState>((set, get) => ({
       ...(first ? { pendingWorkspace: { ...get().pendingWorkspace, ...defaultWorkspace(saved.defaultUseWorktree) } } : {}),
       sourceControlRefreshIntervalSeconds: saved.sourceControlRefreshIntervalSeconds,
       prRefreshIntervalSeconds: saved.prRefreshIntervalSeconds,
-      holdingAutoExpireEnabled: saved.holdingAutoExpireEnabled,
-      holdingHours: saved.holdingHours,
       defaultUseWorktree: saved.defaultUseWorktree,
       settingsLoaded: true,
       appearance: appearanceOf(saved),
@@ -1027,11 +959,8 @@ export const useAppStore = create<AppState>((set, get) => ({
         ...(stillHeld ? {} : { message: "The requested worktree no longer exists." })
       });
     }
+    await waitForSession(session.id);
     set({
-      sessionsByProject: {
-        ...get().sessionsByProject,
-        [projectId]: upsertInList(get().sessionsByProject[projectId] ?? [], session)
-      },
       activeProjectId: projectId,
       activeSessionId: session.id,
       historyLoadedBySession: { ...get().historyLoadedBySession, [session.id]: true },
@@ -1046,19 +975,11 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   async importSession(request: ImportSessionRequest) {
     const { project, session } = await window.cw.importSession(request);
-    set({
-      projects: withProject(get().projects, project),
-      sessionsByProject: {
-        ...get().sessionsByProject,
-        [project.id]: upsertInList(get().sessionsByProject[project.id] ?? [], session)
-      }
-    });
+    set({ projects: withProject(get().projects, project) });
+    await waitForSession(session.id);
+    set({ activeProjectId: project.id });
     get().selectSession(session.id);
     return session;
-  },
-
-  applySession(session: Session) {
-    set({ sessionsByProject: upsertSession(get().sessionsByProject, session) });
   },
 
   applyProject(project: Project) {
@@ -1592,13 +1513,6 @@ export const useAppStore = create<AppState>((set, get) => ({
               }
             }
       });
-    } else if (event.type === "session.branch.updated") {
-      const byProject = get().sessionsByProject;
-      const next: Record<string, Session[]> = {};
-      for (const [pid, list] of Object.entries(byProject)) {
-        next[pid] = list.map((s) => (s.id === sessionId ? { ...s, branch: event.branch } : s));
-      }
-      set({ sessionsByProject: next });
     } else if (event.type === "turn.error") {
       const book =
         get().busyTurns[sessionId] === event.turnId
@@ -1635,21 +1549,6 @@ export const useAppStore = create<AppState>((set, get) => ({
         }
       });
     }
-  },
-
-  applySessionTitle(sessionId: string, title: string) {
-    const byProject = get().sessionsByProject;
-    let changed = false;
-    const next: Record<string, Session[]> = {};
-    for (const [pid, list] of Object.entries(byProject)) {
-      next[pid] = list.map((s) => {
-        if (s.id !== sessionId || s.title === title) return s;
-        changed = true;
-        return { ...s, title };
-      });
-    }
-    if (!changed) return;
-    set({ sessionsByProject: next });
   }
 }));
 

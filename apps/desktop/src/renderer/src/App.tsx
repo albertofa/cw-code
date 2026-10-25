@@ -4,7 +4,6 @@ import { applyAppearance } from "./appearanceFonts.js";
 import { ThemeSync } from "./components/ThemeSync.js";
 import { HarnessNotices } from "./components/HarnessNotices.js";
 import { collectSubagents } from "./components/subagents.js";
-import { isWorkingSetStatus } from "./components/workingSet.js";
 import { Sidebar } from "./components/Sidebar.js";
 import { WindowControls } from "./components/WindowControls.js";
 import { SkillsModal } from "./components/SkillsModal.js";
@@ -26,13 +25,11 @@ import { useTabMenu } from "./components/TabMenu.js";
 import { useDockDrop } from "./components/useDockDrop.js";
 import { useResizableWidth } from "./components/useResizableWidth.js";
 import { usePanelAnimationMs, usePresence } from "./components/usePresence.js";
-import { Notifications, useNotifs } from "./components/Notifications.js";
+import { Notifications } from "./components/Notifications.js";
 import { useAttentionBadge } from "./components/useAttentionBadge.js";
-import { useNeedsYouDetailLoader } from "./components/useNeedsYou.js";
 import { useAutoFollowUp } from "./components/useAutoFollowUp.js";
 import { useNotificationSounds } from "./components/useNotificationSounds.js";
 import { visibleLayerOpen } from "./components/openLayer.js";
-import { ipcErrorMessage } from "./components/ipcError.js";
 import { useAppStore } from "./stores/appStore.js";
 import { rightOpenTabs } from "./stores/panelLayout.js";
 import { selectSessionPanel, usePanelStore } from "./stores/panelStore.js";
@@ -41,11 +38,10 @@ import { useSkillsStore } from "./stores/skillsStore.js";
 import { projectDirty, useSettingsDraftStore } from "./stores/settingsDraftStore.js";
 import { prKey } from "./components/prInbox.js";
 import type { TurnEvent } from "./cw.js";
-import { PRS_TOPIC, SIDEBAR_TOPIC, gitTopic, sessionTopic } from "@cw-code/shared/topics";
+import { PRS_TOPIC, gitTopic, sessionTopic } from "@cw-code/shared/topics";
 import { startAppBridge } from "./server/appBridge.js";
+import { startSidebarBridge } from "./server/sidebarBridge.js";
 import { useDocumentVisible, useTopics } from "./server/useTopics.js";
-
-const LOAD_NOTIF_ID = "workspace-load";
 
 const RIGHT_WIDTH_DEFAULT = 520;
 const SIDE_WIDTH_DEFAULT = 320;
@@ -103,7 +99,6 @@ function handleTurnEvent(msg: { sessionId: string; event: TurnEvent }): void {
 
 export function App() {
   useAttentionBadge();
-  useNeedsYouDetailLoader();
   useAutoFollowUp();
   useNotificationSounds();
   const activeSessionId = useAppStore((s) => s.activeSessionId);
@@ -111,7 +106,6 @@ export function App() {
   const prRefreshIntervalSeconds = useAppStore((s) => s.prRefreshIntervalSeconds);
   const mainView = usePrStore((s) => s.mainView);
   const runModal = usePrStore((s) => s.runModal);
-  const loadProjects = useAppStore((s) => s.loadProjects);
   const appearance = useAppStore((s) => s.appearance);
   const sessionPanel = usePanelStore((s) => selectSessionPanel(s, activeSessionId ?? undefined));
   const { dockByTab, rightVisible } = sessionPanel;
@@ -164,26 +158,11 @@ export function App() {
       setPreloadError("window.cw is missing — preload did not load. Restart the Electron app (plain browsers can't reach the backend).");
       return;
     }
-    const loadWorkspace = (): void => {
-      loadProjects().then(
-        () => useNotifs.getState().dismiss(LOAD_NOTIF_ID),
-        (err: unknown) =>
-          useNotifs.getState().upsert({
-            id: LOAD_NOTIF_ID,
-            kind: "error",
-            title: "Could not load projects",
-            message: ipcErrorMessage(err),
-            sticky: true,
-            actions: [{ label: "Retry", primary: true, onClick: loadWorkspace }]
-          })
-      );
-    };
-    loadWorkspace();
     const off = window.cw.onTurnEvent(handleTurnEvent);
-    const offTitle = window.cw.onSessionTitle(({ sessionId, title }) => useAppStore.getState().applySessionTitle(sessionId, title));
-    const offSession = window.cw.onSessionUpdated((session) => useAppStore.getState().applySession(session));
     const offProject = window.cw.onProjectChanged((project) => useAppStore.getState().applyProject(project));
     const offApp = startAppBridge();
+    const offSidebar = startSidebarBridge();
+    void useAppStore.getState().hydrateActiveTurns();
     const offSkills = window.cw.onSkillsChanged((result) => useSkillsStore.getState().applyList(result));
     const offComposer = window.cw.onComposerChanged(({ sessionId, prefs }) => useAppStore.getState().applyComposer(sessionId, prefs));
     const offGitStatus = window.cw.onGitStatus(({ sessionId, status }) => useAppStore.getState().applyGitStatus(sessionId, status));
@@ -221,10 +200,9 @@ export function App() {
     window.addEventListener("keydown", onKey);
     return () => {
       off();
-      offTitle();
-      offSession();
       offProject();
       offApp();
+      offSidebar();
       offSkills();
       offComposer();
       offGitStatus();
@@ -237,19 +215,8 @@ export function App() {
     };
   }, []);
 
-  const workingSetKey = useMemo(
-    () =>
-      Object.values(sessionsByProject)
-        .flat()
-        .filter((session) => isWorkingSetStatus(session.status))
-        .map((session) => session.id)
-        .sort()
-        .join("|"),
-    [sessionsByProject]
-  );
-
   const subscribedTopics = useMemo(() => {
-    const topics = [SIDEBAR_TOPIC, PRS_TOPIC];
+    const topics = [PRS_TOPIC];
     for (const session of Object.values(sessionsByProject).flat()) {
       if (session.status === "resolved" || session.status === "archived") continue;
       topics.push(sessionTopic(session.id));
@@ -259,16 +226,10 @@ export function App() {
   }, [sessionsByProject, activeSessionId]);
   useTopics(subscribedTopics);
 
-  const watchedGitKey = useMemo(() => {
-    const ids = new Set(workingSetKey ? workingSetKey.split("|") : []);
-    if (activeSessionId) ids.add(activeSessionId);
-    return [...ids].sort().join("|");
-  }, [workingSetKey, activeSessionId]);
-
   const documentVisible = useDocumentVisible();
   const gitTopics = useMemo(
-    () => (documentVisible && watchedGitKey ? watchedGitKey.split("|").map(gitTopic) : []),
-    [documentVisible, watchedGitKey]
+    () => (documentVisible && activeSessionId ? [gitTopic(activeSessionId)] : []),
+    [documentVisible, activeSessionId]
   );
   useTopics(gitTopics);
 

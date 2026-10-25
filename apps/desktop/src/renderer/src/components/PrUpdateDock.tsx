@@ -114,7 +114,6 @@ export function PrUpdateDock({ sessionId }: { sessionId: string }) {
   const babysitOf = useBabysitStates();
   const sendPromptTo = useAppStore((s) => s.sendPromptTo);
   const { ensureOpen, dialog: restoreDialog } = useRestoreBeforeSend();
-  const applySession = useAppStore((s) => s.applySession);
   const openRunModal = usePrStore((s) => s.openRunModal);
   const loadDetail = usePrStore((s) => s.loadDetail);
   const settings = useAppSettings();
@@ -150,7 +149,7 @@ export function PrUpdateDock({ sessionId }: { sessionId: string }) {
 
   const markSeen = async (targets: DockEntry[]) => {
     for (const entry of targets) {
-      applySession(await window.cw.markSessionPrSeen(sessionId, entry.item.link.ref, seenHead(entry), seenAt(entry)));
+      await window.cw.markSessionPrSeen(sessionId, entry.item.link.ref, seenHead(entry), seenAt(entry));
     }
   };
 
@@ -217,7 +216,7 @@ export function PrUpdateDock({ sessionId }: { sessionId: string }) {
 
   const startContinuous = async (workflow: PrWorkflow, ref: PrRef) => {
     const adopt = linkWithWorkflow(findSession(useAppStore.getState().sessionsByProject, sessionId), ref, workflow.id);
-    if (adopt) applySession(await window.cw.linkSessionPr(sessionId, adopt));
+    if (adopt) await window.cw.linkSessionPr(sessionId, adopt);
   };
 
   const send = async () => {

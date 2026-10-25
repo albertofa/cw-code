@@ -1,6 +1,6 @@
 import "../../../../tests/dom.js";
 import { beforeEach, describe, expect, it, vi } from "bun:test";
-import type { HistoryMessage, TaskSnapshot, UpdateActionResult, UpdateState } from "@cw-code/contracts";
+import type { HistoryMessage, SessionMeta, SessionRow, TaskSnapshot, UpdateActionResult, UpdateState } from "@cw-code/contracts";
 import { DEFAULT_COMPOSER, useAppStore } from "./appStore.js";
 import { applyInstalledHarnesses } from "../server/appBridge.js";
 
@@ -504,42 +504,95 @@ describe("appStore pending model per harness", () => {
   });
 });
 
-describe("appStore applySession", () => {
-  it("replaces the stored session so removed keys disappear", () => {
-    const base = {
-      id: "sess_apply",
-      projectId: "proj_apply",
-      driver: "claude" as const,
-      title: "Linked",
-      status: "idle" as const,
-      resumeCursor: "",
-      createdAt: 1,
-      updatedAt: 1
+describe("appStore applySidebar", () => {
+  const alpha = { id: "proj_a", rootPath: "C:/code/alpha", name: "alpha" };
+  const beta = { id: "proj_b", rootPath: "C:/code/beta", name: "beta" };
+
+  function row(session: SessionMeta): SessionRow {
+    return {
+      session,
+      busy: false,
+      branch: null,
+      attention: null,
+      babysit: null,
+      prBadge: null,
+      pendingQuestionIds: [],
+      latestUnseenPrUpdateAt: null,
+      prMuted: false
     };
-    const other = { ...base, id: "sess_other" };
-    const prs = [{ ref: { host: "github.com", owner: "acme", repo: "widgets", number: 7 }, origin: "opened" as const, lastSeenSha: "a", lastSeenAt: 1 }];
-    useAppStore.setState({ sessionsByProject: { proj_apply: [{ ...base, prs }, other] } });
-    useAppStore.getState().applySession({ ...base, updatedAt: 2 });
-    const [updated, untouched] = useAppStore.getState().sessionsByProject.proj_apply;
-    expect(updated).toEqual({ ...base, updatedAt: 2 });
-    expect("prs" in updated).toBe(false);
-    expect(untouched).toBe(other);
+  }
+
+  function session(id: string, projectId: string, updatedAt: number, status: SessionMeta["status"] = "idle"): SessionMeta {
+    return { id, projectId, driver: "claude", title: id, status, resumeCursor: "", createdAt: 1, updatedAt };
+  }
+
+  const opened: string[] = [];
+
+  beforeEach(() => {
+    opened.length = 0;
+    (window as unknown as { cw: unknown }).cw = {
+      openSession: async (sessionId: string, reason: string) => {
+        opened.push(`${sessionId}:${reason}`);
+      },
+      getHistory: async () => [],
+      getComposer: async () => ({}),
+      getGitStatus: async () => {
+        throw new Error("no git");
+      }
+    };
+    useAppStore.setState({
+      projects: [],
+      sessionsByProject: {},
+      projectsByRecency: [],
+      sidebarLoaded: false,
+      activeProjectId: null,
+      activeSessionId: null,
+      pendingDriver: null,
+      lastDriver: "codex"
+    });
   });
 
-  it("applies the server's status even while a turn is busy for that session", () => {
-    const base = {
-      id: "sess_busy",
-      projectId: "proj_busy",
-      driver: "claude" as const,
-      title: "Busy",
-      status: "working" as const,
-      resumeCursor: "",
-      createdAt: 1,
-      updatedAt: 1
-    };
-    useAppStore.setState({ sessionsByProject: { proj_busy: [base] }, busyTurns: { sess_busy: "turn_1" } });
-    useAppStore.getState().applySession({ ...base, status: "input-required", title: "Renamed", updatedAt: 2 });
-    expect(useAppStore.getState().sessionsByProject.proj_busy[0]).toEqual({ ...base, status: "input-required", title: "Renamed", updatedAt: 2 });
+  it("groups rows by project, newest first, and keeps unchanged lists", () => {
+    const older = session("sess_old", "proj_a", 1);
+    const newer = session("sess_new", "proj_a", 2);
+    const other = session("sess_b", "proj_b", 3);
+    useAppStore.getState().applySidebar([alpha, beta], [row(older), row(other), row(newer)], null);
+    const first = useAppStore.getState().sessionsByProject;
+    expect(first.proj_a.map((s) => s.id)).toEqual(["sess_new", "sess_old"]);
+    expect(first.proj_b.map((s) => s.id)).toEqual(["sess_b"]);
+
+    const renamed = { ...other, title: "Renamed" };
+    useAppStore.getState().applySidebar([alpha, beta], [row(older), row(renamed), row(newer)], null);
+    const second = useAppStore.getState().sessionsByProject;
+    expect(second.proj_a).toBe(first.proj_a);
+    expect(second.proj_b).toEqual([renamed]);
+  });
+
+  it("restores the server's pick once and opens a finished session for restore", () => {
+    const done = session("sess_done", "proj_b", 5, "done");
+    const defaults = { restoreSessionId: "sess_done", restoreProjectId: "proj_b", projectsByRecency: ["proj_b", "proj_a"] };
+    useAppStore.getState().applySidebar([alpha, beta], [row(done)], defaults);
+    expect(useAppStore.getState()).toMatchObject({ activeProjectId: "proj_b", activeSessionId: "sess_done", pendingDriver: null });
+    expect(useAppStore.getState().projectsByRecency).toEqual(["proj_b", "proj_a"]);
+    expect(opened).toEqual(["sess_done:restore"]);
+
+    useAppStore.setState({ activeProjectId: null, activeSessionId: null });
+    useAppStore.getState().applySidebar([alpha, beta], [row(done)], defaults);
+    expect(useAppStore.getState().activeSessionId).toBeNull();
+    expect(opened).toEqual(["sess_done:restore"]);
+  });
+
+  it("opens the new-session form on the server's project when nothing can be restored", () => {
+    const defaults = { restoreSessionId: null, restoreProjectId: "proj_b", projectsByRecency: [] };
+    useAppStore.getState().applySidebar([alpha, beta], [], defaults);
+    expect(useAppStore.getState()).toMatchObject({ activeProjectId: "proj_b", activeSessionId: null, pendingDriver: "codex" });
+  });
+
+  it("starts a new session in the most recent project when none is active", () => {
+    installPushRecentModel();
+    useAppStore.setState({ projects: [alpha, beta], projectsByRecency: ["proj_b", "proj_a"], activeProjectId: null });
+    useAppStore.getState().startNewSession();
+    expect(useAppStore.getState().activeProjectId).toBe("proj_b");
   });
 });
 

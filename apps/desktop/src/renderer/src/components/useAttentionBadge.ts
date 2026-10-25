@@ -1,5 +1,7 @@
 import { useEffect, useRef } from "react";
-import { useNeedsYouCount } from "./useNeedsYou.js";
+import type { AppTopicData } from "@cw-code/contracts";
+import { APP_TOPIC } from "@cw-code/shared/topics";
+import { useTopicSelect } from "../server/topics.js";
 
 const BADGE_SIZE = 32;
 const BADGE_FILL = "#e8b44f";
@@ -42,7 +44,7 @@ function drawBadge(count: number): string | null {
 }
 
 export function useAttentionBadge(): void {
-  const count = useNeedsYouCount();
+  const count = useTopicSelect<number, Partial<AppTopicData>>(APP_TOPIC, (state) => state?.data.attention?.count ?? 0, { whenHidden: "keep" });
   const sent = useRef<number | null>(null);
   useEffect(() => {
     if (!window.cw || sent.current === count) return;

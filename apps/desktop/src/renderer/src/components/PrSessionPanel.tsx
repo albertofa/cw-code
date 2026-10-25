@@ -113,7 +113,6 @@ export function PrSessionChip({ sessionId }: { sessionId: string }) {
   const openPr = usePrStore((s) => s.openPr);
   const selectedKey = usePrStore((s) => s.selectedPrKeyBySession[sessionId] ?? null);
   const selectSessionPr = usePrStore((s) => s.selectSessionPr);
-  const applySession = useAppStore((s) => s.applySession);
   const chipRef = useRef<HTMLButtonElement>(null);
   const [menuOpen, setMenuOpen] = useState(false);
   const [linkingKey, setLinkingKey] = useState<string | null>(null);
@@ -165,7 +164,7 @@ export function PrSessionChip({ sessionId }: { sessionId: string }) {
     if (linkingKey !== null) return;
     setLinkingKey(item.key);
     try {
-      applySession(await window.cw.linkSessionPr(sessionId, { ref: item.ref, origin: "linked", lastSeenSha: item.headSha, lastSeenAt: Date.now() }));
+      await window.cw.linkSessionPr(sessionId, { ref: item.ref, origin: "linked", lastSeenSha: item.headSha, lastSeenAt: Date.now() });
     } catch (err) {
       useNotifs.getState().push({ kind: "error", title: `Could not link #${item.ref.number}`, message: errorMessage(err) });
     } finally {
@@ -224,7 +223,6 @@ export function PrSessionPanel({ sessionId }: { sessionId: string }) {
   const detail = selected?.detail;
   const loading = selected?.loading ?? false;
   const error = selected?.error;
-  const applySession = useAppStore((s) => s.applySession);
   const openPr = usePrStore((s) => s.openPr);
   const openRunModal = usePrStore((s) => s.openRunModal);
   const loadDetail = usePrStore((s) => s.loadDetail);
@@ -255,7 +253,7 @@ export function PrSessionPanel({ sessionId }: { sessionId: string }) {
     setUnlinking(true);
     setActionError(null);
     try {
-      applySession(await window.cw.unlinkSessionPr(sessionId, link.ref));
+      await window.cw.unlinkSessionPr(sessionId, link.ref);
       selectSessionPr(sessionId, null);
     } catch (err) {
       setActionError(`Could not unlink #${link.ref.number}: ${errorMessage(err)}`);

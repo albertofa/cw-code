@@ -8,6 +8,7 @@ import type {
   CliBinary,
   HarnessAvailability,
   LegacyPreferences,
+  SidebarReorderRequest,
   CliDiscoveredCandidate,
   CliDiscoverResult,
   CommandInvocation,
@@ -608,6 +609,7 @@ export interface CwApi {
   };
   recheckClis(): Promise<HarnessAvailability>;
   importLegacyPrefs(legacy: LegacyPreferences): Promise<void>;
+  reorderSidebar(request: SidebarReorderRequest): Promise<void>;
   pushRecentModel(driver: DriverName, model: string): Promise<void>;
   setComposerDraft(key: string, text: string, attachments: readonly string[]): Promise<void>;
   discoverBinaries(binaries?: CliBinary[]): Promise<CliDiscoverResult>;
@@ -617,7 +619,6 @@ export interface CwApi {
   listProjects(): Promise<Project[]>;
   addProject(rootPath: string): Promise<Project>;
   updateProjectSettings(projectId: string, settings: ProjectSettings): Promise<Project>;
-  listSessions(projectId: string): Promise<Session[]>;
   createSession(projectId: string, driver: DriverName, options?: CreateSessionOptions): Promise<Session>;
   listImportableSessions(driver: DriverName): Promise<ImportableSession[]>;
   importSession(request: ImportSessionRequest): Promise<{ project: Project; session: Session }>;
@@ -700,8 +701,6 @@ export interface CwApi {
   unlinkSessionRun(sessionId: string, ref: RunRef): Promise<Session>;
   markSessionRunSeen(sessionId: string, ref: RunRef, seenAt: number): Promise<Session>;
   onTurnEvent(cb: (msg: { sessionId: string; event: TurnEvent }) => void): () => void;
-  onSessionTitle(cb: (msg: { sessionId: string; title: string }) => void): () => void;
-  onSessionUpdated(cb: (session: Session) => void): () => void;
   onProjectChanged(cb: (project: Project) => void): () => void;
   onSkillsChanged(cb: (result: SkillsListResult) => void): () => void;
   onComposerChanged(cb: (event: ComposerChangedEvent) => void): () => void;

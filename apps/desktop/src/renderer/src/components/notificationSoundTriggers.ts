@@ -1,8 +1,11 @@
-import type { NotificationSoundEvent, PrDetail, Session, SessionStatus } from "../cw.js";
+import type { NotificationSoundEvent, PrDetail, PrSummary, Session, SessionStatus } from "../cw.js";
 import { prKey } from "./prInbox.js";
-import { detailIsCurrent } from "./needsYou.js";
 import { hasUnseen, updatesSince } from "./prUpdates.js";
 import { sessionLinks, type PrSummaryLookup } from "./sessionPrLinks.js";
+
+function detailIsCurrent(detail: PrDetail | undefined, summary: PrSummary): detail is PrDetail {
+  return detail !== undefined && detail.updatedAt >= summary.updatedAt && detail.headRefOid === summary.headRefOid;
+}
 
 export interface SessionSoundState {
   status: SessionStatus;

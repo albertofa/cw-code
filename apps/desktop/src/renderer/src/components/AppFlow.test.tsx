@@ -35,7 +35,42 @@ function makeSession(overrides: Partial<Session> = {}): Session {
   };
 }
 
+const topicListeners = new Map<string, Set<() => void>>();
+let sidebar: TopicState;
+
+function emitTopic(topic: string): void {
+  for (const cb of topicListeners.get(topic) ?? []) cb();
+}
+
+function addSidebarSession(session: Session): void {
+  const row = {
+    session,
+    busy: false,
+    branch: null,
+    attention: null,
+    babysit: null,
+    prBadge: null,
+    pendingQuestionIds: [],
+    latestUnseenPrUpdateAt: null,
+    prMuted: false
+  };
+  sidebar = { ...sidebar, rev: sidebar.rev + 1, data: { ...sidebar.data, [`row/${session.id}`]: row } };
+  emitTopic("sidebar");
+}
+
 function installTopics(): void {
+  topicListeners.clear();
+  sidebar = {
+    status: "ready",
+    rev: 1,
+    error: null,
+    data: {
+      layout: { needsYou: [], workingSet: [], main: [], resolved: [], quickCounts: { pr: 0 } },
+      defaults: { restoreSessionId: null, restoreProjectId: "proj_1", projectsByRecency: ["proj_1"] },
+      "project/proj_1": { id: "proj_1", rootPath: "C:\\proj", name: "proj" },
+      "worktrees/proj_1": []
+    }
+  };
   const app: TopicState = {
     status: "ready",
     rev: 1,
@@ -49,9 +84,14 @@ function installTopics(): void {
   const cache = {
     epoch: 0,
     acquire: () => () => {},
-    listen: () => () => {},
+    listen: (topic: string, cb: () => void) => {
+      const set = topicListeners.get(topic) ?? new Set<() => void>();
+      set.add(cb);
+      topicListeners.set(topic, set);
+      return () => set.delete(cb);
+    },
     onEpoch: () => () => {},
-    state: (topic: string) => (topic === "app" ? app : undefined)
+    state: (topic: string) => (topic === "app" ? app : topic === "sidebar" ? sidebar : undefined)
   };
   initTopics(cache as unknown as TopicCache);
 }
@@ -62,11 +102,12 @@ function installBridge(): void {
   const explicit: Record<string, unknown> = {
     isDev: false,
     listProjects: async () => [{ id: "proj_1", rootPath: "C:\\proj", name: "proj" }],
-    listSessions: async () => [],
     createSession: async (projectId: string, driver: "opencode") => {
       sessionSeq += 1;
       const session = makeSession({ id: `sess_${sessionSeq}`, projectId, driver });
-      return delayed(session, 1500);
+      const created = await delayed(session, 1500);
+      setTimeout(() => addSidebarSession(created), 0);
+      return created;
     },
     getHistory: async () => delayed([], 300),
     startTurn: async () => delayed("turn-1", 800),
@@ -423,9 +464,6 @@ describe("new-session crash repro (interactive)", () => {
         type: "turn.error",
         turnId: "turn-1",
         message: "opencode server unreachable at 127.0.0.1:1 (fetch failed)"
-      });
-      await act(async () => {
-        store().applySessionTitle(firstId!, "Fresh title here");
       });
       await emit(firstId!, {
         type: "session.branch.updated",

@@ -4,6 +4,7 @@ import { useAppStore } from "../stores/appStore.js";
 import { resolveRightTop } from "../stores/panelLayout.js";
 import { selectSessionPanel, usePanelStore } from "../stores/panelStore.js";
 import { sessionLinks } from "./sessionPrLinks.js";
+import { useSessionRow } from "./useSessions.js";
 import { toolAvailability } from "./toolTabs.js";
 
 export interface ToolAvailability {
@@ -16,11 +17,10 @@ export interface ToolAvailability {
 
 export function useToolAvailability(sessionId: string | undefined): ToolAvailability {
   const pendingDriver = useAppStore((s) => s.pendingDriver);
-  const sessionsByProject = useAppStore((s) => s.sessionsByProject);
   const hasPreview = useAppStore((s) => (sessionId ? (s.previewBySession[sessionId] ?? null) !== null : false));
   const { dockByTab, activeRight } = usePanelStore((s) => selectSessionPanel(s, sessionId));
 
-  const session = Object.values(sessionsByProject).flat().find((item) => item.id === sessionId);
+  const session = useSessionRow(sessionId)?.session;
   const driver = pendingDriver ?? session?.driver;
   const hasPr = pendingDriver === null && sessionLinks(session).length > 0;
 

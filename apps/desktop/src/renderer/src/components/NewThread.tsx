@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
 import { Download, Folder, GitBranch, GitFork, History } from "lucide-react";
 import { useAppStore } from "../stores/appStore.js";
-import type { CreateSessionOptions, CreateWorkspaceMode, DriverName, GitBranchInfo, Session } from "../cw.js";
-import { worktreeCandidates } from "./worktreeCandidates.js";
+import type { CreateSessionOptions, CreateWorkspaceMode, DriverName, GitBranchInfo } from "../cw.js";
+import { useWorktreeCandidates } from "./useSessions.js";
 import { shortenHome } from "./pathDisplay.js";
 import { DriverIcon } from "./DriverIcon.js";
 import { pickableHarnesses } from "./harnessAvailability.js";
@@ -13,7 +13,6 @@ import { NewSessionProjectPicker } from "./NewSessionProjectPicker.js";
 import { ImportSessionsModal } from "./ImportSessionsModal.js";
 
 const NO_PROJECT_HINT = "Choose a project to start a session";
-const NO_SESSIONS: Session[] = [];
 const DEFAULT_BASE_ID = "";
 const DEFAULT_BASE_LABEL = "Default branch (latest from origin)";
 
@@ -44,9 +43,8 @@ export function NewThread({
   const [importOpen, setImportOpen] = useState(false);
 
   const projectKey = project?.id ?? null;
-  const sessions = useAppStore((s) => (projectKey ? (s.sessionsByProject[projectKey] ?? NO_SESSIONS) : NO_SESSIONS));
   const store = useAppStore.getState();
-  const candidates = worktreeCandidates(sessions);
+  const candidates = useWorktreeCandidates(projectKey);
 
   useEffect(() => {
     let active = true;

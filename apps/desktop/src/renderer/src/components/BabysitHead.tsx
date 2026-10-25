@@ -43,9 +43,8 @@ function StatusMark({ phase }: { phase: BabysitPhase["kind"] }) {
 }
 
 export function BabysitHead({ sessionId, state }: { sessionId: string; state: BabysitState }) {
-  const pause = useAppStore((s) => s.pauseAutoFollowUp);
-  const resume = useAppStore((s) => s.resumeAutoFollowUp);
-  const applySession = useAppStore((s) => s.applySession);
+  const pauseLocal = useAppStore((s) => s.pauseAutoFollowUp);
+  const resumeLocal = useAppStore((s) => s.resumeAutoFollowUp);
   const openPr = usePrStore((s) => s.openPr);
   const detail = usePrStore((s) => s.detailByKey[prKey(state.link.ref)]);
   const [stopping, setStopping] = useState(false);
@@ -54,14 +53,25 @@ export function BabysitHead({ sessionId, state }: { sessionId: string; state: Ba
   const { link, workflow, phase } = state;
   const paused = phase.kind === "paused";
 
+  const pause = () => {
+    pauseLocal(sessionId);
+    setError(null);
+    void window.cw.pauseAutoFollowUp(sessionId).catch((err: unknown) => setError(`Could not pause ${workflow.label}: ${ipcErrorMessage(err)}`));
+  };
+
+  const resume = async () => {
+    resumeLocal(sessionId);
+    await window.cw.resumeAutoFollowUp(sessionId);
+  };
+
   const stop = async () => {
     if (stopping) return;
     setStopping(true);
     setError(null);
     const { workflowId: _workflowId, ...rest } = link;
     try {
-      applySession(await window.cw.linkSessionPr(sessionId, rest));
-      resume(sessionId);
+      await window.cw.linkSessionPr(sessionId, rest);
+      await resume();
     } catch (err) {
       setError(`Could not stop ${workflow.label}: ${ipcErrorMessage(err)}`);
     } finally {
@@ -87,12 +97,18 @@ export function BabysitHead({ sessionId, state }: { sessionId: string; state: Ba
           View PR
         </button>
         {paused ? (
-          <button className="pr-detail-btn sm" onClick={() => resume(sessionId)}>
+          <button
+            className="pr-detail-btn sm"
+            onClick={() => {
+              setError(null);
+              void resume().catch((err: unknown) => setError(`Could not resume ${workflow.label}: ${ipcErrorMessage(err)}`));
+            }}
+          >
             <Play size={12} aria-hidden="true" />
             Resume
           </button>
         ) : (
-          <button className="pr-detail-btn sm" onClick={() => pause(sessionId)} title="Stop sending updates on their own until you resume">
+          <button className="pr-detail-btn sm" onClick={pause} title="Stop sending updates on their own until you resume">
             <Pause size={12} aria-hidden="true" />
             Pause
           </button>

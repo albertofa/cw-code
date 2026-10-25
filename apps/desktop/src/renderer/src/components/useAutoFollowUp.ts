@@ -2,7 +2,6 @@ import { useEffect, useMemo, useRef } from "react";
 import type { AppSettings, PrDetail, PrWorkflow, Session } from "../cw.js";
 import { useAppStore } from "../stores/appStore.js";
 import { usePrStore } from "../stores/prStore.js";
-import { shouldRequestDetail, type DetailAttempt } from "./needsYou.js";
 import { useNotifs } from "./Notifications.js";
 import { prKey } from "./prInbox.js";
 import {
@@ -23,6 +22,16 @@ import { errorMessage } from "./errorMessage.js";
 import { ipcErrorMessage } from "./ipcError.js";
 
 const NO_WORKFLOWS: PrWorkflow[] = [];
+
+interface DetailAttempt {
+  version: string;
+  fetchedAt: number;
+}
+
+function shouldRequestDetail(last: DetailAttempt | undefined, version: string, fetchedAt: number, loading: boolean): boolean {
+  if (loading) return false;
+  return last === undefined || last.version !== version || last.fetchedAt !== fetchedAt;
+}
 
 function isBusy(sessionId: string): boolean {
   return useAppStore.getState().busyTurns[sessionId] !== undefined;
@@ -62,8 +71,7 @@ async function sendAutoFollowUp(followUp: AutoFollowUp, settings: AppSettings, h
     return true;
   }
   try {
-    const session = await window.cw.markSessionPrSeen(sessionId, link.ref, detail.headRefOid, seenThrough(detail, updates));
-    useAppStore.getState().applySession(session);
+    await window.cw.markSessionPrSeen(sessionId, link.ref, detail.headRefOid, seenThrough(detail, updates));
   } catch (err) {
     console.warn(`[pr] auto follow-up sent but ${prRefLabel(link.ref)} could not be marked seen: ${errorMessage(err)}`);
   }
