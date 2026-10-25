@@ -190,16 +190,11 @@ describe("server process", () => {
     bystander.onPatch((patch) => leaked.push(patch));
     await watcher.call("topics.subscribe", { topics: ["sidebar"] });
 
-    const root = mkdtempSync(join(tmpdir(), "cw-sidebar-"));
-    try {
-      const project = await bystander.call<Project>("projects.add", root);
-      const session = await bystander.call<SessionMeta>("sessions.create", { projectId: project.id, driver: "claude" });
-      await until(() => rowPatches.includes(`row/${session.id}`));
-      expect(projectsSeen.map((seen) => seen.id)).toEqual([project.id]);
-      expect(leaked).toEqual([]);
-    } finally {
-      rmSync(root, { recursive: true, force: true });
-    }
+    const project = await bystander.call<Project>("projects.add", mkdtempSync(join(home, "sidebar-")));
+    const session = await bystander.call<SessionMeta>("sessions.create", { projectId: project.id, driver: "claude" });
+    await until(() => rowPatches.includes(`row/${session.id}`));
+    expect(projectsSeen.map((seen) => seen.id)).toEqual([project.id]);
+    expect(leaked).toEqual([]);
   });
 
   it("returns a fresh snapshot when a subscribed client subscribes again", async () => {
