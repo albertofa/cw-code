@@ -1,8 +1,24 @@
 import type { PrRef, SessionPrLink } from "@cw-code/contracts";
 import type { ServerApp } from "../app/ServerApp.js";
 import { assertPrRef } from "../github/PullRequestService.js";
+import type { SessionManager } from "../sessions/SessionManager.js";
 import type { Router } from "../transport/Router.js";
-import { handle } from "./shared.js";
+import { handle, knownSessionId, parseArgs } from "./shared.js";
+
+const MAX_UPDATE_KEYS = 100;
+
+export function parseUpdateKeys(
+  args: unknown,
+  channel: string,
+  sessions: Pick<SessionManager, "hasSession">
+): { sessionId: string; keys: string[] } {
+  const parsed = parseArgs(args, channel);
+  const keys = parsed.keys;
+  if (!Array.isArray(keys) || keys.length === 0 || keys.length > MAX_UPDATE_KEYS || !keys.every((key) => typeof key === "string")) {
+    throw new Error(`${channel} requires 1 to ${MAX_UPDATE_KEYS} pull request keys`);
+  }
+  return { sessionId: knownSessionId(sessions, parsed.sessionId), keys: keys as string[] };
+}
 
 export function registerPrHandlers(router: Router, app: ServerApp): void {
   const services = () => app.requireServices();
@@ -13,6 +29,14 @@ export function registerPrHandlers(router: Router, app: ServerApp): void {
   handle<{ ref: PrRef }>(router, "prs.diff", (args) => services().pullRequests.diff(args.ref));
   handle<{ ref: PrRef; runId: number }>(router, "prs.checkLog", (args) => services().pullRequests.failedCheckLog(args.ref, args.runId));
   handle(router, "prs.projectRepos", () => services().prStore.refreshProjectRepos());
+  handle(router, "prs.sendUpdates", (args) => {
+    const { sessionId, keys } = parseUpdateKeys(args, "prs.sendUpdates", services().sessions);
+    return services().sessionPrs.sendUpdates(sessionId, keys);
+  });
+  handle(router, "prs.dismissUpdates", (args) => {
+    const { sessionId, keys } = parseUpdateKeys(args, "prs.dismissUpdates", services().sessions);
+    services().sessionPrs.dismissUpdates(sessionId, keys);
+  });
   handle<{ sessionId: string; link: SessionPrLink }>(router, "sessions.linkPr", (args) => {
     const link = args.link;
     assertPrRef(link.ref);

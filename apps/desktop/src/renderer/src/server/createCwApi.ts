@@ -218,6 +218,8 @@ export function createCwApi(client: ServerClient, topics: TopicCache, desktop: D
     linkSessionPr: (sessionId, link) => call<Session>("sessions.linkPr", { sessionId, link }),
     unlinkSessionPr: (sessionId, ref) => call<Session>("sessions.unlinkPr", { sessionId, ref }),
     markSessionPrSeen: (sessionId, ref, headSha, seenAt) => call<Session>("sessions.markPrSeen", { sessionId, ref, headSha, seenAt }),
+    sendPrUpdates: (sessionId, keys) => call<string>("prs.sendUpdates", { sessionId, keys }),
+    dismissPrUpdates: (sessionId, keys) => callVoid("prs.dismissUpdates", { sessionId, keys }),
     linkSessionIssue: (sessionId, link) => call<Session>("sessions.linkIssue", { sessionId, link }),
     unlinkSessionIssue: (sessionId, ref) => call<Session>("sessions.unlinkIssue", { sessionId, ref }),
     markSessionIssueSeen: (sessionId, ref, seenAt) => call<Session>("sessions.markIssueSeen", { sessionId, ref, seenAt }),

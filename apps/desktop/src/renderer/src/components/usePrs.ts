@@ -14,7 +14,9 @@ import type {
 import { PRS_TOPIC, sessionTopic } from "@cw-code/shared/topics";
 import { useTopicEntry, useTopicSelect } from "../server/topics.js";
 import { errorMessage } from "./errorMessage.js";
-import { prRefLabel, type PrSummaryLookup } from "./sessionPrLinks.js";
+import { prRefLabel } from "./sessionPrLinks.js";
+
+export type PrSummaryLookup = ReadonlyMap<string, PrSummary>;
 
 const SUMMARY_PREFIX = "summary/";
 const DETAIL_PREFIX = "detail/";

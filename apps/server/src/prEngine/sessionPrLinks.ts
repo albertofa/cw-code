@@ -1,13 +1,13 @@
 import type { GitPullRequest, PrChip, PrChipTone, PrDetail, PrLinkSnapshot, PrRef, PrSummary, SessionPrLink } from "@cw-code/contracts";
 import { prChip } from "./prChip.js";
-import { prKey, prRefFromUrl } from "@cw-code/shared/prRef";
+import { prKey, prRefFromUrl, prRefLabel } from "@cw-code/shared/prRef";
 import { hasUnseen } from "./prUpdates.js";
 
 interface LinkedSession {
   prs?: SessionPrLink[];
 }
 
-export { prRefFromUrl };
+export { prRefFromUrl, prRefLabel };
 
 export type PrSummaryLookup = ReadonlyMap<string, PrSummary>;
 
@@ -33,10 +33,6 @@ export function linkWithWorkflow(session: LinkedSession | undefined, ref: PrRef,
 
 export function sessionsLinkedTo<S extends LinkedSession>(sessions: S[], ref: PrRef): S[] {
   return sessions.filter((session) => linkFor(session, ref) !== undefined);
-}
-
-export function prRefLabel(ref: PrRef): string {
-  return `${ref.owner}/${ref.repo}#${ref.number}`;
 }
 
 export function mergeSummary(inbox: PrSummary | undefined, tracked: PrSummary | undefined): PrSummary | undefined {

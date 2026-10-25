@@ -38,10 +38,12 @@ export function registerGitHandlers(router: Router, app: ServerApp): void {
     return gitTopic.mismatch(sessionId);
   });
   handle(router, "git.keepFolderHead", async (raw) => {
-    const { sessions, sourceControl, gitTopic } = services();
+    const { sessions, sourceControl, gitTopic, sessionPrs } = services();
     const sessionId = knownSessionId(sessions, parseArgs(raw, "git.keepFolderHead").sessionId);
     await sourceControl.refresh(sessionId);
-    return gitTopic.keepFolderHead(sessionId);
+    const head = gitTopic.keepFolderHead(sessionId);
+    sessionPrs.invalidate();
+    return head;
   });
   handle<{ sessionId: string }>(router, "git.branches", (args) => {
     const { sessions, git } = services();

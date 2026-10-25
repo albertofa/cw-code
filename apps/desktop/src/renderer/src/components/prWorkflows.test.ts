@@ -4,8 +4,8 @@ import {
   attributionText,
   failedJobNames,
   issueTemplateVars,
+  linkWithWorkflow,
   loadFailedLogs,
-  primaryAction,
   resolveTemplate,
   runRefTemplateVars,
   runTemplateVars,
@@ -174,40 +174,17 @@ describe("suggestedWorkflow", () => {
   });
 });
 
-describe("primaryAction", () => {
-  const reviewWorkflow = workflow({ id: "review", suggestWhen: ["review-requested"] });
+describe("linkWithWorkflow", () => {
+  const ref: PrRef = { host: "github.com", owner: "acme", repo: "widgets", number: 7 };
+  const opened = { ref, origin: "opened" as const, lastSeenSha: "sha-7", lastSeenAt: 1_000 };
 
-  it("returns none for a merged PR", () => {
-    const pr = prSummary({ state: "MERGED" });
-    expect(primaryAction(pr, [session()], [reviewWorkflow])).toEqual({ kind: "none" });
+  it("adopts the workflow on a link the session opened, keeping its origin and seen state", () => {
+    expect(linkWithWorkflow(session({ prs: [opened] }), ref, "babysit")).toEqual({ ...opened, workflowId: "babysit" });
   });
 
-  it("returns open when a main session has seen the current head", () => {
-    const pr = prSummary({ headRefOid: "sha1" });
-    const linked = [session({ prs: [{ ref: pr.ref, origin: "opened", lastSeenSha: "sha1", lastSeenAt: 0 }] })];
-    expect(primaryAction(pr, linked, [])).toEqual({ kind: "open", sessionId: "s1" });
-  });
-
-  it("returns continue when the main session is a review link behind the head", () => {
-    const pr = prSummary({ headRefOid: "sha2" });
-    const linked = [session({ prs: [{ ref: pr.ref, origin: "workflow", workflowId: "review", lastSeenSha: "sha1", lastSeenAt: 0 }] })];
-    expect(primaryAction(pr, linked, [])).toEqual({ kind: "continue", sessionId: "s1", workflowId: "review" });
-  });
-
-  it("returns open when the review session already saw the current head", () => {
-    const pr = prSummary({ headRefOid: "sha1" });
-    const linked = [session({ prs: [{ ref: pr.ref, origin: "workflow", workflowId: "review", lastSeenSha: "sha1", lastSeenAt: 0 }] })];
-    expect(primaryAction(pr, linked, [])).toEqual({ kind: "open", sessionId: "s1" });
-  });
-
-  it("returns run for a suggested workflow when nothing is linked", () => {
-    const pr = prSummary({ viewerIsAuthor: false, reviewRequestedFromViewer: true });
-    expect(primaryAction(pr, [], [reviewWorkflow])).toEqual({ kind: "run", workflowId: "review" });
-  });
-
-  it("returns none when nothing is linked and no workflow is suggested", () => {
-    const pr = prSummary({ viewerIsAuthor: false, reviewRequestedFromViewer: false });
-    expect(primaryAction(pr, [], [reviewWorkflow])).toEqual({ kind: "none" });
+  it("returns null when the link already runs that workflow or the PR is not linked", () => {
+    expect(linkWithWorkflow(session({ prs: [{ ...opened, workflowId: "babysit" }] }), ref, "babysit")).toBeNull();
+    expect(linkWithWorkflow(session({ prs: [opened] }), { ...ref, number: 8 }, "babysit")).toBeNull();
   });
 });
 

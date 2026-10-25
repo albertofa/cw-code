@@ -1,9 +1,15 @@
 import { describe, expect, it } from "bun:test";
-import { prKey, prRefFromUrl } from "./prRef.js";
+import { prKey, prRefFromUrl, prRefLabel } from "./prRef.js";
 
 describe("prKey", () => {
   it("formats host, owner, repo and number", () => {
     expect(prKey({ host: "github.com", owner: "acme", repo: "app", number: 7 })).toBe("github.com/acme/app#7");
+  });
+});
+
+describe("prRefLabel", () => {
+  it("formats owner, repo and number without the host", () => {
+    expect(prRefLabel({ host: "github.com", owner: "acme", repo: "app", number: 7 })).toBe("acme/app#7");
   });
 });
 

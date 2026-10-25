@@ -18,8 +18,8 @@ import type {
   SessionPrLink,
   WorkflowRunSummary
 } from "@cw-code/contracts";
-import { autoFollowUpWorkflow, runsContinuously, withAutomatedWorkflowNote } from "@cw-code/shared/autoFollowUp";
-import { linkFor, pickMainSession } from "./sessionPrLinks.js";
+import { autoFollowUpWorkflow, runsContinuously } from "@cw-code/shared/autoFollowUp";
+import { linkFor } from "./sessionPrLinks.js";
 
 export { ISSUE_TEMPLATE_VARS, RUN_TEMPLATE_VARS, TEMPLATE_VARS, TEMPLATE_VARS_BY_TARGET } from "@cw-code/shared/workflowTemplates";
 
@@ -240,23 +240,9 @@ export function babysittingSession<S extends Pick<SessionMeta, "status" | "prs">
   return null;
 }
 
-export type PrPrimaryAction =
-  | { kind: "open"; sessionId: string }
-  | { kind: "continue"; sessionId: string; workflowId: string }
-  | { kind: "run"; workflowId: string }
-  | { kind: "none" };
-
-export function primaryAction(pr: PrSummary, linked: SessionMeta[], workflows: PrWorkflow[]): PrPrimaryAction {
-  if (pr.state === "MERGED") return { kind: "none" };
-  const session = pickMainSession(linked, pr.ref);
-  const link = session ? linkFor(session, pr.ref) : undefined;
-  if (session && link?.workflowId === "review" && pr.headRefOid !== link.lastSeenSha) {
-    return { kind: "continue", sessionId: session.id, workflowId: "review" };
-  }
-  if (session) return { kind: "open", sessionId: session.id };
-  const suggested = suggestedWorkflow(pr, workflows);
-  if (suggested) return { kind: "run", workflowId: suggested.id };
-  return { kind: "none" };
+export function linkWithWorkflow(session: Pick<SessionMeta, "prs"> | undefined, ref: PrRef, workflowId: string): SessionPrLink | null {
+  const link = linkFor(session, ref);
+  return link && link.workflowId !== workflowId ? { ...link, workflowId } : null;
 }
 
 const FAILED_LOGS_PATTERN = /\{\{\s*checks\.failedLogs\s*\}\}/;
@@ -269,36 +255,6 @@ export function needsFailedLogs(template: string): boolean {
 
 export function needsRunFailedLogs(template: string): boolean {
   return RUN_FAILED_LOGS_PATTERN.test(template);
-}
-
-function fallbackWorkflowId(pr: Pick<PrSummary, "viewerIsAuthor"> | null): string {
-  return pr !== null && !pr.viewerIsAuthor ? "review" : "babysit";
-}
-
-export function defaultFollowUpWorkflowId(link: SessionPrLink, pr: Pick<PrSummary, "viewerIsAuthor"> | null): string {
-  return link.workflowId || fallbackWorkflowId(pr);
-}
-
-export function followUpWorkflow(
-  link: SessionPrLink,
-  pr: Pick<PrSummary, "viewerIsAuthor"> | null,
-  workflows: PrWorkflow[]
-): PrWorkflow | null {
-  const own = link.workflowId ? workflows.find((w) => w.id === link.workflowId) : undefined;
-  return own ?? workflows.find((w) => w.id === fallbackWorkflowId(pr)) ?? null;
-}
-
-export function followUpPrompt(
-  detail: PrDetail,
-  link: SessionPrLink,
-  workflow: PrWorkflow,
-  updates: PrUpdate[],
-  settings: Pick<AppSettings, "prAttributionEnabled" | "prAttributionText">,
-  harness: string,
-  failedLogs?: string
-): string {
-  const vars = templateVars(detail, { link, updates, failedLogs, attribution: attributionText(settings, harness), harness });
-  return withAutomatedWorkflowNote(workflow, resolveTemplate(workflow.updatePrompt, vars));
 }
 
 function isWatchable(session: Pick<SessionMeta, "status">): boolean {

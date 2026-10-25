@@ -13,3 +13,7 @@ export function prRefFromUrl(url: string): PrRef | null {
   if (!Number.isSafeInteger(number) || number <= 0) return null;
   return { host: match[1].toLowerCase(), owner: match[2], repo: match[3], number };
 }
+
+export function prRefLabel(ref: PrRef): string {
+  return `${ref.owner}/${ref.repo}#${ref.number}`;
+}

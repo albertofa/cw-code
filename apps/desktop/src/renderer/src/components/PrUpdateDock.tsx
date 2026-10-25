@@ -1,84 +1,61 @@
 import { useMemo, useState, type ReactNode } from "react";
 import { Bell, ExternalLink, RefreshCw, Send, TriangleAlert, X } from "lucide-react";
-import type { AppSettings, BabysitPhase, PrRef, PrSummary, PrUpdate, PrWorkflow } from "@cw-code/contracts";
-import { useAppStore } from "../stores/appStore.js";
+import type { PrDockEntry, PrSummary, PrWorkflow, ThreadTopicData } from "@cw-code/contracts";
+import { combinedPrompt } from "@cw-code/shared/prDock";
+import { sessionTopic } from "@cw-code/shared/topics";
 import { usePrStore } from "../stores/prStore.js";
+import { peekTopic } from "../server/topics.js";
 import { prKey } from "./prInbox.js";
 import { formatRelativeAge } from "./prInboxModel.js";
 import { PrUpdateIcon } from "./PrUpdateIcon.js";
-import { defaultFollowUpWorkflowId, followUpMode, followUpPrompt, followUpWorkflow, needsFailedLogs } from "./prWorkflows.js";
-import { seenThrough, updatesSince } from "./prUpdates.js";
-import { linkWithWorkflow, prRefLabel } from "./sessionPrLinks.js";
+import { followUpMode } from "./prWorkflows.js";
+import { linkFor, prRefLabel } from "./sessionPrLinks.js";
 import { harnessLabel } from "./toolTabs.js";
 import { workflowIcon } from "./workflowIcons.js";
-import { findSession, useLinkedPrs, type LinkedPr } from "./useLinkedPr.js";
 import { useAppSettings, useAppSettingsError } from "./useAppSettings.js";
-import { requestPrDetail, useSessionBabysit } from "./usePrs.js";
+import { requestPrDetail, usePrDetailEntries, usePrSummaries, useSessionBabysit } from "./usePrs.js";
 import { useSessionRow } from "./useSessions.js";
+import { useThreadEntry } from "./useThread.js";
 import { BabysitHead } from "./BabysitHead.js";
 import { errorMessage } from "./errorMessage.js";
 import { ipcErrorMessage } from "./ipcError.js";
 import { useRestoreBeforeSend } from "./sessionLifecycle.js";
 
-const EMPTY_UPDATES: PrUpdate[] = [];
+const NO_ENTRIES: PrDockEntry[] = [];
 
-interface DockEntry {
-  item: LinkedPr;
+interface DockRow {
+  entry: PrDockEntry;
   pr: PrSummary | null;
-  updates: PrUpdate[];
   workflow: PrWorkflow | null;
-  workflowId: string;
-  isReview: boolean;
-  logsNeeded: boolean;
-  prompt: string | null;
+  loading: boolean;
 }
 
-function dockEntry(item: LinkedPr, settings: AppSettings | null, harness: string): DockEntry {
-  const { link, detail } = item;
-  const pr = item.summary ?? detail ?? null;
-  const updates = detail ? updatesSince(detail, link) : EMPTY_UPDATES;
-  const workflow = settings ? followUpWorkflow(link, pr, settings.prWorkflows) : null;
-  const workflowId = workflow?.id ?? defaultFollowUpWorkflowId(link, pr);
-  const prompt = detail && workflow && settings ? followUpPrompt(detail, link, workflow, updates, settings, harness) : null;
-  return {
-    item,
-    pr,
-    updates,
-    workflow,
-    workflowId,
-    isReview: workflowId === "review",
-    logsNeeded: workflow !== null && needsFailedLogs(workflow.updatePrompt),
-    prompt
-  };
+function isSendable(row: DockRow): boolean {
+  return !row.entry.logsNeeded && row.entry.prompt !== null;
 }
 
-function combinedPrompt(entries: DockEntry[]): string | null {
-  if (entries.length === 0) return null;
-  return entries.map((entry) => `## ${prRefLabel(entry.item.link.ref)}\n\n${entry.prompt ?? ""}`).join("\n\n");
+function omittedReason(row: DockRow): string {
+  return row.entry.logsNeeded ? "needs failed CI logs, use Review and send" : "no follow-up prompt, pick one with Other workflow";
 }
 
-function omittedReason(entry: DockEntry): string {
-  return entry.logsNeeded ? "needs failed CI logs, use Review and send" : "no follow-up prompt, pick one with Other workflow";
+function sendSignature(rows: DockRow[]): string {
+  return rows.map((row) => `${row.entry.key}@${row.entry.updates.map((update) => update.at).join(",")}`).join(" ");
 }
 
-function seenAt(entry: DockEntry): number | null {
-  return seenThrough(entry.item.detail ?? entry.item.summary, entry.updates);
-}
-
-function sendSignature(entries: DockEntry[]): string {
-  return entries.map((entry) => `${entry.item.key}@${seenHead(entry) ?? ""}:${seenAt(entry) ?? ""}`).join(" ");
-}
-
-function seenHead(entry: DockEntry): string | null {
-  return entry.item.detail?.headRefOid ?? entry.item.summary?.headRefOid ?? null;
-}
-
-function autoHint(entry: DockEntry, workflow: PrWorkflow, phase: BabysitPhase): ReactNode {
+function autoHintText(hint: PrDockEntry["autoHint"], workflow: PrWorkflow): ReactNode {
   const label = <b>{workflow.label}</b>;
-  if (phase.kind === "paused") return <>{label} is paused, so this update waits for you</>;
-  if (!entry.updates.some((update) => update.actionable)) return <>{label} doesn't act on this kind of update</>;
-  if (phase.kind === "working") return <>{label} sends this after the current turn</>;
-  return <>{label} is sending this</>;
+  switch (hint) {
+    case "paused":
+      return <>{label} is paused, so this update waits for you</>;
+    case "not-actionable":
+      return <>{label} doesn't act on this kind of update</>;
+    case "after-turn":
+      return <>{label} sends this after the current turn</>;
+    case "sending":
+      return <>{label} is sending this</>;
+    case null:
+      return null;
+  }
 }
 
 function WorkflowTag({ workflow }: { workflow: PrWorkflow }) {
@@ -91,22 +68,29 @@ function WorkflowTag({ workflow }: { workflow: PrWorkflow }) {
   );
 }
 
-function ViewButton({ entry }: { entry: DockEntry }) {
+function ViewButton({ entry }: { entry: PrDockEntry }) {
   const openPr = usePrStore((s) => s.openPr);
-  const ref = entry.item.link.ref;
   return (
-    <button className="pr-detail-btn ghost sm" onClick={() => (entry.isReview ? openPr(ref, "files") : openPr(ref))}>
+    <button className="pr-detail-btn ghost sm" onClick={() => (entry.isReview ? openPr(entry.ref, "files") : openPr(entry.ref))}>
       <ExternalLink size={12} aria-hidden="true" />
       {entry.isReview ? "Diff since review" : "View"}
     </button>
   );
 }
 
+async function adoptWorkflow(sessionId: string, key: string, workflow: PrWorkflow): Promise<void> {
+  const link = peekTopic<ThreadTopicData>(sessionTopic(sessionId))?.data.prItems.find((item) => item.key === key)?.link;
+  if (link && link.workflowId !== workflow.id) await window.cw.linkSessionPr(sessionId, { ...link, workflowId: workflow.id });
+}
+
 export function PrUpdateDock({ sessionId }: { sessionId: string }) {
-  const { session, items } = useLinkedPrs(sessionId);
-  const busy = useSessionRow(sessionId)?.busy ?? false;
+  const row = useSessionRow(sessionId);
+  const session = row?.session;
+  const busy = row?.busy ?? false;
+  const entries = useThreadEntry(sessionId, "prDock") ?? NO_ENTRIES;
   const babysit = useSessionBabysit(sessionId);
-  const sendPromptTo = useAppStore((s) => s.sendPromptTo);
+  const summaries = usePrSummaries();
+  const details = usePrDetailEntries();
   const { ensureOpen, dialog: restoreDialog } = useRestoreBeforeSend();
   const openRunModal = usePrStore((s) => s.openRunModal);
   const settings = useAppSettings();
@@ -117,40 +101,46 @@ export function PrUpdateDock({ sessionId }: { sessionId: string }) {
   const [sentSignature, setSentSignature] = useState<string | null>(null);
 
   const harness = session ? harnessLabel(session.driver) : "";
-  const entries = useMemo(() => items.map((item) => dockEntry(item, settings, harness)), [items, settings, harness]);
-  const changed = useMemo(() => entries.filter((entry) => entry.updates.length > 0), [entries]);
+  const rows = useMemo(
+    () =>
+      entries.map((entry): DockRow => {
+        const detail = details.get(entry.key);
+        return {
+          entry,
+          pr: summaries.get(entry.key) ?? detail?.detail ?? null,
+          workflow: entry.workflowLabel === null ? null : (settings?.prWorkflows.find((item) => item.id === entry.workflowId) ?? null),
+          loading: detail?.loading ?? false
+        };
+      }),
+    [entries, summaries, details, settings]
+  );
+  const changed = useMemo(() => rows.filter((item) => item.entry.updates.length > 0), [rows]);
   const failed = useMemo(
-    () => entries.filter((entry) => entry.updates.length === 0 && entry.item.error !== undefined && entry.item.unseen),
-    [entries]
+    () => rows.filter((item) => item.entry.updates.length === 0 && item.entry.error !== null && item.entry.unseen),
+    [rows]
   );
   const single = changed.length === 1 ? changed[0] : null;
-  const sendable = useMemo(() => changed.filter((entry) => !entry.logsNeeded && entry.prompt !== null), [changed]);
-  const omitted = useMemo(
-    () => (settings ? changed.filter((entry) => entry.logsNeeded || entry.prompt === null) : []),
-    [changed, settings]
-  );
-  const prompt = useMemo(() => (single ? single.prompt : combinedPrompt(sendable)), [single, sendable]);
+  const sendable = useMemo(() => changed.filter(isSendable), [changed]);
+  const omitted = useMemo(() => changed.filter((item) => !isSendable(item)), [changed]);
+  const prompt = useMemo(() => (single ? single.entry.prompt : combinedPrompt(sendable.map((item) => item.entry))), [single, sendable]);
   const covered = useMemo(() => (single ? [single] : sendable), [single, sendable]);
   const alreadySent = sentSignature !== null && sentSignature === sendSignature(covered);
 
   if (!session || (!babysit && changed.length === 0 && failed.length === 0)) return null;
 
-  const babysat = (entry: DockEntry) => babysit !== null && prKey(entry.item.link.ref) === prKey(babysit.link.ref);
+  const babysat = (item: DockRow) => babysit !== null && item.entry.key === prKey(babysit.link.ref);
   const dockClass = babysit ? `pr-dock babysit-dock ${babysit.phase.kind}` : "pr-dock";
   const babysitHead = babysit && <BabysitHead sessionId={sessionId} state={babysit} />;
 
-  const markSeen = async (targets: DockEntry[]) => {
-    for (const entry of targets) {
-      await window.cw.markSessionPrSeen(sessionId, entry.item.link.ref, seenHead(entry), seenAt(entry));
-    }
-  };
-
-  const dismiss = async (targets: DockEntry[]) => {
+  const dismiss = async (targets: DockRow[]) => {
     if (working) return;
     setWorking("dismiss");
     setActionError(null);
     try {
-      await markSeen(targets);
+      await window.cw.dismissPrUpdates(
+        sessionId,
+        targets.map((item) => item.entry.key)
+      );
     } catch (err) {
       setActionError(`Could not dismiss the update: ${errorMessage(err)}`);
     } finally {
@@ -158,18 +148,18 @@ export function PrUpdateDock({ sessionId }: { sessionId: string }) {
     }
   };
 
-  const failedRows = failed.map((entry) => (
-    <div key={entry.item.key} className="pr-dock-error" role="alert">
-      <b>{prRefLabel(entry.item.link.ref)}</b> changed, but its details could not be loaded: {entry.item.error}{" "}
-      <button className="pr-detail-btn ghost sm" onClick={() => void requestPrDetail(entry.item.link.ref)} disabled={entry.item.loading}>
+  const failedRows = failed.map((item) => (
+    <div key={item.entry.key} className="pr-dock-error" role="alert">
+      <b>{prRefLabel(item.entry.ref)}</b> changed, but its details could not be loaded: {item.entry.error}{" "}
+      <button className="pr-detail-btn ghost sm" onClick={() => void requestPrDetail(item.entry.ref)} disabled={item.loading}>
         Retry
       </button>
       <button
         className="icon-btn pr-dock-dismiss"
-        onClick={() => void dismiss([entry])}
+        onClick={() => void dismiss([item])}
         disabled={working !== null}
         title="Dismiss until the next change"
-        aria-label={`Dismiss update for ${prRefLabel(entry.item.link.ref)}`}
+        aria-label={`Dismiss update for ${prRefLabel(item.entry.ref)}`}
       >
         <X size={14} aria-hidden="true" />
       </button>
@@ -186,7 +176,7 @@ export function PrUpdateDock({ sessionId }: { sessionId: string }) {
               <TriangleAlert size={14} className="pr-dock-head-icon bad" aria-hidden="true" />
               <span className="pr-dock-title">
                 {failed.length === 1
-                  ? `PR #${failed[0].item.link.ref.number} changed, but its details could not be loaded`
+                  ? `PR #${failed[0].entry.ref.number} changed, but its details could not be loaded`
                   : `${failed.length} pull requests changed, but their details could not be loaded`}
               </span>
             </div>
@@ -197,19 +187,15 @@ export function PrUpdateDock({ sessionId }: { sessionId: string }) {
     );
   }
 
-  const openInModal = (entry: DockEntry) => {
-    openRunModal({ workflowId: entry.workflowId, subject: { kind: "pr", ref: entry.item.link.ref }, continueSessionId: sessionId });
+  const openInModal = (item: DockRow) => {
+    openRunModal({ workflowId: item.entry.workflowId, subject: { kind: "pr", ref: item.entry.ref }, continueSessionId: sessionId });
   };
 
   const singleBabysat = single !== null && babysat(single);
-  const mode = single ? followUpMode(session, single.item.link, single.pr, single.workflow, settings?.prWorkflows ?? [], babysit) : null;
+  const singleLink = single ? linkFor(session, single.entry.ref) : undefined;
+  const mode = single && singleLink ? followUpMode(session, singleLink, single.pr, single.workflow, settings?.prWorkflows ?? [], babysit) : null;
   const continuous = mode?.kind === "start" ? mode.workflow : null;
   const auto = mode?.kind === "auto" ? mode : null;
-
-  const startContinuous = async (workflow: PrWorkflow, ref: PrRef) => {
-    const adopt = linkWithWorkflow(findSession(useAppStore.getState().sessionsByProject, sessionId), ref, workflow.id);
-    if (adopt) await window.cw.linkSessionPr(sessionId, adopt);
-  };
 
   const send = async () => {
     if (!prompt || busy || working || alreadySent) return;
@@ -220,7 +206,10 @@ export function PrUpdateDock({ sessionId }: { sessionId: string }) {
         setWorking(null);
         return;
       }
-      await sendPromptTo(sessionId, prompt, undefined, { prRefs: covered.map((entry) => entry.item.link.ref) });
+      await window.cw.sendPrUpdates(
+        sessionId,
+        covered.map((item) => item.entry.key)
+      );
     } catch (err) {
       setActionError(`Could not send the update: ${ipcErrorMessage(err)}`);
       setWorking(null);
@@ -229,29 +218,23 @@ export function PrUpdateDock({ sessionId }: { sessionId: string }) {
     setSentSignature(sendSignature(covered));
     if (continuous && single) {
       try {
-        await startContinuous(continuous, single.item.link.ref);
+        await adoptWorkflow(sessionId, single.entry.key, continuous);
       } catch (err) {
         setActionError(`The update was sent, but ${continuous.label} could not be started: ${ipcErrorMessage(err)}`);
       }
     }
-    try {
-      await markSeen(covered);
-    } catch (err) {
-      setActionError(`The update was sent, but could not be cleared: ${errorMessage(err)}. Use × to clear it.`);
-    } finally {
-      setWorking(null);
-    }
+    setWorking(null);
   };
 
-  const allReview = changed.every((entry) => entry.isReview);
+  const allReview = changed.every((item) => item.entry.isReview);
   const since = allReview ? "your review" : "your last turn";
   const title = singleBabysat
     ? `Changed since ${since}`
     : single
-      ? `PR #${single.item.link.ref.number} changed since ${since}`
+      ? `PR #${single.entry.ref.number} changed since ${since}`
       : `${changed.length} pull requests changed since ${since}`;
-  const totalUpdates = changed.reduce((sum, entry) => sum + entry.updates.length, 0);
-  const singleLogs = single !== null && single.logsNeeded;
+  const totalUpdates = changed.reduce((sum, item) => sum + item.entry.updates.length, 0);
+  const singleLogs = single !== null && single.entry.logsNeeded;
   const primaryLabel = singleLogs
     ? "Review and send…"
     : allReview
@@ -269,7 +252,7 @@ export function PrUpdateDock({ sessionId }: { sessionId: string }) {
     : alreadySent
       ? "This update was already sent"
       : continuous && single
-        ? `Send this update now, then let ${continuous.label} follow up on ${prRefLabel(single.item.link.ref)} by itself until it is merged or closed`
+        ? `Send this update now, then let ${continuous.label} follow up on ${prRefLabel(single.entry.ref)} by itself until it is merged or closed`
         : auto
           ? `Send this update without waiting for ${auto.workflow.label}`
           : undefined;
@@ -286,7 +269,7 @@ export function PrUpdateDock({ sessionId }: { sessionId: string }) {
   const footWorkflow = mode && (mode.kind === "start" || mode.kind === "once") ? mode.workflow : null;
   const hint = single && mode ? (
     mode.kind === "auto" ? (
-      autoHint(single, mode.workflow, mode.phase)
+      autoHintText(single.entry.autoHint, mode.workflow)
     ) : mode.kind === "start" ? (
       "sends this now, then keeps following up by itself until the PR is merged or closed"
     ) : mode.kind === "once" ? (
@@ -306,40 +289,40 @@ export function PrUpdateDock({ sessionId }: { sessionId: string }) {
         <span className="pr-dock-title">{title}</span>
         <span className="pr-dock-badge">{totalUpdates}</span>
         <span className="pr-dock-spacer" />
-        {single && !singleBabysat && <ViewButton entry={single} />}
+        {single && !singleBabysat && <ViewButton entry={single.entry} />}
         <button
           className="icon-btn pr-dock-dismiss"
           onClick={() => void dismiss(changed)}
           disabled={working !== null}
           title={single ? "Dismiss until the next change" : "Dismiss all until the next change"}
-          aria-label={single ? `Dismiss update for ${prRefLabel(single.item.link.ref)}` : "Dismiss all pull request updates"}
+          aria-label={single ? `Dismiss update for ${prRefLabel(single.entry.ref)}` : "Dismiss all pull request updates"}
         >
           <X size={14} aria-hidden="true" />
         </button>
       </div>
-      {changed.map((entry) => {
-        const ref = entry.item.link.ref;
+      {changed.map((item) => {
+        const ref = item.entry.ref;
         return (
-          <div key={entry.item.key} className="pr-dock-group">
+          <div key={item.entry.key} className="pr-dock-group">
             <div className="pr-dock-group-head">
-              <span className="pr-dock-group-title" title={entry.pr?.title}>
+              <span className="pr-dock-group-title" title={item.pr?.title}>
                 <b>{prRefLabel(ref)}</b>
-                {entry.pr ? ` ${entry.pr.title}` : ""}
+                {item.pr ? ` ${item.pr.title}` : ""}
               </span>
               {!single && (
                 <>
-                  <span className="pr-dock-badge">{entry.updates.length}</span>
+                  <span className="pr-dock-badge">{item.entry.updates.length}</span>
                   <span className="pr-dock-spacer" />
-                  {entry.workflow && !babysat(entry) && <WorkflowTag workflow={entry.workflow} />}
-                  <ViewButton entry={entry} />
-                  {(entry.logsNeeded || !babysat(entry)) && (
-                    <button className="pr-detail-btn ghost sm" onClick={() => openInModal(entry)}>
-                      {entry.logsNeeded ? "Review and send…" : "Other workflow"}
+                  {item.workflow && !babysat(item) && <WorkflowTag workflow={item.workflow} />}
+                  <ViewButton entry={item.entry} />
+                  {(item.entry.logsNeeded || !babysat(item)) && (
+                    <button className="pr-detail-btn ghost sm" onClick={() => openInModal(item)}>
+                      {item.entry.logsNeeded ? "Review and send…" : "Other workflow"}
                     </button>
                   )}
                   <button
                     className="icon-btn pr-dock-dismiss"
-                    onClick={() => void dismiss([entry])}
+                    onClick={() => void dismiss([item])}
                     disabled={working !== null}
                     title="Dismiss until the next change"
                     aria-label={`Dismiss update for ${prRefLabel(ref)}`}
@@ -350,7 +333,7 @@ export function PrUpdateDock({ sessionId }: { sessionId: string }) {
               )}
             </div>
             <ul className="pr-dock-list">
-              {entry.updates.map((update, index) => (
+              {item.entry.updates.map((update, index) => (
                 <li key={`${update.kind}-${update.at}-${index}`} className="pr-dock-item">
                   <PrUpdateIcon kind={update.kind} />
                   <span className="pr-dock-item-text">{update.summary}</span>
@@ -358,7 +341,7 @@ export function PrUpdateDock({ sessionId }: { sessionId: string }) {
                 </li>
               ))}
             </ul>
-            {settings && !entry.workflow && (
+            {settings && item.entry.workflowLabel === null && (
               <div className="pr-dock-error" role="alert">
                 No follow-up workflow found for #{ref.number}; pick one with Other workflow.
               </div>
@@ -375,7 +358,7 @@ export function PrUpdateDock({ sessionId }: { sessionId: string }) {
       )}
       {!single && omitted.length > 0 && (
         <div className="pr-dock-error" role="status">
-          Not included: {omitted.map((entry) => `#${entry.item.link.ref.number} (${omittedReason(entry)})`).join(", ")}. Send{" "}
+          Not included: {omitted.map((item) => `#${item.entry.ref.number} (${omittedReason(item)})`).join(", ")}. Send{" "}
           {omitted.length === 1 ? "it" : "them"} afterwards.
         </div>
       )}

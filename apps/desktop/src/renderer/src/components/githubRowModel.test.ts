@@ -307,6 +307,18 @@ describe("continueSessionFor", () => {
     expect(continueSessionFor({ kind: "run", run: run() }, "pr", [prSession])).toBeNull();
   });
 
+  it("prefers the session that opened the PR, then a review workflow, then the latest", () => {
+    const ref = pr().ref;
+    const linked = (id: string, updatedAt: number, origin: "opened" | "workflow" | "linked", workflowId?: string) =>
+      sessionMeta({ id, updatedAt, prs: [{ ref, origin, workflowId, lastSeenAt: 0, lastSeenSha: "" }] });
+    const opened = linked("opened", 1, "opened");
+    const review = linked("review", 2, "workflow", "review");
+    const latest = linked("latest", 9, "linked");
+    expect(continueSessionFor({ kind: "pr", pr: pr() }, "pr", [latest, review, opened])?.id).toBe("opened");
+    expect(continueSessionFor({ kind: "pr", pr: pr() }, "pr", [latest, review, other])?.id).toBe("review");
+    expect(continueSessionFor({ kind: "pr", pr: pr() }, "pr", [linked("older", 3, "linked"), latest, other])?.id).toBe("latest");
+  });
+
   it("continues only sessions linked to the issue for issue workflows", () => {
     const linked = sessionMeta({ id: "linked", updatedAt: 3, issues: [{ ref: issue().ref, origin: "workflow", lastSeenAt: 0 }] });
     expect(continueSessionFor({ kind: "issue", issue: issue() }, "issue", [prSession, other, linked])?.id).toBe("linked");

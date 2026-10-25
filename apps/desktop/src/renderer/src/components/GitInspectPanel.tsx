@@ -7,7 +7,7 @@ import { parseUnifiedDiff, type DiffFile } from "./diffParser.js";
 import { useAppStore } from "../stores/appStore.js";
 import { usePanelStore } from "../stores/panelStore.js";
 import { shortenHome } from "./pathDisplay.js";
-import { findSession } from "./useLinkedPr.js";
+import { findSession } from "../server/sidebarData.js";
 import { snapshotKey, splitRepoPath } from "./turnChanges.js";
 import { refreshGit, useGitStatus } from "./useGit.js";
 

@@ -38,7 +38,7 @@ import {
   type Tone
 } from "./githubRowModel.js";
 import { formatRelativeAge } from "./prInboxModel.js";
-import { prRefFromUrl } from "./sessionPrLinks.js";
+import { prRefFromUrl } from "@cw-code/shared/prRef";
 
 const SHOW_DELAY_MS = 280;
 const SWITCH_DELAY_MS = 60;

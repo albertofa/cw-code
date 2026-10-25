@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import type { PrUpdate } from "@cw-code/contracts";
 import type {
   AppSettings,
   IssueDetail,
@@ -12,7 +13,7 @@ import type {
 } from "../cw.js";
 import { prKey } from "./prInbox.js";
 import { linkFor } from "./sessionPrLinks.js";
-import { updatesSince } from "./prUpdates.js";
+import { useThreadEntry } from "./useThread.js";
 import {
   attributionText,
   issueTemplateVars,
@@ -43,6 +44,8 @@ export interface WorkflowSubjectData {
   vars: Record<string, string> | null;
 }
 
+const NO_UPDATES: PrUpdate[] = [];
+
 interface IssueLoad {
   key: string;
   detail?: IssueDetail;
@@ -69,6 +72,8 @@ export function useWorkflowSubjectData(input: {
   const prDetail: PrDetail | undefined = prEntry?.detail ?? undefined;
   const prError = prEntry?.error ?? undefined;
   const prSummary = usePrSummary(prKeyValue || null);
+  const dock = useThreadEntry(prRef ? continueSession?.id : null, "prDock");
+  const prUpdates = useMemo(() => dock?.find((entry) => entry.key === prKeyValue)?.updates ?? NO_UPDATES, [dock, prKeyValue]);
 
   const [issueLoad, setIssueLoad] = useState<IssueLoad | null>(null);
   const [issueAttempt, setIssueAttempt] = useState(0);
@@ -143,7 +148,7 @@ export function useWorkflowSubjectData(input: {
         const link = continueSession ? linkFor(continueSession, subject.ref) : undefined;
         return templateVars(prDetail, {
           link,
-          updates: continueSession && link ? updatesSince(prDetail, link) : undefined,
+          updates: continueSession && link ? prUpdates : undefined,
           failedLogs,
           attribution,
           harness
@@ -159,7 +164,7 @@ export function useWorkflowSubjectData(input: {
           ? runTemplateVars(cachedRun, { failedLogs, attribution, harness })
           : runRefTemplateVars(subject.ref, { failedLogs, attribution, harness });
     }
-  }, [subject, prDetail, issue, cachedRun, hasWorkflow, settings, logsReady, continueSession, failedLogs, harness, issueKeyValue]);
+  }, [subject, prDetail, prUpdates, issue, cachedRun, hasWorkflow, settings, logsReady, continueSession, failedLogs, harness, issueKeyValue]);
 
   const loaded = subject.kind === "pr" ? prDetail !== undefined : subject.kind === "issue" ? issue !== undefined : true;
   const revision =

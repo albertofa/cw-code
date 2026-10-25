@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
 import { Activity, Archive, ArchiveRestore, Bell, ChartColumn, Check, ChevronDown, ChevronRight, ChevronUp, CircleCheck, CircleHelp, Clock, Copy, GitBranch, GitPullRequest, Hash, LoaderCircle, Pause, Pencil, Play, Plus, Search, Settings, ShieldAlert, Sparkles, X, type LucideIcon } from "lucide-react";
 import type { Attention, AttentionKind, BabysitState, NeedsYouSlot, SessionRow, SidebarLayout, SidebarReorderRequest, SidebarSection, SidebarTopicData } from "@cw-code/contracts";
+import { prKey } from "@cw-code/shared/prRef";
+import { hasUnseen } from "@cw-code/shared/prSeen";
 import { SIDEBAR_TOPIC } from "@cw-code/shared/topics";
 import type { DriverName, Session, SessionStatus } from "../cw.js";
 import { useAppStore } from "../stores/appStore.js";
@@ -14,8 +16,8 @@ import { shortenHome } from "./pathDisplay.js";
 import { PrChipBadge } from "./PrChipBadge.js";
 import { babysitPhaseLabel, babysitStatusText } from "./babysitLabels.js";
 import { needsAttentionCount } from "./prInbox.js";
-import { anyLinkUnseen, sessionLinks, type PrSummaryLookup } from "./sessionPrLinks.js";
-import { usePrInboxItems, usePrSummaries } from "./usePrs.js";
+import { sessionLinks } from "./sessionPrLinks.js";
+import { usePrInboxItems, usePrSummaries, type PrSummaryLookup } from "./usePrs.js";
 import { matchesQuickFilter, matchesSessionQuery, toggleQuickFilter, type QuickFilter, type QuickFilterFacts } from "./sidebarQuickFilters.js";
 import { useSessions, useSidebarLayout } from "./useSessions.js";
 import { useGitStatus } from "./useGit.js";
@@ -90,7 +92,10 @@ const DRIVER_LABEL: Record<DriverName, string> = {
 };
 
 function sessionHasUnseen(session: Session, summaryByKey: PrSummaryLookup): boolean {
-  return anyLinkUnseen(sessionLinks(session), summaryByKey);
+  return sessionLinks(session).some((link) => {
+    const summary = summaryByKey.get(prKey(link.ref));
+    return summary !== undefined && hasUnseen(summary, link);
+  });
 }
 
 const QUICK_FILTER_UI: Array<{ id: Exclude<QuickFilter, "all">; label: string; hint: string; Icon: LucideIcon }> = [

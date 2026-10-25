@@ -21,6 +21,7 @@ import { PreferencesStore } from "../prefs/PreferencesStore.js";
 import { preferencesFilePath } from "../paths/appPaths.js";
 import { AutoFollowUpEngine } from "../prEngine/AutoFollowUpEngine.js";
 import { PrStore } from "../prEngine/PrStore.js";
+import { SessionPrModel } from "../prEngine/sessionPrModel.js";
 import { PtyPool } from "../pty/PtyPool.js";
 import { SessionManager } from "../sessions/SessionManager.js";
 import type { SessionStore } from "../sessions/SessionStore.js";
@@ -67,6 +68,7 @@ export interface Services {
   threads: ThreadService;
   turns: TurnService;
   autoFollowUp: AutoFollowUpEngine;
+  sessionPrs: SessionPrModel;
   sidebar: SidebarService;
 }
 
@@ -95,6 +97,15 @@ function wireAutoFollowUp({ autoFollowUp, prStore, threads, turns }: Services): 
 
 function wireUsage({ sessions, threads, usageTopic }: Services): void {
   wireSessionUsageTotals(threads, usageTopic, (cb) => sessions.onUsageRecorded(cb));
+}
+
+function wireSessionPrs({ sessionPrs, threads, prStore, sourceControl, autoFollowUp }: Services): void {
+  threads.registerExtras((sessionId) => sessionPrs.extras(sessionId));
+  sessionPrs.watch(
+    (onChange) => prStore.onChanged(onChange),
+    (onChange) => sourceControl.onPublished(onChange),
+    (onChange) => autoFollowUp.onChanged(onChange)
+  );
 }
 
 function wireSidebar({ sidebar, threads, sourceControl, prStore, autoFollowUp, preferences }: Services): void {
@@ -127,7 +138,7 @@ function wireGitHubViews({ githubViews, prStore }: Services): void {
 }
 
 function wireServiceEvents(
-  { sessions, sourceControl, gitTopic, prTracker, prStore, ptys, runWatcher, githubViews, threads, autoFollowUp, sidebar }: Services,
+  { sessions, sourceControl, gitTopic, prTracker, prStore, ptys, runWatcher, githubViews, threads, autoFollowUp, sessionPrs, sidebar }: Services,
   { emit, dropTopic }: ServiceHooks
 ): void {
   sessions.setEmitter((sessionId, event) => {
@@ -149,6 +160,7 @@ function wireServiceEvents(
     prTracker.setTracked(sessions.trackedPrRefs());
     prStore.onSessionsChanged();
     autoFollowUp.reevaluate();
+    sessionPrs.invalidate();
     sidebar.invalidate();
     gitTopic.stateChanged(session.id);
   });
@@ -281,6 +293,22 @@ export function createServices(stores: { sessionStore: SessionStore; settingsSto
     postNotice: (sessionId, notice) => sessions.emitNotice(sessionId, notice.noticeId, notice.text, notice.severity),
     shutdownReserved: () => sessions.isShutdownReserved()
   });
+  const sessionPrs = new SessionPrModel({
+    sessions: () => sessions.listAllSessions(),
+    isOpen: (sessionId) => threads.isOpen(sessionId),
+    refresh: (sessionId) => threads.refreshExtras(sessionId),
+    settings: () => sessions.getSettings(),
+    gitStatus: (sessionId) => sourceControl.status(sessionId),
+    branchMismatch: (sessionId) => gitTopic.mismatch(sessionId),
+    summaryLookup: () => prStore.summaryLookup(),
+    detail: (key) => prStore.detail(key),
+    detailError: (key) => prStore.detailError(key),
+    babysit: (sessionId) => autoFollowUp.babysit(sessionId),
+    startTurn: (sessionId, prompt, input) => turns.start(sessionId, prompt, input),
+    markPrSeen: (sessionId, ref, headSha, seenAt) => {
+      sessions.markPrSeen(sessionId, ref, headSha, seenAt);
+    }
+  });
   const sidebar = new SidebarService(hooks.topics, {
     sessions: () => sessions.listAllSessions(),
     projects: () => sessions.listProjects(),
@@ -352,11 +380,13 @@ export function createServices(stores: { sessionStore: SessionStore; settingsSto
     threads,
     turns,
     autoFollowUp,
+    sessionPrs,
     sidebar
   };
   wireServiceEvents(services, hooks);
   wireAutoFollowUp(services);
   wireUsage(services);
+  wireSessionPrs(services);
   wireSidebar(services);
   wireGitTopic(services);
   wireFilesTopic(services);

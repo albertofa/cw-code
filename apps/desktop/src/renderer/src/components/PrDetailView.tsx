@@ -29,7 +29,6 @@ import { openExternalLink } from "./externalLink.js";
 import { PrFilesPanel } from "./PrFilesPanel.js";
 import { CheckLogSkeleton, PrDetailSkeleton } from "./GitHubSkeletons.js";
 import { prKey } from "./prInbox.js";
-import { firstUnseenIndex } from "./prUpdates.js";
 import { useAppSettings, useAppSettingsError } from "./useAppSettings.js";
 import { suggestedWorkflow } from "./prWorkflows.js";
 import { groupCommitsByDay, linkedBarState, mergeBoxState, relativeTime, threadQuoteText, threadSendTarget, type LinkedBarState } from "./prDetailModel.js";
@@ -282,7 +281,7 @@ export function PrDetailView({ prRef }: { prRef: PrRef }) {
     return Array.from(groups.entries());
   }, [detail]);
 
-  const newSinceIndex = detail && mainLink ? firstUnseenIndex(detail.timeline, mainLink.lastSeenAt) : -1;
+  const newSinceIndex = detail && mainLink ? detail.timeline.findIndex((item) => item.at > mainLink.lastSeenAt) : -1;
 
   return (
     <div className="thread-col pr-view">

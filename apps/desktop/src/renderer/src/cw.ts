@@ -696,6 +696,8 @@ export interface CwApi {
   linkSessionPr(sessionId: string, link: SessionPrLink): Promise<Session>;
   unlinkSessionPr(sessionId: string, ref: PrRef): Promise<Session>;
   markSessionPrSeen(sessionId: string, ref: PrRef, headSha: string | null, seenAt: number | null): Promise<Session>;
+  sendPrUpdates(sessionId: string, keys: string[]): Promise<string>;
+  dismissPrUpdates(sessionId: string, keys: string[]): Promise<void>;
   linkSessionIssue(sessionId: string, link: SessionIssueLink): Promise<Session>;
   unlinkSessionIssue(sessionId: string, ref: IssueRef): Promise<Session>;
   markSessionIssueSeen(sessionId: string, ref: IssueRef, seenAt: number): Promise<Session>;

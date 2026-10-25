@@ -1,24 +1,24 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { CircleCheck, CircleX, ExternalLink, GitPullRequest, History, Link2, MessageSquare, RefreshCw, Send, Unlink } from "lucide-react";
+import type { PrDockEntry, PrUpdate, SessionPrItem } from "@cw-code/contracts";
 import type { PrDetail, PrReviewThread } from "../cw.js";
 import { usePrStore } from "../stores/prStore.js";
 import { PrChipBadge } from "./PrChipBadge.js";
 import { mergeBoxState, threadQuoteText, type MergeRow } from "./prDetailModel.js";
-import { prKey } from "./prInbox.js";
 import { formatRelativeAge } from "./prInboxModel.js";
 import { whyLinkedText } from "./babysitLabels.js";
-import { defaultFollowUpWorkflowId, followUpWorkflow } from "./prWorkflows.js";
-import { updatesSince } from "./prUpdates.js";
 import { PrUpdateIcon } from "./PrUpdateIcon.js";
 import { PrPanelSkeleton } from "./GitHubSkeletons.js";
-import { useBranchMismatch, useGitStatus } from "./useGit.js";
-import { canLinkItem, sessionPrItemLabel, sessionPrItemsTitle, type SessionPrItem } from "./sessionPrItems.js";
-import { displayChip, mostUrgentLink, prRefLabel } from "./sessionPrLinks.js";
-import { useLinkedPrs, useSessionPrItems } from "./useLinkedPr.js";
-import { requestPrDetail } from "./usePrs.js";
+import { prRefLabel } from "./sessionPrLinks.js";
+import { requestPrDetail, usePrDetail, usePrDetails, usePrSummary } from "./usePrs.js";
 import { useAppSettings, useAppSettingsError } from "./useAppSettings.js";
+import { useThreadEntry } from "./useThread.js";
 import { useNotifs } from "./Notifications.js";
 import { errorMessage } from "./errorMessage.js";
+
+const NO_ITEMS: SessionPrItem[] = [];
+const NO_DOCK: PrDockEntry[] = [];
+const NO_UPDATES: PrUpdate[] = [];
 
 function stateLabel(pr: Pick<PrDetail, "state" | "isDraft">): { label: string; tone: string } {
   if (pr.state === "MERGED") return { label: "Merged", tone: "merged" };
@@ -58,18 +58,28 @@ function ThreadRow({ thread, onSend }: { thread: PrReviewThread; onSend: () => v
   );
 }
 
+function useSessionPrItems(sessionId: string): SessionPrItem[] {
+  return useThreadEntry(sessionId, "prItems") ?? NO_ITEMS;
+}
+
+function useSessionPrDock(sessionId: string): PrDockEntry[] {
+  return useThreadEntry(sessionId, "prDock") ?? NO_DOCK;
+}
+
 function useSelectedLinkedPr(sessionId: string) {
-  const linked = useLinkedPrs(sessionId);
+  const items = useSessionPrItems(sessionId);
+  const linked = useMemo(() => items.filter((item) => item.link !== undefined), [items]);
   const selectedKey = usePrStore((s) => s.selectedPrKeyBySession[sessionId] ?? null);
-  const gitStatus = useGitStatus(sessionId);
-  const mismatch = useBranchMismatch(sessionId);
-  const gitPr = mismatch ? null : (gitStatus?.pullRequest ?? null);
-  const links = useMemo(() => linked.items.map((item) => item.link), [linked.items]);
-  const urgent = useMemo(() => mostUrgentLink(links, linked.summaryByKey, gitPr), [links, linked.summaryByKey, gitPr]);
-  const urgentKey = urgent ? prKey(urgent.ref) : null;
-  const selected =
-    linked.items.find((item) => item.key === selectedKey) ?? linked.items.find((item) => item.key === urgentKey) ?? linked.items[0];
-  return { items: linked.items, summaryByKey: linked.summaryByKey, gitPr, selected };
+  const selected = linked.find((item) => item.key === selectedKey) ?? linked[0];
+  return { linked, selected };
+}
+
+function itemLabel(item: SessionPrItem): string {
+  return item.title ? `#${item.ref.number} · ${item.title}` : `#${item.ref.number}`;
+}
+
+function itemsTitle(items: SessionPrItem[]): string {
+  return items.map((item) => `${item.chip.label} ${item.chip.reason}`).join(" · ");
 }
 
 function PrMenuRow({
@@ -83,7 +93,7 @@ function PrMenuRow({
   onOpen: () => void;
   onLink: () => void;
 }) {
-  const label = sessionPrItemLabel(item);
+  const label = itemLabel(item);
   const number = item.ref.number;
   return (
     <div className="pr-links-row" role="listitem" title={label}>
@@ -91,7 +101,7 @@ function PrMenuRow({
       <PrChipBadge chip={item.chip} />
       <span className="name">{item.title ?? `Pull request #${number}`}</span>
       {item.unseen && <span className="pr-panel-chip-dot" aria-hidden="true" />}
-      {canLinkItem(item) && (
+      {item.canLink && (
         <button
           type="button"
           className="pr-links-action"
@@ -111,7 +121,9 @@ function PrMenuRow({
 }
 
 export function PrSessionChip({ sessionId }: { sessionId: string }) {
-  const { items } = useSessionPrItems(sessionId);
+  const items = useSessionPrItems(sessionId);
+  const dock = useSessionPrDock(sessionId);
+  const details = usePrDetails();
   const openPr = usePrStore((s) => s.openPr);
   const selectedKey = usePrStore((s) => s.selectedPrKeyBySession[sessionId] ?? null);
   const selectSessionPr = usePrStore((s) => s.selectSessionPr);
@@ -122,11 +134,11 @@ export function PrSessionChip({ sessionId }: { sessionId: string }) {
   const menuRef = useRef<HTMLDivElement>(null);
   const updateCount = useMemo(() => {
     let total: number | null = null;
-    for (const item of items) {
-      if (item.detail && item.link) total = (total ?? 0) + updatesSince(item.detail, item.link).length;
+    for (const entry of dock) {
+      if (details[entry.key]) total = (total ?? 0) + entry.updates.length;
     }
     return total;
-  }, [items]);
+  }, [dock, details]);
 
   useEffect(() => {
     if (!menuOpen) return;
@@ -148,7 +160,7 @@ export function PrSessionChip({ sessionId }: { sessionId: string }) {
   const multiple = items.length > 1;
   const showDot = updateCount === null && items.some((item) => item.unseen);
   const title = [
-    multiple ? sessionPrItemsTitle(items) : top.chip.title,
+    multiple ? itemsTitle(items) : top.chip.title,
     updateCount ? `${updateCount} ${updateCount === 1 ? "update" : "updates"} since your last turn` : null,
     showDot ? "Updated since your last turn" : null,
     multiple ? "Choose a pull request" : "Open the pull request"
@@ -218,13 +230,16 @@ export function PrSessionChip({ sessionId }: { sessionId: string }) {
 }
 
 export function PrSessionPanel({ sessionId }: { sessionId: string }) {
-  const { items, summaryByKey, gitPr, selected } = useSelectedLinkedPr(sessionId);
+  const { linked, selected } = useSelectedLinkedPr(sessionId);
   const selectSessionPr = usePrStore((s) => s.selectSessionPr);
   const link = selected?.link;
-  const summary = selected?.summary;
-  const detail = selected?.detail;
-  const loading = selected?.loading ?? false;
-  const error = selected?.error;
+  const key = selected?.key ?? null;
+  const summary = usePrSummary(key);
+  const detailEntry = usePrDetail(key);
+  const detail = detailEntry?.detail ?? undefined;
+  const loading = detailEntry?.loading ?? false;
+  const error = detailEntry?.error ?? undefined;
+  const dockEntry = useSessionPrDock(sessionId).find((entry) => entry.key === key);
   const openPr = usePrStore((s) => s.openPr);
   const openRunModal = usePrStore((s) => s.openRunModal);
   const settings = useAppSettings();
@@ -232,7 +247,7 @@ export function PrSessionPanel({ sessionId }: { sessionId: string }) {
   const [unlinking, setUnlinking] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
 
-  const updates = useMemo(() => (detail && link ? updatesSince(detail, link) : []), [detail, link]);
+  const updates = dockEntry?.updates ?? NO_UPDATES;
   const unresolved = useMemo(() => (detail ? detail.threads.filter((t) => !t.isResolved) : []), [detail]);
   const status = useMemo(() => (detail ? mergeBoxState(detail) : null), [detail]);
 
@@ -242,11 +257,11 @@ export function PrSessionPanel({ sessionId }: { sessionId: string }) {
 
   const pr = detail ?? summary ?? null;
   const workflows = settings?.prWorkflows ?? [];
-  const workflowId = followUpWorkflow(link, pr, workflows)?.id ?? defaultFollowUpWorkflowId(link, pr);
   const now = Date.now();
 
   const sendThread = (thread: PrReviewThread) => {
-    openRunModal({ workflowId, subject: { kind: "pr", ref: link.ref }, continueSessionId: sessionId, promptOverride: threadQuoteText(thread, link.ref) });
+    if (!dockEntry) return;
+    openRunModal({ workflowId: dockEntry.workflowId, subject: { kind: "pr", ref: link.ref }, continueSessionId: sessionId, promptOverride: threadQuoteText(thread, link.ref) });
   };
 
   const unlink = async () => {
@@ -267,10 +282,9 @@ export function PrSessionPanel({ sessionId }: { sessionId: string }) {
 
   return (
     <div className="pr-panel">
-      {items.length > 1 && (
+      {linked.length > 1 && (
         <div className="pr-panel-switch" role="tablist" aria-label="Linked pull requests">
-          {items.map((item) => {
-            const itemPr = item.summary ?? item.detail;
+          {linked.map((item) => {
             const active = item.key === selected?.key;
             return (
               <button
@@ -278,13 +292,13 @@ export function PrSessionPanel({ sessionId }: { sessionId: string }) {
                 className={`pr-panel-switch-btn${active ? " active" : ""}`}
                 role="tab"
                 aria-selected={active}
-                title={itemPr ? `${prRefLabel(item.link.ref)} · ${itemPr.title}` : prRefLabel(item.link.ref)}
+                title={item.title ? `${prRefLabel(item.ref)} · ${item.title}` : prRefLabel(item.ref)}
                 onClick={() => {
                   selectSessionPr(sessionId, item.key);
                   setActionError(null);
                 }}
               >
-                <PrChipBadge chip={displayChip(item.link, summaryByKey, gitPr)} />
+                <PrChipBadge chip={item.chip} />
                 {item.unseen && <span className="pr-panel-chip-dot" aria-hidden="true" />}
               </button>
             );

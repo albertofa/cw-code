@@ -134,6 +134,10 @@ export class PrStore {
     return this.details.get(key);
   }
 
+  detailError(key: string): string | null {
+    return this.detailErrors.get(key) ?? null;
+  }
+
   context(): GitHubContext {
     return githubContext(this.repos, this.viewer());
   }

@@ -17,7 +17,7 @@ import type {
 } from "@cw-code/contracts";
 import { suggestedWorkflow } from "./prWorkflows.js";
 import { formatRelativeAge } from "./prInboxModel.js";
-import { linkFor, pickMainSession, sessionsLinkedTo } from "./sessionPrLinks.js";
+import { linkFor } from "./sessionPrLinks.js";
 
 export type Tone = "ok" | "bad" | "warn" | "info" | "neutral" | "merged";
 
@@ -308,6 +308,15 @@ export function latestSession<S extends LinkedSession>(sessions: S[]): S | null 
   return sessions.reduce<S | null>((latest, session) => (latest === null || session.updatedAt > latest.updatedAt ? session : latest), null);
 }
 
+function mainPrSession<S extends LinkedSession>(sessions: S[], ref: PrSummary["ref"]): S | null {
+  const linked = sessions.filter((session) => linkFor(session, ref) !== undefined);
+  return (
+    linked.find((session) => linkFor(session, ref)?.origin === "opened") ??
+    linked.find((session) => linkFor(session, ref)?.workflowId === "review") ??
+    latestSession(linked)
+  );
+}
+
 export interface SessionOriginLink {
   origin: PrLinkOrigin;
   workflowId?: string;
@@ -346,7 +355,7 @@ export function isFinished(subject: RowSubject): boolean {
 export function continueSessionFor<S extends LinkedSession>(subject: RowSubject, workflowTarget: PrWorkflow["target"], sessions: S[]): S | null {
   if (workflowTarget === "pr") {
     const ref = subject.kind === "pr" ? subject.pr.ref : subject.kind === "run" ? runPrRef(subject.run) : null;
-    return ref ? pickMainSession(sessionsLinkedTo(sessions, ref), ref) : null;
+    return ref ? mainPrSession(sessions, ref) : null;
   }
   if (workflowTarget === "issue") {
     return subject.kind === "issue" ? latestSession(sessions.filter((session) => issueLinkFor(session, subject.issue.ref) !== undefined)) : null;

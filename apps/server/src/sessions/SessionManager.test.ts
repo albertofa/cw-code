@@ -2516,6 +2516,23 @@ describe("SessionManager", () => {
     manager.dispose();
   });
 
+  it("never moves a pull request's seen state backwards when it is linked again", async () => {
+    const { manager } = makeManager();
+    const project = manager.addProject("C:\\proj-relink-seen");
+    const session = await manager.createSession(project.id, "claude");
+    const widgets = { host: "github.com", owner: "acme", repo: "widgets", number: 42 };
+    const stale = { ref: widgets, origin: "linked" as const, lastSeenSha: "a", lastSeenAt: 100 };
+    manager.linkPr(session.id, stale);
+    manager.markPrSeen(session.id, widgets, "a2", 500);
+
+    let meta = manager.linkPr(session.id, { ...stale, workflowId: "babysit" });
+    expect(meta.prs?.[0]).toMatchObject({ workflowId: "babysit", lastSeenSha: "a2", lastSeenAt: 500 });
+
+    meta = manager.linkPr(session.id, { ...stale, lastSeenSha: "a3", lastSeenAt: 900 });
+    expect(meta.prs?.[0]).toMatchObject({ lastSeenSha: "a3", lastSeenAt: 900 });
+    manager.dispose();
+  });
+
   it("links, marks seen and unlinks pull requests independently", async () => {
     const { manager } = makeManager();
     const project = manager.addProject("C:\\proj-multi-pr");

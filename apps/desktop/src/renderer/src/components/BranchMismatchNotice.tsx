@@ -4,7 +4,7 @@ import { useAppStore } from "../stores/appStore.js";
 import { ipcErrorMessage } from "./ipcError.js";
 import { keepLabel, mismatchSentence, sendHereLabel, type BranchMismatch } from "./sessionBranch.js";
 import { useBranchMismatch } from "./useGit.js";
-import { findSession } from "./useLinkedPr.js";
+import { findSession } from "../server/sidebarData.js";
 import { useThreadEntry } from "./useThread.js";
 
 export function BranchMismatchDock({ sessionId }: { sessionId: string }) {

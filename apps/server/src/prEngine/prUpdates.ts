@@ -1,9 +1,7 @@
 import type { PrCheck, PrDetail, PrReviewThread, PrSummary, PrTimelineItem, PrUpdate, SessionPrLink } from "@cw-code/contracts";
+import { hasUnseen } from "@cw-code/shared/prSeen";
 
-export function hasUnseen(pr: PrSummary, link: SessionPrLink): boolean {
-  if (pr.state !== "OPEN") return false;
-  return (link.lastSeenSha !== "" && pr.headRefOid !== link.lastSeenSha) || pr.updatedAt > link.lastSeenAt;
-}
+export { hasUnseen };
 
 export function updatesSince(detail: PrDetail, link: SessionPrLink): PrUpdate[] {
   const updates: PrUpdate[] = [];

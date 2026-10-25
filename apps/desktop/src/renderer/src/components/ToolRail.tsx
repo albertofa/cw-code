@@ -1,5 +1,5 @@
 import { Fragment, type MouseEvent as ReactMouseEvent } from "react";
-import type { DockableTabId } from "@cw-code/contracts";
+import type { DockableTabId, SessionPrItem } from "@cw-code/contracts";
 import type { DriverName } from "../cw.js";
 import { resolveBottomActive, rightOpenTabs } from "../stores/panelLayout.js";
 import { selectSessionPanel, usePanelStore } from "../stores/panelStore.js";
@@ -7,10 +7,13 @@ import { DriverIcon } from "./DriverIcon.js";
 import { PanelToggles } from "./PanelToggles.js";
 import { endTabDrag, startTabDrag, useDockDrop } from "./useDockDrop.js";
 import { useBranchMismatch, useGitStatus } from "./useGit.js";
-import { useLinkedPrs } from "./useLinkedPr.js";
+import { usePrDetails, usePrSummaries } from "./usePrs.js";
+import { useThreadEntry } from "./useThread.js";
 import { TOOL_TABS, isHarnessTabId } from "./toolTabs.js";
 import { checkCountsTone, checksTone, railGroups, type RailDotTone } from "./railTools.js";
 import "./toolRail.css";
+
+const EMPTY_PR_ITEMS: SessionPrItem[] = [];
 
 export interface SubagentStats {
   total: number;
@@ -18,11 +21,13 @@ export interface SubagentStats {
 }
 
 function PrDot({ sessionId }: { sessionId: string }) {
-  const { items } = useLinkedPrs(sessionId);
+  const items = useThreadEntry(sessionId, "prItems") ?? EMPTY_PR_ITEMS;
+  const summaries = usePrSummaries();
+  const details = usePrDetails();
   const gitStatus = useGitStatus(sessionId);
   const mismatch = useBranchMismatch(sessionId);
   const fallback = mismatch ? undefined : gitStatus?.pullRequest?.checks;
-  const linked = checksTone(items.flatMap((item) => (item.summary ?? item.detail)?.ci ?? []));
+  const linked = checksTone(items.flatMap((item) => (item.link ? ((summaries.get(item.key) ?? details[item.key])?.ci ?? []) : [])));
   const tone: RailDotTone | null = linked ?? checkCountsTone(fallback);
   if (tone === null) return null;
   return <span className={`rail-dot ${tone}`} aria-hidden="true" />;

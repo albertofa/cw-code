@@ -30,6 +30,14 @@ export function sameItems<T>(a: readonly T[], b: readonly T[]): boolean {
   return a.length === b.length && a.every((item, index) => item === b[index]);
 }
 
+export function findSession(sessionsByProject: Record<string, Session[]>, sessionId: string): Session | undefined {
+  for (const list of Object.values(sessionsByProject)) {
+    const found = list.find((item) => item.id === sessionId);
+    if (found) return found;
+  }
+  return undefined;
+}
+
 function reuseSession(before: Session | undefined, next: Session): Session {
   if (!before || before === next) return next;
   return JSON.stringify(before) === JSON.stringify(next) ? before : next;

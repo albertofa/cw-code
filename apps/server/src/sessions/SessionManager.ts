@@ -77,6 +77,7 @@ import {
   upsertIssueLink,
   upsertLink,
   upsertRunLink,
+  withNewerSeen,
   type PrHeadPlan
 } from "../github/prLinks.js";
 import { prKey, prRefFromUrl } from "../github/prParsers.js";
@@ -1151,7 +1152,7 @@ export class SessionManager {
     const session = this.store.getSession(sessionId);
     if (!session) throw new Error(`unknown session ${sessionId}`);
     const prUnlinked = removeUnlinkedKey(session.prUnlinked, prKey(link.ref));
-    this.store.updateSession(sessionId, { prs: upsertLink(session.prs, link), prUnlinked });
+    this.store.updateSession(sessionId, { prs: upsertLink(session.prs, withNewerSeen(link, findLink(session.prs, link.ref))), prUnlinked });
     this.endStaleBabysit(sessionId);
     return this.emitSession(sessionId);
   }

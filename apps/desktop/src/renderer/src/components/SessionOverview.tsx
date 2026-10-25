@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { Bot, ChartColumn, ChevronDown, Gauge, GitBranch, ListChecks, Sparkles } from "lucide-react";
+import type { SessionPrItem } from "@cw-code/contracts";
 import type { AccountUsageOk, DriverName, TodoItem } from "../cw.js";
 import { useAppStore, type ChatMessage } from "../stores/appStore.js";
 import { usePrStore } from "../stores/prStore.js";
@@ -12,15 +13,15 @@ import { formatRelativeAge } from "./prInboxModel.js";
 import { collectSubagents, formatTokensShort, isSubagentMessage, subagentStateLabel } from "./subagents.js";
 import { formatDuration } from "./toolSummaries.js";
 import { harnessLabel } from "./toolTabs.js";
-import { findSession, useSessionPrItems } from "./useLinkedPr.js";
 import { formatCostUsd, useNow } from "./usageFormat.js";
 import { useGitStatus } from "./useGit.js";
 import { useThreadEntry, useThreadItemsSelect } from "./useThread.js";
 import { useAccountUsage } from "./useUsage.js";
-import { sameItems } from "../server/sidebarData.js";
+import { findSession, sameItems } from "../server/sidebarData.js";
 import "./sessionOverview.css";
 
 const EMPTY_TODOS: TodoItem[] = [];
+const EMPTY_PR_ITEMS: SessionPrItem[] = [];
 
 function subagentItems(items: ChatMessage[]): ChatMessage[] {
   return items.filter(isSubagentMessage);
@@ -108,7 +109,7 @@ function ChangesSummary({ dirtyCount, addedLines, deletedLines }: { dirtyCount: 
 }
 
 function PullRequestRow({ sessionId, githubError }: { sessionId: string; githubError: string | null }) {
-  const { items } = useSessionPrItems(sessionId);
+  const items = useThreadEntry(sessionId, "prItems") ?? EMPTY_PR_ITEMS;
   const openPr = usePrStore((s) => s.openPr);
   if (items.length > 0) {
     return (
