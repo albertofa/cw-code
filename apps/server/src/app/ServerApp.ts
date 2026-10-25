@@ -398,6 +398,7 @@ export class ServerApp {
     this.sessionSettleTimer = setInterval(() => this.runSessionSweeps(), SESSION_SETTLE_INTERVAL_MS);
     this.sessionSettleTimer.unref?.();
     this.services?.prTracker.start();
+    this.services?.prStore.resume();
     this.services?.sourceControl.start();
   }
 

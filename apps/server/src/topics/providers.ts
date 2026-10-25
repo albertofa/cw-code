@@ -16,7 +16,6 @@ function createPrsProvider(hub: TopicHub, services: Services, { sendTo }: TopicP
     ...services.prStore.attach(hub),
     onSubscribe: pushTrackedPrs,
     resync: () => {
-      services.prStore.resume();
       for (const clientId of hub.subscriberIds(PRS_TOPIC)) pushTrackedPrs(clientId);
     }
   };

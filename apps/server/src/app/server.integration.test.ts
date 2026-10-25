@@ -151,9 +151,14 @@ describe("server process", () => {
     const leaked: unknown[] = [];
     subscriber.on("prs.tracked", (payload) => pushed.push(payload as PrSummary[]));
     bystander.on("prs.tracked", (payload) => leaked.push(payload));
-    const snapshot = await subscriber.call<Record<string, { data: Record<string, unknown> }>>("topics.subscribe", { topics: ["prs"] });
+    await subscriber.call("settings.set", { githubCliBinaryPath: join(home, "no-gh") });
+    type PrsSnapshot = Record<string, { data: { inbox?: { error: string | null } } & Record<string, unknown> }>;
+    const snapshot = await subscriber.call<PrsSnapshot>("topics.subscribe", { topics: ["prs"] });
     expect(Object.keys(snapshot.prs.data).sort()).toEqual(["context", "inbox"]);
     expect(pushed).toEqual([[]]);
+    await subscriber.call("prs.refresh", { force: true });
+    const refreshed = await subscriber.call<PrsSnapshot>("topics.subscribe", { topics: ["prs"] });
+    expect(refreshed.prs.data.inbox?.error).not.toBeNull();
 
     const settingsSeen = (client: ServerClient) =>
       new Promise<AppSettings>((resolve) => {

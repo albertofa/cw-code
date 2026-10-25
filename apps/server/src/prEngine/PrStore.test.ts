@@ -13,6 +13,10 @@ const KEY = prKey(REF);
 const OTHER_REF: PrRef = { ...REF, number: 43 };
 const OTHER_KEY = prKey(OTHER_REF);
 
+function refN(number: number): PrRef {
+  return { ...REF, number };
+}
+
 function summary(overrides: Partial<PrSummary> = {}): PrSummary {
   return {
     ref: REF,
@@ -98,6 +102,8 @@ interface Harness {
   patches: TopicPatch[];
   detailResults: Map<string, PrDetail>;
   detailFailures: Map<string, string>;
+  detailControl: { hold: boolean; auto: boolean; running: number; peak: number };
+  releases: Map<string, () => void>;
   setSettings(patch: { prRefreshIntervalSeconds?: number; prWorkflows?: PrWorkflow[] }): void;
   setInbox(result: PrInboxResult): void;
   data(): PrsTopicData;
@@ -116,6 +122,8 @@ function createHarness(sessions: SessionMeta[] = [], workflows: PrWorkflow[] = [
   const detailResults = new Map<string, PrDetail>();
   const detailFailures = new Map<string, string>();
   const state = { sessions };
+  const detailControl = { hold: false, auto: false, running: 0, peak: 0 };
+  const releases = new Map<string, () => void>();
   const prStore = new PrStore({
     sessions: () => state.sessions,
     settings: () => settings,
@@ -128,11 +136,18 @@ function createHarness(sessions: SessionMeta[] = [], workflows: PrWorkflow[] = [
     fetchDetail: async (ref) => {
       const key = prKey(ref);
       fetchedDetails.push(key);
-      const failure = detailFailures.get(key);
-      if (failure) throw new Error(failure);
-      const result = detailResults.get(key);
-      if (!result) throw new Error(`no detail for ${key}`);
-      return result;
+      detailControl.running += 1;
+      detailControl.peak = Math.max(detailControl.peak, detailControl.running);
+      try {
+        if (detailControl.hold) await new Promise<void>((resolve) => releases.set(key, resolve));
+        const failure = detailFailures.get(key);
+        if (failure) throw new Error(failure);
+        const result = detailResults.get(key) ?? (detailControl.auto ? detailOf(summary({ ref })) : undefined);
+        if (!result) throw new Error(`no detail for ${key}`);
+        return result;
+      } finally {
+        detailControl.running -= 1;
+      }
     }
   });
   const hub = new TopicHub((_clientIds, frame) => {
@@ -164,6 +179,8 @@ function createHarness(sessions: SessionMeta[] = [], workflows: PrWorkflow[] = [
     patches,
     detailResults,
     detailFailures,
+    detailControl,
+    releases,
     setSettings(patch) {
       settings = { ...settings, ...patch };
       prStore.onSettingsChanged();
@@ -292,7 +309,7 @@ describe("PrStore", () => {
       h.prStore.onTracked([summary({ updatedAt: 3000 })]);
       await settle();
       await settle();
-      expect(h.fetchedDetails.length).toBeLessThanOrEqual(2);
+      expect(h.fetchedDetails).toEqual([KEY]);
     });
 
     it("records failures in the detail entry without retrying", async () => {
@@ -333,6 +350,150 @@ describe("PrStore", () => {
       await request;
       expect(entry(h, KEY)?.loading).toBe(false);
       expect(entry(h, KEY)?.detail?.body).toBe("body");
+    });
+  });
+
+  describe("detail load queue", () => {
+    const manyLinks = (count: number) => Array.from({ length: count }, (_, index) => link({ ref: refN(index + 1) }));
+
+    it("runs at most three detail loads at once and drains the queue", async () => {
+      const h = createHarness([session({ prs: manyLinks(7) })]);
+      h.detailControl.hold = true;
+      h.detailControl.auto = true;
+      h.openSession("s1");
+      await settle();
+      expect(h.fetchedDetails).toHaveLength(3);
+
+      for (let round = 0; round < 7; round++) {
+        for (const release of [...h.releases.values()]) release();
+        h.releases.clear();
+        await settle();
+      }
+      expect(h.fetchedDetails).toHaveLength(7);
+      expect(h.detailControl.peak).toBe(3);
+      expect(h.prStore.detail(prKey(refN(7)))?.ref.number).toBe(7);
+    });
+
+    it("lets explicit loads jump the queue", async () => {
+      const h = createHarness([session({ prs: manyLinks(5) })]);
+      h.detailControl.hold = true;
+      h.detailControl.auto = true;
+      h.openSession("s1");
+      await settle();
+      expect(h.fetchedDetails).toEqual([1, 2, 3].map((n) => prKey(refN(n))));
+
+      const explicit = h.prStore.loadDetail(refN(5));
+      h.releases.get(prKey(refN(1)))?.();
+      await settle();
+      expect(h.fetchedDetails.at(3)).toBe(prKey(refN(5)));
+      h.detailControl.hold = false;
+      for (const release of h.releases.values()) release();
+      await explicit;
+    });
+
+    it("keeps attempt dedupe for queued loads", async () => {
+      const h = createHarness([session({ prs: manyLinks(5) })]);
+      h.detailControl.hold = true;
+      h.detailControl.auto = true;
+      h.openSession("s1");
+      await settle();
+      h.prStore.onSessionsChanged();
+      await settle();
+      h.detailControl.hold = false;
+      for (const release of h.releases.values()) release();
+      await settle();
+      expect(h.fetchedDetails).toHaveLength(5);
+      expect(new Set(h.fetchedDetails).size).toBe(5);
+    });
+
+    it("ignores results that arrive after dispose and rejects queued loads", async () => {
+      const h = createHarness([session({ prs: manyLinks(4) })]);
+      h.detailControl.hold = true;
+      h.detailControl.auto = true;
+      h.openSession("s1");
+      await settle();
+      const queued = h.prStore.loadDetail(refN(4));
+      h.prStore.dispose();
+      const [result] = await Promise.allSettled([queued]);
+      expect(result.status).toBe("rejected");
+      for (const release of h.releases.values()) release();
+      await settle();
+      expect(h.prStore.detail(prKey(refN(1)))).toBeUndefined();
+      expect(h.fetchedDetails).toHaveLength(3);
+    });
+  });
+
+  describe("detail cache eviction", () => {
+    it("drops details nobody wants once the session closes", async () => {
+      const h = createHarness([session()]);
+      h.detailResults.set(KEY, detailOf(summary()));
+      h.openSession("s1");
+      await settle();
+      expect(h.prStore.detail(KEY)).toBeDefined();
+      h.closeSession("s1");
+      await settle();
+      expect(h.prStore.detail(KEY)).toBeUndefined();
+    });
+
+    it("keeps explicitly requested details for ten minutes", async () => {
+      const h = createHarness();
+      h.detailResults.set(KEY, detailOf(summary()));
+      await h.prStore.loadDetail(REF);
+      await advanceTimersByTimeAsync(9 * 60_000);
+      h.prStore.onSessionsChanged();
+      await settle();
+      expect(h.prStore.detail(KEY)).toBeDefined();
+      await advanceTimersByTimeAsync(2 * 60_000);
+      h.prStore.onSessionsChanged();
+      await settle();
+      expect(h.prStore.detail(KEY)).toBeUndefined();
+    });
+
+    it("keeps details of PRs that sessions still care about", async () => {
+      const h = createHarness([session({ prs: [link({ workflowId: "babysit" })] })], [babysitWorkflow()]);
+      h.detailResults.set(KEY, detailOf(summary()));
+      h.prStore.onTracked([summary()]);
+      await settle();
+      await advanceTimersByTimeAsync(30 * 60_000);
+      h.prStore.onSessionsChanged();
+      await settle();
+      expect(h.prStore.detail(KEY)).toBeDefined();
+      expect(h.fetchedDetails).toEqual([KEY]);
+    });
+
+    it("caps the cache at 100 details", async () => {
+      const h = createHarness();
+      h.detailControl.auto = true;
+      await Promise.all(Array.from({ length: 105 }, (_, index) => h.prStore.loadDetail(refN(index + 1))));
+      await settle();
+      const cached = Array.from({ length: 105 }, (_, index) => h.prStore.detail(prKey(refN(index + 1)))).filter(Boolean);
+      expect(cached).toHaveLength(100);
+    });
+  });
+
+  describe("projection", () => {
+    it("publishes nothing when a change leaves the data identical", async () => {
+      const h = createHarness([session()]);
+      h.setInbox(inboxResult([summary()]));
+      h.subscribePrs();
+      await settle();
+      const count = h.patches.length;
+      h.prStore.onSessionsChanged();
+      h.prStore.onTracked([]);
+      await settle();
+      expect(h.patches).toHaveLength(count);
+    });
+
+    it("coalesces bursts of changes into one patch", async () => {
+      const h = createHarness([]);
+      h.setInbox(inboxResult([summary()]));
+      h.subscribePrs();
+      await settle();
+      const count = h.patches.length;
+      h.sessions.push(session());
+      for (let index = 0; index < 5; index++) h.prStore.onSessionsChanged();
+      await settle();
+      expect(h.patches).toHaveLength(count + 1);
     });
   });
 
@@ -381,8 +542,38 @@ describe("PrStore", () => {
       expect(h.fetchedInboxes).toHaveLength(1);
 
       h.prStore.resume();
-      await advanceTimersByTimeAsync(60_000);
+      await settle();
       expect(h.fetchedInboxes).toHaveLength(2);
+      await advanceTimersByTimeAsync(60_000);
+      expect(h.fetchedInboxes).toHaveLength(3);
+      h.prStore.dispose();
+    });
+
+    it("runs a forced refresh after a non-forced one that is already in flight", async () => {
+      const h = createHarness();
+      await Promise.all([h.prStore.refreshInbox(false), h.prStore.refreshInbox(true)]);
+      expect(h.fetchedInboxes).toEqual([false, true]);
+    });
+
+    it("ignores an inbox result that arrives after dispose", async () => {
+      const h = createHarness();
+      h.setInbox(inboxResult([summary()]));
+      const request = h.prStore.refreshInbox(false);
+      h.prStore.dispose();
+      await request;
+      expect(h.prStore.summaryLookup().size).toBe(0);
+    });
+
+    it("resumes an active subscription after dispose without a resync", async () => {
+      const h = createHarness();
+      h.subscribePrs();
+      await settle();
+      h.prStore.dispose();
+      h.prStore.resume();
+      await settle();
+      const before = h.fetchedInboxes.length;
+      await advanceTimersByTimeAsync(60_000);
+      expect(h.fetchedInboxes.length).toBe(before + 1);
       h.prStore.dispose();
     });
 
@@ -406,7 +597,7 @@ describe("PrStore", () => {
       expect(h.prStore.summaryLookup().get(KEY)?.title).toBe("Add feature");
     });
 
-    it("keeps the previous inbox and reports the error when a refresh fails", async () => {
+    it("replaces the inbox with a refresh result that carries an error", async () => {
       const h = createHarness();
       h.setInbox(inboxResult([summary()]));
       h.subscribePrs();
@@ -414,6 +605,7 @@ describe("PrStore", () => {
       h.setInbox(inboxResult([], { error: "rate limited", account: null, fetchedAt: 200 }));
       await h.prStore.refreshInbox(true);
       expect(h.data().inbox.error).toBe("rate limited");
+      expect(h.data().inbox.keys).toEqual([]);
     });
 
     it("exposes detail-only summaries without the heavy detail fields", async () => {
@@ -433,6 +625,7 @@ describe("PrStore", () => {
       h.subscribePrs();
       await settle();
       h.prStore.onTracked([summary({ title: "from tracker", updatedAt: 2000 })]);
+      await settle();
       expect(h.data()[`summary/${KEY}`]?.title).toBe("from tracker");
     });
 
@@ -452,9 +645,11 @@ describe("PrStore", () => {
       const h = createHarness([]);
       h.subscribePrs();
       h.prStore.onTracked([summary()]);
+      await settle();
       expect(h.data()[`rel/${KEY}`]?.linkedSessionIds).toEqual([]);
       h.sessions.push(session());
       h.prStore.onSessionsChanged();
+      await settle();
       expect(h.data()[`rel/${KEY}`]?.linkedSessionIds).toEqual(["s1"]);
     });
 
@@ -465,9 +660,12 @@ describe("PrStore", () => {
         calls += 1;
       });
       h.prStore.onTracked([summary()]);
+      h.prStore.onSessionsChanged();
+      await settle();
       expect(calls).toBe(1);
       off();
       h.prStore.onTracked([]);
+      await settle();
       expect(calls).toBe(1);
     });
 
