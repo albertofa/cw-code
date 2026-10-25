@@ -39,7 +39,7 @@ export class RunWatcher {
 
   private watched = new Map<string, RunRef>();
   private etags = new Map<string, string>();
-  private active = true;
+  private active = false;
   private epoch = 0;
   private warned = new Map<string, Set<string>>();
   private runsTimer: ReturnType<typeof setTimeout> | null = null;

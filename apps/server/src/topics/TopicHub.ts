@@ -6,6 +6,7 @@ type AnyStore = TopicStore<Record<string, unknown>>;
 
 export interface TopicProvider {
   owns(topic: string): boolean;
+  exactTopics?: readonly string[];
   acquire(topic: string, hub: TopicHub): AnyStore;
   release(topic: string): void;
   onSubscribe?(clientId: string, topic: string): void;
@@ -22,7 +23,8 @@ function unknownTopic(topic: string, cause?: unknown): Error {
 
 export class TopicHub {
   private providers: TopicProvider[] = [];
-  private readonly acquired = new Map<string, AnyStore>();
+  private readonly current = new Map<string, AnyStore>();
+  private readonly warnedStale = new WeakSet<object>();
   private readonly acquiring = new Set<string>();
   private readonly lastRev = new Map<string, number>();
   private readonly topicsByClient = new Map<string, Set<string>>();
@@ -36,7 +38,7 @@ export class TopicHub {
 
   clearProviders(): void {
     this.providers = [];
-    this.acquired.clear();
+    this.current.clear();
   }
 
   reacquireAll(): void {
@@ -47,7 +49,7 @@ export class TopicHub {
         this.acquireStore(provider, topic, false);
       } catch (error) {
         console.warn(`topic '${topic}' cannot be restored and its subscribers were dropped: ${(error as Error).message}`);
-        this.dropTopic(topic);
+        this.dropTopic(topic, false);
         continue;
       }
       this.runHook(topic, () => provider?.resync?.(topic));
@@ -63,28 +65,27 @@ export class TopicHub {
 
   createStore<D extends Record<string, unknown>>(topic: string, initial: D): TopicStore<D> {
     const startRev = (this.lastRev.get(topic) ?? 0) + 1;
-    const publish = (patch: TopicPatch): void => {
-      this.lastRev.set(topic, patch.rev);
-      const clientIds = this.clientsByTopic.get(topic);
-      if (!clientIds || clientIds.size === 0) return;
-      this.send([...clientIds], JSON.stringify({ t: "patch", topic: patch.topic, rev: patch.rev, ops: patch.ops }));
-    };
     const hasLiveSubscribers = this.subscriberIds(topic).size > 0 && !this.acquiring.has(topic);
-    if (!hasLiveSubscribers) return new TopicStore(topic, initial, startRev, publish);
-    const store = new TopicStore<D>(topic, {} as D, startRev, publish);
-    store.replace(initial);
+    const store: TopicStore<D> = new TopicStore<D>(topic, hasLiveSubscribers ? ({} as D) : initial, startRev, (patch) => this.publish(store, patch));
+    this.current.set(topic, store as unknown as AnyStore);
+    if (hasLiveSubscribers) store.replace(initial);
     return store;
   }
 
   subscribe(ctx: CallContext, topics: string[]): TopicsSubscribeResult {
-    this.subscribeClient(ctx.clientId, topics);
-    const result: TopicsSubscribeResult = {};
-    for (const topic of topics) {
-      const store = this.acquired.get(topic);
-      if (!store) throw unknownTopic(topic);
-      result[topic] = store.snapshot();
+    const added = this.subscribeClient(ctx.clientId, topics);
+    try {
+      const result: TopicsSubscribeResult = {};
+      for (const topic of topics) {
+        const store = this.current.get(topic);
+        if (!store) throw unknownTopic(topic);
+        result[topic] = store.snapshot();
+      }
+      return result;
+    } catch (error) {
+      for (const topic of added.reverse()) this.removeSubscription(ctx.clientId, topic);
+      throw error;
     }
-    return result;
   }
 
   subscribeClient(clientId: string, topics: readonly string[]): string[] {
@@ -117,10 +118,10 @@ export class TopicHub {
     for (const topic of [...owned]) this.removeSubscription(ctx.clientId, topic);
   }
 
-  dropTopic(topic: string): void {
+  dropTopic(topic: string, release = true): void {
     const clients = this.clientsByTopic.get(topic);
     if (!clients) return;
-    for (const clientId of [...clients]) this.removeSubscription(clientId, topic);
+    for (const clientId of [...clients]) this.removeSubscription(clientId, topic, release);
   }
 
   isSubscribed(clientId: string, topic: string): boolean {
@@ -144,13 +145,33 @@ export class TopicHub {
   }
 
   private providerFor(topic: string): TopicProvider | undefined {
-    return this.providers.find((provider) => provider.owns(topic));
+    return this.providers.find((provider) => provider.exactTopics?.includes(topic)) ?? this.providers.find((provider) => provider.owns(topic));
+  }
+
+  private publish(store: object, patch: TopicPatch): void {
+    const topic = patch.topic;
+    const current = this.current.get(topic);
+    const subscribers = this.clientsByTopic.get(topic);
+    const isStale =
+      (current !== undefined && current !== store) ||
+      (current === undefined && subscribers !== undefined && subscribers.size > 0) ||
+      patch.rev <= (this.lastRev.get(topic) ?? 0);
+    if (isStale) {
+      if (!this.warnedStale.has(store)) {
+        this.warnedStale.add(store);
+        console.warn(`dropping a patch for topic '${topic}' from a store that is no longer current`);
+      }
+      return;
+    }
+    this.lastRev.set(topic, patch.rev);
+    if (!subscribers || subscribers.size === 0) return;
+    this.send([...subscribers], JSON.stringify({ t: "patch", topic, rev: patch.rev, ops: patch.ops }));
   }
 
   private acquireStore(provider: TopicProvider, topic: string, firstSubscriber: boolean): void {
     if (firstSubscriber) this.acquiring.add(topic);
     try {
-      this.acquired.set(topic, provider.acquire(topic, this));
+      this.current.set(topic, provider.acquire(topic, this));
     } finally {
       this.acquiring.delete(topic);
     }
@@ -167,6 +188,7 @@ export class TopicHub {
         this.acquireStore(provider, topic, true);
       } catch (error) {
         this.unlink(clientId, topic);
+        this.current.delete(topic);
         throw unknownTopic(topic, error);
       }
     }
@@ -174,14 +196,14 @@ export class TopicHub {
     return true;
   }
 
-  private removeSubscription(clientId: string, topic: string): void {
+  private removeSubscription(clientId: string, topic: string, release = true): void {
     if (!this.isSubscribed(clientId, topic)) return;
     const isLast = this.unlink(clientId, topic);
     const provider = this.providerFor(topic);
     this.runHook(topic, () => provider?.onUnsubscribe?.(clientId, topic));
     if (!isLast) return;
-    this.acquired.delete(topic);
-    this.runHook(topic, () => provider?.release(topic));
+    this.current.delete(topic);
+    if (release) this.runHook(topic, () => provider?.release(topic));
   }
 
   private link(clientId: string, topic: string): void {

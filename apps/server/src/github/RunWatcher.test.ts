@@ -55,13 +55,27 @@ describe("RunWatcher", () => {
     vi.useRealTimers();
   });
 
-  function setup(handler: (args: string[]) => ReturnType<GhExec>) {
+  function setup(handler: (args: string[]) => ReturnType<GhExec>, active = true) {
     const exec = vi.fn<GhExec>(handler);
     const watcher = new RunWatcher(settings, exec);
+    if (active) watcher.setActive(true);
     const changed: WorkflowRunSummary[][] = [];
     watcher.onRunsChanged = (runs) => changed.push(runs);
     return { exec, watcher, changed };
   }
+
+  it("does not poll until it is activated", async () => {
+    const { exec, watcher, changed } = setup(async (args) => (isJobsCall(args) ? NO_JOBS : ok([], restRun(1, "in_progress"))), false);
+    watcher.watch([REF_A]);
+    expect(vi.getTimerCount()).toBe(0);
+    await advanceTimersByTimeAsync(60_000);
+    expect(exec).not.toHaveBeenCalled();
+
+    watcher.setActive(true);
+    await advanceTimersByTimeAsync(15_000);
+    expect(changed).toHaveLength(1);
+    watcher.dispose();
+  });
 
   it("emits on a 200 with jobs and sends the stored ETag on the next poll", async () => {
     const jobs = {

@@ -196,6 +196,99 @@ describe("TopicHub", () => {
     expect(hub.countFor("a")).toBe(0);
   });
 
+  test("drops patches from a released store once a new store is current, and warns once", () => {
+    const { hub, sent, stores } = setup();
+    hub.subscribe(ctx("a"), ["t/1"]);
+    const old = stores.get("t/1");
+    old?.upsert("k", 1);
+    hub.unsubscribe(ctx("a"), ["t/1"]);
+    hub.subscribe(ctx("a"), ["t/1"]);
+    sent.length = 0;
+    warn.mockClear();
+
+    old?.upsert("stale", 1);
+    old?.upsert("stale", 2);
+    expect(sent).toEqual([]);
+    expect(warn).toHaveBeenCalledTimes(1);
+
+    stores.get("t/1")?.upsert("fresh", 1);
+    expect(sent).toHaveLength(1);
+    expect(JSON.parse(sent[0]?.frame ?? "")).toMatchObject({ topic: "t/1", rev: 2 });
+  });
+
+  test("a released store that is not replaced keeps the rev continuous without sending", () => {
+    const { hub, sent, stores } = setup();
+    hub.subscribe(ctx("a"), ["t/1"]);
+    const store = stores.get("t/1");
+    hub.unsubscribe(ctx("a"), ["t/1"]);
+    store?.upsert("k", 1);
+    expect(sent).toEqual([]);
+    expect(hub.createStore("t/1", {}).rev).toBe(1);
+  });
+
+  test("createStore on a live topic makes the new store current for new subscribers and replaces existing state", () => {
+    const { hub, sent, stores } = setup();
+    hub.subscribe(ctx("a"), ["t/1"]);
+    const old = stores.get("t/1");
+    old?.upsert("k", 1);
+    sent.length = 0;
+
+    const swapped = hub.createStore<Record<string, unknown>>("t/1", { swapped: true });
+
+    expect(sent).toEqual([{ clientIds: ["a"], frame: JSON.stringify({ t: "patch", topic: "t/1", rev: 2, ops: [{ op: "replace", value: { swapped: true } }] }) }]);
+    expect(hub.subscribe(ctx("b"), ["t/1"])["t/1"]).toEqual({ rev: 2, data: { swapped: true } });
+    sent.length = 0;
+    old?.upsert("stale", 1);
+    swapped.upsert("next", 1);
+    expect(sent.map((entry) => JSON.parse(entry.frame).rev)).toEqual([3]);
+  });
+
+  test("reacquireAll does not release a topic whose acquire just failed", () => {
+    const { hub, log } = setup();
+    hub.subscribe(ctx("a"), ["t/1"]);
+    log.length = 0;
+    hub.clearProviders();
+    const releases: string[] = [];
+    hub.register({
+      owns: () => true,
+      acquire: () => {
+        throw new Error("boom");
+      },
+      release: (topic) => void releases.push(topic)
+    });
+    hub.reacquireAll();
+    expect(releases).toEqual([]);
+    expect(hub.countFor("a")).toBe(0);
+  });
+
+  test("subscribe rolls back everything when a topic lost its store during the call", () => {
+    const { hub, provider } = setup();
+    provider.onSubscribe = (_clientId, topic) => {
+      if (topic === "t/2") hub.dropTopic("t/1");
+    };
+    expect(() => hub.subscribe(ctx("a"), ["t/1", "t/2"])).toThrow(expect.objectContaining({ code: "unknown-topic" }));
+    expect(hub.countFor("a")).toBe(0);
+    expect(hub.activeTopics("t/")).toEqual([]);
+  });
+
+  test("an exact-topic provider wins over a prefix provider regardless of registration order", () => {
+    const hub = new TopicHub(() => {});
+    const owner: string[] = [];
+    const provider = (name: string, owns: TopicProvider["owns"], exactTopics?: string[]): TopicProvider => ({
+      owns,
+      exactTopics,
+      acquire: (topic, owning) => {
+        owner.push(name);
+        return owning.createStore<Record<string, unknown>>(topic, {});
+      },
+      release: () => {}
+    });
+    hub.register(provider("prefix", (topic) => topic.startsWith("github/")));
+    hub.register(provider("exact", (topic) => topic === "github/runs", ["github/runs"]));
+    hub.subscribe(ctx("a"), ["github/runs", "github/other"]);
+    expect(owner).toEqual(["exact", "prefix"]);
+  });
+
   test("resync calls the provider resync of each active topic", () => {
     const { hub, provider } = setup();
     const resynced: string[] = [];
