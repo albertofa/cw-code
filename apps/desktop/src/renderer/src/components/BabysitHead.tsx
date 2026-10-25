@@ -53,15 +53,28 @@ export function BabysitHead({ sessionId, state }: { sessionId: string; state: Ba
   const { link, workflow, phase } = state;
   const paused = phase.kind === "paused";
 
-  const pause = () => {
-    pauseLocal(sessionId);
+  const pause = async () => {
     setError(null);
-    void window.cw.pauseAutoFollowUp(sessionId).catch((err: unknown) => setError(`Could not pause ${workflow.label}: ${ipcErrorMessage(err)}`));
+    try {
+      await window.cw.pauseAutoFollowUp(sessionId);
+      pauseLocal(sessionId);
+    } catch (err) {
+      setError(`Could not pause ${workflow.label}: ${ipcErrorMessage(err)}`);
+    }
   };
 
   const resume = async () => {
-    resumeLocal(sessionId);
     await window.cw.resumeAutoFollowUp(sessionId);
+    resumeLocal(sessionId);
+  };
+
+  const resumeClicked = async () => {
+    setError(null);
+    try {
+      await resume();
+    } catch (err) {
+      setError(`Could not resume ${workflow.label}: ${ipcErrorMessage(err)}`);
+    }
   };
 
   const stop = async () => {
@@ -71,9 +84,15 @@ export function BabysitHead({ sessionId, state }: { sessionId: string; state: Ba
     const { workflowId: _workflowId, ...rest } = link;
     try {
       await window.cw.linkSessionPr(sessionId, rest);
-      await resume();
     } catch (err) {
       setError(`Could not stop ${workflow.label}: ${ipcErrorMessage(err)}`);
+      setStopping(false);
+      return;
+    }
+    try {
+      await resume();
+    } catch (err) {
+      setError(`Stopped ${workflow.label}, but could not clear its pause: ${ipcErrorMessage(err)}`);
     } finally {
       setStopping(false);
     }
@@ -97,18 +116,12 @@ export function BabysitHead({ sessionId, state }: { sessionId: string; state: Ba
           View PR
         </button>
         {paused ? (
-          <button
-            className="pr-detail-btn sm"
-            onClick={() => {
-              setError(null);
-              void resume().catch((err: unknown) => setError(`Could not resume ${workflow.label}: ${ipcErrorMessage(err)}`));
-            }}
-          >
+          <button className="pr-detail-btn sm" onClick={() => void resumeClicked()}>
             <Play size={12} aria-hidden="true" />
             Resume
           </button>
         ) : (
-          <button className="pr-detail-btn sm" onClick={pause} title="Stop sending updates on their own until you resume">
+          <button className="pr-detail-btn sm" onClick={() => void pause()} title="Stop sending updates on their own until you resume">
             <Pause size={12} aria-hidden="true" />
             Pause
           </button>

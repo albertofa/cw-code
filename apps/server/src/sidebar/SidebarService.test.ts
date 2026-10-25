@@ -311,14 +311,17 @@ describe("SidebarService", () => {
     expect(row("a").session.title).toBe("new");
   });
 
-  test("archived sessions have no row and defaults pick the newest session not auto-resolved", () => {
+  test("archived sessions get a row but stay out of the layout and defaults pick the newest session not auto-resolved", () => {
     const { data } = setup([
       session("a", "archived", { updatedAt: 9 }),
       session("b", "resolved", { updatedAt: 8, autoResolved: true }),
       session("c", "idle", { updatedAt: 1 })
     ]);
     const snapshot = data();
-    expect(Object.keys(snapshot).filter((key) => key.startsWith("row/")).sort()).toEqual(["row/b", "row/c"]);
+    expect(Object.keys(snapshot).filter((key) => key.startsWith("row/")).sort()).toEqual(["row/a", "row/b", "row/c"]);
+    expect(snapshot["row/a"]).toMatchObject({ session: { id: "a", status: "archived" }, attention: null, babysit: null });
+    const layout = snapshot.layout as SidebarLayout;
+    expect([...layout.workingSet, ...layout.main, ...layout.resolved, ...layout.needsYou.map((entry) => entry.sessionId)]).not.toContain("a");
     expect(snapshot.defaults).toEqual({ restoreSessionId: "c", restoreProjectId: "p", projectsByRecency: ["p"] });
     expect(snapshot["project/p"]).toEqual(PROJECT);
     expect(snapshot["worktrees/p"]).toEqual([]);

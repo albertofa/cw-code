@@ -357,6 +357,35 @@ describe("GitHubViews", () => {
     expect(meta.badges).toEqual({ pr: { count: 1, tone: "default" }, issue: { count: 1, tone: "quiet" }, run: { count: 1, tone: "bad" } });
   });
 
+  it("rejects a refresh for a topic that is not subscribed", async () => {
+    const h = createHarness();
+    const topic = githubViewTopic("pr", "is:pr author:@me");
+    const [viewResult, metaResult] = await Promise.allSettled([h.views.refresh(topic, true), h.views.refresh(GITHUB_META_TOPIC, true)]);
+    expect(viewResult.status).toBe("rejected");
+    expect(metaResult.status).toBe("rejected");
+    h.subscribe(topic);
+    await flush();
+    await h.views.refresh(topic, true);
+    expect(h.calls.prs.at(-1)?.force).toBe(true);
+  });
+
+  it("force-refreshes only open run views on CI activity", async () => {
+    const h = createHarness();
+    h.state.runs = [run(1)];
+    h.subscribe(GITHUB_META_TOPIC);
+    await flush();
+    const metaRunFetches = h.calls.runs.length;
+    h.views.ciActivity();
+    await flush();
+    expect(h.calls.runs).toHaveLength(metaRunFetches);
+    h.subscribe(githubViewTopic("run", "is:run"));
+    await flush();
+    const before = h.calls.runs.length;
+    h.views.ciActivity();
+    await flush();
+    expect(h.calls.runs.length).toBeGreaterThan(before);
+  });
+
   it("caches view counts for 60 seconds", async () => {
     const h = createHarness();
     setSystemTime(new Date(1_000_000));
@@ -395,7 +424,8 @@ describe("GitHubViews", () => {
       expect(h.calls.prs.at(-1)?.force).toBe(true);
       h.unsubscribe(topic);
       await advanceTimersByTimeAsync(180_000);
-      await h.views.refresh(topic, true);
+      const [afterUnsubscribe] = await Promise.allSettled([h.views.refresh(topic, true)]);
+      expect(afterUnsubscribe.status).toBe("rejected");
       expect(h.calls.prs).toHaveLength(3);
       expect(vi.getTimerCount()).toBe(0);
     });

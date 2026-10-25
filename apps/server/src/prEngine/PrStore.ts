@@ -521,7 +521,7 @@ export class PrStore {
 
   private projection(): PrsTopicData {
     const lookup = this.lookup();
-    const sessions = this.deps.sessions();
+    const sessions = this.deps.sessions().filter((session) => session.status !== "archived");
     const workflows = this.deps.settings().prWorkflows;
     const viewer = this.viewer();
     const inputs = JSON.stringify([sessions, workflows, viewer]);

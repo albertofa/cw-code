@@ -30,14 +30,21 @@ export function sameItems<T>(a: readonly T[], b: readonly T[]): boolean {
   return a.length === b.length && a.every((item, index) => item === b[index]);
 }
 
+function reuseSession(before: Session | undefined, next: Session): Session {
+  if (!before || before === next) return next;
+  return JSON.stringify(before) === JSON.stringify(next) ? before : next;
+}
+
 export function sessionsByProjectOf(
   projects: readonly Project[],
   rows: readonly SessionRow[],
   previous: Record<string, Session[]>
 ): Record<string, Session[]> {
+  const known = new Map<string, Session>();
+  for (const list of Object.values(previous)) for (const session of list) known.set(session.id, session);
   const grouped: Record<string, Session[]> = {};
   for (const project of projects) grouped[project.id] = [];
-  for (const row of rows) (grouped[row.session.projectId] ??= []).push(row.session);
+  for (const row of rows) (grouped[row.session.projectId] ??= []).push(reuseSession(known.get(row.session.id), row.session));
   const next: Record<string, Session[]> = {};
   let changed = Object.keys(previous).length !== Object.keys(grouped).length;
   for (const [projectId, sessions] of Object.entries(grouped)) {

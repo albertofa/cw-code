@@ -213,7 +213,7 @@ export class SidebarService implements TopicProvider {
     const sessions = allSessions.filter((session) => session.status !== "archived");
     const lookup = this.deps.summaryLookup();
     const workflows = this.deps.workflows();
-    const rows = new Map(sessions.map((session) => [session.id, this.row(session, lookup, workflows)]));
+    const rows = new Map(allSessions.map((session) => [session.id, this.row(session, lookup, workflows)]));
     const needsYou = needsYouEntries(
       sessions,
       (session) => rows.get(session.id)?.attention ?? null,

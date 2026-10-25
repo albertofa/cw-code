@@ -568,6 +568,24 @@ describe("appStore applySidebar", () => {
     expect(second.proj_b).toEqual([renamed]);
   });
 
+  it("keeps session identity when only the row fields change", () => {
+    const stable = session("sess_a", "proj_a", 1);
+    useAppStore.getState().applySidebar([alpha], [row(stable)], null);
+    const first = useAppStore.getState().sessionsByProject;
+    useAppStore.getState().applySidebar([alpha], [{ ...row({ ...stable }), busy: true, branch: "main" }], null);
+    const second = useAppStore.getState().sessionsByProject;
+    expect(second).toBe(first);
+    expect(second.proj_a[0]).toBe(first.proj_a[0]);
+  });
+
+  it("waits for a snapshot with data before choosing the initial session", () => {
+    const empty = { restoreSessionId: null, restoreProjectId: null, projectsByRecency: [] };
+    useAppStore.getState().applySidebar([], [], empty);
+    expect(useAppStore.getState()).toMatchObject({ sidebarLoaded: false, activeProjectId: null });
+    useAppStore.getState().applySidebar([alpha, beta], [], { ...empty, restoreProjectId: "proj_b" });
+    expect(useAppStore.getState()).toMatchObject({ sidebarLoaded: true, activeProjectId: "proj_b", activeSessionId: null });
+  });
+
   it("restores the server's pick once and opens a finished session for restore", () => {
     const done = session("sess_done", "proj_b", 5, "done");
     const defaults = { restoreSessionId: "sess_done", restoreProjectId: "proj_b", projectsByRecency: ["proj_b", "proj_a"] };

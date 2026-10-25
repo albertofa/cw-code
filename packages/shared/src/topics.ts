@@ -1,4 +1,5 @@
 import type { GitHubKind } from "@cw-code/contracts";
+import { MAX_QUERY_LENGTH } from "./githubViews.js";
 
 export const APP_TOPIC = "app";
 export const SIDEBAR_TOPIC = "sidebar";
@@ -18,7 +19,8 @@ const GITHUB_VIEW_PATTERN = /^[a-z0-9-]{1,64}$/;
 const GITHUB_VIEW_PREFIX = "github/view:";
 const GITHUB_KINDS: Record<GitHubKind, true> = { pr: true, issue: true, run: true };
 const ENCODED_QUERY_PATTERN = /^[A-Za-z0-9_.!~*()%'-]*$/;
-const MAX_ENCODED_QUERY_LENGTH = 2000;
+const MAX_ENCODED_CHARS_PER_QUERY_CHAR = 9;
+const MAX_ENCODED_QUERY_LENGTH = MAX_QUERY_LENGTH * MAX_ENCODED_CHARS_PER_QUERY_CHAR;
 
 export function sessionTopic(sessionId: string): string {
   return `session/${sessionId}`;

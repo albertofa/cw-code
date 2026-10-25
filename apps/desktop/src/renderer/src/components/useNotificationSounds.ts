@@ -1,10 +1,9 @@
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useRef } from "react";
 import { useAppStore } from "../stores/appStore.js";
 import { usePrStore } from "../stores/prStore.js";
-import { latestUnseenPrUpdateAt, trackNotificationSounds, type SessionSoundState, type SoundTracker } from "./notificationSoundTriggers.js";
+import { trackNotificationSounds, type SessionSoundState, type SoundTracker } from "./notificationSoundTriggers.js";
 import { playNotificationSound } from "./notificationSounds.js";
-import { prSummaryLookup } from "./sessionPrLinks.js";
-import { useBabysitStates } from "./useBabysit.js";
+import { useSessions } from "./useSessions.js";
 
 function openSessionId(): string | null {
   if (document.visibilityState !== "visible" || !document.hasFocus()) return null;
@@ -13,24 +12,17 @@ function openSessionId(): string | null {
 }
 
 export function useNotificationSounds(): void {
-  const sessionsByProject = useAppStore((s) => s.sessionsByProject);
-  const pendingQuestions = useAppStore((s) => s.pendingQuestions);
-  const inboxItems = usePrStore((s) => s.inbox?.items);
-  const detailByKey = usePrStore((s) => s.detailByKey);
-  const trackedByKey = usePrStore((s) => s.trackedByKey);
-  const babysitOf = useBabysitStates();
+  const rows = useSessions();
   const tracker = useRef<SoundTracker | null>(null);
-  const summaryByKey = useMemo(() => prSummaryLookup(inboxItems ?? [], detailByKey, trackedByKey), [inboxItems, detailByKey, trackedByKey]);
 
   useEffect(() => {
     const states: Record<string, SessionSoundState> = {};
-    for (const session of Object.values(sessionsByProject).flat()) {
-      const closed = session.status === "resolved" || session.status === "archived";
-      states[session.id] = {
-        status: session.status,
-        questionIds: (pendingQuestions[session.id] ?? []).map((request) => request.requestId),
-        latestPrUpdateAt: closed ? null : latestUnseenPrUpdateAt(session, summaryByKey, detailByKey),
-        prMuted: babysitOf(session) !== null
+    for (const row of rows) {
+      states[row.session.id] = {
+        status: row.session.status,
+        questionIds: row.pendingQuestionIds,
+        latestPrUpdateAt: row.latestUnseenPrUpdateAt,
+        prMuted: row.prMuted
       };
     }
     const result = trackNotificationSounds(tracker.current, states, Date.now(), openSessionId());
@@ -38,5 +30,5 @@ export function useNotificationSounds(): void {
     const settings = useAppStore.getState().notificationSounds;
     const event = settings ? result.events.find((candidate) => settings[candidate].enabled && settings[candidate].volume > 0) : undefined;
     if (settings && event) void playNotificationSound(settings[event].sound, settings[event].volume);
-  }, [sessionsByProject, pendingQuestions, summaryByKey, detailByKey, babysitOf]);
+  }, [rows]);
 }

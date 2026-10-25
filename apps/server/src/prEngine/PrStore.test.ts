@@ -653,6 +653,14 @@ describe("PrStore", () => {
       expect(h.data()[`rel/${KEY}`]?.linkedSessionIds).toEqual(["s1"]);
     });
 
+    it("leaves archived sessions out of relations", async () => {
+      const h = createHarness([session({ status: "archived" })]);
+      h.subscribePrs();
+      h.prStore.onTracked([summary()]);
+      await settle();
+      expect(h.data()[`rel/${KEY}`]?.linkedSessionIds).toEqual([]);
+    });
+
     it("notifies change listeners until they unsubscribe", async () => {
       const h = createHarness();
       let calls = 0;

@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test";
+import { MAX_QUERY_LENGTH } from "./githubViews.js";
 import {
   filesTopic,
   GITHUB_META_TOPIC,
@@ -74,7 +75,7 @@ describe("github topics", () => {
       "github/view:pr:a b",
       "github/view:pr:a:b",
       "github/view:pr:%E0%A4%A",
-      "github/view:pr:" + "a".repeat(2001)
+      "github/view:pr:" + "a".repeat(4609)
     ];
     for (const topic of rejected) {
       expect(parseGithubViewTopic(topic)).toBeNull();
@@ -85,7 +86,15 @@ describe("github topics", () => {
   });
 
   it("accepts an encoded query at the length cap", () => {
-    expect(isValidTopic("github/view:pr:" + "a".repeat(2000))).toBe(true);
+    expect(isValidTopic("github/view:pr:" + "a".repeat(4608))).toBe(true);
+  });
+
+  it("fits the worst-case encoding of a maximum-length query", () => {
+    const query = "€".repeat(MAX_QUERY_LENGTH);
+    const topic = githubViewTopic("pr", query);
+    expect(topic.length).toBeGreaterThan("github/view:pr:".length + MAX_QUERY_LENGTH * 8);
+    expect(parseGithubViewTopic(topic)).toEqual({ kind: "pr", query });
+    expect(isValidTopic(topic)).toBe(true);
   });
 
   it("exposes the meta topic", () => {

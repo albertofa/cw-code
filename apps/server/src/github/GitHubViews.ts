@@ -238,7 +238,7 @@ export class GitHubViews {
 
   async refresh(topic: string, force: boolean): Promise<void> {
     if (topic === GITHUB_META_TOPIC) {
-      if (!this.meta) return;
+      if (!this.meta) throw new Error(`topic is not subscribed: ${topic}`);
       const inbox = this.deps.refreshInbox(force).catch((error: unknown) => {
         console.warn(`${LOG_PREFIX} inbox refresh failed: ${describeError(error)}`);
       });
@@ -246,7 +246,8 @@ export class GitHubViews {
       return;
     }
     const state = this.topics.get(topic);
-    const entry = state?.key ? this.entries.get(state.key) : undefined;
+    if (!state) throw new Error(`topic is not subscribed: ${topic}`);
+    const entry = state.key ? this.entries.get(state.key) : undefined;
     if (entry) await this.fetchEntry(entry, force);
   }
 
@@ -301,7 +302,6 @@ export class GitHubViews {
   ciActivity(): void {
     const keys = new Set<string>();
     for (const state of this.topics.values()) if (state.kind === "run" && state.key) keys.add(state.key);
-    for (const key of this.meta?.keys ?? []) if (this.entries.get(key)?.spec.kind === "run") keys.add(key);
     for (const key of keys) {
       const entry = this.entries.get(key);
       if (entry) void this.fetchEntry(entry, true);
@@ -555,6 +555,7 @@ export class GitHubViews {
 
   private recompute(): void {
     this.recomputePending = false;
+    if (!this.hasUsers()) return;
     try {
       const env = this.env();
       for (const state of this.topics.values()) {

@@ -121,7 +121,6 @@ function wireServiceEvents(
     emit("session.updated", session);
     prTracker.setTracked(sessions.trackedPrRefs());
     prStore.onSessionsChanged();
-    githubViews.reevaluate();
     autoFollowUp.reevaluate();
     sidebar.invalidate();
   });
@@ -265,7 +264,7 @@ export function createServices(stores: { sessionStore: SessionStore; settingsSto
   const runWatcher = new RunWatcher(() => sessions.getSettings());
   const githubViews = new GitHubViews(hooks.topics, {
     settings: () => sessions.getSettings(),
-    sessions: () => sessions.listAllSessions(),
+    sessions: () => sessions.listAllSessions().filter((session) => session.status !== "archived"),
     context: () => prStore.context(),
     inbox: () => prStore.inbox(),
     summaryLookup: () => prStore.summaryLookup(),

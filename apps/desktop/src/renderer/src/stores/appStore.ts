@@ -124,6 +124,7 @@ export const DEFAULT_COMPOSER: Required<Pick<ComposerPrefs, "effort" | "permissi
 
 const composerLoads = new Map<string, Promise<void>>();
 const SESSION_ROW_WAIT_MS = 5000;
+const SESSION_ROW_LATE_MS = 60_000;
 
 function defaultWorkspace(defaultUseWorktree: boolean): CreateSessionOptions {
   return { mode: defaultUseWorktree ? "new" : "current" };
@@ -143,21 +144,34 @@ function hasSession(byProject: Record<string, Session[]>, sessionId: string): bo
   return sessionOwnerId(byProject, sessionId) !== undefined;
 }
 
-function waitForSession(sessionId: string): Promise<void> {
-  if (hasSession(useAppStore.getState().sessionsByProject, sessionId)) return Promise.resolve();
+function waitForSession(sessionId: string, timeoutMs = SESSION_ROW_WAIT_MS): Promise<boolean> {
+  if (hasSession(useAppStore.getState().sessionsByProject, sessionId)) return Promise.resolve(true);
   return new Promise((resolve) => {
-    const finish = (): void => {
+    const finish = (appeared: boolean): void => {
       window.clearTimeout(timer);
       stop();
-      resolve();
+      resolve(appeared);
     };
-    const timer = window.setTimeout(() => {
-      console.warn(`[sidebar] session ${sessionId} did not reach the sidebar within ${SESSION_ROW_WAIT_MS}ms`);
-      finish();
-    }, SESSION_ROW_WAIT_MS);
+    const timer = window.setTimeout(() => finish(false), timeoutMs);
     const stop = useAppStore.subscribe((state) => {
-      if (hasSession(state.sessionsByProject, sessionId)) finish();
+      if (hasSession(state.sessionsByProject, sessionId)) finish(true);
     });
+  });
+}
+
+async function selectWhenListed(sessionId: string, select: () => void): Promise<void> {
+  const selectedBefore = useAppStore.getState().activeSessionId;
+  if (await waitForSession(sessionId)) {
+    select();
+    return;
+  }
+  useNotifs.getState().push({
+    kind: "warning",
+    title: "Session not listed yet",
+    message: "The new session didn't appear yet — it will show up in the sidebar when ready."
+  });
+  void waitForSession(sessionId, SESSION_ROW_LATE_MS).then((appeared) => {
+    if (appeared && useAppStore.getState().activeSessionId === selectedBefore) select();
   });
 }
 
@@ -603,11 +617,13 @@ export const useAppStore = create<AppState>((set, get) => ({
       set({ projects: nextProjects, sessionsByProject, projectsByRecency });
     }
     if (current.sidebarLoaded || !defaults) return;
+    if (projects.length === 0 && !defaults.restoreSessionId) return;
     set({ sidebarLoaded: true });
-    if (projects.length === 0 || get().activeProjectId) return;
+    if (get().activeProjectId) return;
     const picked = defaults.restoreSessionId ? rows.find((row) => row.session.id === defaults.restoreSessionId)?.session : undefined;
     if (!picked) {
-      set({ activeProjectId: defaults.restoreProjectId ?? projects[0].id, activeSessionId: null, pendingDriver: get().lastDriver });
+      const projectId = defaults.restoreProjectId ?? projects[0]?.id;
+      if (projectId) set({ activeProjectId: projectId, activeSessionId: null, pendingDriver: get().lastDriver });
       return;
     }
     set({ activeProjectId: picked.projectId, activeSessionId: picked.id, pendingDriver: null });
@@ -959,14 +975,8 @@ export const useAppStore = create<AppState>((set, get) => ({
         ...(stillHeld ? {} : { message: "The requested worktree no longer exists." })
       });
     }
-    await waitForSession(session.id);
-    set({
-      activeProjectId: projectId,
-      activeSessionId: session.id,
-      historyLoadedBySession: { ...get().historyLoadedBySession, [session.id]: true },
-      pendingDriver: null,
-      lastDriver: driver
-    });
+    set({ historyLoadedBySession: { ...get().historyLoadedBySession, [session.id]: true }, lastDriver: driver });
+    await selectWhenListed(session.id, () => set({ activeProjectId: projectId, activeSessionId: session.id, pendingDriver: null }));
     await get().ensureComposer(session.id);
     if (prefs) await get().setComposerPrefs(session.id, { ...prefs });
     void get().refreshProjectCheckoutGitStatus(session.id);
@@ -976,9 +986,10 @@ export const useAppStore = create<AppState>((set, get) => ({
   async importSession(request: ImportSessionRequest) {
     const { project, session } = await window.cw.importSession(request);
     set({ projects: withProject(get().projects, project) });
-    await waitForSession(session.id);
-    set({ activeProjectId: project.id });
-    get().selectSession(session.id);
+    await selectWhenListed(session.id, () => {
+      set({ activeProjectId: project.id });
+      get().selectSession(session.id);
+    });
     return session;
   },
 

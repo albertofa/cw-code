@@ -1,13 +1,12 @@
 import { useRef } from "react";
 import type { TopicState } from "@cw-code/client";
-import type { Project, SessionRow, SidebarDefaults, SidebarLayout, WorktreeCandidate } from "@cw-code/contracts";
+import type { SessionRow, SidebarLayout, WorktreeCandidate } from "@cw-code/contracts";
 import { SIDEBAR_TOPIC } from "@cw-code/shared/topics";
 import { useTopicEntry, useTopicSelect, type TopicOptions } from "../server/topics.js";
-import { rowKey, sameItems, sidebarProjects, sidebarRows, worktreesKey } from "../server/sidebarData.js";
+import { rowKey, sameItems, sidebarRows, worktreesKey } from "../server/sidebarData.js";
 
 const HELD: TopicOptions = { whenHidden: "keep" };
 const NO_ROWS: SessionRow[] = [];
-const NO_PROJECTS: Project[] = [];
 const NO_CANDIDATES: WorktreeCandidate[] = [];
 
 interface ListCache<T> {
@@ -40,16 +39,8 @@ export function useSessionRow(sessionId: string | null | undefined): SessionRow 
   return useTopicEntry<SessionRow>(SIDEBAR_TOPIC, sessionId ? rowKey(sessionId) : "", HELD);
 }
 
-export function useProjects(): Project[] {
-  return useSidebarList(sidebarProjects, NO_PROJECTS);
-}
-
 export function useSidebarLayout(): SidebarLayout | undefined {
   return useTopicEntry<SidebarLayout>(SIDEBAR_TOPIC, "layout", HELD);
-}
-
-export function useSidebarDefaults(): SidebarDefaults | undefined {
-  return useTopicEntry<SidebarDefaults>(SIDEBAR_TOPIC, "defaults", HELD);
 }
 
 export function useWorktreeCandidates(projectId: string | null): WorktreeCandidate[] {
