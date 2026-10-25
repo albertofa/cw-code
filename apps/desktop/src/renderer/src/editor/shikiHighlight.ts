@@ -3,8 +3,8 @@ import { syntaxHighlighting } from "@codemirror/language";
 import { Decoration, EditorView, ViewPlugin, type DecorationSet, type ViewUpdate } from "@codemirror/view";
 import { lezerHighlightStyle } from "./lezerStyle.js";
 import { highlightWithShiki, type ShikiTokens } from "./shikiClient.js";
+import { SHIKI_MAX_CHARS } from "./shikiProtocol.js";
 
-export const SHIKI_MAX_CHARS = 500_000;
 const EDIT_DEBOUNCE_MS = 180;
 
 export const lezerColors = new Compartment();

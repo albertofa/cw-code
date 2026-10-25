@@ -16,6 +16,7 @@ interface Job {
 }
 
 let worker: Worker | null = null;
+let spawnFailed = false;
 let nextId = 1;
 let running: { id: number; job: Job; timer: ReturnType<typeof setTimeout> } | null = null;
 const queue = new Map<string, Job>();
@@ -25,14 +26,21 @@ function isFailing(lang: string): boolean {
   return (failedLangs.get(lang) ?? 0) > Date.now();
 }
 
-function spawn(): Worker {
-  const created = new Worker(new URL("./shiki.worker.ts", import.meta.url), { type: "module", name: "shiki" });
-  created.onmessage = (event: MessageEvent<ShikiResponse>) => finish(event.data);
-  created.onerror = (event) => {
-    console.warn(`[editor] syntax highlighter worker failed: ${event.message}`);
-    restart(null);
-  };
-  return created;
+function spawn(): Worker | null {
+  if (spawnFailed) return null;
+  try {
+    const created = new Worker(new URL("./shiki.worker.ts", import.meta.url), { type: "module", name: "shiki" });
+    created.onmessage = (event: MessageEvent<ShikiResponse>) => finish(event.data);
+    created.onerror = (event) => {
+      console.warn(`[editor] syntax highlighter worker failed: ${event.message}`);
+      restart(null);
+    };
+    return created;
+  } catch (err) {
+    spawnFailed = true;
+    console.warn(`[editor] syntax highlighter unavailable: ${err instanceof Error ? err.message : String(err)}`);
+    return null;
+  }
 }
 
 function restart(timedOutLang: string | null): void {
@@ -74,6 +82,11 @@ function pump(): void {
     return;
   }
   worker ??= spawn();
+  if (!worker) {
+    job.resolve(null);
+    pump();
+    return;
+  }
   const id = nextId++;
   const timer = setTimeout(() => {
     console.warn(`[editor] syntax highlighting for ${job.lang} timed out; restarting the highlighter`);
@@ -90,4 +103,11 @@ export function highlightWithShiki(owner: string, lang: string, text: string): P
     queue.set(owner, { owner, lang, text, resolve });
     pump();
   });
+}
+
+export function cancelShikiHighlight(owner: string): void {
+  const job = queue.get(owner);
+  if (!job) return;
+  queue.delete(owner);
+  job.resolve(null);
 }

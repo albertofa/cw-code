@@ -20,7 +20,8 @@ import { editorTheme } from "./editorTheme.js";
 import { gitGutter } from "./gitGutter.js";
 import { resolveLanguage, type ResolvedLanguage } from "./languages.js";
 import { lezerHighlightStyle } from "./lezerStyle.js";
-import { SHIKI_MAX_CHARS, lezerColors, shikiHighlighting } from "./shikiHighlight.js";
+import { lezerColors, shikiHighlighting } from "./shikiHighlight.js";
+import { SHIKI_MAX_CHARS } from "./shikiProtocol.js";
 
 export interface EditorHost {
   save(): void;
