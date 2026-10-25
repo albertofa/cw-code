@@ -31,6 +31,7 @@ import type {
   SessionCleanupResult,
   SessionIssueLink,
   SessionMeta,
+  SessionOpenReason,
   SessionPrLink,
   SessionRunLink,
   SessionStatus,
@@ -49,6 +50,7 @@ import type {
 } from "@cw-code/contracts";
 import { type SessionStatusReason } from "../debug/sessionStatusTrace.js";
 import { isWorkingSetStatus } from "@cw-code/shared/workingSet";
+import { expiredHoldingIds } from "../sidebar/workingSet.js";
 import { autoFollowUpWorkflow, babysitsOpenPr } from "@cw-code/shared/autoFollowUp";
 import { SessionStore } from "./SessionStore.js";
 import {
@@ -461,6 +463,10 @@ export class SessionManager {
     return updated;
   }
 
+  private emitIfKnown(sessionId: string): void {
+    if (this.store.getSession(sessionId)) this.emitSession(sessionId);
+  }
+
   getSettings(): AppSettings {
     return this.settings.get();
   }
@@ -533,6 +539,7 @@ export class SessionManager {
           },
           "turn-done-background"
         );
+        this.emitIfKnown(event.sessionId);
       } else {
         const wasActive = this.activeTurns.has(event.turnId);
         const turnStartedAt = this.activeTurns.get(event.turnId)?.startedAt;
@@ -544,6 +551,7 @@ export class SessionManager {
         } else {
           this.store.updateSession(event.sessionId, { resumeCursor: event.resumeCursor, status: this.turnEndStatus(event.sessionId) }, "turn-done");
         }
+        this.emitIfKnown(event.sessionId);
         this.captureEndSnapshot(event.sessionId, event.turnId);
         if (wasActive && !event.isError) void this.renameBranchForTitle(event.sessionId, event.turnId);
         const covered = this.turnPrRefs.get(event.turnId) ?? [];
@@ -569,6 +577,7 @@ export class SessionManager {
           },
           "turn-error"
         );
+        this.emitIfKnown(sessionId);
       }
     }
     if (event.type === "approval.request" || event.type === "question.request") {
@@ -579,18 +588,21 @@ export class SessionManager {
             : { kind: "question", sessionId, turnId: event.turnId, request: event.request }
         );
         this.store.updateSession(sessionId, { status: "input-required" }, "approval-pending");
+        this.emitIfKnown(sessionId);
       }
     }
     if (event.type === "approval.resolved" || event.type === "question.resolved") {
       this.pendingRequests.resolve(event.requestId);
       if (sessionId && this.activeTurns.has(event.turnId)) {
-        this.store.updateSession(sessionId, { status: "working" }, "approval-resolved");
+        const status = this.pendingRequests.list(sessionId).length > 0 ? "input-required" : "working";
+        this.store.updateSession(sessionId, { status }, "approval-resolved");
+        this.emitIfKnown(sessionId);
       }
     }
     if (event.type === "permission.mode.reported") {
       if (sessionId) {
         this.store.updateSession(sessionId, { effectivePermissionMode: event.mode ?? undefined });
-        if (this.store.getSession(sessionId)) this.emitSession(sessionId);
+        this.emitIfKnown(sessionId);
       }
     }
     this.onEvent(sessionId, event);
@@ -963,6 +975,27 @@ export class SessionManager {
     return this.emitSession(sessionId);
   }
 
+  markTurnSeen(sessionId: string): SessionMeta | null {
+    if (this.store.getSession(sessionId)?.status !== "done") return null;
+    this.store.updateSession(sessionId, { status: "holding" }, "turn-seen");
+    return this.emitSession(sessionId);
+  }
+
+  openSession(sessionId: string, reason: SessionOpenReason): SessionMeta | null {
+    const session = this.store.getSession(sessionId);
+    if (!session) return null;
+    if (session.status === "resolved") {
+      if (this.pendingRestores.has(sessionId) || this.pendingResolves.has(sessionId)) return null;
+      this.store.updateSession(sessionId, { status: "idle" }, reason === "select" ? "reopen-on-select" : "reopen-on-restore");
+      return this.emitSession(sessionId);
+    }
+    if (reason === "restore" && session.status === "done") {
+      this.store.updateSession(sessionId, { status: "holding" }, "reopen-on-restore");
+      return this.emitSession(sessionId);
+    }
+    return null;
+  }
+
   async markWorking(sessionId: string): Promise<SessionMeta> {
     const session = this.store.getSession(sessionId);
     if (!session) throw new Error(`unknown session ${sessionId}`);
@@ -1021,6 +1054,7 @@ export class SessionManager {
     this.store.updateSession(sessionId, { status: "idle", ...checkout.patch }, "restore");
     if (checkout.created) this.startWorktreeSetup(current, project, checkout.created.path);
     const restored = this.emitSession(sessionId);
+    if (checkout.created?.baseWarning) this.emitNotice(sessionId, `restore:${sessionId}:${Date.now()}`, checkout.created.baseWarning, "warning");
     return checkout.created ? withCreateNotice(restored, checkout.created.baseWarning) : restored;
   }
 
@@ -1194,6 +1228,12 @@ export class SessionManager {
     return expired;
   }
 
+  expireDueHoldingSessions(now = Date.now()): SessionMeta[] {
+    const { holdingAutoExpireEnabled, holdingHours } = this.settings.get();
+    if (!holdingAutoExpireEnabled) return [];
+    return this.expireHoldingSessions(expiredHoldingIds(this.store.listAllSessions(), holdingHours, now));
+  }
+
   settleFinishedPrSessions(): Promise<string[]> {
     if (this.settleSweep) return this.settleSweep;
     const sweep = this.runFinishedPrSweep().finally(() => {
@@ -1337,10 +1377,24 @@ export class SessionManager {
     this.pendingResolves.set(sessionId, entry);
     try {
       const result = await run;
-      if (this.store.getSession(sessionId)) this.emitSession(sessionId);
+      this.emitIfKnown(sessionId);
+      if (!opts.auto) this.emitResolveNotices(sessionId, result);
       return result;
     } finally {
       if (this.pendingResolves.get(sessionId) === entry) this.pendingResolves.delete(sessionId);
+    }
+  }
+
+  private emitResolveNotices(sessionId: string, result: SessionCleanupResult): void {
+    const at = Date.now();
+    const notice = (kind: string, text: string, severity: "info" | "error") => this.emitNotice(sessionId, `resolve:${sessionId}:${at}:${kind}`, text, severity);
+    if (result.destroyScriptError) notice("destroy-script", `Destroy script failed: ${result.destroyScriptError}`, "error");
+    if (result.dirtyBlocked) {
+      notice("dirty", "Worktree kept: it has uncommitted changes. Commit or clean them, then resolve the session again to prune it.", "error");
+    } else if (result.error) {
+      notice("prune-error", `Could not prune worktree: ${result.error}`, "error");
+    } else if (result.worktreeRemoved && !result.branchDeleted) {
+      notice("branch-kept", "Worktree pruned; its branch was kept.", "info");
     }
   }
 
@@ -2063,8 +2117,11 @@ export class SessionManager {
     if (this.branchSwitchPendingOnRoot(session)) throw new Error(`${project.name} is switching branches — try again in a moment`);
     if (this.pendingRestores.has(sessionId)) throw new Error("session busy (restore pending)");
     this.pendingTurns.add(sessionId);
+    const previousStatus = session.status;
+    this.store.updateSession(sessionId, { status: "working" }, "turn-start");
+    this.emitSession(sessionId);
     try {
-      if (session.status === "idle" && session.resumeCursor) {
+      if (previousStatus === "idle" && session.resumeCursor) {
         await this.dropFinishedPrLinks(sessionId, [...(opts?.prRefs ?? []), ...(opts?.finalReview ? [opts.finalReview.ref] : [])]);
       }
       const cwd = await this.ensureWorktree(sessionId);
@@ -2105,13 +2162,26 @@ export class SessionManager {
       if (opts?.finalReview) this.turnFinalReviews.set(handle.turnId, opts.finalReview);
       const lastTurnSnapshot = snapshot ? { turnId: handle.turnId, ...snapshot } : undefined;
       const snapshotChanged = lastTurnSnapshot !== undefined || session.lastTurnSnapshot !== undefined;
-      this.store.updateSession(sessionId, { status: "working", lastTurnSnapshot }, "turn-start");
+      this.store.updateSession(sessionId, { lastTurnSnapshot });
       if (snapshotChanged) this.emitSession(sessionId);
       if (firstMessage) this.maybeAutoTitle(sessionId, prompt, placeholder);
       return handle.turnId;
+    } catch (err) {
+      this.revertFailedTurnStart(sessionId, previousStatus);
+      throw err;
     } finally {
       this.pendingTurns.delete(sessionId);
     }
+  }
+
+  private revertFailedTurnStart(sessionId: string, previousStatus: SessionStatus): void {
+    const current = this.store.getSession(sessionId);
+    if (!current || current.status !== "working") return;
+    for (const entry of this.activeTurns.values()) {
+      if (entry.sessionId === sessionId) return;
+    }
+    this.store.updateSession(sessionId, { status: previousStatus }, "turn-start-failed");
+    this.emitSession(sessionId);
   }
 
   private maybeAutoTitle(sessionId: string, prompt: string, placeholder: string): void {

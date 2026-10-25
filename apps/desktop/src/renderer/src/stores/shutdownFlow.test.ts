@@ -127,36 +127,9 @@ describe("runShutdownFlow", () => {
     await settle();
     expect(useAppStore.getState().shutdown).toMatchObject({ reason: "update", phase: "review", assessment: BUSY });
     expect(api.prepareCalls).toHaveLength(0);
-    useAppStore.setState({ busyTurns: { sess_bg: "t1" } });
     await shutdownProceed();
     expect(api.prepareCalls).toEqual([{ reason: "update", stopActiveTurns: true, approvedTurnIds: ["t1"], timeoutMs: 10_000 }]);
     expect(await pending).toEqual({ token: "token-1" });
-    expect(useAppStore.getState().busyTurns).toEqual({});
-  });
-
-  it("marks only the turns the backend reports as stopped, not stale ones from the dialog", async () => {
-    const twoTurns: ShutdownAssessment = {
-      activeTurns: [
-        { sessionId: "sess_ended", turnId: "t-ended", title: "already finished", startedAt: 1 },
-        { sessionId: "sess_live", turnId: "t-live", title: "still running", startedAt: 2 }
-      ],
-      backgroundTasks: 0,
-      terminals: []
-    };
-    api.assessments = [twoTurns];
-    api.prepareResults = [{ ok: true, token: "token-1", stoppedTurnIds: ["t-live"] }];
-    const original = useAppStore.getState().markTurnsInterrupted;
-    const marked: string[][] = [];
-    useAppStore.setState({ markTurnsInterrupted: (sessionIds: string[]) => marked.push(sessionIds) });
-    try {
-      const pending = runShutdownFlow("update");
-      await settle();
-      await shutdownProceed();
-      expect(await pending).toEqual({ token: "token-1" });
-      expect(marked).toEqual([["sess_live"]]);
-    } finally {
-      useAppStore.setState({ markTurnsInterrupted: original });
-    }
   });
 
   it("saves every dirty file before continuing", async () => {

@@ -152,35 +152,6 @@ describe("restartToUpdate", () => {
     expect(bridge.installs).toEqual([]);
   });
 
-  it("marks only the turns main reports as stopped before installing", async () => {
-    bridge.assessments = [
-      {
-        activeTurns: [
-          { sessionId: "sess_a", turnId: "t1", title: "work", startedAt: 1 },
-          { sessionId: "sess_b", turnId: "t2", title: "finished meanwhile", startedAt: 1 }
-        ],
-        backgroundTasks: 0,
-        terminals: []
-      }
-    ];
-    bridge.stoppedTurnIds = ["t1"];
-    bridge.installResult = { ok: true, state: ready(3, { phase: "installing" }) };
-    const original = useAppStore.getState().markTurnsInterrupted;
-    const marked: string[][] = [];
-    useAppStore.setState({ markTurnsInterrupted: (sessionIds: string[]) => marked.push(sessionIds) });
-    try {
-      const pending = restartToUpdate();
-      await new Promise((resolve) => setTimeout(resolve, 0));
-      await shutdownProceed();
-      await pending;
-      expect(bridge.prepareRequests[0]).toMatchObject({ reason: "update", stopActiveTurns: true, approvedTurnIds: ["t1", "t2"] });
-      expect(marked).toEqual([["sess_a"]]);
-      expect(bridge.installs).toEqual([{ version: "1.1.0", channel: "stable", token: "token-1" }]);
-    } finally {
-      useAppStore.setState({ markTurnsInterrupted: original });
-    }
-  });
-
   it("refuses while another quit or restart flow is open", async () => {
     bridge.assessments = [BUSY];
     void runShutdownFlow("quit");

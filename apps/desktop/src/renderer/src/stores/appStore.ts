@@ -41,7 +41,6 @@ import { getLastModel, setLastModel } from "../components/lastModel.js";
 import { defaultModelPatch } from "../components/modelMenus.js";
 import { fallbackHarness } from "../components/harnessAvailability.js";
 import { formatDuration, mergeToolPairs } from "../components/toolSummaries.js";
-import { expiredHoldingIds } from "../components/workingSet.js";
 import { defaultNewSessionProjectId } from "../components/projectRecency.js";
 import { projectDriver, withProjectPrefs } from "../components/projectDefaults.js";
 import { useNotifs } from "../components/Notifications.js";
@@ -283,8 +282,6 @@ interface AppState {
   setSessionStatus(sessionId: string, status: SessionStatus, reason?: SessionStatusReason): Promise<void>;
   markSessionWorking(sessionId: string): Promise<void>;
   restoreSession(sessionId: string): Promise<void>;
-  expireHoldingSessions(): Promise<void>;
-  appendSystemNotice(sessionId: string, text: string, isError?: boolean): void;
   clearSessionWorktrees(sessionIds: string[]): void;
   createSession(driver: DriverName, prefs?: ComposerPrefs, workspace?: CreateSessionOptions): Promise<void>;
   createSessionIn(projectId: string, driver: DriverName, prefs?: ComposerPrefs, workspace?: CreateSessionOptions): Promise<Session>;
@@ -296,7 +293,6 @@ interface AppState {
   sendPrompt(prompt: string, attachments?: string[], opts?: ComposerSendOptions): Promise<void>;
   sendPromptTo(sessionId: string, prompt: string, attachments?: string[], opts?: SendPromptOptions): Promise<void>;
   interrupt(): Promise<void>;
-  markTurnsInterrupted(sessionIds: string[]): void;
   retryConnection(sessionId: string): Promise<void>;
   respondApproval(requestId: string, decision: ApprovalDecision): Promise<void>;
   respondQuestion(sessionId: string, requestId: string, answers: Record<string, string>): Promise<void>;
@@ -378,14 +374,6 @@ function withAutoPause(
   reason: AutoFollowUpPause
 ): Record<string, AutoFollowUpPause> {
   return paused[sessionId] === "user" ? paused : { ...paused, [sessionId]: reason };
-}
-
-function withSessionStatus(
-  byProject: Record<string, Session[]>,
-  sessionId: string,
-  status: SessionStatus
-): Record<string, Session[]> {
-  return patchSession(byProject, sessionId, { status, updatedAt: Date.now() });
 }
 
 function patchSession(
@@ -662,8 +650,8 @@ export const useAppStore = create<AppState>((set, get) => ({
         pendingDriver: null
       });
       if (picked.status === "done") {
-        void get().setSessionStatus(picked.id, "holding", "reopen-on-restore").catch((err) =>
-          console.warn(`setSessionStatus failed for ${picked.id} -> holding: ${(err as Error).message}`)
+        void window.cw.openSession(picked.id, "restore").catch((err: Error) =>
+          console.warn(`openSession failed for ${picked.id}: ${err.message}`)
         );
       }
       void get().ensureHistory(picked.id);
@@ -732,40 +720,17 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   async setSessionStatus(sessionId: string, status: SessionStatus, reason?: SessionStatusReason) {
-    if (status === "resolved" || status === "archived") {
-      const result = await window.cw.resolveSession(sessionId, status, true, false);
-      const worktreeKept = Boolean(result.dirtyBlocked || result.error);
-      set({
-        sessionsByProject: patchSession(get().sessionsByProject, sessionId, {
-          status: result.status,
-          updatedAt: Date.now(),
-          ...(worktreeKept ? {} : { worktreePath: undefined }),
-          ...(result.branchDeleted ? { branch: undefined } : {})
-        })
-      });
-      if (result.destroyScriptError) {
-        useNotifs.getState().push({ kind: "error", title: "Destroy script failed", message: result.destroyScriptError });
-      }
-      if (result.dirtyBlocked) {
-        get().appendSystemNotice(
-          sessionId,
-          "Worktree kept: it has uncommitted changes. Commit or clean them, then resolve the session again to prune it.",
-          true
-        );
-      } else if (result.error) {
-        useNotifs.getState().push({ kind: "error", title: "Could not prune worktree", message: result.error });
-      } else if (result.worktreeRemoved && !result.branchDeleted) {
-        get().appendSystemNotice(sessionId, "Worktree pruned; its branch was kept.");
-      }
+    if (status !== "resolved" && status !== "archived") {
+      await window.cw.setSessionStatus(sessionId, status, reason);
       return;
     }
-    const updated = await window.cw.setSessionStatus(sessionId, status, reason);
-    set({
-      sessionsByProject: patchSession(get().sessionsByProject, sessionId, {
-        status: updated.status,
-        updatedAt: updated.updatedAt
-      })
-    });
+    const result = await window.cw.resolveSession(sessionId, status, true, false);
+    if (result.destroyScriptError) {
+      useNotifs.getState().push({ kind: "error", title: "Destroy script failed", message: result.destroyScriptError });
+    }
+    if (result.error && !result.dirtyBlocked) {
+      useNotifs.getState().push({ kind: "error", title: "Could not prune worktree", message: result.error });
+    }
   },
 
   async markSessionWorking(sessionId: string) {
@@ -773,46 +738,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   async restoreSession(sessionId: string) {
-    const restored = await window.cw.restoreSession(sessionId);
-    get().applySession(restored);
-    if (restored.createNotice) get().appendSystemNotice(sessionId, restored.createNotice);
-  },
-
-  async expireHoldingSessions() {
-    if (!get().holdingAutoExpireEnabled) return;
-    const sessions = Object.values(get().sessionsByProject).flat();
-    const ids = expiredHoldingIds(sessions, get().holdingHours, Date.now());
-    if (ids.length === 0) return;
-    try {
-      const expired = await window.cw.expireHolding(ids);
-      if (expired.length === 0) return;
-      let sessionsByProject = get().sessionsByProject;
-      for (const session of expired) {
-        sessionsByProject = patchSession(sessionsByProject, session.id, {
-          status: session.status,
-          updatedAt: session.updatedAt
-        });
-      }
-      set({ sessionsByProject });
-    } catch (err) {
-      console.warn(`expireHolding failed: ${(err as Error).message}`);
-    }
-  },
-
-  appendSystemNotice(sessionId: string, text: string, isError = false) {
-    const notice: ChatMessage = {
-      id: `worktree-notice-${sessionId}-${Date.now()}`,
-      role: "system",
-      text,
-      turnId: LOCAL_NOTICE_TURN_ID,
-      isError
-    };
-    set({
-      messagesBySession: {
-        ...get().messagesBySession,
-        [sessionId]: [...(get().messagesBySession[sessionId] ?? []), notice]
-      }
-    });
+    get().applySession(await window.cw.restoreSession(sessionId));
   },
 
   clearSessionWorktrees(sessionIds: string[]) {
@@ -1147,14 +1073,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   applySession(session: Session) {
-    const { busyTurns, sessionsByProject } = get();
-    const current = busyTurns[session.id]
-      ? Object.values(sessionsByProject)
-          .flat()
-          .find((s) => s.id === session.id)
-      : undefined;
-    const next = current ? { ...session, status: current.status } : session;
-    set({ sessionsByProject: upsertSession(sessionsByProject, next) });
+    set({ sessionsByProject: upsertSession(get().sessionsByProject, session) });
   },
 
   applyProject(project: Project) {
@@ -1183,9 +1102,6 @@ export const useAppStore = create<AppState>((set, get) => ({
     if (!prompt.trim()) return;
     if (isPendingTurn(get().busyTurns[sessionId])) throw new Error("session busy (turn pending)");
     const prefs = get().composerBySession[sessionId] ?? DEFAULT_COMPOSER;
-    const previous = Object.values(get().sessionsByProject)
-      .flat()
-      .find((s) => s.id === sessionId);
     const previousTodos = get().todosBySession[sessionId];
     const acceptFolderHead = opts?.acceptFolderHead ?? useBranchStore.getState().keptFolderHeadBySession[sessionId];
     const pending = nextPendingTurnId();
@@ -1198,8 +1114,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         ? {}
         : { autoFollowUpPaused: without(get().autoFollowUpPaused, sessionId) }),
       turnStartedAt: { ...get().turnStartedAt, [sessionId]: Date.now() },
-      todosBySession: { ...get().todosBySession, [sessionId]: [] },
-      sessionsByProject: withSessionStatus(get().sessionsByProject, sessionId, "working")
+      todosBySession: { ...get().todosBySession, [sessionId]: [] }
     });
     let turnId: string;
     try {
@@ -1236,9 +1151,6 @@ export const useAppStore = create<AppState>((set, get) => ({
             : {}),
           ...(previousTodos && previousTodos.length > 0 && (get().todosBySession[sessionId] ?? []).length === 0
             ? { todosBySession: { ...get().todosBySession, [sessionId]: previousTodos } }
-            : {}),
-          ...(previous
-            ? { sessionsByProject: withSessionStatus(get().sessionsByProject, sessionId, previous.status) }
             : {})
         });
         if (remoteStart) get().applyEvent(sessionId, remoteStart);
@@ -1284,24 +1196,8 @@ export const useAppStore = create<AppState>((set, get) => ({
       busyTurns: book.busyTurns,
       turnStartedAt: book.turnStartedAt,
       turnDurations: book.turnDurations,
-      ...(sessionId
-        ? {
-            sessionsByProject: patchSession(get().sessionsByProject, sessionId, { status: "holding", updatedAt: Date.now() }),
-            autoFollowUpPaused: withAutoPause(get().autoFollowUpPaused, sessionId, "interrupted")
-          }
-        : {})
+      ...(sessionId ? { autoFollowUpPaused: withAutoPause(get().autoFollowUpPaused, sessionId, "interrupted") } : {})
     });
-  },
-
-  markTurnsInterrupted(sessionIds: string[]) {
-    let book: TurnBookkeeping = { busyTurns: get().busyTurns, turnStartedAt: get().turnStartedAt, turnDurations: get().turnDurations };
-    let sessionsByProject = get().sessionsByProject;
-    for (const sessionId of sessionIds) {
-      const turnId = book.busyTurns[sessionId];
-      if (turnId) book = closeTurn(book, sessionId, knownTurnId(turnId));
-      sessionsByProject = patchSession(sessionsByProject, sessionId, { status: "holding", updatedAt: Date.now() });
-    }
-    set({ ...book, sessionsByProject });
   },
 
   async retryConnection(sessionId: string) {
@@ -1320,11 +1216,6 @@ export const useAppStore = create<AppState>((set, get) => ({
         busyTurns: book.busyTurns,
         turnStartedAt: book.turnStartedAt,
         turnDurations: book.turnDurations,
-        sessionsByProject: withSessionStatus(
-          get().sessionsByProject,
-          sessionId,
-          running ? "working" : "idle"
-        ),
         messagesBySession: {
           ...get().messagesBySession,
           [sessionId]: withBufferedTasks(sessionId, mergeToolPairs(result.history))
@@ -1411,7 +1302,6 @@ export const useAppStore = create<AppState>((set, get) => ({
         busyTurns: { ...get().busyTurns, [sessionId]: event.turnId },
         turnStartedAt: { ...get().turnStartedAt, [sessionId]: event.startedAt },
         todosBySession: { ...get().todosBySession, [sessionId]: [] },
-        sessionsByProject: withSessionStatus(get().sessionsByProject, sessionId, "working"),
         ...(event.prompt === "" || messages.some((m) => m.id === userId)
           ? {}
           : {
@@ -1440,8 +1330,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         turnDurations: book.turnDurations,
         pendingApprovals: approvals,
         pendingQuestions: questions,
-        ...(event.reason === "shutdown" ? {} : { autoFollowUpPaused: withAutoPause(get().autoFollowUpPaused, sessionId, "interrupted") }),
-        sessionsByProject: patchSession(get().sessionsByProject, sessionId, { status: "holding", updatedAt: Date.now() })
+        ...(event.reason === "shutdown" ? {} : { autoFollowUpPaused: withAutoPause(get().autoFollowUpPaused, sessionId, "interrupted") })
       });
       return;
     }
@@ -1513,8 +1402,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         pendingApprovals: {
           ...get().pendingApprovals,
           [sessionId]: [...pending, event.request]
-        },
-        sessionsByProject: withSessionStatus(get().sessionsByProject, sessionId, "input-required")
+        }
       });
     } else if (event.type === "approval.resolved") {
       const pending = (get().pendingApprovals[sessionId] ?? []).filter(
@@ -1524,12 +1412,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         pendingApprovals: {
           ...get().pendingApprovals,
           [sessionId]: pending
-        },
-        ...(pending.length > 0
-          ? { sessionsByProject: withSessionStatus(get().sessionsByProject, sessionId, "input-required") }
-          : get().busyTurns[sessionId]
-            ? { sessionsByProject: withSessionStatus(get().sessionsByProject, sessionId, "working") }
-            : {})
+        }
       });
     } else if (event.type === "question.request") {
       const pending = get().pendingQuestions[sessionId] ?? [];
@@ -1538,8 +1421,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         pendingQuestions: {
           ...get().pendingQuestions,
           [sessionId]: [...pending, event.request]
-        },
-        sessionsByProject: withSessionStatus(get().sessionsByProject, sessionId, "input-required")
+        }
       });
     } else if (event.type === "question.resolved") {
       const pending = (get().pendingQuestions[sessionId] ?? []).filter(
@@ -1566,12 +1448,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         messagesBySession: {
           ...get().messagesBySession,
           [sessionId]: [...messages, ...notes]
-        },
-        ...(pending.length > 0
-          ? { sessionsByProject: withSessionStatus(get().sessionsByProject, sessionId, "input-required") }
-          : get().busyTurns[sessionId]
-            ? { sessionsByProject: withSessionStatus(get().sessionsByProject, sessionId, "working") }
-            : {})
+        }
       });
     } else if (event.type === "tool.call") {
       const buffered = takeBufferedTask(sessionId, event.toolCallId);
@@ -1713,11 +1590,6 @@ export const useAppStore = create<AppState>((set, get) => ({
         pendingApprovals: approvals,
         pendingQuestions: questions,
         ...(event.isError ? { autoFollowUpPaused: withAutoPause(get().autoFollowUpPaused, sessionId, "error") } : {}),
-        sessionsByProject: isFinal
-          ? withSessionStatus(get().sessionsByProject, sessionId, "done")
-          : busyMatch
-            ? withSessionStatus(get().sessionsByProject, sessionId, "working")
-            : get().sessionsByProject,
         messagesBySession: {
           ...get().messagesBySession,
           [sessionId]: turnMessages
@@ -1762,7 +1634,6 @@ export const useAppStore = create<AppState>((set, get) => ({
         pendingApprovals: approvals,
         pendingQuestions: questions,
         autoFollowUpPaused: withAutoPause(get().autoFollowUpPaused, sessionId, "error"),
-        sessionsByProject: patchSession(get().sessionsByProject, sessionId, { status: "holding", updatedAt: Date.now() }),
         messagesBySession: {
           ...get().messagesBySession,
           [sessionId]: [

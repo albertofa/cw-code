@@ -386,6 +386,7 @@ export class ServerApp {
     if (!running || !running.shutdown.isIdle()) return;
     void running.sessions.settleFinishedPrSessions();
     void running.sessions.resolveExpiredIdleSessions();
+    running.sessions.expireDueHoldingSessions();
   }
 
   private startSessionSweeps(): void {

@@ -4637,3 +4637,188 @@ describe("SessionManager pending requests", () => {
     failed.manager.dispose();
   });
 });
+
+describe("SessionManager status machine", () => {
+  function storeOf(manager: SessionManager): SessionStore {
+    return (manager as unknown as { store: SessionStore }).store;
+  }
+
+  function recordSessions(manager: SessionManager): SessionMeta[] {
+    const emitted: SessionMeta[] = [];
+    manager.setSessionEmitter((session) => emitted.push({ ...session }));
+    return emitted;
+  }
+
+  it("emits working before the driver starts the turn", async () => {
+    const { manager, fake } = makeManager();
+    const project = manager.addProject("C:\\proj-status-working");
+    const session = await manager.createSession(project.id, "claude");
+    const order: string[] = [];
+    manager.setSessionEmitter((updated) => order.push(`emit:${updated.status}`));
+    const startTurn = fake.startTurn.bind(fake);
+    fake.startTurn = (request) => {
+      order.push(`driver:${storeOf(manager).getSession(session.id)?.status}`);
+      return startTurn(request);
+    };
+
+    await manager.startTurn(session.id, "hello");
+
+    expect(order.slice(0, 2)).toEqual(["emit:working", "driver:working"]);
+    manager.dispose();
+  });
+
+  it("restores the previous status and emits it when the turn fails to start", async () => {
+    const { dir, manager, project } = makePrManager({});
+    const tracePath = join(dir, "session-status.jsonl");
+    initSessionStatusTrace({ filePath: tracePath });
+    try {
+      const session = await manager.createSession(project.id, "claude");
+      manager.setSessionStatus(session.id, "holding");
+      const emitted = recordSessions(manager);
+      (manager as unknown as { ensureWorktree(sessionId: string): Promise<string> }).ensureWorktree = () => Promise.reject(new Error("worktree boom"));
+
+      await expect(manager.startTurn(session.id, "hello")).rejects.toThrow("worktree boom");
+
+      expect(emitted.map((item) => item.status)).toEqual(["working", "holding"]);
+      expect(storeOf(manager).getSession(session.id)?.status).toBe("holding");
+      const reasons = readStatusTransitions(tracePath).filter((entry) => entry.sessionId === session.id).map((entry) => entry.reason);
+      expect(reasons.slice(-2)).toEqual(["turn-start", "turn-start-failed"]);
+      expect(manager.listActiveTurns()).toEqual([]);
+    } finally {
+      resetSessionStatusTraceForTests();
+      manager.dispose();
+    }
+  });
+
+  it("does not touch the status when a second start is rejected as busy", async () => {
+    const { manager, fake } = makeManager();
+    const project = manager.addProject("C:\\proj-status-busy");
+    const session = await manager.createSession(project.id, "claude");
+    await manager.startTurn(session.id, "first");
+    const emitted = recordSessions(manager);
+
+    await expect(manager.startTurn(session.id, "second")).rejects.toThrow(/busy/);
+
+    expect(emitted).toEqual([]);
+    expect(storeOf(manager).getSession(session.id)?.status).toBe("working");
+    fake.completeAll();
+    manager.dispose();
+  });
+
+  it("emits the session when a turn completes or errors", async () => {
+    const { manager, fake, received } = makeManager();
+    const project = manager.addProject("C:\\proj-status-end");
+    const session = await manager.createSession(project.id, "claude");
+    const turnId = await manager.startTurn(session.id, "hello");
+    const emitted = recordSessions(manager);
+
+    fake.complete(turnId);
+    expect(emitted.at(-1)?.status).toBe("done");
+
+    const second = await manager.startTurn(session.id, "again");
+    (manager as unknown as { routeEvent(e: ThreadEvent): void }).routeEvent({ type: "turn.error", turnId: second, message: "failed" });
+    expect(received.some(({ event }) => event.type === "turn.error")).toBe(true);
+    expect(emitted.at(-1)?.status).toBe("holding");
+    manager.dispose();
+  });
+
+  it("marks a turn as seen only for done sessions", async () => {
+    const { manager } = makeManager();
+    const project = manager.addProject("C:\\proj-status-seen");
+    const session = await manager.createSession(project.id, "claude");
+    const store = storeOf(manager);
+    const emitted = recordSessions(manager);
+
+    expect(manager.markTurnSeen(session.id)).toBeNull();
+    expect(manager.markTurnSeen("missing")).toBeNull();
+    store.updateSession(session.id, { status: "working" });
+    expect(manager.markTurnSeen(session.id)).toBeNull();
+    expect(emitted).toEqual([]);
+
+    store.updateSession(session.id, { status: "done" });
+    expect(manager.markTurnSeen(session.id)?.status).toBe("holding");
+    expect(emitted.map((item) => item.status)).toEqual(["holding"]);
+    expect(manager.markTurnSeen(session.id)).toBeNull();
+    manager.dispose();
+  });
+
+  it("reopens sessions according to the open reason", async () => {
+    const { manager } = makeManager();
+    const project = manager.addProject("C:\\proj-status-open");
+    const store = storeOf(manager);
+    const resolved = await manager.createSession(project.id, "claude");
+    await manager.resolveSession(resolved.id, "resolved");
+    const done = await manager.createSession(project.id, "claude");
+    store.updateSession(done.id, { status: "done" });
+    const archived = await manager.createSession(project.id, "claude");
+    await manager.resolveSession(archived.id, "archived");
+    const emitted = recordSessions(manager);
+
+    expect(manager.openSession(done.id, "select")).toBeNull();
+    expect(store.getSession(done.id)?.status).toBe("done");
+    expect(manager.openSession(archived.id, "restore")).toBeNull();
+    expect(manager.openSession("missing", "restore")).toBeNull();
+    expect(emitted).toEqual([]);
+
+    expect(manager.openSession(resolved.id, "select")?.status).toBe("idle");
+    expect(manager.openSession(done.id, "restore")?.status).toBe("holding");
+    expect(emitted.map((item) => item.status)).toEqual(["idle", "holding"]);
+
+    await manager.resolveSession(resolved.id, "resolved");
+    expect(manager.openSession(resolved.id, "restore")?.status).toBe("idle");
+    manager.dispose();
+  });
+
+  it("expires holding sessions only past the configured threshold and only when enabled", async () => {
+    const { manager } = makeManager();
+    const project = manager.addProject("C:\\proj-status-expire");
+    const store = storeOf(manager);
+    const session = await manager.createSession(project.id, "claude");
+    store.updateSession(session.id, { status: "holding" });
+    const holdingSince = store.getSession(session.id)?.updatedAt ?? 0;
+    const hour = 3_600_000;
+    const emitted = recordSessions(manager);
+
+    expect(manager.expireDueHoldingSessions(holdingSince + 3 * hour)).toEqual([]);
+    manager.setSettings({ holdingAutoExpireEnabled: true, holdingHours: 3 });
+    expect(manager.expireDueHoldingSessions(holdingSince + 3 * hour - 1)).toEqual([]);
+    expect(store.getSession(session.id)?.status).toBe("holding");
+
+    const expired = manager.expireDueHoldingSessions(holdingSince + 3 * hour);
+
+    expect(expired.map((item) => item.id)).toEqual([session.id]);
+    expect(store.getSession(session.id)?.status).toBe("idle");
+    expect(emitted.at(-1)?.status).toBe("idle");
+    manager.dispose();
+  });
+
+  it("emits a thread notice when resolving keeps a dirty worktree", async () => {
+    const { manager, project, received } = makeGitSandboxManager("cw-resolve-notice-");
+    const session = await manager.createSession(project.id, "claude", { baseBranch: "main" });
+    writeFileSync(join(session.worktreePath!, "README.md"), "changed\n", "utf8");
+
+    const result = await manager.resolveSession(session.id, "resolved", { removeWorktree: true });
+
+    expect(result.dirtyBlocked).toBe(true);
+    const notices = received.flatMap(({ sessionId, event }) => (sessionId === session.id && event.type === "session.notice" ? [event] : []));
+    expect(notices).toHaveLength(1);
+    expect(notices[0]).toMatchObject({ severity: "error" });
+    expect(notices[0].text).toContain("Worktree kept");
+    manager.dispose();
+  });
+
+  it("emits the destroy-script failure as a thread notice and skips notices for automatic resolves", async () => {
+    const { manager, project, received } = makeGitSandboxManager("cw-resolve-notice-script-");
+    manager.updateProjectSettings(project.id, { destroyScript: "exit 4" });
+    const manual = await manager.createSession(project.id, "claude", { baseBranch: "main" });
+    await manager.resolveSession(manual.id, "resolved", { removeWorktree: true });
+    const automatic = await manager.createSession(project.id, "claude", { baseBranch: "main" });
+    await manager.resolveSession(automatic.id, "resolved", { removeWorktree: true, auto: true });
+
+    const noticesFor = (sessionId: string) =>
+      received.flatMap(({ sessionId: id, event }) => (id === sessionId && event.type === "session.notice" ? [event.text] : []));
+    expect(noticesFor(manual.id).some((text) => text.includes("Destroy script failed"))).toBe(true);
+    expect(noticesFor(automatic.id)).toEqual([]);
+    manager.dispose();
+  });
+});

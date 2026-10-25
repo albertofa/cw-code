@@ -111,8 +111,6 @@ export function App() {
   const prRefreshIntervalSeconds = useAppStore((s) => s.prRefreshIntervalSeconds);
   const mainView = usePrStore((s) => s.mainView);
   const runModal = usePrStore((s) => s.runModal);
-  const holdingHours = useAppStore((s) => s.holdingHours);
-  const holdingAutoExpireEnabled = useAppStore((s) => s.holdingAutoExpireEnabled);
   const loadProjects = useAppStore((s) => s.loadProjects);
   const appearance = useAppStore((s) => s.appearance);
   const sessionPanel = usePanelStore((s) => selectSessionPanel(s, activeSessionId ?? undefined));
@@ -299,14 +297,6 @@ export function App() {
       document.removeEventListener("visibilitychange", onVisibility);
     };
   }, [prRefreshIntervalSeconds]);
-
-  useEffect(() => {
-    if (!window.cw || !holdingAutoExpireEnabled) return;
-    const expire = () => void useAppStore.getState().expireHoldingSessions();
-    expire();
-    const timer = window.setInterval(expire, 60_000);
-    return () => window.clearInterval(timer);
-  }, [holdingAutoExpireEnabled, holdingHours]);
 
   useEffect(() => {
     if (!activeSessionId) return;

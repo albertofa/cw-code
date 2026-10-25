@@ -34,6 +34,8 @@ export type SessionStatusReason =
   | "turn-start-failed"
   | "unknown";
 
+export type SessionOpenReason = "select" | "restore";
+
 export interface ProjectSettings {
   /** Harness preselected when a new session starts in this project. */
   defaultDriver?: DriverKind;

@@ -120,11 +120,6 @@ async function prepareOnce(flow: ActiveFlow, assessment: ShutdownAssessment, sto
     });
     return;
   }
-  if ((result.ok || result.code === "timeout") && result.stoppedTurnIds.length > 0) {
-    const stopped = new Set(result.stoppedTurnIds);
-    const sessionIds = assessment.activeTurns.filter((turn) => stopped.has(turn.turnId)).map((turn) => turn.sessionId);
-    useAppStore.getState().markTurnsInterrupted(sessionIds);
-  }
   if (active !== flow) {
     if (result.ok || result.code === "timeout") void window.cw.shutdown.cancel(result.token).catch(() => {});
     return;

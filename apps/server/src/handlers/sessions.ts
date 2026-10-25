@@ -1,4 +1,4 @@
-import type { CreateSessionOptions, DriverKind, ImportSessionRequest, ProjectSettings, SessionStatus } from "@cw-code/contracts";
+import type { CreateSessionOptions, DriverKind, ImportSessionRequest, ProjectSettings, SessionOpenReason, SessionStatus } from "@cw-code/contracts";
 import { MAX_TOPICS_PER_CLIENT, sessionTopic } from "@cw-code/shared/topics";
 import { homedir } from "node:os";
 import type { ServerApp } from "../app/ServerApp.js";
@@ -44,7 +44,10 @@ export function registerSessionHandlers(router: Router, app: ServerApp): void {
   });
   handle<{ sessionId: string }>(router, "sessions.markWorking", (args) => services().sessions.markWorking(args.sessionId));
   handle<{ sessionId: string }>(router, "sessions.restore", (args) => services().sessions.restoreSession(args.sessionId));
-  handle<string[]>(router, "sessions.expireHolding", (sessionIds) => services().sessions.expireHoldingSessions(sessionIds));
+  handle<{ sessionId: string }>(router, "sessions.markTurnSeen", (args) => services().sessions.markTurnSeen(args.sessionId));
+  handle<{ sessionId: string; reason: SessionOpenReason }>(router, "sessions.open", (args) =>
+    services().sessions.openSession(args.sessionId, args.reason)
+  );
   handle<{ sessionId: string; status: SessionStatus; removeWorktree?: boolean; forceBranch?: boolean }>(
     router,
     "sessions.resolve",

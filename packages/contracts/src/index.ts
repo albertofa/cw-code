@@ -1,4 +1,4 @@
-export type { SessionStatusReason } from "./session.js";
+export type { SessionOpenReason, SessionStatusReason } from "./session.js";
 export type {
   DriverKind,
   Project,
