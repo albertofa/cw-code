@@ -23,6 +23,7 @@ import { SessionManager } from "../sessions/SessionManager.js";
 import type { SessionStore } from "../sessions/SessionStore.js";
 import type { SettingsStore } from "../settings/SettingsStore.js";
 import { ShutdownCoordinator } from "../shutdown/ShutdownCoordinator.js";
+import { SidebarService } from "../sidebar/SidebarService.js";
 import { SkillsStore } from "../skills/SkillsStore.js";
 import { SourceControlService } from "../sourceControl/SourceControlService.js";
 import { ThreadService } from "../threads/ThreadService.js";
@@ -55,6 +56,7 @@ export interface Services {
   threads: ThreadService;
   turns: TurnService;
   autoFollowUp: AutoFollowUpEngine;
+  sidebar: SidebarService;
 }
 
 export interface ServiceHooks {
@@ -78,8 +80,21 @@ function wireAutoFollowUp({ autoFollowUp, prStore, threads, turns }: Services): 
   turns.onTurnStopped((sessionId) => autoFollowUp.turnStopped(sessionId));
 }
 
+function wireSidebar({ sidebar, threads, sourceControl, prStore, autoFollowUp, preferences }: Services): void {
+  sidebar.watch(
+    (onChange) => threads.onRuntimeChanged(onChange),
+    (onChange) => sourceControl.onPublished(onChange),
+    (onChange) => prStore.onChanged(onChange),
+    (onChange) => autoFollowUp.onChanged(onChange),
+    (onChange) =>
+      preferences.onChanged((change) => {
+        if (change.kind === "sidebarOrder") onChange();
+      })
+  );
+}
+
 function wireServiceEvents(
-  { sessions, sourceControl, prTracker, prStore, ptys, runWatcher, threads, autoFollowUp }: Services,
+  { sessions, sourceControl, prTracker, prStore, ptys, runWatcher, threads, autoFollowUp, sidebar }: Services,
   { emit, dropTopic }: ServiceHooks
 ): void {
   sessions.setEmitter((sessionId, event) => {
@@ -87,16 +102,21 @@ function wireServiceEvents(
     threads.onDriverEvent(sessionId, event);
     sourceControl.onThreadEvent(sessionId, event);
   });
-  sessions.setTitleEmitter((sessionId, title) => emit("session.title", { sessionId, title }));
+  sessions.setTitleEmitter((sessionId, title) => {
+    emit("session.title", { sessionId, title });
+    sidebar.invalidate();
+  });
   sessions.setSessionEmitter((session) => {
     emit("session.updated", session);
     prTracker.setTracked(sessions.trackedPrRefs());
     prStore.onSessionsChanged();
     autoFollowUp.reevaluate();
+    sidebar.invalidate();
   });
   sessions.setProjectEmitter((project) => {
     emit("projects.changed", project);
     prStore.onProjectsChanged();
+    sidebar.invalidate();
   });
   ptys.setExitEmitter((ptyId, token, exitCode) => {
     emit("pty.exit", { ptyId, token, exitCode });
@@ -208,6 +228,19 @@ export function createServices(stores: { sessionStore: SessionStore; settingsSto
     postNotice: (sessionId, notice) => sessions.emitNotice(sessionId, notice.noticeId, notice.text, notice.severity),
     enabled: false
   });
+  const sidebar = new SidebarService(hooks.topics, {
+    sessions: () => sessions.listAllSessions(),
+    projects: () => sessions.listProjects(),
+    runtime: (sessionId) => threads.runtime(sessionId),
+    gitStatus: (sessionId) => sourceControl.status(sessionId),
+    summaryLookup: () => prStore.summaryLookup(),
+    detail: (key) => prStore.detail(key),
+    babysit: (sessionId) => autoFollowUp.babysit(sessionId),
+    sidebarOrder: () => preferences.sidebarOrder(),
+    setSidebarOrder: (order) => preferences.setSidebarOrder(order),
+    publishAttention: (count) => appTopic.setAttention(count),
+    watchWorkingSet: (sessionIds) => sourceControl.setWorkingSet(sessionIds)
+  });
   const services: Services = {
     sessions,
     skills: new SkillsStore(),
@@ -229,9 +262,11 @@ export function createServices(stores: { sessionStore: SessionStore; settingsSto
     harnessMonitor,
     threads,
     turns,
-    autoFollowUp
+    autoFollowUp,
+    sidebar
   };
   wireServiceEvents(services, hooks);
   wireAutoFollowUp(services);
+  wireSidebar(services);
   return services;
 }

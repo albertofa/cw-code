@@ -1,10 +1,49 @@
-import type { CreateSessionOptions, DriverKind, ImportSessionRequest, ProjectSettings, SessionOpenReason, SessionStatus } from "@cw-code/contracts";
+import type {
+  CreateSessionOptions,
+  DriverKind,
+  ImportSessionRequest,
+  ProjectSettings,
+  SessionCleanupResult,
+  SessionOpenReason,
+  SessionStatus,
+  SidebarReorderRequest,
+  SidebarSection
+} from "@cw-code/contracts";
 import { MAX_TOPICS_PER_CLIENT, sessionTopic } from "@cw-code/shared/topics";
 import { homedir } from "node:os";
 import type { ServerApp } from "../app/ServerApp.js";
+import type { Services } from "../app/services.js";
 import type { SessionStatusReason } from "../debug/sessionStatusTrace.js";
 import type { Router } from "../transport/Router.js";
-import { handle, subscribeIfConnected } from "./shared.js";
+import { handle, parseArgs, parseBoolean, parseString, subscribeIfConnected } from "./shared.js";
+
+function parseSection(value: unknown, name: string): SidebarSection {
+  if (value !== "main" && value !== "resolved") throw new Error(`${name} must be main or resolved`);
+  return value;
+}
+
+function parseSidebarReorder(value: unknown): SidebarReorderRequest {
+  const args = parseArgs(value, "sidebar.reorder");
+  return {
+    sessionId: parseString(args.sessionId, "sessionId"),
+    from: parseSection(args.from, "from"),
+    to: parseSection(args.to, "to"),
+    targetId: args.targetId === null ? null : parseString(args.targetId, "targetId"),
+    before: parseBoolean(args.before, "before")
+  };
+}
+
+async function resolveSession(
+  { sessions, ptys, fileWatcher }: Services,
+  sessionId: string,
+  status: SessionStatus,
+  options: { removeWorktree?: boolean; forceBranch?: boolean }
+): Promise<SessionCleanupResult> {
+  await fileWatcher.unwatch(sessionId);
+  const result = await sessions.resolveSession(sessionId, status, options);
+  if (result.status === "resolved" || result.status === "archived") ptys.killSession(sessionId);
+  return result;
+}
 
 export function registerSessionHandlers(router: Router, app: ServerApp): void {
   const services = () => app.requireServices();
@@ -57,14 +96,14 @@ export function registerSessionHandlers(router: Router, app: ServerApp): void {
   handle<{ sessionId: string; status: SessionStatus; removeWorktree?: boolean; forceBranch?: boolean }>(
     router,
     "sessions.resolve",
-    async (args) => {
-      const { sessions, ptys, fileWatcher } = services();
-      await fileWatcher.unwatch(args.sessionId);
-      const result = await sessions.resolveSession(args.sessionId, args.status, { removeWorktree: args.removeWorktree, forceBranch: args.forceBranch });
-      if (result.status === "resolved" || result.status === "archived") ptys.killSession(args.sessionId);
-      return result;
-    }
+    (args) => resolveSession(services(), args.sessionId, args.status, { removeWorktree: args.removeWorktree, forceBranch: args.forceBranch })
   );
+  handle<unknown>(router, "sidebar.reorder", async (args) => {
+    const request = parseSidebarReorder(args);
+    const action = services().sidebar.reorder(request);
+    if (action === "resolve") await resolveSession(services(), request.sessionId, "resolved", { removeWorktree: true, forceBranch: false });
+    else if (action === "restore") await services().sessions.restoreSession(request.sessionId);
+  });
   handle(router, "worktrees.prune", async () => {
     const { sessions, fileWatcher } = services();
     const perProject = await Promise.all(sessions.listProjects().map((project) => sessions.listSessions(project.id)));

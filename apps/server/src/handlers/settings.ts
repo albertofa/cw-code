@@ -52,6 +52,7 @@ export function registerSettingsHandlers(router: Router, app: ServerApp): void {
     appTopic.setSettings(saved);
     services().prStore.onSettingsChanged();
     services().autoFollowUp.reevaluate();
+    services().sidebar.invalidate();
     app.emit("settings.changed", saved);
     if (checks.length > 0) void harnessMonitor.check("settings");
     return saved;

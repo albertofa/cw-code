@@ -136,8 +136,11 @@ describe("server process", () => {
 
   it("accepts topic subscriptions and rejects pty topics", async () => {
     const client = await connect();
-    expect(await client.call("topics.subscribe", { topics: ["sidebar"] })).toEqual({ sidebar: { rev: 0, data: {} } });
-    expect(await client.call("topics.subscribe", { topics: ["sidebar"] })).toEqual({ sidebar: { rev: 0, data: {} } });
+    type SidebarSnapshot = { sidebar: { rev: number; data: Record<string, unknown> } };
+    const first = await client.call<SidebarSnapshot>("topics.subscribe", { topics: ["sidebar"] });
+    expect(first.sidebar.data.layout).toEqual({ needsYou: [], workingSet: [], main: [], resolved: [], quickCounts: { pr: 0 } });
+    expect(first.sidebar.data.defaults).toMatchObject({ restoreSessionId: null });
+    expect(await client.call("topics.subscribe", { topics: ["sidebar"] })).toEqual(first);
     await expect(client.call("topics.subscribe", { topics: ["app", "github/nope"] })).rejects.toMatchObject({ code: "unknown-topic" });
     await expect(client.call("topics.subscribe", { topics: ["pty/x:shell"] })).rejects.toMatchObject({ code: "invalid-topic" });
     await expect(client.call("topics.unsubscribe", { topics: ["pty/x:shell"] })).rejects.toMatchObject({ code: "invalid-topic" });

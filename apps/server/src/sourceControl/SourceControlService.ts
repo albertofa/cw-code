@@ -48,6 +48,9 @@ export class SourceControlService {
   private readonly requested = new Map<string, Set<string>>();
   private readonly toolEffects = new Map<string, Map<string, ToolGitEffect>>();
   private watched = new Set<string>();
+  private subscribed: string[] = [];
+  private workingSet: string[] = [];
+  private readonly publishedListeners = new Set<(update: GitStatusUpdate) => void>();
   private pollTimer: ReturnType<typeof setTimeout> | null = null;
   private watchGeneration = 0;
 
@@ -74,13 +77,18 @@ export class SourceControlService {
   }
 
   setWatched(sessionIds: string[]): void {
-    const next = new Set(sessionIds);
-    const added = [...next].filter((id) => !this.watched.has(id));
-    const removed = [...this.watched].some((id) => !next.has(id));
-    this.watched = next;
-    if (!this.scheduler || (added.length === 0 && !removed)) return;
-    for (const id of added) void this.refresh(id);
-    void this.syncWatcherRoots();
+    this.subscribed = [...sessionIds];
+    this.applyWatched();
+  }
+
+  setWorkingSet(sessionIds: string[]): void {
+    this.workingSet = [...sessionIds];
+    this.applyWatched();
+  }
+
+  onPublished(cb: (update: GitStatusUpdate) => void): () => void {
+    this.publishedListeners.add(cb);
+    return () => this.publishedListeners.delete(cb);
   }
 
   refresh(sessionId: string, request: { forcePullRequest?: boolean } = {}): Promise<void> {
@@ -268,10 +276,18 @@ export class SourceControlService {
     const fingerprint = JSON.stringify(status);
     if (this.fingerprints.get(sessionId) === fingerprint) return;
     this.fingerprints.set(sessionId, fingerprint);
+    const update: GitStatusUpdate = { sessionId, status };
     try {
-      this.emit({ sessionId, status });
+      this.emit(update);
     } catch (error) {
       this.warn(`${LOG_PREFIX} could not push the status of session ${sessionId}: ${describeError(error)}`);
+    }
+    for (const listener of [...this.publishedListeners]) {
+      try {
+        listener(update);
+      } catch (error) {
+        this.warn(`${LOG_PREFIX} a published-status listener failed for session ${sessionId}: ${describeError(error)}`);
+      }
     }
   }
 
@@ -282,6 +298,16 @@ export class SourceControlService {
       this.failures.set(sessionId, message);
     }
     if (fresh) this.warn(`${LOG_PREFIX} ${message}`);
+  }
+
+  private applyWatched(): void {
+    const next = new Set([...this.subscribed, ...this.workingSet]);
+    const added = [...next].filter((id) => !this.watched.has(id));
+    const removed = [...this.watched].some((id) => !next.has(id));
+    this.watched = next;
+    if (!this.scheduler || (added.length === 0 && !removed)) return;
+    for (const id of added) void this.refresh(id);
+    void this.syncWatcherRoots();
   }
 
   private refreshWatched(): void {
