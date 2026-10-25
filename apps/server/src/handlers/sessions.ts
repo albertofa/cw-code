@@ -100,9 +100,11 @@ export function registerSessionHandlers(router: Router, app: ServerApp): void {
   );
   handle<unknown>(router, "sidebar.reorder", async (args) => {
     const request = parseSidebarReorder(args);
-    const action = services().sidebar.reorder(request);
-    if (action === "resolve") await resolveSession(services(), request.sessionId, "resolved", { removeWorktree: true, forceBranch: false });
-    else if (action === "restore") await services().sessions.restoreSession(request.sessionId);
+    await services().sidebar.reorder(request, (action) =>
+      action === "resolve"
+        ? resolveSession(services(), request.sessionId, "resolved", { removeWorktree: true, forceBranch: false })
+        : services().sessions.restoreSession(request.sessionId)
+    );
   });
   handle(router, "worktrees.prune", async () => {
     const { sessions, fileWatcher } = services();

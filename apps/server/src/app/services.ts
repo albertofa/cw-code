@@ -235,7 +235,7 @@ export function createServices(stores: { sessionStore: SessionStore; settingsSto
     gitStatus: (sessionId) => sourceControl.status(sessionId),
     summaryLookup: () => prStore.summaryLookup(),
     detail: (key) => prStore.detail(key),
-    babysit: (sessionId) => autoFollowUp.babysit(sessionId),
+    workflows: () => sessions.getSettings().prWorkflows,
     sidebarOrder: () => preferences.sidebarOrder(),
     setSidebarOrder: (order) => preferences.setSidebarOrder(order),
     publishAttention: (count) => appTopic.setAttention(count),

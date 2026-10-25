@@ -10,21 +10,24 @@ const REQUEST: SidebarReorderRequest = { sessionId: "s1", from: "main", to: "res
 
 let calls: unknown[][];
 let action: SidebarStatusAction | null;
+let failResolve: boolean;
 let router: Router;
 
 beforeEach(() => {
   calls = [];
   action = null;
+  failResolve = false;
   const services = {
     sidebar: {
-      reorder: (request: SidebarReorderRequest) => {
+      reorder: async (request: SidebarReorderRequest, apply: (action: SidebarStatusAction) => Promise<unknown>) => {
         calls.push(["reorder", request]);
-        return action;
+        if (action) await apply(action);
       }
     },
     sessions: {
       resolveSession: async (sessionId: string, status: string, options: unknown) => {
         calls.push(["resolveSession", sessionId, status, options]);
+        if (failResolve) throw new Error("session busy (turn active)");
         return { sessionId, status, worktreeOrphaned: false, worktreeRemoved: true, branchDeleted: true };
       },
       restoreSession: async (sessionId: string) => {
@@ -60,6 +63,13 @@ describe("sidebar.reorder", () => {
       ["reorder", request],
       ["restoreSession", "s1"]
     ]);
+  });
+
+  test("surfaces a failed resolve to the caller", async () => {
+    action = "resolve";
+    failResolve = true;
+    const [result] = await Promise.allSettled([dispatch(REQUEST)]);
+    expect(result?.status).toBe("rejected");
   });
 
   test("changes no status when the reorder asks for none", async () => {

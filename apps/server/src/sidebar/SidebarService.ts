@@ -1,7 +1,7 @@
 import type {
-  BabysitState,
   GitStatus,
   PrDetail,
+  PrWorkflow,
   Project,
   SessionMeta,
   SessionRow,
@@ -14,6 +14,7 @@ import type {
 import { prKey } from "@cw-code/shared/prRef";
 import { SIDEBAR_TOPIC } from "@cw-code/shared/topics";
 import type { ChangeSource } from "../app/ShutdownPublisher.js";
+import { babysitState } from "../prEngine/babysit.js";
 import { firstUnseenPr, needsYouEntries, sessionAttention } from "../prEngine/needsYou.js";
 import { displayChip, linksTitle, mostUrgentLink, sessionLinks, type PrSummaryLookup } from "../prEngine/sessionPrLinks.js";
 import { latestUnseenPrUpdateAt } from "../prEngine/soundFacts.js";
@@ -32,7 +33,7 @@ export interface SidebarServiceDeps {
   gitStatus(sessionId: string): GitStatus | null;
   summaryLookup(): PrSummaryLookup;
   detail(key: string): PrDetail | undefined;
-  babysit(sessionId: string): BabysitState | null;
+  workflows(): PrWorkflow[];
   sidebarOrder(): SidebarOrderPrefs | null;
   setSidebarOrder(order: SidebarOrderPrefs): void;
   publishAttention(count: number): void;
@@ -40,6 +41,8 @@ export interface SidebarServiceDeps {
 }
 
 export type SidebarStatusAction = "resolve" | "restore";
+
+export const MAX_WATCHED_WORKING_SET = 30;
 
 interface Snapshot {
   json: string;
@@ -55,6 +58,9 @@ interface Computed {
 
 const LOG_PREFIX = "[sidebar]";
 
+const EMPTY_LAYOUT: SidebarLayout = { needsYou: [], workingSet: [], main: [], resolved: [], quickCounts: { pr: 0 } };
+const EMPTY_DEFAULTS: SidebarDefaults = { restoreSessionId: null, restoreProjectId: null, projectsByRecency: [] };
+
 function describeError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
@@ -69,6 +75,15 @@ function groupByProject(sessions: SessionMeta[]): Record<string, SessionMeta[]> 
   return byProject;
 }
 
+function watchedWorkingSet(sessions: SessionMeta[]): string[] {
+  return sessions
+    .filter((session) => isWorkingSetStatus(session.status))
+    .sort((a, b) => b.updatedAt - a.updatedAt)
+    .slice(0, MAX_WATCHED_WORKING_SET)
+    .map((session) => session.id)
+    .sort();
+}
+
 function restoreDefaults(sessions: SessionMeta[], projects: Project[]): Pick<SidebarDefaults, "restoreSessionId" | "restoreProjectId"> {
   const candidates = sessions.filter((session) => session.status !== "archived").sort((a, b) => b.updatedAt - a.updatedAt);
   const picked = candidates.find((session) => !session.autoResolved);
@@ -80,20 +95,26 @@ export class SidebarService implements TopicProvider {
   readonly exactTopics = [SIDEBAR_TOPIC];
   private readonly store: TopicStore<SidebarTopicData>;
   private readonly snapshots = new Map<string, Snapshot>();
-  private layout: SidebarLayout;
+  private layout: SidebarLayout = EMPTY_LAYOUT;
   private attention = 0;
   private publishedAttention: number | null = null;
+  private workingSetIds: string[] = [];
   private watchedKey: string | null = null;
-  private scheduled = false;
+  private timer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(
-    hub: TopicHub,
+    private readonly hub: TopicHub,
     private readonly deps: SidebarServiceDeps
   ) {
-    const computed = this.compute();
-    this.layout = computed.layout;
-    this.store = hub.createStore<SidebarTopicData>(SIDEBAR_TOPIC, computed.data);
-    this.applySideEffects(computed);
+    let computed: Computed | null = null;
+    try {
+      computed = this.compute();
+    } catch (error) {
+      console.warn(`${LOG_PREFIX} initial compute failed: ${describeError(error)}`);
+    }
+    const initial = computed?.data ?? ({ layout: EMPTY_LAYOUT, defaults: EMPTY_DEFAULTS } as SidebarTopicData);
+    this.store = hub.createStore<SidebarTopicData>(SIDEBAR_TOPIC, initial);
+    if (computed) this.applyComputed(computed);
   }
 
   owns(topic: string): boolean {
@@ -106,6 +127,18 @@ export class SidebarService implements TopicProvider {
 
   release(): void {}
 
+  onSubscribe(): void {
+    this.syncWatched();
+  }
+
+  onUnsubscribe(): void {
+    this.syncWatched();
+  }
+
+  resync(): void {
+    this.syncWatched();
+  }
+
   watch(...sources: ChangeSource[]): () => void {
     const stops = sources.map((source) => source(() => this.invalidate()));
     return () => {
@@ -114,52 +147,64 @@ export class SidebarService implements TopicProvider {
   }
 
   invalidate(): void {
-    if (this.scheduled) return;
-    this.scheduled = true;
-    queueMicrotask(() => {
-      if (this.scheduled) this.recompute();
-    });
+    if (this.timer) return;
+    this.timer = setTimeout(() => {
+      this.timer = null;
+      this.recompute();
+    }, 0);
+    this.timer.unref?.();
   }
 
   attentionCount(): number {
     return this.attention;
   }
 
-  reorder(request: SidebarReorderRequest): SidebarStatusAction | null {
+  async reorder(request: SidebarReorderRequest, apply: (action: SidebarStatusAction) => Promise<unknown>): Promise<void> {
     this.recompute();
     const away = new Set([...this.layout.needsYou.map((entry) => entry.sessionId), ...this.layout.workingSet]);
     const result = reorderSidebar(this.deps.sidebarOrder(), { main: this.layout.main, resolved: this.layout.resolved }, away, request);
-    if (!result) return null;
+    if (!result) return;
+    const action = this.statusAction(request.sessionId, result.statusChange);
+    if (action) await apply(action);
     this.deps.setSidebarOrder(result.order);
-    if (result.statusChange === "resolved") return "resolve";
-    if (result.statusChange !== "idle") return null;
-    const session = this.deps.sessions().find((item) => item.id === request.sessionId);
+  }
+
+  private statusAction(sessionId: string, change: "idle" | "resolved" | null): SidebarStatusAction | null {
+    if (change === "resolved") return "resolve";
+    if (change !== "idle") return null;
+    const session = this.deps.sessions().find((item) => item.id === sessionId);
     return session?.status === "resolved" ? "restore" : null;
   }
 
   private recompute(): void {
-    this.scheduled = false;
+    if (this.timer) clearTimeout(this.timer);
+    this.timer = null;
     try {
       const computed = this.compute();
-      this.layout = computed.layout;
       this.store.sync(computed.data);
-      this.applySideEffects(computed);
+      this.applyComputed(computed);
     } catch (error) {
       console.warn(`${LOG_PREFIX} recompute failed: ${describeError(error)}`);
     }
   }
 
-  private applySideEffects(computed: Computed): void {
+  private applyComputed(computed: Computed): void {
+    this.layout = computed.layout;
     this.attention = computed.attentionCount;
     if (this.publishedAttention !== computed.attentionCount) {
       this.publishedAttention = computed.attentionCount;
       this.deps.publishAttention(computed.attentionCount);
     }
-    const watchedKey = computed.watchedIds.join("|");
-    if (this.watchedKey !== watchedKey) {
-      this.watchedKey = watchedKey;
-      this.deps.watchWorkingSet(computed.watchedIds);
-    }
+    this.workingSetIds = computed.watchedIds;
+    this.syncWatched();
+  }
+
+  private syncWatched(): void {
+    const watched = this.hub.subscribers(SIDEBAR_TOPIC) > 0 ? this.workingSetIds : [];
+    const watchedKey = watched.join("|");
+    if (this.watchedKey === watchedKey) return;
+    this.watchedKey = watchedKey;
+    this.deps.watchWorkingSet(watched);
   }
 
   private compute(): Computed {
@@ -167,7 +212,8 @@ export class SidebarService implements TopicProvider {
     const projects = this.deps.projects();
     const sessions = allSessions.filter((session) => session.status !== "archived");
     const lookup = this.deps.summaryLookup();
-    const rows = new Map(sessions.map((session) => [session.id, this.row(session, lookup)]));
+    const workflows = this.deps.workflows();
+    const rows = new Map(sessions.map((session) => [session.id, this.row(session, lookup, workflows)]));
     const needsYou = needsYouEntries(
       sessions,
       (session) => rows.get(session.id)?.attention ?? null,
@@ -200,11 +246,11 @@ export class SidebarService implements TopicProvider {
       data: data as SidebarTopicData,
       layout: data.layout as SidebarLayout,
       attentionCount: needsYou.filter((entry) => entry.slot !== "running").length,
-      watchedIds: sessions.filter((session) => isWorkingSetStatus(session.status)).map((session) => session.id).sort()
+      watchedIds: watchedWorkingSet(sessions)
     };
   }
 
-  private row(session: SessionMeta, lookup: PrSummaryLookup): SessionRow {
+  private row(session: SessionMeta, lookup: PrSummaryLookup, workflows: PrWorkflow[]): SessionRow {
     const runtime = this.deps.runtime(session.id);
     const git = this.deps.gitStatus(session.id);
     const links = sessionLinks(session);
@@ -214,7 +260,14 @@ export class SidebarService implements TopicProvider {
       const detail = this.deps.detail(key);
       if (detail) detailByKey[key] = detail;
     }
-    const babysit = links.length > 0 ? this.deps.babysit(session.id) : null;
+    const babysit =
+      links.length > 0
+        ? babysitState(session, lookup, workflows, {
+            busy: runtime.busy,
+            paused: session.autoFollowUp?.paused,
+            autoTurns: session.autoFollowUp?.turns ?? 0
+          })
+        : null;
     const gitPr = git?.pullRequest ?? null;
     const urgent = mostUrgentLink(links, lookup, gitPr);
     const chip = urgent ? displayChip(urgent, lookup, gitPr) : null;
