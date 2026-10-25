@@ -10,7 +10,6 @@ import {
   searchKey,
   useGitHubStore
 } from "../stores/githubStore.js";
-import { usePrStore } from "../stores/prStore.js";
 import { anchorRectOf, type AnchorRect } from "./AnchoredPopover.js";
 import { GitHubHeader } from "./GitHubHeader.js";
 import { GitHubResults, type Listing } from "./GitHubResults.js";
@@ -18,6 +17,7 @@ import { GitHubListSkeleton } from "./GitHubSkeletons.js";
 import { GitHubToolbar } from "./GitHubToolbar.js";
 import { GitHubViewMenu } from "./GitHubViewMenu.js";
 import { useRetainedEntry } from "./useRetainedEntry.js";
+import { EMPTY_GITHUB_CONTEXT, projectIdFor, useGitHubContext, usePrInbox, usePrInboxItems } from "./usePrs.js";
 import { addQualifier, normalizeQuery, queryProblems } from "@cw-code/shared/githubQueryDsl";
 import { resolveViews } from "@cw-code/shared/githubViews";
 import { applyLocalFilters, runMatches, sortRuns } from "./githubViewQueryLegacy.js";
@@ -74,9 +74,9 @@ export function GitHubView() {
   const clearError = useGitHubStore((s) => s.clearError);
   const setWatchedRuns = useGitHubStore((s) => s.setWatchedRuns);
 
-  const inbox = usePrStore((s) => s.inbox);
-  const projectRepos = usePrStore((s) => s.projectRepos);
-  const projectIdForRef = usePrStore((s) => s.projectIdForRef);
+  const inbox = usePrInbox();
+  const inboxItems = usePrInboxItems();
+  const projectRepos = (useGitHubContext() ?? EMPTY_GITHUB_CONTEXT).projectRepos;
   const sessionsByProject = useAppStore((s) => s.sessionsByProject);
 
   const inputRef = useRef<HTMLInputElement | null>(null);
@@ -107,7 +107,7 @@ export function GitHubView() {
 
   const viewer = storedViewer ?? inbox?.account?.login ?? null;
   const cloned = useMemo(() => clonedReposOf(projectRepos), [projectRepos]);
-  const isCloned = useCallback((repo: RepoRef) => projectIdForRef(repo) !== null, [projectIdForRef, projectRepos]);
+  const isCloned = useCallback((repo: RepoRef) => projectIdFor(projectRepos, repo) !== null, [projectRepos]);
   const sessions = useMemo(() => Object.values(sessionsByProject).flat(), [sessionsByProject]);
   const issueMentionsMode = useMemo(() => mentionsMode(tab.query), [tab.query]);
 
@@ -121,7 +121,7 @@ export function GitHubView() {
   const cachedIssues = useMemo(() => Object.values(issueResults).flatMap((result) => result.data?.items ?? NO_ISSUES), [issueResults]);
   const cachedRuns = useMemo(() => Object.values(runResults).flatMap((result) => result.data?.items ?? NO_RUNS), [runResults]);
 
-  const involvedPrKeys = useMemo(() => involvedPrKeysOf(inbox?.items ?? NO_PRS, cachedPrs, viewer), [inbox, cachedPrs, viewer]);
+  const involvedPrKeys = useMemo(() => involvedPrKeysOf(inboxItems, cachedPrs, viewer), [inboxItems, cachedPrs, viewer]);
   const runContext = useMemo(() => buildRunContext(viewer, involvedPrKeys, sessions), [viewer, involvedPrKeys, sessions]);
 
   const split = useMemo(() => (kind === "run" ? null : scopedSplitOf(kind, tab.query)), [kind, tab.query]);
@@ -150,15 +150,15 @@ export function GitHubView() {
     const issues = issueResults[keys.issue]?.data?.items ?? NO_ISSUES;
     const runs = runResults[keys.run]?.data?.items ?? NO_RUNS;
     return {
-      pr: prBadge(inbox?.items ?? NO_PRS),
+      pr: prBadge(inboxItems),
       issue: { count: assignedOpenIssueCount(issues, viewer), tone: "quiet" },
       run: { count: failingInvolvedRunCount(runs, runContext), tone: "bad" }
     };
-  }, [inbox, issueResults, runResults, cloned, viewer, runContext]);
+  }, [inboxItems, issueResults, runResults, cloned, viewer, runContext]);
 
   const suggestionSource = useMemo(
-    () => buildSuggestionSource({ viewer, prs: [...(inbox?.items ?? NO_PRS), ...cachedPrs], issues: cachedIssues, runs: cachedRuns, repos: githubProjectRepos(projectRepos) }),
-    [viewer, inbox, cachedPrs, cachedIssues, cachedRuns, projectRepos]
+    () => buildSuggestionSource({ viewer, prs: [...inboxItems, ...cachedPrs], issues: cachedIssues, runs: cachedRuns, repos: githubProjectRepos(projectRepos) }),
+    [viewer, inboxItems, cachedPrs, cachedIssues, cachedRuns, projectRepos]
   );
 
   const views = useMemo(() => resolveViews(kind, org, savedViews), [kind, org, savedViews]);

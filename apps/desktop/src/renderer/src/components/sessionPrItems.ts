@@ -1,4 +1,4 @@
-import type { GitPullRequest, PrDetail, PrRef, PrSummary, SessionPrLink } from "../cw.js";
+import type { GitPullRequest, PrDetail, PrRef, SessionPrLink } from "../cw.js";
 import { prChip, type PrChip } from "./prChip.js";
 import { prKey } from "./prInbox.js";
 import { hasUnseen } from "./prUpdates.js";
@@ -113,17 +113,4 @@ export function sessionPrItemsTitle(items: SessionPrItem[]): string {
 
 export function canLinkItem(item: SessionPrItem): boolean {
   return item.source === "branch" && item.state === "OPEN";
-}
-
-export function withBranchSummary(
-  summaryByKey: PrSummaryLookup,
-  gitPr: GitPullRequest | null,
-  inboxItems: PrSummary[] | undefined
-): PrSummaryLookup {
-  const ref = gitPr ? prRefFromUrl(gitPr.url) : null;
-  if (!ref) return summaryByKey;
-  const key = prKey(ref);
-  if (summaryByKey.has(key)) return summaryByKey;
-  const found = inboxItems?.find((item) => prKey(item.ref) === key);
-  return found ? new Map(summaryByKey).set(key, found) : summaryByKey;
 }

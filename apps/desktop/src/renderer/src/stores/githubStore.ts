@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import type { GitHubContext, PrsTopicData } from "@cw-code/contracts";
 import type {
   GitHubAccountRef,
   GitHubKind,
@@ -30,11 +31,12 @@ import {
   type QueryToken
 } from "@cw-code/shared/githubQueryDsl";
 import { BUILTIN_VIEWS, MAX_QUERY_LENGTH, MAX_SAVED_VIEWS, MAX_VIEW_NAME_LENGTH, resolveViews } from "@cw-code/shared/githubViews";
-import { GITHUB_RUNS_TOPIC } from "@cw-code/shared/topics";
+import { GITHUB_RUNS_TOPIC, PRS_TOPIC } from "@cw-code/shared/topics";
 import { errorMessage } from "../components/errorMessage.js";
 import type { LocalFilter } from "../components/githubViewQueryLegacy.js";
+import { EMPTY_GITHUB_CONTEXT } from "../components/usePrs.js";
+import { bindTopic } from "../server/topics.js";
 import { useAppStore } from "./appStore.js";
-import { usePrStore } from "./prStore.js";
 
 export interface GitHubTabState {
   query: string;
@@ -348,6 +350,28 @@ function releaseRunsTopic(): void {
   runsTopicDisposer = null;
 }
 
+let prsContext: GitHubContext = EMPTY_GITHUB_CONTEXT;
+let prsTopicDisposer: (() => void) | null = null;
+
+function sameContext(a: GitHubContext, b: GitHubContext): boolean {
+  return a.viewer === b.viewer && a.org === b.org && JSON.stringify(a.projectRepos) === JSON.stringify(b.projectRepos);
+}
+
+function holdPrsTopic(onChange: () => void): void {
+  if (prsTopicDisposer) return;
+  prsTopicDisposer = bindTopic<Partial<PrsTopicData>>(PRS_TOPIC, (state) => {
+    const context = state.data.context;
+    if (!context || sameContext(prsContext, context)) return;
+    prsContext = context;
+    onChange();
+  });
+}
+
+function releasePrsTopic(): void {
+  prsTopicDisposer?.();
+  prsTopicDisposer = null;
+}
+
 export const useGitHubStore = create<GitHubStore>((set, get) => {
   const keySequences = new Map<string, number>();
   const latestKeys: Record<GitHubKind, string | null> = { pr: null, issue: null, run: null };
@@ -397,7 +421,7 @@ export const useGitHubStore = create<GitHubStore>((set, get) => {
     set(assign(next));
   }
 
-  const clonedRepos = (): RepoRef[] => clonedReposOf(usePrStore.getState().projectRepos);
+  const clonedRepos = (): RepoRef[] => clonedReposOf(prsContext.projectRepos);
 
   const cancelTimer = (kind: GitHubKind) => {
     const timer = timers[kind];
@@ -749,11 +773,13 @@ export const useGitHubStore = create<GitHubStore>((set, get) => {
       set({ active });
       if (!active) {
         releaseRunsTopic();
+        releasePrsTopic();
         teardownRuntime();
         watchedSignature = null;
         return;
       }
       holdRunsTopic();
+      holdPrsTopic(() => get().syncContext());
       if (requestedRuns.length > 0) get().setWatchedRuns(requestedRuns);
       subscribe();
       scheduleRefresh();
@@ -785,9 +811,8 @@ export const useGitHubStore = create<GitHubStore>((set, get) => {
     },
 
     syncContext() {
-      const prState = usePrStore.getState();
-      const viewer = get().viewer ?? prState.inbox?.account?.login ?? null;
-      const org = orgFromRepos(prState.projectRepos, viewer);
+      const viewer = get().viewer ?? prsContext.viewer;
+      const org = orgFromRepos(prsContext.projectRepos, viewer);
       if (viewer !== get().viewer || org !== get().org) set({ viewer, org });
       if (get().active) refreshBadges(true);
       const previousRunKey = latestKeys.run;
@@ -806,4 +831,5 @@ export const useGitHubStore = create<GitHubStore>((set, get) => {
 import.meta.hot?.dispose(() => {
   teardownRuntime();
   releaseRunsTopic();
+  releasePrsTopic();
 });

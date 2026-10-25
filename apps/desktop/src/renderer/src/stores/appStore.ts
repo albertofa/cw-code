@@ -43,7 +43,6 @@ import { fallbackHarness } from "../components/harnessAvailability.js";
 import { formatDuration, mergeToolPairs } from "../components/toolSummaries.js";
 import { projectDriver, withProjectPrefs } from "../components/projectDefaults.js";
 import { useNotifs } from "../components/Notifications.js";
-import type { AutoFollowUpPause } from "../components/prSessionModel.js";
 import { ipcErrorMessage } from "../components/ipcError.js";
 import { currentCheckoutSessionIds } from "../components/sessionBranch.js";
 import { sameItems, sessionsByProjectOf } from "../server/sidebarData.js";
@@ -233,11 +232,9 @@ export interface ShutdownUiState {
 
 export interface SendPromptOptions {
   prRefs?: PrRef[];
-  finalReview?: { ref: PrRef; sha: string };
   command?: CommandInvocation;
   skills?: string[];
   acceptFolderHead?: string;
-  auto?: boolean;
 }
 
 export type ComposerSendOptions = Pick<SendPromptOptions, "command" | "skills">;
@@ -257,10 +254,6 @@ interface AppState {
   todosBySession: Record<string, TodoItem[]>;
   turnUsageBySession: Record<string, TurnUsage>;
   busyTurns: Record<string, string>;
-  autoFollowUpTurns: Record<string, number>;
-  autoFollowUpPaused: Record<string, AutoFollowUpPause>;
-  pauseAutoFollowUp(sessionId: string, reason?: AutoFollowUpPause): void;
-  resumeAutoFollowUp(sessionId: string): void;
   loadingHistory: Record<string, boolean>;
   historyLoadedBySession: Record<string, boolean>;
   historyErrorBySession: Record<string, string>;
@@ -398,21 +391,6 @@ function withoutRetryNotice(messages: ChatMessage[], turnId: string): ChatMessag
   return messages.some((m) => m.id === id) ? messages.filter((m) => m.id !== id) : messages;
 }
 
-function without<T>(record: Record<string, T>, key: string): Record<string, T> {
-  if (!(key in record)) return record;
-  const next = { ...record };
-  delete next[key];
-  return next;
-}
-
-function withAutoPause(
-  paused: Record<string, AutoFollowUpPause>,
-  sessionId: string,
-  reason: AutoFollowUpPause
-): Record<string, AutoFollowUpPause> {
-  return paused[sessionId] === "user" ? paused : { ...paused, [sessionId]: reason };
-}
-
 interface TurnBookkeeping {
   busyTurns: Record<string, string>;
   turnStartedAt: Record<string, number>;
@@ -461,8 +439,6 @@ export const useAppStore = create<AppState>((set, get) => ({
   todosBySession: {},
   turnUsageBySession: {},
   busyTurns: {},
-  autoFollowUpTurns: {},
-  autoFollowUpPaused: {},
   loadingHistory: {},
   historyLoadedBySession: {},
   historyErrorBySession: {},
@@ -997,18 +973,6 @@ export const useAppStore = create<AppState>((set, get) => ({
     set({ projects: withProject(get().projects, project) });
   },
 
-  pauseAutoFollowUp(sessionId: string, reason: AutoFollowUpPause = "user") {
-    const paused = get().autoFollowUpPaused;
-    set({ autoFollowUpPaused: reason === "user" ? { ...paused, [sessionId]: "user" } : withAutoPause(paused, sessionId, reason) });
-  },
-
-  resumeAutoFollowUp(sessionId: string) {
-    set({
-      autoFollowUpPaused: without(get().autoFollowUpPaused, sessionId),
-      autoFollowUpTurns: without(get().autoFollowUpTurns, sessionId)
-    });
-  },
-
   async sendPrompt(prompt: string, attachments?: string[], opts?: ComposerSendOptions) {
     const sessionId = get().activeSessionId;
     if (!sessionId) return;
@@ -1022,14 +986,9 @@ export const useAppStore = create<AppState>((set, get) => ({
     const previousTodos = get().todosBySession[sessionId];
     const acceptFolderHead = opts?.acceptFolderHead ?? useBranchStore.getState().keptFolderHeadBySession[sessionId];
     const pending = nextPendingTurnId();
-    const previousAutoTurns = get().autoFollowUpTurns[sessionId];
     ignoredTurnStarts.delete(sessionId);
     set({
       busyTurns: { ...get().busyTurns, [sessionId]: pending },
-      autoFollowUpTurns: { ...get().autoFollowUpTurns, [sessionId]: opts?.auto ? (get().autoFollowUpTurns[sessionId] ?? 0) + 1 : 0 },
-      ...(opts?.auto || get().autoFollowUpPaused[sessionId] === "user"
-        ? {}
-        : { autoFollowUpPaused: without(get().autoFollowUpPaused, sessionId) }),
       turnStartedAt: { ...get().turnStartedAt, [sessionId]: Date.now() },
       todosBySession: { ...get().todosBySession, [sessionId]: [] }
     });
@@ -1041,14 +1000,12 @@ export const useAppStore = create<AppState>((set, get) => ({
         ...(opts?.command ? { command: opts.command } : {}),
         ...(opts?.skills?.length ? { skills: opts.skills } : {}),
         ...(opts?.prRefs ? { prRefs: opts.prRefs } : {}),
-        ...(opts?.finalReview ? { finalReview: opts.finalReview } : {}),
         ...(acceptFolderHead ? { acceptFolderHead } : {})
       });
     } catch (err) {
       const remoteStart = ignoredTurnStarts.get(sessionId);
       ignoredTurnStarts.delete(sessionId);
       if (get().busyTurns[sessionId] === pending) {
-        const revertAutoTurns = opts?.auto && (err as { code?: unknown } | null)?.code === "session-busy";
         const book = closeTurn(
           { busyTurns: get().busyTurns, turnStartedAt: get().turnStartedAt, turnDurations: get().turnDurations },
           sessionId,
@@ -1058,14 +1015,6 @@ export const useAppStore = create<AppState>((set, get) => ({
           busyTurns: book.busyTurns,
           turnStartedAt: book.turnStartedAt,
           turnDurations: book.turnDurations,
-          ...(revertAutoTurns
-            ? {
-                autoFollowUpTurns:
-                  previousAutoTurns === undefined
-                    ? without(get().autoFollowUpTurns, sessionId)
-                    : { ...get().autoFollowUpTurns, [sessionId]: previousAutoTurns }
-              }
-            : {}),
           ...(previousTodos && previousTodos.length > 0 && (get().todosBySession[sessionId] ?? []).length === 0
             ? { todosBySession: { ...get().todosBySession, [sessionId]: previousTodos } }
             : {})
@@ -1112,8 +1061,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     set({
       busyTurns: book.busyTurns,
       turnStartedAt: book.turnStartedAt,
-      turnDurations: book.turnDurations,
-      ...(sessionId ? { autoFollowUpPaused: withAutoPause(get().autoFollowUpPaused, sessionId, "interrupted") } : {})
+      turnDurations: book.turnDurations
     });
   },
 
@@ -1246,8 +1194,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         turnStartedAt: book.turnStartedAt,
         turnDurations: book.turnDurations,
         pendingApprovals: approvals,
-        pendingQuestions: questions,
-        ...(event.reason === "shutdown" ? {} : { autoFollowUpPaused: withAutoPause(get().autoFollowUpPaused, sessionId, "interrupted") })
+        pendingQuestions: questions
       });
       return;
     }
@@ -1506,7 +1453,6 @@ export const useAppStore = create<AppState>((set, get) => ({
         turnDurations: book.turnDurations,
         pendingApprovals: approvals,
         pendingQuestions: questions,
-        ...(event.isError ? { autoFollowUpPaused: withAutoPause(get().autoFollowUpPaused, sessionId, "error") } : {}),
         messagesBySession: {
           ...get().messagesBySession,
           [sessionId]: turnMessages
@@ -1543,7 +1489,6 @@ export const useAppStore = create<AppState>((set, get) => ({
         turnDurations: book.turnDurations,
         pendingApprovals: approvals,
         pendingQuestions: questions,
-        autoFollowUpPaused: withAutoPause(get().autoFollowUpPaused, sessionId, "error"),
         messagesBySession: {
           ...get().messagesBySession,
           [sessionId]: [

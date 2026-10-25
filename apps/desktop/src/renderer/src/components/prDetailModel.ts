@@ -10,9 +10,10 @@ import type {
   PrReviewThread,
   PrSummary,
   PrWorkflow,
-  SessionMeta
+  SessionMeta,
+  SubjectRelations
 } from "@cw-code/contracts";
-import { babysittingSession, primaryAction, suggestedWorkflow } from "./prWorkflows.js";
+import { suggestedWorkflow } from "./prWorkflows.js";
 import { linkFor } from "./sessionPrLinks.js";
 
 export interface MergeRow {
@@ -95,19 +96,30 @@ export type LinkedBarState =
   | { kind: "run"; workflowId: string }
   | { kind: "none" };
 
-export function linkedSessionsBarState(pr: PrSummary, linkedSessions: SessionMeta[], workflows: PrWorkflow[]): LinkedBarState {
-  const babysitter = pr.state === "OPEN" ? babysittingSession(linkedSessions, pr.ref, workflows) : null;
-  if (babysitter) return { kind: "babysit", ...babysitter };
-  const action = primaryAction(pr, linkedSessions, workflows);
-  if (action.kind === "continue" || action.kind === "open") {
-    const session = linkedSessions.find((s) => s.id === action.sessionId);
+export function linkedBarState(
+  pr: PrSummary,
+  relations: SubjectRelations | undefined,
+  sessionOf: (sessionId: string) => SessionMeta | undefined,
+  workflows: PrWorkflow[]
+): LinkedBarState {
+  if (!relations) return { kind: "none" };
+  const babysitter = pr.state === "OPEN" ? relations.babysitter : null;
+  if (babysitter) {
+    const session = sessionOf(babysitter.sessionId);
+    const workflow = workflows.find((item) => item.id === babysitter.workflowId);
+    if (session && workflow) return { kind: "babysit", session, workflow };
+  }
+  if (pr.state === "MERGED") return { kind: "none" };
+  const action = relations.action;
+  if (action.kind === "session") {
+    const session = sessionOf(action.sessionId);
     if (!session) return { kind: "none" };
-    return action.kind === "continue"
+    return action.mode === "continue" && action.workflowId
       ? { kind: "continue", session, workflowId: action.workflowId }
       : { kind: "open", session, suggested: suggestedWorkflow(pr, workflows) };
   }
-  if (action.kind === "run") return { kind: "run", workflowId: action.workflowId };
-  return { kind: "none" };
+  const suggested = suggestedWorkflow(pr, workflows);
+  return suggested ? { kind: "run", workflowId: suggested.id } : { kind: "none" };
 }
 
 export interface ThreadSendTarget {

@@ -80,6 +80,7 @@ function wireAutoFollowUp({ autoFollowUp, prStore, threads, turns }: Services): 
   threads.onTurnSettled((sessionId, _turnId, event) => autoFollowUp.turnSettled(sessionId, event));
   turns.onTurnStarted((sessionId, auto) => autoFollowUp.turnStarted(sessionId, auto));
   turns.onTurnStopped((sessionId) => autoFollowUp.turnStopped(sessionId));
+  autoFollowUp.setEnabled(true);
 }
 
 function wireSidebar({ sidebar, threads, sourceControl, prStore, autoFollowUp, preferences }: Services): void {
@@ -243,8 +244,7 @@ export function createServices(stores: { sessionStore: SessionStore; settingsSto
     },
     updateAutoFollowUp: (sessionId, update) => sessions.updateAutoFollowUp(sessionId, update) !== null,
     postNotice: (sessionId, notice) => sessions.emitNotice(sessionId, notice.noticeId, notice.text, notice.severity),
-    shutdownReserved: () => sessions.isShutdownReserved(),
-    enabled: false
+    shutdownReserved: () => sessions.isShutdownReserved()
   });
   const sidebar = new SidebarService(hooks.topics, {
     sessions: () => sessions.listAllSessions(),

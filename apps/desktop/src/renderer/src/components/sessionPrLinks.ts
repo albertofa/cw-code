@@ -1,4 +1,4 @@
-import type { GitPullRequest, PrDetail, PrLinkSnapshot, PrRef, PrSummary, SessionPrLink } from "../cw.js";
+import type { GitPullRequest, PrLinkSnapshot, PrRef, PrSummary, SessionPrLink } from "../cw.js";
 import { prChip, type PrChip, type PrChipTone } from "./prChip.js";
 import { prKey, prRefFromUrl } from "@cw-code/shared/prRef";
 import { hasUnseen } from "./prUpdates.js";
@@ -37,26 +37,6 @@ export function sessionsLinkedTo<S extends LinkedSession>(sessions: S[], ref: Pr
 
 export function prRefLabel(ref: PrRef): string {
   return `${ref.owner}/${ref.repo}#${ref.number}`;
-}
-
-export function mergeSummary(inbox: PrSummary | undefined, tracked: PrSummary | undefined): PrSummary | undefined {
-  if (!inbox) return tracked;
-  if (!tracked) return inbox;
-  return inbox.updatedAt > tracked.updatedAt ? inbox : tracked;
-}
-
-export function prSummaryLookup(
-  inboxItems: PrSummary[],
-  detailByKey: Record<string, PrDetail>,
-  trackedByKey: Record<string, PrSummary>
-): Map<string, PrSummary> {
-  const byKey = new Map<string, PrSummary>(Object.entries(detailByKey));
-  const inboxByKey = new Map(inboxItems.map((item) => [prKey(item.ref), item]));
-  for (const key of new Set([...inboxByKey.keys(), ...Object.keys(trackedByKey)])) {
-    const merged = mergeSummary(inboxByKey.get(key), trackedByKey[key]);
-    if (merged) byKey.set(key, merged);
-  }
-  return byKey;
 }
 
 function snapshotChip(link: SessionPrLink, snapshot: PrLinkSnapshot): PrChip {

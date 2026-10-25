@@ -26,8 +26,8 @@ import { useDockDrop } from "./components/useDockDrop.js";
 import { useResizableWidth } from "./components/useResizableWidth.js";
 import { usePanelAnimationMs, usePresence } from "./components/usePresence.js";
 import { Notifications } from "./components/Notifications.js";
-import { useAutoFollowUp } from "./components/useAutoFollowUp.js";
 import { useNotificationSounds } from "./components/useNotificationSounds.js";
+import { useHoldPrs } from "./components/usePrs.js";
 import { visibleLayerOpen } from "./components/openLayer.js";
 import { useAppStore } from "./stores/appStore.js";
 import { rightOpenTabs } from "./stores/panelLayout.js";
@@ -37,7 +37,7 @@ import { useSkillsStore } from "./stores/skillsStore.js";
 import { projectDirty, useSettingsDraftStore } from "./stores/settingsDraftStore.js";
 import { prKey } from "./components/prInbox.js";
 import type { TurnEvent } from "./cw.js";
-import { PRS_TOPIC, gitTopic, sessionTopic } from "@cw-code/shared/topics";
+import { gitTopic, sessionTopic } from "@cw-code/shared/topics";
 import { startAppBridge } from "./server/appBridge.js";
 import { startSidebarBridge } from "./server/sidebarBridge.js";
 import { useDocumentVisible, useTopics } from "./server/useTopics.js";
@@ -97,11 +97,10 @@ function handleTurnEvent(msg: { sessionId: string; event: TurnEvent }): void {
 }
 
 export function App() {
-  useAutoFollowUp();
+  useHoldPrs();
   useNotificationSounds();
   const activeSessionId = useAppStore((s) => s.activeSessionId);
   const sessionsByProject = useAppStore((s) => s.sessionsByProject);
-  const prRefreshIntervalSeconds = useAppStore((s) => s.prRefreshIntervalSeconds);
   const mainView = usePrStore((s) => s.mainView);
   const runModal = usePrStore((s) => s.runModal);
   const appearance = useAppStore((s) => s.appearance);
@@ -164,8 +163,6 @@ export function App() {
     const offSkills = window.cw.onSkillsChanged((result) => useSkillsStore.getState().applyList(result));
     const offComposer = window.cw.onComposerChanged(({ sessionId, prefs }) => useAppStore.getState().applyComposer(sessionId, prefs));
     const offGitStatus = window.cw.onGitStatus(({ sessionId, status }) => useAppStore.getState().applyGitStatus(sessionId, status));
-    const offTrackedPrs = window.cw.onTrackedPrs((items) => usePrStore.getState().applyTracked(items));
-    void usePrStore.getState().loadTracked();
     const offUpdates = useAppStore.getState().subscribeUpdates();
     const offShutdown = window.cw.shutdown.onRequested(() => void handleQuitRequest());
     const offShutdownExpired = window.cw.shutdown.onExpired(() => handleShutdownExpired());
@@ -204,7 +201,6 @@ export function App() {
       offSkills();
       offComposer();
       offGitStatus();
-      offTrackedPrs();
       offUpdates();
       offShutdown();
       offShutdownExpired();
@@ -214,7 +210,7 @@ export function App() {
   }, []);
 
   const subscribedTopics = useMemo(() => {
-    const topics = [PRS_TOPIC];
+    const topics: string[] = [];
     for (const session of Object.values(sessionsByProject).flat()) {
       if (session.status === "resolved" || session.status === "archived") continue;
       topics.push(sessionTopic(session.id));
@@ -239,23 +235,6 @@ export function App() {
     window.addEventListener("focus", onFocus);
     return () => window.removeEventListener("focus", onFocus);
   }, []);
-
-  useEffect(() => {
-    if (!window.cw) return;
-    const refresh = () => {
-      if (!document.hidden) void usePrStore.getState().refreshInbox();
-    };
-    const onVisibility = () => {
-      if (!document.hidden) refresh();
-    };
-    refresh();
-    const timer = window.setInterval(refresh, Math.max(30, prRefreshIntervalSeconds || 120) * 1000);
-    document.addEventListener("visibilitychange", onVisibility);
-    return () => {
-      window.clearInterval(timer);
-      document.removeEventListener("visibilitychange", onVisibility);
-    };
-  }, [prRefreshIntervalSeconds]);
 
   useEffect(() => {
     if (!activeSessionId) return;

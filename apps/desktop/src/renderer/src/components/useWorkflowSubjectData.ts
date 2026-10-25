@@ -10,12 +10,21 @@ import type {
   WorkflowRunSummary,
   WorkflowSubject
 } from "../cw.js";
-import { usePrStore } from "../stores/prStore.js";
 import { prKey } from "./prInbox.js";
 import { linkFor } from "./sessionPrLinks.js";
 import { updatesSince } from "./prUpdates.js";
-import { attributionText, issueTemplateVars, loadFailedLogs, loadRunFailedLogs, runRefTemplateVars, runTemplateVars, templateVars } from "./prWorkflows.js";
-import { needsFailedLogs, needsRunFailedLogs } from "./prSessionModel.js";
+import {
+  attributionText,
+  issueTemplateVars,
+  loadFailedLogs,
+  loadRunFailedLogs,
+  needsFailedLogs,
+  needsRunFailedLogs,
+  runRefTemplateVars,
+  runTemplateVars,
+  templateVars
+} from "./prWorkflows.js";
+import { requestPrDetail, usePrDetail, usePrSummary } from "./usePrs.js";
 import { errorMessage } from "./errorMessage.js";
 import { issueKey, runKey } from "./workflowSubject.js";
 
@@ -56,10 +65,10 @@ export function useWorkflowSubjectData(input: {
   const prKeyValue = prRef ? prKey(prRef) : "";
   const issueKeyValue = issueRef ? issueKey(issueRef) : "";
 
-  const prDetail: PrDetail | undefined = usePrStore((s) => (prKeyValue ? s.detailByKey[prKeyValue] : undefined));
-  const prError = usePrStore((s) => (prKeyValue ? s.detailErrorByKey[prKeyValue] : undefined));
-  const prSummary = usePrStore((s) => (prKeyValue ? s.inbox?.items.find((item) => prKey(item.ref) === prKeyValue) : undefined));
-  const loadDetail = usePrStore((s) => s.loadDetail);
+  const prEntry = usePrDetail(prKeyValue || null);
+  const prDetail: PrDetail | undefined = prEntry?.detail ?? undefined;
+  const prError = prEntry?.error ?? undefined;
+  const prSummary = usePrSummary(prKeyValue || null);
 
   const [issueLoad, setIssueLoad] = useState<IssueLoad | null>(null);
   const [issueAttempt, setIssueAttempt] = useState(0);
@@ -67,7 +76,7 @@ export function useWorkflowSubjectData(input: {
   const [logsError, setLogsError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (prRef) void loadDetail(prRef);
+    if (prRef) void requestPrDetail(prRef);
   }, [prKeyValue]);
 
   useEffect(() => {
@@ -168,7 +177,7 @@ export function useWorkflowSubjectData(input: {
     loaded,
     error: subject.kind === "pr" ? (prError ?? null) : issueError,
     retry: () => {
-      if (prRef) void loadDetail(prRef);
+      if (prRef) void requestPrDetail(prRef);
       if (issueRef) setIssueAttempt((n) => n + 1);
     },
     revision,

@@ -120,8 +120,7 @@ function installBridge(): void {
     getComposer: async () => delayed({}, 400),
     setComposer: async (_id: string, prefs: unknown) => delayed(prefs, 200),
     getDefaultPrWorkflows: async () => [],
-    getPrInbox: async () => ({ account: null, items: [], fetchedAt: 0, error: null }),
-    getProjectGitHubRepos: async () => [],
+    refreshPrInbox: async () => {},
     searchGitHub: async () => ({ account: null, items: [], openCount: null, closedCount: null, truncated: false, limit: 50, fetchedAt: 0, error: null }),
     countGitHub: async () => [],
     getGitHubRuns: async () => ({ account: null, items: [], fetchedAt: 0, error: null }),
@@ -134,8 +133,6 @@ function installBridge(): void {
       throw new Error("no git");
     },
     onGitStatus: noop,
-    getTrackedPrs: async () => [],
-    onTrackedPrs: noop,
     listGitBranches: async () => [],
     listProjectBranches: async () =>
       delayed([{ name: "main", label: "main", current: true }], 600),

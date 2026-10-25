@@ -11,13 +11,13 @@ import type {
   SessionMeta,
   SessionPrLink
 } from "@cw-code/contracts";
-import { autoFollowUpWorkflow, runsContinuously, withAutomatedWorkflowNote } from "@cw-code/shared/autoFollowUp";
+import { AUTO_FOLLOW_UP_LIMIT, autoFollowUpWorkflow, runsContinuously, withAutomatedWorkflowNote } from "@cw-code/shared/autoFollowUp";
 import { prKey } from "@cw-code/shared/prRef";
 import { detailNeedsRefresh, seenThrough, updatesSince } from "./prUpdates.js";
 import { attributionText, resolveTemplate, templateVars } from "./prWorkflows.js";
 import { sessionLinks, type PrSummaryLookup } from "./sessionPrLinks.js";
 
-export const AUTO_FOLLOW_UP_LIMIT = 8;
+export { AUTO_FOLLOW_UP_LIMIT };
 
 const AUTO_FOLLOW_UP_STATUSES: ReadonlySet<SessionMeta["status"]> = new Set(["done", "idle", "holding", "babysit"]);
 

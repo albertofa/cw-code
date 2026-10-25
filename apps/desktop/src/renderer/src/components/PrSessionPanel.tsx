@@ -7,7 +7,8 @@ import { PrChipBadge } from "./PrChipBadge.js";
 import { mergeBoxState, threadQuoteText, type MergeRow } from "./prDetailModel.js";
 import { prKey } from "./prInbox.js";
 import { formatRelativeAge } from "./prInboxModel.js";
-import { defaultFollowUpWorkflowId, followUpWorkflow, whyLinkedText } from "./prSessionModel.js";
+import { whyLinkedText } from "./babysitLabels.js";
+import { defaultFollowUpWorkflowId, followUpWorkflow } from "./prWorkflows.js";
 import { updatesSince } from "./prUpdates.js";
 import { PrUpdateIcon } from "./PrUpdateIcon.js";
 import { PrPanelSkeleton } from "./GitHubSkeletons.js";
@@ -15,6 +16,7 @@ import { branchMismatch } from "./sessionBranch.js";
 import { canLinkItem, sessionPrItemLabel, sessionPrItemsTitle, type SessionPrItem } from "./sessionPrItems.js";
 import { displayChip, mostUrgentLink, prRefLabel } from "./sessionPrLinks.js";
 import { useLinkedPrs, useSessionPrItems } from "./useLinkedPr.js";
+import { requestPrDetail } from "./usePrs.js";
 import { useAppSettings, useAppSettingsError } from "./useAppSettings.js";
 import { useNotifs } from "./Notifications.js";
 import { errorMessage } from "./errorMessage.js";
@@ -225,7 +227,6 @@ export function PrSessionPanel({ sessionId }: { sessionId: string }) {
   const error = selected?.error;
   const openPr = usePrStore((s) => s.openPr);
   const openRunModal = usePrStore((s) => s.openRunModal);
-  const loadDetail = usePrStore((s) => s.loadDetail);
   const settings = useAppSettings();
   const settingsError = useAppSettingsError();
   const [unlinking, setUnlinking] = useState(false);
@@ -297,7 +298,7 @@ export function PrSessionPanel({ sessionId }: { sessionId: string }) {
           </div>
           <button
             className="icon-btn"
-            onClick={() => void loadDetail(link.ref)}
+            onClick={() => void requestPrDetail(link.ref)}
             disabled={loading}
             title="Refresh"
             aria-label="Refresh pull request"
@@ -326,7 +327,7 @@ export function PrSessionPanel({ sessionId }: { sessionId: string }) {
         {error && (
           <div className="pr-view-error" role="alert">
             {error}
-            <button className="pr-view-retry" onClick={() => void loadDetail(link.ref)} disabled={loading}>
+            <button className="pr-view-retry" onClick={() => void requestPrDetail(link.ref)} disabled={loading}>
               Retry
             </button>
           </div>

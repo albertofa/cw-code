@@ -1,26 +1,20 @@
 import { useMemo, useState, type ReactNode } from "react";
 import { Bell, ExternalLink, RefreshCw, Send, TriangleAlert, X } from "lucide-react";
-import type { AppSettings, PrRef, PrSummary, PrUpdate, PrWorkflow } from "@cw-code/contracts";
+import type { AppSettings, BabysitPhase, PrRef, PrSummary, PrUpdate, PrWorkflow } from "@cw-code/contracts";
 import { useAppStore } from "../stores/appStore.js";
 import { usePrStore } from "../stores/prStore.js";
 import { prKey } from "./prInbox.js";
 import { formatRelativeAge } from "./prInboxModel.js";
 import { PrUpdateIcon } from "./PrUpdateIcon.js";
-import {
-  defaultFollowUpWorkflowId,
-  followUpMode,
-  followUpPrompt,
-  followUpWorkflow,
-  needsFailedLogs,
-  type BabysitPhase
-} from "./prSessionModel.js";
+import { defaultFollowUpWorkflowId, followUpMode, followUpPrompt, followUpWorkflow, needsFailedLogs } from "./prWorkflows.js";
 import { seenThrough, updatesSince } from "./prUpdates.js";
 import { linkWithWorkflow, prRefLabel } from "./sessionPrLinks.js";
 import { harnessLabel } from "./toolTabs.js";
 import { workflowIcon } from "./workflowIcons.js";
 import { findSession, useLinkedPrs, type LinkedPr } from "./useLinkedPr.js";
 import { useAppSettings, useAppSettingsError } from "./useAppSettings.js";
-import { useBabysitStates } from "./useBabysit.js";
+import { requestPrDetail, useSessionBabysit } from "./usePrs.js";
+import { useSessionRow } from "./useSessions.js";
 import { BabysitHead } from "./BabysitHead.js";
 import { errorMessage } from "./errorMessage.js";
 import { ipcErrorMessage } from "./ipcError.js";
@@ -110,12 +104,11 @@ function ViewButton({ entry }: { entry: DockEntry }) {
 
 export function PrUpdateDock({ sessionId }: { sessionId: string }) {
   const { session, items } = useLinkedPrs(sessionId);
-  const busy = useAppStore((s) => s.busyTurns[sessionId] !== undefined);
-  const babysitOf = useBabysitStates();
+  const busy = useSessionRow(sessionId)?.busy ?? false;
+  const babysit = useSessionBabysit(sessionId);
   const sendPromptTo = useAppStore((s) => s.sendPromptTo);
   const { ensureOpen, dialog: restoreDialog } = useRestoreBeforeSend();
   const openRunModal = usePrStore((s) => s.openRunModal);
-  const loadDetail = usePrStore((s) => s.loadDetail);
   const settings = useAppSettings();
   const settingsError = useAppSettingsError();
   const [previewOpen, setPreviewOpen] = useState(false);
@@ -140,7 +133,6 @@ export function PrUpdateDock({ sessionId }: { sessionId: string }) {
   const covered = useMemo(() => (single ? [single] : sendable), [single, sendable]);
   const alreadySent = sentSignature !== null && sentSignature === sendSignature(covered);
 
-  const babysit = session ? babysitOf(session) : null;
   if (!session || (!babysit && changed.length === 0 && failed.length === 0)) return null;
 
   const babysat = (entry: DockEntry) => babysit !== null && prKey(entry.item.link.ref) === prKey(babysit.link.ref);
@@ -169,7 +161,7 @@ export function PrUpdateDock({ sessionId }: { sessionId: string }) {
   const failedRows = failed.map((entry) => (
     <div key={entry.item.key} className="pr-dock-error" role="alert">
       <b>{prRefLabel(entry.item.link.ref)}</b> changed, but its details could not be loaded: {entry.item.error}{" "}
-      <button className="pr-detail-btn ghost sm" onClick={() => void loadDetail(entry.item.link.ref)} disabled={entry.item.loading}>
+      <button className="pr-detail-btn ghost sm" onClick={() => void requestPrDetail(entry.item.link.ref)} disabled={entry.item.loading}>
         Retry
       </button>
       <button

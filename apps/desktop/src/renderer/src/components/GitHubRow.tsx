@@ -1,4 +1,4 @@
-import { memo, useMemo, type ReactNode } from "react";
+import { memo, useCallback, useMemo, type ReactNode } from "react";
 import { ChevronRight, GitBranch, MessageSquare, Timer } from "lucide-react";
 import type { IssueSummary, PrSummary, PrWorkflow, WorkflowRunSummary } from "../cw.js";
 import { useAppStore } from "../stores/appStore.js";
@@ -31,6 +31,7 @@ import {
 import { formatRelativeAge } from "./prInboxModel.js";
 import { useNow } from "./usageFormat.js";
 import { useAppSettings, useAppSettingsError } from "./useAppSettings.js";
+import { EMPTY_GITHUB_CONTEXT, projectIdFor, useGitHubContext, usePrSummaries } from "./usePrs.js";
 
 const LIVE_TICK_MS = 1000;
 const NO_WORKFLOWS: PrWorkflow[] = [];
@@ -304,8 +305,9 @@ export const GitHubRow = memo(function GitHubRow(props: GitHubRowProps) {
   const sessionsByProject = useAppStore((s) => s.sessionsByProject);
   const openPr = usePrStore((s) => s.openPr);
   const { host, owner, repo } = props.item.ref;
-  const cloned = usePrStore((s) => s.projectIdForRef({ host, owner, repo }) !== null);
-  const inboxItems = usePrStore((s) => s.inbox?.items);
+  const projectRepos = (useGitHubContext() ?? EMPTY_GITHUB_CONTEXT).projectRepos;
+  const cloned = useMemo(() => projectIdFor(projectRepos, { host, owner, repo }) !== null, [projectRepos, host, owner, repo]);
+  const summaries = usePrSummaries();
   const workflows = useAppSettings()?.prWorkflows ?? NO_WORKFLOWS;
   const workflowsError = useAppSettingsError();
   const live = props.kind === "run" && props.item.status === "in_progress";
@@ -318,10 +320,7 @@ export const GitHubRow = memo(function GitHubRow(props: GitHubRowProps) {
     return sessionsForRun(subject.run, allSessions);
   }, [subject, allSessions]);
 
-  const lookupPr = useMemo(() => {
-    const byKey = new Map((inboxItems ?? []).map((pr) => [prKey(pr.ref), pr]));
-    return (ref: PrSummary["ref"]) => byKey.get(prKey(ref));
-  }, [inboxItems]);
+  const lookupPr = useCallback((ref: PrSummary["ref"]) => summaries.get(prKey(ref)), [summaries]);
   const unseenIds = useMemo(() => unseenSessionIds(subject, sessions, lookupPr), [subject, sessions, lookupPr]);
   const unseen = unseenIds.size > 0;
   const delta = rowDelta(subject, sessions, now);

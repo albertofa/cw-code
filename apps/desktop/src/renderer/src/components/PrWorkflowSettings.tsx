@@ -3,7 +3,6 @@ import { AlertTriangle, Bot, Copy, Folder, FolderGit2, Gauge, GitFork, GitPullRe
 import type { PrSuggestCondition, PrWorkflow, PrWorkflowHarness, PrWorkflowIcon, PrWorkspaceChoice } from "@cw-code/contracts";
 import type { AppSettings, DriverName, PrDetail, PrSummary } from "../cw.js";
 import { useAppStore } from "../stores/appStore.js";
-import { usePrStore } from "../stores/prStore.js";
 import { useSettingsDraftStore } from "../stores/settingsDraftStore.js";
 import { DriverIcon } from "./DriverIcon.js";
 import { errorMessage } from "./errorMessage.js";
@@ -14,7 +13,6 @@ import { InlineLoading } from "./Loading.js";
 import { EFFORTS, effortLabel, effortOptionsFor } from "./modelMenus.js";
 import { useNotifs } from "./Notifications.js";
 import { prKey } from "./prInbox.js";
-import { needsFailedLogs } from "./prSessionModel.js";
 import {
   changeWorkflowTarget,
   CONDITIONS_BY_TARGET,
@@ -35,7 +33,8 @@ import {
   type TemplateVarIssues,
   type WorkflowTarget
 } from "./prWorkflowEditor.js";
-import { attributionText, loadFailedLogs, resolveTemplate, TEMPLATE_VARS_BY_TARGET, templateVars } from "./prWorkflows.js";
+import { attributionText, loadFailedLogs, needsFailedLogs, resolveTemplate, TEMPLATE_VARS_BY_TARGET, templateVars } from "./prWorkflows.js";
+import { requestPrDetail, usePrDetail, usePrInbox, usePrInboxItems } from "./usePrs.js";
 import { SettingsPageHead, SettingsSwitch } from "./SettingsLayout.js";
 import { HARNESS_IDS, HARNESS_NAMES } from "./settingsSections.js";
 import { useRecentModels } from "./lastModel.js";
@@ -78,7 +77,6 @@ const TARGET_SUBJECTS: Record<WorkflowTarget, string> = {
 
 const ICON_IDS = Object.keys(WORKFLOW_ICONS) as PrWorkflowIcon[];
 
-const NO_PRS: PrSummary[] = [];
 
 type ResetScope = "workflow" | PromptField;
 
@@ -363,22 +361,22 @@ function PromptPreview({
   failedLogs: FailedLogsCache;
   driver: DriverName;
 }) {
-  const inboxError = usePrStore((s) => s.inboxError);
-  const inboxLoading = usePrStore((s) => s.inboxLoading);
-  const refreshInbox = usePrStore((s) => s.refreshInbox);
-  const loadDetail = usePrStore((s) => s.loadDetail);
+  const inbox = usePrInbox();
+  const inboxError = inbox?.error ?? null;
+  const inboxLoading = inbox?.loading ?? true;
   const selected = prs.find((pr) => prKey(pr.ref) === prKeyValue) ?? prs[0];
   const key = selected ? prKey(selected.ref) : null;
-  const detail: PrDetail | undefined = usePrStore((s) => (key ? s.detailByKey[key] : undefined));
-  const detailError = usePrStore((s) => (key ? s.detailErrorByKey[key] : undefined));
-  const detailLoading = usePrStore((s) => (key ? s.detailLoadingByKey[key] === true : false));
+  const entry = usePrDetail(key);
+  const detail: PrDetail | undefined = entry?.detail ?? undefined;
+  const detailError = entry?.error ?? undefined;
+  const detailLoading = entry?.loading ?? false;
   const needsLogs = needsFailedLogs(template);
   const logsId = detail ? `${prKey(detail.ref)}@${detail.headRefOid}` : null;
   const logs = logsId ? failedLogs.entries[logsId] : undefined;
   const requestLogs = failedLogs.request;
 
   useEffect(() => {
-    if (selected && !detail && !detailLoading && !detailError) void loadDetail(selected.ref);
+    if (selected && !detail && !detailLoading && !detailError) void requestPrDetail(selected.ref);
   }, [key]);
 
   useEffect(() => {
@@ -390,7 +388,7 @@ function PromptPreview({
       <div className="sp-code sp-preview-empty" role={inboxError ? "alert" : undefined}>
         {inboxLoading ? <InlineLoading label="Loading pull requests" /> : inboxError ? `Could not load pull requests: ${inboxError}` : "No pull requests to preview with"}
         {inboxError && !inboxLoading && (
-          <button type="button" className="btn sp-btn-sm" onClick={() => void refreshInbox(true)}>
+          <button type="button" className="btn sp-btn-sm" onClick={() => void window.cw.refreshPrInbox(true).catch((err: unknown) => console.warn(`[pr] inbox refresh failed: ${errorMessage(err)}`))}>
             <RefreshCw size={12} aria-hidden="true" /> Retry
           </button>
         )}
@@ -426,7 +424,7 @@ function PromptPreview({
       {detailError && (
         <div className="settings-error sp-preview-error" role="alert">
           Could not load the pull request: {detailError}
-          <button type="button" className="btn sp-btn-sm" onClick={() => selected && void loadDetail(selected.ref)} disabled={detailLoading}>
+          <button type="button" className="btn sp-btn-sm" onClick={() => selected && void requestPrDetail(selected.ref)} disabled={detailLoading}>
             Retry
           </button>
         </div>
@@ -718,7 +716,7 @@ function WorkflowEditor({ workflow, settings, onChange, onDuplicate, onDelete, o
   resetBusy: ResetScope | null;
   resetError: string | null;
 }) {
-  const prs = usePrStore((s) => s.inbox?.items ?? NO_PRS);
+  const prs = usePrInboxItems();
   const [previewPr, setPreviewPr] = useState<string | null>(null);
   const failedLogs = useFailedLogsCache();
   const driver = useAppStore((s) => workflowDriver(workflow.harness, s.pendingDriver ?? s.lastDriver));
@@ -882,11 +880,6 @@ export function PrWorkflowSettings({ focusWorkflowId }: { focusWorkflowId?: stri
   const [selectedId, setSelectedId] = useState<string | null>(focusWorkflowId ?? null);
   const [resetBusy, setResetBusy] = useState<{ id: string; scope: ResetScope } | null>(null);
   const [resetError, setResetError] = useState<string | null>(null);
-
-  useEffect(() => {
-    const prStore = usePrStore.getState();
-    if (!prStore.inbox && !prStore.inboxLoading) void prStore.refreshInbox();
-  }, []);
 
   useEffect(() => {
     if (!invalidWorkflowId) return;

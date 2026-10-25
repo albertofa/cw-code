@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
 import { Activity, Archive, ArchiveRestore, Bell, ChartColumn, Check, ChevronDown, ChevronRight, ChevronUp, CircleCheck, CircleHelp, Clock, Copy, GitBranch, GitPullRequest, Hash, LoaderCircle, Pause, Pencil, Play, Plus, Search, Settings, ShieldAlert, Sparkles, X, type LucideIcon } from "lucide-react";
-import type { Attention, AttentionKind, NeedsYouSlot, SessionRow, SidebarLayout, SidebarReorderRequest, SidebarSection, SidebarTopicData } from "@cw-code/contracts";
+import type { Attention, AttentionKind, BabysitState, NeedsYouSlot, SessionRow, SidebarLayout, SidebarReorderRequest, SidebarSection, SidebarTopicData } from "@cw-code/contracts";
 import { SIDEBAR_TOPIC } from "@cw-code/shared/topics";
 import type { DriverName, Session, SessionStatus } from "../cw.js";
 import { useAppStore } from "../stores/appStore.js";
@@ -12,9 +12,10 @@ import { getLastModel } from "./lastModel.js";
 import { ProjectMonogram } from "./ProjectMonogram.js";
 import { shortenHome } from "./pathDisplay.js";
 import { PrChipBadge } from "./PrChipBadge.js";
-import { babysitPhaseLabel, babysitStatusText, type BabysitState } from "./prSessionModel.js";
+import { babysitPhaseLabel, babysitStatusText } from "./babysitLabels.js";
 import { needsAttentionCount } from "./prInbox.js";
-import { anyLinkUnseen, prSummaryLookup, sessionLinks, type PrSummaryLookup } from "./sessionPrLinks.js";
+import { anyLinkUnseen, sessionLinks, type PrSummaryLookup } from "./sessionPrLinks.js";
+import { usePrInboxItems, usePrSummaries } from "./usePrs.js";
 import { matchesQuickFilter, matchesSessionQuery, toggleQuickFilter, type QuickFilter, type QuickFilterFacts } from "./sidebarQuickFilters.js";
 import { useSessions, useSidebarLayout } from "./useSessions.js";
 import { ipcErrorMessage } from "./ipcError.js";
@@ -292,9 +293,8 @@ export function Sidebar({ onOpenSkills, skillsOpen = false, hidden = false }: { 
   const restoreSession = useAppStore((s) => s.restoreSession);
   const { confirm, dialog: confirmDialog } = useConfirm();
   const shortPath = (value: string): string => shortenHome(value, homeDir ?? undefined);
-  const inbox = usePrStore((s) => s.inbox);
-  const detailByKey = usePrStore((s) => s.detailByKey);
-  const trackedByKey = usePrStore((s) => s.trackedByKey);
+  const inboxItems = usePrInboxItems();
+  const summaryByKey = usePrSummaries();
   const mainView = usePrStore((s) => s.mainView);
   const openGitHub = usePrStore((s) => s.openGitHub);
   const openSessionView = usePrStore((s) => s.openSessionView);
@@ -388,8 +388,6 @@ export function Sidebar({ onOpenSkills, skillsOpen = false, hidden = false }: { 
   const projectNameById = useMemo<Record<string, string>>(() => Object.fromEntries(projects.map((p) => [p.id, p.name])), [projects]);
   const rowById = useMemo(() => new Map(rows.map((row) => [row.session.id, row])), [rows]);
   const source = useMemo<Session[]>(() => rows.map((row) => row.session), [rows]);
-  const summaryByKey = useMemo(() => prSummaryLookup(inbox?.items ?? [], detailByKey, trackedByKey), [inbox, detailByKey, trackedByKey]);
-  const inboxItems = inbox?.items;
   const branchOf = useCallback((s: Session): string | undefined => rowById.get(s.id)?.branch ?? undefined, [rowById]);
   const babysitOf = useCallback((s: Session) => rowById.get(s.id)?.babysit ?? null, [rowById]);
   const needsYouAll = useMemo<NeedsYouRow[]>(
@@ -484,7 +482,7 @@ export function Sidebar({ onOpenSkills, skillsOpen = false, hidden = false }: { 
     prevRects.current = next;
   }, [rowOrderKey]);
   const workingSetVisible = source.length > 0 || quickFilter !== "all";
-  const attentionCount = useMemo(() => needsAttentionCount(inboxItems ?? []), [inboxItems]);
+  const attentionCount = useMemo(() => needsAttentionCount(inboxItems), [inboxItems]);
   const anyUnseen = useMemo(() => source.some((s) => sessionHasUnseen(s, summaryByKey)), [source, summaryByKey]);
   const inboxActive = mainView.kind === "github" || mainView.kind === "pr";
   const usageActive = mainView.kind === "usage";

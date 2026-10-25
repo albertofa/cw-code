@@ -1,12 +1,12 @@
-import { useEffect, useMemo } from "react";
-import type { PrDetail, PrInboxResult, PrSummary, Session, SessionPrLink } from "../cw.js";
+import { useMemo } from "react";
+import type { PrDetail, PrSummary, Session, SessionPrLink } from "../cw.js";
 import { useAppStore } from "../stores/appStore.js";
-import { usePrStore } from "../stores/prStore.js";
 import { prKey } from "./prInbox.js";
-import { detailNeedsRefresh, detailRefreshKey, hasUnseen } from "./prUpdates.js";
+import { hasUnseen } from "./prUpdates.js";
 import { branchMismatch } from "./sessionBranch.js";
-import { sessionPrItems, withBranchSummary, type SessionPrItem } from "./sessionPrItems.js";
-import { mergeSummary, sessionLinks, type PrSummaryLookup } from "./sessionPrLinks.js";
+import { sessionPrItems, type SessionPrItem } from "./sessionPrItems.js";
+import { sessionLinks, type PrSummaryLookup } from "./sessionPrLinks.js";
+import { usePrDetailEntries, usePrDetails, usePrSummaries } from "./usePrs.js";
 
 export interface LinkedPr {
   key: string;
@@ -32,37 +32,19 @@ export function findSession(sessionsByProject: Record<string, Session[]>, sessio
   return undefined;
 }
 
-function inboxSummaryByKey(inbox: PrInboxResult | null, links: SessionPrLink[], trackedByKey: Record<string, PrSummary>): Map<string, PrSummary> {
-  const wanted = new Set(links.map((link) => prKey(link.ref)));
-  const inboxByKey = new Map<string, PrSummary>();
-  for (const item of inbox?.items ?? []) {
-    const key = prKey(item.ref);
-    if (wanted.has(key)) inboxByKey.set(key, item);
-  }
-  const byKey = new Map<string, PrSummary>();
-  for (const key of wanted) {
-    const merged = mergeSummary(inboxByKey.get(key), trackedByKey[key]);
-    if (merged) byKey.set(key, merged);
-  }
-  return byKey;
-}
-
 export function useLinkedPrs(sessionId: string): LinkedPrs {
   const session = useAppStore((s) => findSession(s.sessionsByProject, sessionId));
   const links = sessionLinks(session);
-  const inbox = usePrStore((s) => s.inbox);
-  const trackedByKey = usePrStore((s) => s.trackedByKey);
-  const detailByKey = usePrStore((s) => s.detailByKey);
-  const loadingByKey = usePrStore((s) => s.detailLoadingByKey);
-  const errorByKey = usePrStore((s) => s.detailErrorByKey);
+  const summaries = usePrSummaries();
+  const entries = usePrDetailEntries();
 
   return useMemo(() => {
-    const inboxByKey = inboxSummaryByKey(inbox, links, trackedByKey);
     const summaryByKey = new Map<string, PrSummary>();
     const items = links.map((link): LinkedPr => {
       const key = prKey(link.ref);
-      const summary = inboxByKey.get(key);
-      const detail = detailByKey[key];
+      const entry = entries.get(key);
+      const detail = entry?.detail ?? undefined;
+      const summary = summaries.get(key);
       const basis = summary ?? detail;
       if (basis) summaryByKey.set(key, basis);
       return {
@@ -70,59 +52,25 @@ export function useLinkedPrs(sessionId: string): LinkedPrs {
         link,
         summary,
         detail,
-        loading: loadingByKey[key] ?? false,
-        error: errorByKey[key],
+        loading: entry?.loading ?? false,
+        error: entry?.error ?? undefined,
         unseen: basis !== undefined && hasUnseen(basis, link)
       };
     });
     return { session, items, summaryByKey };
-  }, [session, links, inbox, trackedByKey, detailByKey, loadingByKey, errorByKey]);
+  }, [session, links, summaries, entries]);
 }
 
 export function useSessionPrItems(sessionId: string): { items: SessionPrItem[]; session: Session | undefined } {
-  const { session, summaryByKey } = useLinkedPrs(sessionId);
+  const session = useAppStore((s) => findSession(s.sessionsByProject, sessionId));
+  const summaries = usePrSummaries();
   const gitStatus = useAppStore((s) => s.gitStatusBySession[sessionId]);
   const gitPr = gitStatus?.pullRequest ?? null;
-  const detailByKey = usePrStore((s) => s.detailByKey);
-  const inboxItems = usePrStore((s) => s.inbox?.items);
+  const detailByKey = usePrDetails();
   const mismatched = branchMismatch(session, gitStatus) !== null;
   const items = useMemo(
-    () => sessionPrItems(session, gitPr, withBranchSummary(summaryByKey, gitPr, inboxItems), detailByKey, mismatched),
-    [session, gitPr, summaryByKey, inboxItems, detailByKey, mismatched]
+    () => sessionPrItems(session, gitPr, summaries, detailByKey, mismatched),
+    [session, gitPr, summaries, detailByKey, mismatched]
   );
   return { items, session };
-}
-
-function isFinishedAndCached(detail: PrDetail | undefined): boolean {
-  return detail !== undefined && detail.state !== "OPEN";
-}
-
-export function useLinkedPrLoader(sessionId: string | undefined): void {
-  const session = useAppStore((s) => (sessionId ? findSession(s.sessionsByProject, sessionId) : undefined));
-  const links = sessionLinks(session);
-  const inbox = usePrStore((s) => s.inbox);
-  const trackedByKey = usePrStore((s) => s.trackedByKey);
-  const keySignature = links.map((link) => prKey(link.ref)).join(" ");
-  const summaries = inboxSummaryByKey(inbox, links, trackedByKey);
-  const detailSignature = links.map((link) => detailRefreshKey(prKey(link.ref), summaries.get(prKey(link.ref)))).join(" ");
-
-  useEffect(() => {
-    const store = usePrStore.getState();
-    for (const link of links) {
-      const key = prKey(link.ref);
-      if (store.detailErrorByKey[key] !== undefined || isFinishedAndCached(store.detailByKey[key])) continue;
-      void store.loadDetail(link.ref);
-    }
-  }, [sessionId, keySignature]);
-
-  useEffect(() => {
-    const store = usePrStore.getState();
-    for (const link of links) {
-      const key = prKey(link.ref);
-      const detail = store.detailByKey[key];
-      if (store.detailErrorByKey[key] !== undefined || isFinishedAndCached(detail)) continue;
-      if (!detailNeedsRefresh(detail, summaries.get(key))) continue;
-      void store.loadDetail(link.ref);
-    }
-  }, [detailSignature]);
 }

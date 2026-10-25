@@ -1,11 +1,11 @@
 import { useState } from "react";
 import { Activity, Circle, CircleCheck, CircleX, ExternalLink, Pause, Play, Square } from "lucide-react";
-import type { PrDetail } from "@cw-code/contracts";
-import { useAppStore } from "../stores/appStore.js";
+import type { BabysitPhase, BabysitState, PrDetail } from "@cw-code/contracts";
 import { usePrStore } from "../stores/prStore.js";
+import { babysitStatusText } from "./babysitLabels.js";
 import { mergeBoxState, type MergeRow } from "./prDetailModel.js";
 import { prKey } from "./prInbox.js";
-import { babysitStatusText, type BabysitPhase, type BabysitState } from "./prSessionModel.js";
+import { usePrDetail } from "./usePrs.js";
 import { prRefLabel } from "./sessionPrLinks.js";
 import { ipcErrorMessage } from "./ipcError.js";
 
@@ -43,10 +43,8 @@ function StatusMark({ phase }: { phase: BabysitPhase["kind"] }) {
 }
 
 export function BabysitHead({ sessionId, state }: { sessionId: string; state: BabysitState }) {
-  const pauseLocal = useAppStore((s) => s.pauseAutoFollowUp);
-  const resumeLocal = useAppStore((s) => s.resumeAutoFollowUp);
   const openPr = usePrStore((s) => s.openPr);
-  const detail = usePrStore((s) => s.detailByKey[prKey(state.link.ref)]);
+  const detail = usePrDetail(prKey(state.link.ref))?.detail ?? null;
   const [stopping, setStopping] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -57,16 +55,12 @@ export function BabysitHead({ sessionId, state }: { sessionId: string; state: Ba
     setError(null);
     try {
       await window.cw.pauseAutoFollowUp(sessionId);
-      pauseLocal(sessionId);
     } catch (err) {
       setError(`Could not pause ${workflow.label}: ${ipcErrorMessage(err)}`);
     }
   };
 
-  const resume = async () => {
-    await window.cw.resumeAutoFollowUp(sessionId);
-    resumeLocal(sessionId);
-  };
+  const resume = () => window.cw.resumeAutoFollowUp(sessionId);
 
   const resumeClicked = async () => {
     setError(null);

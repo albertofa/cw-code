@@ -673,9 +673,7 @@ export interface CwApi {
   setRepositoryGitIdentity(projectId: string, name: string, email: string): Promise<void>;
   getUsageLedger(query: UsageLedgerQuery): Promise<UsageLedgerRow[]>;
   getAccountUsage(drivers: DriverName[], force?: boolean): Promise<AccountUsageSnapshot[]>;
-  getPrInbox(force?: boolean): Promise<PrInboxResult>;
-  getTrackedPrs(): Promise<PrSummary[]>;
-  onTrackedPrs(cb: (items: PrSummary[]) => void): () => void;
+  refreshPrInbox(force?: boolean): Promise<void>;
   getPrDetail(ref: PrRef): Promise<PrDetail>;
   getPrDiff(ref: PrRef): Promise<string>;
   getPrCheckLog(ref: PrRef, runId: number): Promise<string>;
@@ -689,7 +687,6 @@ export interface CwApi {
   onGitHubRunsChanged(cb: (runs: WorkflowRunSummary[]) => void): () => void;
   onGitHubCiActivity(cb: () => void): () => void;
   cloneGitHubRepo(repo: RepoRef): Promise<Project>;
-  getProjectGitHubRepos(): Promise<ProjectGitHubRepo[]>;
   linkSessionPr(sessionId: string, link: SessionPrLink): Promise<Session>;
   unlinkSessionPr(sessionId: string, ref: PrRef): Promise<Session>;
   markSessionPrSeen(sessionId: string, ref: PrRef, headSha: string | null, seenAt: number | null): Promise<Session>;

@@ -7,11 +7,9 @@ import {
   linkFor,
   linksTitle,
   linkWithWorkflow,
-  mergeSummary,
   mostUrgentLink,
   pickMainSession,
   prRefFromUrl,
-  prSummaryLookup,
   sessionLinks,
   sessionsLinkedTo
 } from "./sessionPrLinks.js";
@@ -165,15 +163,6 @@ describe("chip data sources", () => {
     });
     expect(displayChip(link(5), lookup(summary(5, { ci: "failing" })))).toMatchObject({ tone: "bad", label: "#5" });
   });
-
-  it("prefers the inbox summary over a cached detail for the same pull request", () => {
-    const inbox = summary(1, { title: "from inbox" });
-    const detail = { ...summary(1, { title: "from detail" }), body: "", createdAt: 0, timeline: [], threads: [], checkRuns: [], commits: [], reviewers: [], viewerLogin: "" };
-    const onlyDetail = { ...detail, ref: ref(2), title: "detail only" };
-    const byKey = prSummaryLookup([inbox], { [prKey(detail.ref)]: detail, [prKey(onlyDetail.ref)]: onlyDetail }, {});
-    expect(byKey.get(prKey(ref(1)))?.title).toBe("from inbox");
-    expect(byKey.get(prKey(ref(2)))?.title).toBe("detail only");
-  });
 });
 
 describe("link titles and unseen state", () => {
@@ -203,24 +192,7 @@ describe("pickMainSession", () => {
   });
 });
 
-describe("tracked summaries and link snapshots", () => {
-  it("prefers the newer of the inbox and tracked summaries, tracked on ties", () => {
-    const inbox = summary(1, { updatedAt: 100, title: "inbox" });
-    expect(mergeSummary(inbox, summary(1, { updatedAt: 200, title: "tracked" }))?.title).toBe("tracked");
-    expect(mergeSummary(inbox, summary(1, { updatedAt: 100, title: "tracked" }))?.title).toBe("tracked");
-    expect(mergeSummary(summary(1, { updatedAt: 300, title: "inbox" }), summary(1, { updatedAt: 200 }))?.title).toBe("inbox");
-    expect(mergeSummary(undefined, summary(1, { title: "tracked" }))?.title).toBe("tracked");
-    expect(mergeSummary(inbox, undefined)?.title).toBe("inbox");
-    expect(mergeSummary(undefined, undefined)).toBeUndefined();
-  });
-
-  it("fills the lookup with tracked summaries the inbox lacks", () => {
-    const tracked = summary(2, { title: "tracked only" });
-    const byKey = prSummaryLookup([summary(1)], {}, { [prKey(tracked.ref)]: tracked });
-    expect(byKey.get(prKey(tracked.ref))?.title).toBe("tracked only");
-    expect(byKey.has(prKey(ref(1)))).toBe(true);
-  });
-
+describe("link snapshots", () => {
   it("shows the persisted snapshot state when no summary is loaded", () => {
     const merged = link(3, { snapshot: { state: "MERGED", headRefOid: "abc", updatedAt: 10, syncedAt: 20 } });
     expect(displayChip(merged, lookup())).toMatchObject({ icon: "merge", reason: "merged" });

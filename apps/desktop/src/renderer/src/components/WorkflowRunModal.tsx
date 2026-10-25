@@ -29,7 +29,7 @@ import type { PrWorkspaceChoice } from "@cw-code/contracts";
 import { useAppStore, DEFAULT_COMPOSER } from "../stores/appStore.js";
 import { useGitHubStore } from "../stores/githubStore.js";
 import { usePrStore, type RunModalState } from "../stores/prStore.js";
-import { babysittingSession, resolveTemplate } from "./prWorkflows.js";
+import { babysittingSession, resolveTemplate, startsAutoFollowUp } from "./prWorkflows.js";
 import { harnessLabel } from "./toolTabs.js";
 import { pickableHarnesses } from "./harnessAvailability.js";
 import { useRecentModels } from "./lastModel.js";
@@ -44,7 +44,8 @@ import { findSession } from "./useLinkedPr.js";
 import { useAppSettings, useAppSettingsError } from "./useAppSettings.js";
 import { prKey } from "./prInbox.js";
 import { linkWithWorkflow } from "./sessionPrLinks.js";
-import { startsAutoFollowUp, withAutomatedWorkflowNote } from "./prSessionModel.js";
+import { withAutomatedWorkflowNote } from "@cw-code/shared/autoFollowUp";
+import { EMPTY_GITHUB_CONTEXT, projectIdFor, useGitHubContext, usePrSummary } from "./usePrs.js";
 import { IssueCard, PrCard, RunCard } from "./WorkflowSubjectCards.js";
 import { SubjectCardSkeleton } from "./GitHubSkeletons.js";
 import { Spinner } from "./Loading.js";
@@ -162,9 +163,9 @@ function Segment<T extends string>({
 
 export function WorkflowRunModal({ request }: { request: RunModalState }) {
   const baseSubject = request.subject;
-  const projectRepos = usePrStore((s) => s.projectRepos);
-  const projectIdForRef = usePrStore((s) => s.projectIdForRef);
-  const refreshProjectRepos = usePrStore((s) => s.refreshProjectRepos);
+  const githubContext = useGitHubContext();
+  const reposReady = githubContext !== undefined;
+  const projectRepos = (githubContext ?? EMPTY_GITHUB_CONTEXT).projectRepos;
   const openSessionView = usePrStore((s) => s.openSessionView);
   const closeRunModal = usePrStore((s) => s.closeRunModal);
   const runCaches = useGitHubStore((s) => s.runResults);
@@ -180,7 +181,6 @@ export function WorkflowRunModal({ request }: { request: RunModalState }) {
   const settings = useAppSettings();
   const settingsError = useAppSettingsError();
   const settingsKey = useMemo(() => JSON.stringify(settings), [settings]);
-  const [reposReady, setReposReady] = useState(false);
   const [workflowId, setWorkflowId] = useState(request.workflowId);
   const [target, setTarget] = useState(request.continueSessionId ?? "");
   const [options, setOptions] = useState<HarnessOptions | null>(null);
@@ -202,11 +202,7 @@ export function WorkflowRunModal({ request }: { request: RunModalState }) {
     () => workflowsForSubject(settings?.prWorkflows ?? [], baseSubject, cachedRun),
     [settings, baseSubject, cachedRun]
   );
-  const basePrState = usePrStore((s) => {
-    if (baseSubject.kind !== "pr") return undefined;
-    const refKey = prKey(baseSubject.ref);
-    return (s.detailByKey[refKey] ?? s.inbox?.items.find((item) => prKey(item.ref) === refKey))?.state;
-  });
+  const basePrState = usePrSummary(baseSubject.kind === "pr" ? prKey(baseSubject.ref) : null)?.state;
   const babysitWorkflow = useMemo(() => {
     if (!target || baseSubject.kind !== "pr" || (basePrState !== undefined && basePrState !== "OPEN")) return null;
     const session = findSession(sessionsByProject, target);
@@ -230,7 +226,7 @@ export function WorkflowRunModal({ request }: { request: RunModalState }) {
   );
   const { ensureOpen, dialog: restoreDialog } = useRestoreBeforeSend();
   const continueSession: Session | undefined = target ? allSessions.find((s) => s.id === target) : undefined;
-  const projectId = useMemo(() => projectIdForRef(repo), [projectIdForRef, projectRepos, key]);
+  const projectId = useMemo(() => projectIdFor(projectRepos, repo), [projectRepos, key]);
   const continueAlreadyLinked = continueSession ? isLinkedTo(continueSession, subject) : false;
   const continueLinkKey = continueSession ? `${continueSession.id}\n${key}` : null;
   const adoptedLink =
@@ -286,10 +282,6 @@ export function WorkflowRunModal({ request }: { request: RunModalState }) {
     subject.kind === "issue" ? resolveIssueBase() : subject.kind === "run" ? resolveRunBase(data.run) : null;
   const working = stage !== null;
   const sessionBusy = useSessionRow(continueSession?.id)?.busy ?? false;
-
-  useEffect(() => {
-    void refreshProjectRepos().finally(() => setReposReady(true));
-  }, []);
 
   useEffect(() => {
     setWorkspaceChoice(null);
@@ -494,7 +486,6 @@ export function WorkflowRunModal({ request }: { request: RunModalState }) {
           setStage(current);
           const project = await window.cw.cloneGitHubRepo(subject.ref);
           app.applyProject(project);
-          await refreshProjectRepos();
           targetProjectId = project.id;
           const [models, permissions] = await Promise.all([
             window.cw.listModelsFor(targetProjectId, driver),

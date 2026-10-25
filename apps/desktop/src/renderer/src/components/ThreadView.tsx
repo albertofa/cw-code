@@ -24,7 +24,6 @@ import { BranchMismatchDock } from "./BranchMismatchNotice.js";
 import { PrUpdateDock } from "./PrUpdateDock.js";
 import { WorkingDock } from "./WorkingDock.js";
 import { PrSessionChip } from "./PrSessionPanel.js";
-import { useLinkedPrLoader } from "./useLinkedPr.js";
 import { useMarkTurnSeen } from "./useTurnSeen.js";
 import { sessionLinks } from "./sessionPrLinks.js";
 import { TurnBlock } from "./TurnBlock.js";
@@ -225,7 +224,6 @@ export function ThreadView({ hidden = false }: { hidden?: boolean }) {
   }, [messages, busyTurn]);
   const showNew = pendingDriver !== null || !session;
   const hasPr = !showNew && sessionLinks(session).length > 0;
-  useLinkedPrLoader(showNew ? undefined : session?.id);
   useMarkTurnSeen(showNew ? undefined : session?.id, session?.status, !hidden);
   const scrollRef = useRef<HTMLDivElement>(null);
   const innerRef = useRef<HTMLDivElement>(null);

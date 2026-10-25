@@ -1,5 +1,7 @@
 import type {
   AppSettings,
+  BabysitPhase,
+  BabysitState,
   IssueComment,
   IssueDetail,
   PrCheck,
@@ -16,7 +18,7 @@ import type {
   SessionPrLink,
   WorkflowRunSummary
 } from "@cw-code/contracts";
-import { autoFollowUpWorkflow } from "@cw-code/shared/autoFollowUp";
+import { autoFollowUpWorkflow, runsContinuously, withAutomatedWorkflowNote } from "@cw-code/shared/autoFollowUp";
 import { linkFor, pickMainSession } from "./sessionPrLinks.js";
 
 export { ISSUE_TEMPLATE_VARS, RUN_TEMPLATE_VARS, TEMPLATE_VARS, TEMPLATE_VARS_BY_TARGET } from "@cw-code/shared/workflowTemplates";
@@ -255,4 +257,81 @@ export function primaryAction(pr: PrSummary, linked: SessionMeta[], workflows: P
   const suggested = suggestedWorkflow(pr, workflows);
   if (suggested) return { kind: "run", workflowId: suggested.id };
   return { kind: "none" };
+}
+
+const FAILED_LOGS_PATTERN = /\{\{\s*checks\.failedLogs\s*\}\}/;
+
+const RUN_FAILED_LOGS_PATTERN = /\{\{\s*run\.failedLogs\s*\}\}/;
+
+export function needsFailedLogs(template: string): boolean {
+  return FAILED_LOGS_PATTERN.test(template);
+}
+
+export function needsRunFailedLogs(template: string): boolean {
+  return RUN_FAILED_LOGS_PATTERN.test(template);
+}
+
+function fallbackWorkflowId(pr: Pick<PrSummary, "viewerIsAuthor"> | null): string {
+  return pr !== null && !pr.viewerIsAuthor ? "review" : "babysit";
+}
+
+export function defaultFollowUpWorkflowId(link: SessionPrLink, pr: Pick<PrSummary, "viewerIsAuthor"> | null): string {
+  return link.workflowId || fallbackWorkflowId(pr);
+}
+
+export function followUpWorkflow(
+  link: SessionPrLink,
+  pr: Pick<PrSummary, "viewerIsAuthor"> | null,
+  workflows: PrWorkflow[]
+): PrWorkflow | null {
+  const own = link.workflowId ? workflows.find((w) => w.id === link.workflowId) : undefined;
+  return own ?? workflows.find((w) => w.id === fallbackWorkflowId(pr)) ?? null;
+}
+
+export function followUpPrompt(
+  detail: PrDetail,
+  link: SessionPrLink,
+  workflow: PrWorkflow,
+  updates: PrUpdate[],
+  settings: Pick<AppSettings, "prAttributionEnabled" | "prAttributionText">,
+  harness: string,
+  failedLogs?: string
+): string {
+  const vars = templateVars(detail, { link, updates, failedLogs, attribution: attributionText(settings, harness), harness });
+  return withAutomatedWorkflowNote(workflow, resolveTemplate(workflow.updatePrompt, vars));
+}
+
+function isWatchable(session: Pick<SessionMeta, "status">): boolean {
+  return session.status !== "resolved" && session.status !== "archived";
+}
+
+export function startsAutoFollowUp(
+  session: Pick<SessionMeta, "status">,
+  workflow: PrWorkflow | null | undefined,
+  pr: Pick<PrSummary, "state"> | null | undefined
+): workflow is PrWorkflow {
+  return !!workflow && runsContinuously(workflow) && isWatchable(session) && (!pr || pr.state === "OPEN");
+}
+
+export type FollowUpMode =
+  | { kind: "auto"; workflow: PrWorkflow; phase: BabysitPhase }
+  | { kind: "start"; workflow: PrWorkflow }
+  | { kind: "once"; workflow: PrWorkflow }
+  | { kind: "none" };
+
+export function followUpMode(
+  session: Pick<SessionMeta, "status">,
+  link: SessionPrLink,
+  pr: Pick<PrSummary, "state"> | null,
+  workflow: PrWorkflow | null,
+  workflows: PrWorkflow[],
+  babysit: BabysitState | null
+): FollowUpMode {
+  const auto = autoFollowUpWorkflow(link, workflows);
+  if (auto && babysit && isWatchable(session) && (!pr || pr.state === "OPEN")) {
+    return { kind: "auto", workflow: auto, phase: babysit.phase };
+  }
+  if (!workflow) return { kind: "none" };
+  if (!auto && startsAutoFollowUp(session, workflow, pr)) return { kind: "start", workflow };
+  return { kind: "once", workflow };
 }
