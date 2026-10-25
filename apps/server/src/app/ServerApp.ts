@@ -17,13 +17,13 @@ import { DeviceTokens } from "../transport/deviceTokens.js";
 import { createOriginPolicy, createRejectedOriginLogger } from "../transport/originPolicy.js";
 import { loadOrCreateOwnerToken, tokensEqual } from "../transport/ownerToken.js";
 import { Router, type ClientAuth } from "../transport/Router.js";
-import { TopicRegistry } from "../transport/TopicRegistry.js";
+import { TopicHub } from "../topics/TopicHub.js";
+import { registerTopicProviders, type TopicProviderControls } from "../topics/providers.js";
 import { WsServer } from "../transport/WsServer.js";
 import { ClientInputs } from "./clientInputs.js";
 import { eventAudience } from "./eventAudience.js";
 import { eventTopic, isRoutableTopic } from "./eventTopics.js";
 import { createServices, type Services } from "./services.js";
-import { wireTopics } from "./topicWiring.js";
 
 const SESSION_SETTLE_INTERVAL_MS = 60_000;
 const SESSION_SETTLE_INITIAL_DELAY_MS = 5_000;
@@ -42,9 +42,9 @@ function isProcessGone(pid: number): boolean {
 
 export class ServerApp {
   readonly router = new Router();
-  readonly topics = new TopicRegistry();
+  readonly topics = new TopicHub((clientIds, frame) => this.ws?.sendTo(clientIds, frame));
   readonly clientInputs = new ClientInputs();
-  private readonly topicWiring = wireTopics(this);
+  private topicControls: TopicProviderControls | null = null;
   private deviceTokens: DeviceTokens | null = null;
   private services: Services | null = null;
   private state: StartupState = { mode: "ready" };
@@ -78,9 +78,9 @@ export class ServerApp {
       return;
     }
     if (!isRoutableTopic(channel, topic)) return;
-    const subscribers = this.topics.subscribers(topic);
+    const subscribers = this.topics.subscriberIds(topic);
     if (subscribers.size === 0) return;
-    this.ws?.sendTo(subscribers, channel, payload);
+    this.ws?.sendEvent(subscribers, channel, payload);
   }
 
   isConnected(clientId: string): boolean {
@@ -88,7 +88,7 @@ export class ServerApp {
   }
 
   sendTo(clientId: string, channel: string, payload?: unknown): void {
-    this.ws?.sendTo([clientId], channel, payload);
+    this.ws?.sendEvent([clientId], channel, payload);
   }
 
   get devices(): DeviceTokens {
@@ -112,11 +112,11 @@ export class ServerApp {
   }
 
   syncWatchedRuns(): void {
-    this.topicWiring.syncWatchedRuns();
+    this.topicControls?.syncWatchedRuns();
   }
 
   applyWatchedFiles(sessionId: string): void {
-    this.topicWiring.applyFiles(sessionId);
+    this.topicControls?.applyFiles(sessionId);
   }
 
   currentServices(): Services | null {
@@ -190,7 +190,7 @@ export class ServerApp {
       this.emitDevicesChanged();
     });
     ws.onClientClosed((ctx) => {
-      this.topics.dropClient(ctx.clientId);
+      this.topics.clientClosed(ctx);
       this.clientInputs.dropClient(ctx.clientId);
       if (ctx.auth.kind === "device" && !this.stopping) this.emitDevicesChanged();
       if (ctx.client === "desktop-ui" && !this.stopping && !ws.clients().some((other) => other.client === "desktop-ui")) {
@@ -338,13 +338,18 @@ export class ServerApp {
         console.warn(`turn snapshot index sweep failed: ${(err as Error).message}`);
       });
     this.startSessionSweeps();
-    this.topicWiring.resync();
+    this.topics.clearProviders();
+    this.topicControls = registerTopicProviders(this.topics, services, {
+      clientInputs: this.clientInputs,
+      sendTo: (clientId, channel, payload) => this.sendTo(clientId, channel, payload)
+    });
+    this.topics.reacquireAll();
   }
 
   private handleShutdownRecovered(failure: string | null): void {
     this.servicesDisposed = false;
     this.startSessionSweeps();
-    this.topicWiring.resync();
+    this.topics.resync();
     this.emitShutdownChanged();
     if (!failure) return;
     appendCrashLog(`shutdown recovery could not restart CLI drivers: ${failure}`);

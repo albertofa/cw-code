@@ -136,7 +136,9 @@ describe("server process", () => {
 
   it("accepts topic subscriptions and rejects pty topics", async () => {
     const client = await connect();
-    expect(await client.call("topics.subscribe", { topics: ["sidebar"] })).toEqual({});
+    expect(await client.call("topics.subscribe", { topics: ["sidebar"] })).toEqual({ sidebar: { rev: 0, data: {} } });
+    expect(await client.call("topics.subscribe", { topics: ["sidebar"] })).toEqual({ sidebar: { rev: 0, data: {} } });
+    await expect(client.call("topics.subscribe", { topics: ["app", "github/nope"] })).rejects.toMatchObject({ code: "unknown-topic" });
     await expect(client.call("topics.subscribe", { topics: ["pty/x:shell"] })).rejects.toMatchObject({ code: "invalid-topic" });
     await expect(client.call("topics.unsubscribe", { topics: ["pty/x:shell"] })).rejects.toMatchObject({ code: "invalid-topic" });
     expect(await client.call("topics.unsubscribe", { topics: ["sidebar", "app"] })).toBeNull();
@@ -149,7 +151,7 @@ describe("server process", () => {
     const leaked: unknown[] = [];
     subscriber.on("prs.tracked", (payload) => pushed.push(payload as PrSummary[]));
     bystander.on("prs.tracked", (payload) => leaked.push(payload));
-    expect(await subscriber.call("topics.subscribe", { topics: ["prs"] })).toEqual({});
+    expect(await subscriber.call("topics.subscribe", { topics: ["prs"] })).toEqual({ prs: { rev: 0, data: {} } });
     expect(pushed).toEqual([[]]);
 
     const settingsSeen = (client: ServerClient) =>

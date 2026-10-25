@@ -14,7 +14,7 @@ export function requireOwner(ctx: CallContext, action: string): void {
 }
 
 export function subscribeIfConnected(app: Pick<ServerApp, "isConnected" | "topics">, clientId: string, topics: string[]): void {
-  if (app.isConnected(clientId)) app.topics.subscribe(clientId, topics);
+  if (app.isConnected(clientId)) app.topics.subscribeClient(clientId, topics);
 }
 
 export function parseArgs(args: unknown, channel: string): Record<string, unknown> {

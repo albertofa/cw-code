@@ -131,11 +131,14 @@ export class WsServer {
     }
   }
 
-  sendTo(clientIds: Iterable<string>, channel: string, payload: unknown): void {
-    const data = JSON.stringify({ t: "event", channel, payload } satisfies ServerMessage);
+  sendEvent(clientIds: Iterable<string>, channel: string, payload: unknown): void {
+    this.sendTo(clientIds, JSON.stringify({ t: "event", channel, payload } satisfies ServerMessage));
+  }
+
+  sendTo(clientIds: Iterable<string>, frame: string): void {
     for (const clientId of clientIds) {
       const ws = this.socketsByClient.get(clientId);
-      if (ws) sendRaw(ws, data);
+      if (ws) sendRaw(ws, frame);
     }
   }
 

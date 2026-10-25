@@ -35,8 +35,6 @@ export interface TopicsParams {
   topics: string[];
 }
 
-export type TopicSubscribeResult = Record<string, { rev: number; data: unknown }>;
-
 export interface DeviceInfo {
   id: string;
   name: string;

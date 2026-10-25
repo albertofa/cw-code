@@ -191,7 +191,7 @@ export type {
   FilesTopicData
 } from "./files.js";
 export type { NativeSession, ImportableSession, ImportSessionRequest, ImportSessionResult } from "./importer.js";
-export type { ClientKind, RpcError, ClientMessage, ServerMessage, ServerEndpoint, ServerReady, TopicsParams, TopicSubscribeResult, DeviceInfo, DeviceCreateResult } from "./protocol.js";
+export type { ClientKind, RpcError, ClientMessage, ServerMessage, ServerEndpoint, ServerReady, TopicsParams, DeviceInfo, DeviceCreateResult } from "./protocol.js";
 export type { DesktopApi } from "./desktop.js";
 export type { TopicOp, TopicSnapshot, TopicsSubscribeResult, TopicPatch } from "./topics.js";
 export type {

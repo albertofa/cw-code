@@ -33,6 +33,6 @@ export function registerPtyHandlers(router: Router, app: ServerApp): void {
   handle<{ ptyId: string; cols: number; rows: number }>(router, "pty.resize", (args, ctx) => {
     if (attached(ctx, args.ptyId)) services().ptys.resize(args.ptyId, ctx.clientId, args.cols, args.rows);
   });
-  handle<{ ptyId: string }>(router, "pty.detach", (args, ctx) => app.topics.unsubscribe(ctx.clientId, [ptyTopic(args.ptyId)]));
+  handle<{ ptyId: string }>(router, "pty.detach", (args, ctx) => app.topics.unsubscribe(ctx, [ptyTopic(args.ptyId)]));
   handle<{ ptyId: string }>(router, "pty.kill", (args) => services().ptys.kill(args.ptyId));
 }
