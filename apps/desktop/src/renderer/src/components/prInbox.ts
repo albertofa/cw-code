@@ -11,10 +11,3 @@ export function prBucket(pr: PrSummary): PrBucket {
   if (pr.viewerIsAuthor && pr.review === "approved" && pr.ci === "passing") return "ready";
   return "waiting";
 }
-
-export function needsAttentionCount(items: PrSummary[]): number {
-  return items.filter((pr) => {
-    const bucket = prBucket(pr);
-    return bucket === "review" || bucket === "action";
-  }).length;
-}

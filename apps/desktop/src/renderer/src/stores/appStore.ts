@@ -52,6 +52,8 @@ export const DEFAULT_COMPOSER: Required<Pick<ComposerPrefs, "effort" | "permissi
 };
 
 const composerLoads = new Map<string, Promise<void>>();
+const composerFailureNotified = new Set<string>();
+const COMPOSER_SEND_WAIT_MS = 5000;
 const SESSION_ROW_WAIT_MS = 5000;
 const SESSION_ROW_LATE_MS = 60_000;
 
@@ -102,6 +104,54 @@ export async function selectWhenListed(sessionId: string, select: () => void): P
   void waitForSession(sessionId, SESSION_ROW_LATE_MS).then((appeared) => {
     if (appeared && useAppStore.getState().activeSessionId === selectedBefore) select();
   });
+}
+
+function reportComposerFailure(sessionId: string, err: unknown): void {
+  const message = ipcErrorMessage(err);
+  console.warn(`[cw-code] could not load composer settings for ${sessionId}: ${message}`);
+  if (useAppStore.getState().composerLoadedBySession[sessionId] || composerFailureNotified.has(sessionId)) return;
+  composerFailureNotified.add(sessionId);
+  useNotifs.getState().push({
+    id: `composer-load:${sessionId}`,
+    kind: "warning",
+    title: "Composer settings not loaded",
+    message: `This session's model and permission settings could not be loaded: ${message}. They will be retried before the next send.`
+  });
+}
+
+function loadComposer(sessionId: string): Promise<void> {
+  const load = (async () => {
+    try {
+      useAppStore.getState().applyComposer(sessionId, await window.cw.getComposer(sessionId));
+    } catch (err) {
+      reportComposerFailure(sessionId, err);
+    } finally {
+      composerLoads.delete(sessionId);
+    }
+  })();
+  composerLoads.set(sessionId, load);
+  return load;
+}
+
+function settleWithin(promise: Promise<void>, timeoutMs: number): Promise<void> {
+  return new Promise((resolve) => {
+    const timer = window.setTimeout(resolve, timeoutMs);
+    void promise.finally(() => {
+      window.clearTimeout(timer);
+      resolve();
+    });
+  });
+}
+
+async function composerForSend(sessionId: string): Promise<ComposerPrefs> {
+  if (!useAppStore.getState().composerLoadedBySession[sessionId]) {
+    await settleWithin(useAppStore.getState().ensureComposer(sessionId), COMPOSER_SEND_WAIT_MS);
+  }
+  const state = useAppStore.getState();
+  if (!state.composerLoadedBySession[sessionId]) {
+    throw new Error("this session's model and permission settings have not loaded from the server yet, so the prompt was not sent. Try again in a moment");
+  }
+  return state.composerBySession[sessionId] ?? DEFAULT_COMPOSER;
 }
 
 function withProject(projects: Project[], project: Project): Project[] {
@@ -161,14 +211,12 @@ interface AppState {
   composerLoadedBySession: Record<string, boolean>;
   pendingDriver: DriverName | null;
   lastDriver: DriverName;
-  installedHarnesses: DriverName[] | null;
+  availableHarnesses: DriverName[] | null;
   pendingPrefs: ComposerPrefs;
   pendingWorkspace: CreateSessionOptions;
   newSessionError: string | null;
   setPendingPrefs(prefs: ComposerPrefs): void;
   setPendingWorkspace(options: CreateSessionOptions): void;
-  sourceControlRefreshIntervalSeconds: number;
-  prRefreshIntervalSeconds: number;
   defaultUseWorktree: boolean;
   appearance: AppearancePrefs;
   themePreview: ThemePreview | null;
@@ -206,7 +254,7 @@ interface AppState {
   setSessionStatus(sessionId: string, status: SessionStatus, reason?: SessionStatusReason): Promise<void>;
   markSessionWorking(sessionId: string): Promise<void>;
   restoreSession(sessionId: string): Promise<void>;
-  createSession(driver: DriverName, prefs?: ComposerPrefs, workspace?: CreateSessionOptions): Promise<void>;
+  createSession(driver: DriverName, prefs?: ComposerPrefs, workspace?: CreateSessionOptions): Promise<Session | null>;
   createSessionIn(projectId: string, driver: DriverName, prefs?: ComposerPrefs, workspace?: CreateSessionOptions): Promise<Session>;
   importSession(request: ImportSessionRequest): Promise<Session>;
   applyProject(project: Project): void;
@@ -249,12 +297,10 @@ export const useAppStore = create<AppState>((set, get) => ({
   settingsLoaded: false,
   pendingDriver: null,
   lastDriver: "claude",
-  installedHarnesses: null,
+  availableHarnesses: null,
   pendingPrefs: { ...DEFAULT_COMPOSER },
   pendingWorkspace: defaultWorkspace(true),
   newSessionError: null,
-  sourceControlRefreshIntervalSeconds: 30,
-  prRefreshIntervalSeconds: 120,
   defaultUseWorktree: true,
   appearance: DEFAULT_APPEARANCE,
   themePreview: null,
@@ -382,7 +428,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   setPendingProject(projectId: string) {
     const pendingDriver = get().pendingDriver;
     const settings = get().projects.find((p) => p.id === projectId)?.settings;
-    const target = pendingDriver === null ? null : fallbackHarness(projectDriver(settings, pendingDriver), get().installedHarnesses);
+    const target = pendingDriver === null ? null : fallbackHarness(projectDriver(settings, pendingDriver), get().availableHarnesses);
     set({
       activeProjectId: projectId,
       activeSessionId: null,
@@ -441,7 +487,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     const currentProjectId = get().activeProjectId;
     const projectId = currentProjectId ?? sessionOwnerId(get().sessionsByProject, get().activeSessionId) ?? recentProjectId(get());
     const settings = projectId ? get().projects.find((p) => p.id === projectId)?.settings : undefined;
-    const target = fallbackHarness(driver ?? projectDriver(settings, get().lastDriver), get().installedHarnesses);
+    const target = fallbackHarness(driver ?? projectDriver(settings, get().lastDriver), get().availableHarnesses);
     const previous = get().pendingDriver ?? get().lastDriver;
     const currentModel = get().pendingPrefs.model;
     if (currentModel && previous !== target) pushRecentModel(previous, currentModel);
@@ -476,14 +522,15 @@ export const useAppStore = create<AppState>((set, get) => ({
     pendingPromptInFlight = true;
     set({ newSessionError: null });
     try {
+      let session: Session | null;
       try {
-        await get().createSession(driver, prefs, workspace);
+        session = await get().createSession(driver, prefs, workspace);
       } catch (err) {
         const message = ipcErrorMessage(err);
         set({ newSessionError: message });
         throw new NewSessionRefusedError(message);
       }
-      await get().sendPrompt(prompt, attachments, opts);
+      if (session) await get().sendPromptTo(session.id, prompt, attachments, opts);
     } finally {
       pendingPromptInFlight = false;
     }
@@ -519,31 +566,16 @@ export const useAppStore = create<AppState>((set, get) => ({
   async ensureComposer(sessionId: string) {
     const inflight = composerLoads.get(sessionId);
     if (inflight) return inflight;
-    if (get().composerBySession[sessionId]) return;
-    set({ composerBySession: { ...get().composerBySession, [sessionId]: { ...DEFAULT_COMPOSER } } });
-    const load = (async () => {
-      try {
-        get().applyComposer(sessionId, await window.cw.getComposer(sessionId));
-      } catch {
-      } finally {
-        composerLoads.delete(sessionId);
-      }
-    })();
-    composerLoads.set(sessionId, load);
-    return load;
+    if (get().composerLoadedBySession[sessionId]) return;
+    if (!get().composerBySession[sessionId]) {
+      set({ composerBySession: { ...get().composerBySession, [sessionId]: { ...DEFAULT_COMPOSER } } });
+    }
+    return loadComposer(sessionId);
   },
 
   async reloadComposers() {
-    const sessionIds = Object.keys(get().composerLoadedBySession).filter((sessionId) => !composerLoads.has(sessionId));
-    await Promise.all(
-      sessionIds.map(async (sessionId) => {
-        try {
-          get().applyComposer(sessionId, await window.cw.getComposer(sessionId));
-        } catch (err) {
-          console.warn(`[cw-code] could not reload composer settings for ${sessionId}: ${ipcErrorMessage(err)}`);
-        }
-      })
-    );
+    const known = new Set([...Object.keys(get().composerBySession), ...Object.keys(get().composerLoadedBySession)]);
+    await Promise.all([...known].filter((sessionId) => !composerLoads.has(sessionId)).map(loadComposer));
   },
 
   async setComposerPrefs(sessionId: string, prefs: ComposerPrefs) {
@@ -551,8 +583,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     const merged = { ...(get().composerBySession[sessionId] ?? DEFAULT_COMPOSER), ...prefs };
     set({ composerBySession: { ...get().composerBySession, [sessionId]: merged } });
     try {
-      const saved = await window.cw.setComposer(sessionId, merged);
-      set({ composerBySession: { ...get().composerBySession, [sessionId]: { ...DEFAULT_COMPOSER, ...saved } } });
+      get().applyComposer(sessionId, await window.cw.setComposer(sessionId, merged));
     } catch {
     }
   },
@@ -567,8 +598,6 @@ export const useAppStore = create<AppState>((set, get) => ({
     const first = !get().settingsLoaded;
     set({
       ...(first ? { pendingWorkspace: { ...get().pendingWorkspace, ...defaultWorkspace(saved.defaultUseWorktree) } } : {}),
-      sourceControlRefreshIntervalSeconds: saved.sourceControlRefreshIntervalSeconds,
-      prRefreshIntervalSeconds: saved.prRefreshIntervalSeconds,
       defaultUseWorktree: saved.defaultUseWorktree,
       settingsLoaded: true,
       appearance: appearanceOf(saved),
@@ -579,6 +608,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   applyComposer(sessionId: string, prefs: ComposerPrefs) {
+    composerFailureNotified.delete(sessionId);
     set({
       composerBySession: { ...get().composerBySession, [sessionId]: { ...DEFAULT_COMPOSER, ...prefs } },
       composerLoadedBySession: { ...get().composerLoadedBySession, [sessionId]: true }
@@ -602,8 +632,8 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   async createSession(driver: DriverName, prefs?: ComposerPrefs, workspace?: CreateSessionOptions) {
     const projectId = get().activeProjectId;
-    if (!projectId) return;
-    await get().createSessionIn(projectId, driver, prefs, workspace);
+    if (!projectId) return null;
+    return get().createSessionIn(projectId, driver, prefs, workspace);
   },
 
   async createSessionIn(projectId: string, driver: DriverName, prefs?: ComposerPrefs, workspace?: CreateSessionOptions) {
@@ -654,7 +684,7 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   async sendPromptTo(sessionId: string, prompt: string, attachments?: string[], opts?: SendPromptOptions) {
     if (!prompt.trim()) return;
-    const prefs = get().composerBySession[sessionId] ?? DEFAULT_COMPOSER;
+    const prefs = await composerForSend(sessionId);
     const acceptFolderHead = opts?.acceptFolderHead;
     await window.cw.startTurn(sessionId, prompt, {
       prefs,

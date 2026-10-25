@@ -1,8 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
 import { Activity, Archive, ArchiveRestore, Bell, ChartColumn, Check, ChevronDown, ChevronRight, ChevronUp, CircleCheck, CircleHelp, Clock, Copy, GitBranch, GitPullRequest, Hash, LoaderCircle, Pause, Pencil, Play, Plus, Search, Settings, ShieldAlert, Sparkles, X, type LucideIcon } from "lucide-react";
 import type { Attention, AttentionKind, BabysitState, NeedsYouSlot, SessionRow, SidebarLayout, SidebarReorderRequest, SidebarSection, SidebarTopicData } from "@cw-code/contracts";
-import { prKey } from "@cw-code/shared/prRef";
-import { hasUnseen } from "@cw-code/shared/prSeen";
 import { SIDEBAR_TOPIC } from "@cw-code/shared/topics";
 import type { DriverName, Session, SessionStatus } from "../cw.js";
 import { useAppStore } from "../stores/appStore.js";
@@ -15,9 +13,7 @@ import { ProjectMonogram } from "./ProjectMonogram.js";
 import { shortenHome } from "./pathDisplay.js";
 import { PrChipBadge } from "./PrChipBadge.js";
 import { babysitPhaseLabel, babysitStatusText } from "./babysitLabels.js";
-import { needsAttentionCount } from "./prInbox.js";
 import { sessionLinks } from "./sessionPrLinks.js";
-import { usePrInboxItems, usePrSummaries, type PrSummaryLookup } from "./usePrs.js";
 import { matchesQuickFilter, matchesSessionQuery, toggleQuickFilter, type QuickFilter, type QuickFilterFacts } from "./sidebarQuickFilters.js";
 import { useSessions, useSidebarLayout } from "./useSessions.js";
 import { useGitStatus } from "./useGit.js";
@@ -32,7 +28,7 @@ const IDLE_LIMIT = 4;
 const FLIP_MS_FALLBACK = 150;
 const FLIP_EASING_FALLBACK = "cubic-bezier(0.22, 1, 0.36, 1)";
 const PENDING_MOVE_MS = 1500;
-const EMPTY_LAYOUT: SidebarLayout = { needsYou: [], workingSet: [], main: [], resolved: [], quickCounts: { pr: 0 } };
+const EMPTY_LAYOUT: SidebarLayout = { needsYou: [], workingSet: [], main: [], resolved: [], quickCounts: { pr: 0, prAttention: 0 } };
 
 const ATTENTION_ACTION: Record<AttentionKind, { verb: string; Icon: LucideIcon }> = {
   approval: { verb: "Approve", Icon: ShieldAlert },
@@ -90,13 +86,6 @@ const DRIVER_LABEL: Record<DriverName, string> = {
   opencode: "OpenCode",
   codex: "Codex"
 };
-
-function sessionHasUnseen(session: Session, summaryByKey: PrSummaryLookup): boolean {
-  return sessionLinks(session).some((link) => {
-    const summary = summaryByKey.get(prKey(link.ref));
-    return summary !== undefined && hasUnseen(summary, link);
-  });
-}
 
 const QUICK_FILTER_UI: Array<{ id: Exclude<QuickFilter, "all">; label: string; hint: string; Icon: LucideIcon }> = [
   { id: "pr", label: "Linked to a PR", hint: "Linked to a PR", Icon: GitPullRequest }
@@ -299,8 +288,6 @@ export function Sidebar({ onOpenSkills, skillsOpen = false, hidden = false }: { 
   const restoreSession = useAppStore((s) => s.restoreSession);
   const { confirm, dialog: confirmDialog } = useConfirm();
   const shortPath = (value: string): string => shortenHome(value, homeDir ?? undefined);
-  const inboxItems = usePrInboxItems();
-  const summaryByKey = usePrSummaries();
   const mainView = usePrStore((s) => s.mainView);
   const openGitHub = usePrStore((s) => s.openGitHub);
   const openSessionView = usePrStore((s) => s.openSessionView);
@@ -488,8 +475,8 @@ export function Sidebar({ onOpenSkills, skillsOpen = false, hidden = false }: { 
     prevRects.current = next;
   }, [rowOrderKey]);
   const workingSetVisible = source.length > 0 || quickFilter !== "all";
-  const attentionCount = useMemo(() => needsAttentionCount(inboxItems), [inboxItems]);
-  const anyUnseen = useMemo(() => source.some((s) => sessionHasUnseen(s, summaryByKey)), [source, summaryByKey]);
+  const attentionCount = quickCounts.prAttention;
+  const anyUnseen = useMemo(() => rows.some((row) => row.latestUnseenPrUpdateAt !== null), [rows]);
   const inboxActive = mainView.kind === "github" || mainView.kind === "pr";
   const usageActive = mainView.kind === "usage";
   const newSessionActive = !inboxActive && !usageActive && (pendingDriver !== null || !activeSessionId);

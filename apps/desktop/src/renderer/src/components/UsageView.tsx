@@ -13,7 +13,8 @@ import { useRefreshFeedback } from "./refreshFeedback.js";
 import { formatTokensShort } from "./subagents.js";
 import { harnessLabel } from "./toolTabs.js";
 import { ipcErrorMessage } from "./ipcError.js";
-import { accountRefreshFailed, useAccountFetchedAt, useLedgerRev } from "./useUsage.js";
+import { accountRefreshFailed, useAccountFetchedAt, useLedgerRev, useUsageTopicFailed } from "./useUsage.js";
+import { useConnectionEpoch } from "../server/topics.js";
 
 const DRIVERS: DriverName[] = ["claude", "codex", "opencode"];
 const STACK_ORDER: DriverName[] = ["codex", "claude", "opencode"];
@@ -265,6 +266,8 @@ export function UsageView() {
   const sessionsByProject = useAppStore((s) => s.sessionsByProject);
   const accountFetchedAt = useAccountFetchedAt();
   const ledgerRev = useLedgerRev();
+  const usageTopicFailed = useUsageTopicFailed();
+  const connectionEpoch = useConnectionEpoch();
   const openSettings = usePrStore((s) => s.openSettings);
   const now = useNow();
 
@@ -292,8 +295,9 @@ export function UsageView() {
   }, [query]);
 
   useEffect(() => {
+    if (ledgerRev === null && !usageTopicFailed) return;
     void loadReport();
-  }, [loadReport, ledgerRev]);
+  }, [loadReport, ledgerRev, usageTopicFailed, connectionEpoch]);
 
   const sessionById = useMemo(() => {
     const map = new Map<string, Session>();

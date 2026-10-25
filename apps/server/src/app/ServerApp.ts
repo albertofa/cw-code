@@ -189,7 +189,7 @@ export class ServerApp {
     });
     ws.onClientClosed((ctx) => {
       this.topics.clientClosed(ctx);
-      this.clientInputs.dropClient(ctx.clientId);
+      if (this.clientInputs.dropClient(ctx.clientId).prsChanged) this.services?.prStore.reevaluate();
       if (ctx.auth.kind === "device" && !this.stopping) this.emitDevicesChanged();
       if (ctx.client === "desktop-ui" && !this.stopping && !ws.clients().some((other) => other.client === "desktop-ui")) {
         this.handleUiDisconnected();

@@ -81,8 +81,9 @@ export class ServerLink {
   }
 
   private readAttention(): void {
-    const count = attentionCountOf(this.topics.state<AttentionTopicState["data"]>(APP_TOPIC));
-    if (count === null || count === this.cachedAttention) return;
+    const state = this.topics.state<AttentionTopicState["data"]>(APP_TOPIC);
+    const count = state?.status === "error" ? null : attentionCountOf(state);
+    if ((count === null && state?.status !== "error") || count === this.cachedAttention) return;
     this.cachedAttention = count;
     this.notify("attention");
   }

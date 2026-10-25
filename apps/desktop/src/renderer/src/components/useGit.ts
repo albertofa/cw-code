@@ -36,10 +36,6 @@ export function useBranchMismatched(sessionId: string | null | undefined): boole
   return useGitEntry(sessionId, "branchMismatched") ?? false;
 }
 
-export function useKeptFolderHead(sessionId: string | null | undefined): string | null {
-  return useGitEntry(sessionId, "keptFolderHead");
-}
-
 export function refreshGit(sessionId: string): void {
   window.cw.refreshGit(sessionId).catch((err: Error) => console.warn(`git refresh failed for ${sessionId}: ${err.message}`));
 }

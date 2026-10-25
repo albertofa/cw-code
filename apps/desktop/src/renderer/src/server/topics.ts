@@ -1,6 +1,5 @@
-import { useCallback, useEffect, useMemo, useRef, useSyncExternalStore } from "react";
-import { orderedEntries, type TopicCache, type TopicState } from "@cw-code/client";
-import { useDocumentVisible } from "./useTopics.js";
+import { useCallback, useEffect, useRef, useSyncExternalStore } from "react";
+import type { TopicCache, TopicState } from "@cw-code/client";
 
 export interface TopicOptions {
   whenHidden?: "keep" | "release";
@@ -11,9 +10,16 @@ interface StaleState {
   state: TopicState;
 }
 
-const NO_ENTRIES: readonly never[] = Object.freeze([]);
-
 let cache: TopicCache | null = null;
+
+function subscribeVisibility(onChange: () => void): () => void {
+  document.addEventListener("visibilitychange", onChange);
+  return () => document.removeEventListener("visibilitychange", onChange);
+}
+
+export function useDocumentVisible(): boolean {
+  return useSyncExternalStore(subscribeVisibility, () => !document.hidden);
+}
 
 export function initTopics(next: TopicCache): void {
   cache = next;
@@ -74,12 +80,6 @@ export function useTopicSelect<T, D = Record<string, unknown>>(
 
 export function useTopicEntry<T>(topic: string | null, key: string, opts?: TopicOptions): T | undefined {
   return useTopicSelect<T | undefined>(topic, (state) => (state?.data as Record<string, unknown> | undefined)?.[key] as T | undefined, opts);
-}
-
-export function useOrderedEntries<T extends { seq: number }>(topic: string | null, prefix: string): T[] {
-  const state = useTopic(topic);
-  const data = state?.data;
-  return useMemo(() => (data ? orderedEntries<T>(data, prefix) : (NO_ENTRIES as readonly T[] as T[])), [data, prefix]);
 }
 
 export function readTopic<D = Record<string, unknown>>(topic: string): TopicState<D> | undefined {

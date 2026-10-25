@@ -16,7 +16,7 @@ const APP_SETTLE_TIMEOUT_MS = 15_000;
 
 type AppSettle = { kind: "settled"; status: string | undefined } | { kind: "timeout" } | { kind: "link-down" };
 
-function reload(): void {
+export function reload(): void {
   flushAllComposerDrafts();
   window.location.reload();
 }

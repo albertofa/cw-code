@@ -145,7 +145,7 @@ describe("server process", () => {
     const client = await connect();
     type SidebarSnapshot = { sidebar: { rev: number; data: Record<string, unknown> } };
     const first = await client.call<SidebarSnapshot>("topics.subscribe", { topics: ["sidebar"] });
-    expect(first.sidebar.data.layout).toEqual({ needsYou: [], workingSet: [], main: [], resolved: [], quickCounts: { pr: 0 } });
+    expect(first.sidebar.data.layout).toEqual({ needsYou: [], workingSet: [], main: [], resolved: [], quickCounts: { pr: 0, prAttention: 0 } });
     expect(first.sidebar.data.defaults).toMatchObject({ restoreSessionId: null });
     expect(await client.call("topics.subscribe", { topics: ["sidebar"] })).toEqual(first);
     await expect(client.call("topics.subscribe", { topics: ["app", "github/nope"] })).rejects.toMatchObject({ code: "unknown-topic" });

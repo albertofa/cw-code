@@ -8,7 +8,6 @@ import { DriverIcon } from "./DriverIcon.js";
 import { errorMessage } from "./errorMessage.js";
 import { MenuSelect } from "./MenuSelect.js";
 import { PromptPreviewSkeleton } from "./GitHubSkeletons.js";
-import { isHarnessSkipped } from "./harnessAvailability.js";
 import { InlineLoading } from "./Loading.js";
 import { EFFORTS, effortLabel, effortOptionsFor } from "./modelMenus.js";
 import { useNotifs } from "./Notifications.js";
@@ -557,7 +556,7 @@ function WorkflowHarnessFields({ workflow, onChange }: { workflow: PrWorkflow; o
               { id: "", label: "Composer default", hint: "Composer default", description: `Currently ${HARNESS_NAMES[composerDriver]}` },
               ...HARNESS_IDS.map((id) => {
                 const check = checks?.find((item) => item.binary === id);
-                const unavailable = check !== undefined && isHarnessSkipped(check);
+                const unavailable = check?.skipped === true;
                 return {
                   id,
                   label: HARNESS_NAMES[id],

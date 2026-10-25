@@ -105,6 +105,7 @@ interface Harness {
   detailFailures: Map<string, string>;
   detailControl: { hold: boolean; auto: boolean; running: number; peak: number };
   releases: Map<string, () => void>;
+  watched: Map<string, PrRef>;
   setSettings(patch: { prRefreshIntervalSeconds?: number; prWorkflows?: PrWorkflow[] }): void;
   setInbox(result: PrInboxResult): void;
   data(): PrsTopicData;
@@ -125,7 +126,9 @@ function createHarness(sessions: SessionMeta[] = [], workflows: PrWorkflow[] = [
   const state = { sessions };
   const detailControl = { hold: false, auto: false, running: 0, peak: 0 };
   const releases = new Map<string, () => void>();
+  const watched = new Map<string, PrRef>();
   const prStore = new PrStore({
+    watchedDetails: () => watched,
     sessions: () => state.sessions,
     settings: () => settings,
     projects: () => [{ id: "project", rootPath: "/repo" }],
@@ -182,6 +185,7 @@ function createHarness(sessions: SessionMeta[] = [], workflows: PrWorkflow[] = [
     detailFailures,
     detailControl,
     releases,
+    watched,
     setSettings(patch) {
       settings = { ...settings, ...patch };
       prStore.onSettingsChanged();
@@ -479,6 +483,34 @@ describe("PrStore", () => {
       expect(h.fetchedDetails).toEqual([KEY]);
     });
 
+    it("keeps a watched detail and refreshes it on every new inbox fetch", async () => {
+      const h = createHarness();
+      h.detailResults.set(KEY, detailOf(summary()));
+      h.watched.set(KEY, REF);
+      h.prStore.reevaluate();
+      await settle();
+      expect(h.fetchedDetails).toEqual([KEY]);
+
+      await advanceTimersByTimeAsync(30 * 60_000);
+      h.prStore.onSessionsChanged();
+      await settle();
+      expect(h.prStore.detail(KEY)).toBeDefined();
+
+      h.subscribePrs();
+      await settle();
+      expect(h.fetchedDetails).toEqual([KEY, KEY]);
+      await advanceTimersByTimeAsync(60_000);
+      expect(h.fetchedDetails).toEqual([KEY, KEY]);
+      h.setInbox(inboxResult([], { fetchedAt: 200 }));
+      await advanceTimersByTimeAsync(60_000);
+      expect(h.fetchedDetails).toEqual([KEY, KEY, KEY]);
+
+      h.watched.clear();
+      h.prStore.reevaluate();
+      await settle();
+      expect(h.prStore.detail(KEY)).toBeUndefined();
+    });
+
     it("caps the cache at 100 details", async () => {
       const h = createHarness();
       h.detailControl.auto = true;
@@ -533,6 +565,26 @@ describe("PrStore", () => {
       h.unsubscribePrs();
       await advanceTimersByTimeAsync(10 * 60_000);
       expect(h.fetchedInboxes).toHaveLength(3);
+    });
+
+    it("keeps the inbox fresh without prs subscribers while asked to", async () => {
+      const h = createHarness();
+      h.prStore.keepInboxFresh(true);
+      await settle();
+      expect(h.fetchedInboxes).toEqual([false]);
+      await advanceTimersByTimeAsync(60_000);
+      expect(h.fetchedInboxes).toHaveLength(2);
+
+      h.subscribePrs();
+      await settle();
+      h.unsubscribePrs();
+      const count = h.fetchedInboxes.length;
+      await advanceTimersByTimeAsync(60_000);
+      expect(h.fetchedInboxes).toHaveLength(count + 1);
+
+      h.prStore.keepInboxFresh(false);
+      await advanceTimersByTimeAsync(10 * 60_000);
+      expect(h.fetchedInboxes).toHaveLength(count + 1);
     });
 
     it("clamps the interval to 30 seconds and reschedules on settings change", async () => {

@@ -164,7 +164,10 @@ function applyUpdatePreferences(): void {
 function handleLinkChange(change: ServerLinkChange): void {
   if (change === "shutdown" && !link.shutdown.committed) restartAfterFailedInstall = false;
   if (change === "settings") syncWindowBackground();
-  if (change === "attention" && link.attentionCount !== null) applyAttention(link.attentionCount);
+  if (change === "attention") {
+    if (link.attentionCount === null) clearAttention();
+    else applyAttention(link.attentionCount);
+  }
   if (change === "settings" || change === "startup") {
     ensureUpdateService();
     applyUpdatePreferences();
@@ -435,6 +438,17 @@ function showAttentionIndicators(win: BrowserWindow, count: number): void {
   } else {
     app.setBadgeCount(count);
   }
+}
+
+function clearAttention(): void {
+  const win = liveMainWindow();
+  attentionCount = null;
+  if (!win) {
+    if (process.platform !== "win32") app.setBadgeCount(0);
+    return;
+  }
+  showAttentionIndicators(win, 0);
+  win.flashFrame(false);
 }
 
 function applyAttention(count: number): void {

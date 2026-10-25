@@ -145,7 +145,7 @@ export function WorkflowRunModal({ request }: { request: RunModalState }) {
   const composerDriver = useAppStore((s) => s.pendingDriver ?? s.lastDriver);
   const composerBySession = useAppStore((s) => s.composerBySession);
   const homeDir = useAppStore((s) => s.homeDir);
-  const installedHarnesses = useAppStore((s) => s.installedHarnesses);
+  const availableHarnesses = useAppStore((s) => s.availableHarnesses);
 
   const settings = useAppSettings();
   const settingsError = useAppSettingsError();
@@ -184,7 +184,7 @@ export function WorkflowRunModal({ request }: { request: RunModalState }) {
     requestKey,
     (retry) => window.cw.workflowPreview({ ...previewRequest, retry }),
     (value) => value.logsNeeded && !value.logsReady && !value.logsError,
-    [prRevision, settings, sessionsSignature, installedHarnesses]
+    [prRevision, settings, sessionsSignature, availableHarnesses]
   );
   const preview = previewState.value;
   const live = preview !== null && previewState.current;

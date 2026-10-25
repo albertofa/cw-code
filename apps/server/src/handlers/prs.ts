@@ -18,10 +18,26 @@ export function parseUpdateKeys(
   return { sessionId: knownSessionId(sessions, parsed.sessionId), keys };
 }
 
+export function parsePrRef(args: unknown, channel: string): PrRef {
+  const ref = parseArgs(args, channel).ref as PrRef;
+  assertPrRef(ref);
+  return { host: ref.host, owner: ref.owner, repo: ref.repo, number: ref.number };
+}
+
 export function registerPrHandlers(router: Router, app: ServerApp): void {
   const services = () => app.requireServices();
   handle<{ force?: boolean } | undefined>(router, "prs.refresh", (args) => services().prStore.refreshInbox(args?.force === true));
   handle<{ ref: PrRef }>(router, "prs.detail", (args) => services().prStore.loadDetail(args.ref));
+  handle(router, "prs.watchDetail", (args, ctx) => {
+    const ref = parsePrRef(args, "prs.watchDetail");
+    const prStore = services().prStore;
+    if (app.clientInputs.watchPr(ctx.clientId, ref)) prStore.reevaluate();
+  });
+  handle(router, "prs.unwatchDetail", (args, ctx) => {
+    const ref = parsePrRef(args, "prs.unwatchDetail");
+    const prStore = services().prStore;
+    if (app.clientInputs.unwatchPr(ctx.clientId, ref)) prStore.reevaluate();
+  });
   handle<{ ref: PrRef }>(router, "prs.diff", (args) => services().pullRequests.diff(args.ref));
   handle<{ ref: PrRef; runId: number }>(router, "prs.checkLog", (args) => services().pullRequests.failedCheckLog(args.ref, args.runId));
   handle(router, "prs.sendUpdates", (args) => {

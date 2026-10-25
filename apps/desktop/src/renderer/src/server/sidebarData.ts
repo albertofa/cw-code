@@ -38,9 +38,20 @@ export function findSession(sessionsByProject: Record<string, Session[]>, sessio
   return undefined;
 }
 
+const sessionJson = new WeakMap<Session, string>();
+
+function jsonOf(session: Session): string {
+  let json = sessionJson.get(session);
+  if (json === undefined) {
+    json = JSON.stringify(session);
+    sessionJson.set(session, json);
+  }
+  return json;
+}
+
 function reuseSession(before: Session | undefined, next: Session): Session {
   if (!before || before === next) return next;
-  return JSON.stringify(before) === JSON.stringify(next) ? before : next;
+  return jsonOf(before) === jsonOf(next) ? before : next;
 }
 
 export function sessionsByProjectOf(

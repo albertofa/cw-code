@@ -16,7 +16,7 @@ import { prKey } from "@cw-code/shared/prRef";
 import { PRS_TOPIC, sessionTopic } from "@cw-code/shared/topics";
 import type { TopicHub, TopicProvider } from "../topics/TopicHub.js";
 import type { TopicStore } from "../topics/TopicStore.js";
-import { detailPolicy } from "./detailPolicy.js";
+import { detailPolicy, isFinishedAndCached } from "./detailPolicy.js";
 import { githubContext } from "./githubContext.js";
 import { shouldRequestDetail, type DetailAttempt } from "./needsYou.js";
 import { detailRefreshKey } from "./prUpdates.js";
@@ -38,6 +38,7 @@ export interface PrStoreDeps {
   githubRemote(rootPath: string): Promise<{ host: string; owner: string; repository: string } | null>;
   fetchInbox(force: boolean): Promise<PrInboxResult>;
   fetchDetail(ref: PrRef): Promise<PrDetail>;
+  watchedDetails(): ReadonlyMap<string, PrRef>;
 }
 
 interface InboxTimer {
@@ -111,6 +112,7 @@ export class PrStore {
   private store: TopicStore<PrsTopicData> | null = null;
   private timer: InboxTimer | null = null;
   private active = false;
+  private inboxKeptFresh = false;
   private disposed = false;
   private generation = 0;
   private changePending = false;
@@ -223,6 +225,18 @@ export class PrStore {
     this.scheduleChanged();
   }
 
+  keepInboxFresh(on: boolean): void {
+    if (this.inboxKeptFresh === on) return;
+    this.inboxKeptFresh = on;
+    if (this.active || this.disposed) return;
+    if (!on) {
+      this.stopTimer();
+      return;
+    }
+    this.startTimer();
+    void this.refreshInbox(false);
+  }
+
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
@@ -249,6 +263,10 @@ export class PrStore {
     this.disposed = false;
     const hub = this.hub;
     if (hub && hub.subscribers(PRS_TOPIC) > 0) this.activate(hub);
+    else if (this.inboxKeptFresh) {
+      this.startTimer();
+      void this.refreshInbox(false);
+    }
     this.scheduleChanged();
   }
 
@@ -264,7 +282,7 @@ export class PrStore {
   private deactivate(): void {
     this.active = false;
     this.store = null;
-    this.stopTimer();
+    if (!this.inboxKeptFresh) this.stopTimer();
   }
 
   private intervalMs(): number {
@@ -303,8 +321,10 @@ export class PrStore {
     }
     if (generation !== this.generation) return;
     if (result) {
+      const ticked = result.fetchedAt !== this.inboxResult?.fetchedAt;
       this.inboxResult = result;
       this.lookupCache = null;
+      if (ticked) this.refreshWatchedDetails();
     }
     this.inboxError = result ? result.error : failure;
     this.inboxLoading = false;
@@ -386,6 +406,13 @@ export class PrStore {
     }
   }
 
+  private refreshWatchedDetails(): void {
+    for (const [key, ref] of this.deps.watchedDetails()) {
+      if (isFinishedAndCached(this.details.get(key)) || this.detailRequests.has(key)) continue;
+      this.beginLoad(ref, false).catch(() => undefined);
+    }
+  }
+
   private loadWanted(): void {
     if (this.disposed) return;
     const { wanted, retained } = detailPolicy({
@@ -393,6 +420,7 @@ export class PrStore {
       lookup: this.lookup(),
       details: this.details,
       workflows: this.deps.settings().prWorkflows,
+      watched: this.deps.watchedDetails(),
       isSessionOpen: (sessionId) => (this.hub?.subscribers(sessionTopic(sessionId)) ?? 0) > 0
     });
     this.evict(retained);

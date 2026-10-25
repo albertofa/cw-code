@@ -27,6 +27,10 @@ export function useLedgerRev(): number | null {
   return useTopicSelect<number | null, UsageTopicData>(USAGE_TOPIC, (state) => state?.data.ledgerRev ?? null);
 }
 
+export function useUsageTopicFailed(): boolean {
+  return useTopicSelect<boolean, UsageTopicData>(USAGE_TOPIC, (state) => state?.status === "error");
+}
+
 export function accountEntryNow(driver: DriverKind): AccountUsageEntry {
   return peekTopic<UsageTopicData>(USAGE_TOPIC)?.data.account?.[driver] ?? EMPTY_ENTRY;
 }

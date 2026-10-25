@@ -15,6 +15,7 @@ export interface DetailPolicyInput {
   lookup: PrSummaryLookup;
   details: ReadonlyMap<string, PrDetail>;
   workflows: PrWorkflow[];
+  watched: ReadonlyMap<string, PrRef>;
   isSessionOpen(sessionId: string): boolean;
 }
 
@@ -31,7 +32,7 @@ function isLive(session: SessionMeta): boolean {
   return session.status !== "resolved" && session.status !== "archived";
 }
 
-export function detailPolicy({ sessions, lookup, details, workflows, isSessionOpen }: DetailPolicyInput): DetailPolicyResult {
+export function detailPolicy({ sessions, lookup, details, workflows, watched, isSessionOpen }: DetailPolicyInput): DetailPolicyResult {
   const wanted = new Map<string, WantedDetail>();
   const retained = new Set<string>();
   const want = (ref: PrRef): void => {
@@ -50,6 +51,12 @@ export function detailPolicy({ sessions, lookup, details, workflows, isSessionOp
 
   for (const ref of autoFollowUpRefs(sessions, lookup, workflows)) {
     const key = prKey(ref);
+    retained.add(key);
+    const detail = details.get(key);
+    if (!detail || detailNeedsRefresh(detail, lookup.get(key))) want(ref);
+  }
+
+  for (const [key, ref] of watched) {
     retained.add(key);
     const detail = details.get(key);
     if (!detail || detailNeedsRefresh(detail, lookup.get(key))) want(ref);

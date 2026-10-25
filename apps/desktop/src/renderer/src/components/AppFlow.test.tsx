@@ -105,7 +105,7 @@ function installTopics(): void {
       harnesses: { checks: [], installed: [], issues: [], checkedAt: null, trigger: "startup", error: null }
     },
     sidebar: {
-      layout: { needsYou: [], workingSet: [], main: [], resolved: [], quickCounts: { pr: 0 } },
+      layout: { needsYou: [], workingSet: [], main: [], resolved: [], quickCounts: { pr: 0, prAttention: 0 } },
       defaults: { restoreSessionId: null, restoreProjectId: "proj_1", projectsByRecency: ["proj_1"] },
       "project/proj_1": { id: "proj_1", rootPath: "C:\\proj", name: "proj" },
       "worktrees/proj_1": []

@@ -2,7 +2,8 @@ import "../../../../tests/dom.js";
 import { beforeEach, describe, expect, it, vi } from "bun:test";
 import type { SessionMeta, SessionRow, UpdateActionResult, UpdateState } from "@cw-code/contracts";
 import { DEFAULT_COMPOSER, useAppStore } from "./appStore.js";
-import { applyInstalledHarnesses } from "../server/appBridge.js";
+import { applyAvailableHarnesses } from "../server/appBridge.js";
+import { useNotifs } from "../components/Notifications.js";
 
 const pushRecentModel = vi.fn(async () => {});
 
@@ -18,7 +19,7 @@ describe("appStore pending model per harness", () => {
       activeProjectId: "proj_1",
       pendingDriver: "opencode",
       lastDriver: "opencode",
-      installedHarnesses: null,
+      availableHarnesses: null,
       pendingPrefs: { ...DEFAULT_COMPOSER }
     });
   });
@@ -51,13 +52,13 @@ describe("appStore pending model per harness", () => {
   });
 
   it("opens a new session on an installed harness when the requested one is not installed", () => {
-    useAppStore.setState({ installedHarnesses: ["claude"] });
+    useAppStore.setState({ availableHarnesses: ["claude"] });
     useAppStore.getState().startNewSession("codex");
     expect(useAppStore.getState().pendingDriver).toBe("claude");
   });
 
   it("moves the pending harness when availability drops it", () => {
-    applyInstalledHarnesses(["claude", "codex"]);
+    applyAvailableHarnesses(["claude", "codex"]);
     expect(useAppStore.getState().pendingDriver).toBe("claude");
     expect(useAppStore.getState().lastDriver).toBe("claude");
   });
@@ -283,7 +284,7 @@ describe("appStore project defaults", () => {
       activeSessionId: null,
       pendingDriver: null,
       lastDriver: "opencode",
-      installedHarnesses: null,
+      availableHarnesses: null,
       pendingPrefs: { ...DEFAULT_COMPOSER, model: "alpha/m1" }
     });
   });
@@ -314,9 +315,53 @@ describe("appStore project defaults", () => {
   });
 
   it("falls back to an installed harness when the project's default is missing", () => {
-    useAppStore.setState({ installedHarnesses: ["codex"] });
+    useAppStore.setState({ availableHarnesses: ["codex"] });
     useAppStore.getState().startNewSession();
     expect(useAppStore.getState().pendingDriver).toBe("codex");
     expect(useAppStore.getState().pendingPrefs.model).toBeUndefined();
+  });
+});
+
+describe("appStore composer prefs loading", () => {
+  const started: Array<{ sessionId: string; prefs: unknown }> = [];
+  let composer: () => Promise<object>;
+
+  beforeEach(() => {
+    started.length = 0;
+    composer = async () => {
+      throw new Error("server down");
+    };
+    useNotifs.setState({ notifs: [] });
+    useAppStore.setState({ composerBySession: {}, composerLoadedBySession: {} });
+    (window as unknown as { cw: unknown }).cw = {
+      getComposer: () => composer(),
+      startTurn: async (sessionId: string, _prompt: string, input: { prefs: unknown }) => {
+        started.push({ sessionId, prefs: input.prefs });
+      }
+    };
+  });
+
+  it("does not send with default prefs when they never loaded, and notifies once", async () => {
+    await useAppStore.getState().ensureComposer("s1");
+    await useAppStore.getState().ensureComposer("s1");
+    expect(useNotifs.getState().notifs).toHaveLength(1);
+    const [result] = await Promise.allSettled([useAppStore.getState().sendPromptTo("s1", "hello")]);
+    expect(result.status).toBe("rejected");
+    expect(started).toEqual([]);
+  });
+
+  it("retries an unloaded session before sending and on reconnect", async () => {
+    await useAppStore.getState().ensureComposer("s1");
+    composer = async () => ({ model: "opus", effort: "high" });
+    await useAppStore.getState().reloadComposers();
+    expect(useAppStore.getState().composerLoadedBySession.s1).toBe(true);
+    await useAppStore.getState().sendPromptTo("s1", "hello");
+    expect(started).toEqual([{ sessionId: "s1", prefs: { ...DEFAULT_COMPOSER, model: "opus", effort: "high" } }]);
+  });
+
+  it("loads unloaded prefs on send", async () => {
+    composer = async () => ({ model: "sonnet" });
+    await useAppStore.getState().sendPromptTo("s2", "hello");
+    expect(started).toEqual([{ sessionId: "s2", prefs: { ...DEFAULT_COMPOSER, model: "sonnet" } }]);
   });
 });

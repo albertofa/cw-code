@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { parseUpdateKeys } from "./prs.js";
+import { parsePrRef, parseUpdateKeys } from "./prs.js";
 
 const sessions = { hasSession: (id: string) => id === "s1" };
 
@@ -32,5 +32,17 @@ describe("parseUpdateKeys", () => {
   it("rejects an unknown or non-string session id", () => {
     expect(() => parseUpdateKeys({ sessionId: "nope", keys: ["a"] }, "prs.sendUpdates", sessions)).toThrow("unknown session nope");
     expect(() => parseUpdateKeys({ sessionId: 7, keys: ["a"] }, "prs.sendUpdates", sessions)).toThrow("sessionId must be a string");
+  });
+});
+
+describe("parsePrRef", () => {
+  it("keeps only the reference fields of a valid ref", () => {
+    const ref = { host: "github.com", owner: "o", repo: "r", number: 7 };
+    expect(parsePrRef({ ref: { ...ref, extra: true } }, "prs.watchDetail")).toEqual(ref);
+  });
+
+  it("rejects a missing or malformed ref", () => {
+    expect(() => parsePrRef(undefined, "prs.watchDetail")).toThrow("prs.watchDetail requires an argument object");
+    expect(() => parsePrRef({ ref: { host: "github.com", owner: "o", repo: "r", number: 0 } }, "prs.watchDetail")).toThrow("invalid pull request number");
   });
 });

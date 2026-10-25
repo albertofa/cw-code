@@ -33,12 +33,10 @@ import { useAppSettings, useAppSettingsError } from "./useAppSettings.js";
 import { suggestedWorkflow } from "@cw-code/shared/workflowSuggestions";
 import { groupCommitsByDay, linkedBarState, mergeBoxState, relativeTime, threadQuoteText, threadSendTarget, type LinkedBarState } from "./prDetailModel.js";
 import { linkFor } from "./sessionPrLinks.js";
-import { requestPrDetail, usePrDetail, usePrRelations, usePrsTopicError } from "./usePrs.js";
+import { requestPrDetail, usePrDetail, usePrRelations, usePrsTopicError, watchPrDetail } from "./usePrs.js";
 import { useConnectionEpoch } from "../server/topics.js";
 
 const MAX_LOG_LINES = 2000;
-
-const DETAIL_INTEREST_MS = 5 * 60_000;
 
 interface FixCiAction {
   label: string;
@@ -195,8 +193,7 @@ export function PrDetailView({ prRef }: { prRef: PrRef }) {
 
   useEffect(() => {
     void requestPrDetail(prRef);
-    const timer = window.setInterval(() => void requestPrDetail(prRef), DETAIL_INTEREST_MS);
-    return () => window.clearInterval(timer);
+    return watchPrDetail(prRef);
   }, [key, epoch]);
 
   useEffect(() => {

@@ -206,6 +206,8 @@ export function createCwApi(client: ServerClient, topics: TopicCache, desktop: D
     refreshAccountUsage: (force, drivers) => callVoid("usage.refreshAccount", { force, ...(drivers ? { drivers } : {}) }),
     refreshPrInbox: (force) => callVoid("prs.refresh", { force }),
     getPrDetail: (ref) => call<PrDetail>("prs.detail", { ref }),
+    watchPrDetail: (ref) => callVoid("prs.watchDetail", { ref }),
+    unwatchPrDetail: (ref) => callVoid("prs.unwatchDetail", { ref }),
     getPrDiff: (ref) => call<string>("prs.diff", { ref }),
     getPrCheckLog: (ref, runId) => call<string>("prs.checkLog", { ref, runId }),
     refreshGitHubView: (topic, force) => callVoid("github.refresh", { topic, force }),

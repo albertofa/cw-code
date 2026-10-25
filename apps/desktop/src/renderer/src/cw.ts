@@ -620,6 +620,8 @@ export interface CwApi {
   refreshAccountUsage(force: boolean, drivers?: DriverName[]): Promise<void>;
   refreshPrInbox(force?: boolean): Promise<void>;
   getPrDetail(ref: PrRef): Promise<PrDetail>;
+  watchPrDetail(ref: PrRef): Promise<void>;
+  unwatchPrDetail(ref: PrRef): Promise<void>;
   getPrDiff(ref: PrRef): Promise<string>;
   getPrCheckLog(ref: PrRef, runId: number): Promise<string>;
   refreshGitHubView(topic: string, force?: boolean): Promise<void>;

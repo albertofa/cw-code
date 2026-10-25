@@ -20,7 +20,7 @@ import {
 import type { DirEntry, FsChangeEvent, GitBaseline, GitDecorations, GitFileState } from "@cw-code/contracts";
 import { filesTopic } from "@cw-code/shared/topics";
 import { useConnectionEpoch, useTopicEntry } from "../server/topics.js";
-import { useDocumentVisible } from "../server/useTopics.js";
+import { useDocumentVisible } from "../server/topics.js";
 import { useConfirm } from "./ConfirmDialog.js";
 import { ipcErrorMessage } from "./ipcError.js";
 import { isAbsolutePath } from "./Markdown.js";

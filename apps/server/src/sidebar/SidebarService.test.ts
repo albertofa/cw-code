@@ -99,6 +99,8 @@ function setup(initial: SessionMeta[], options: { failFirstCompute?: boolean } =
     busy: new Set<string>(),
     git: new Map<string, GitStatus>(),
     lookup: new Map<string, PrSummary>(),
+    inbox: [] as PrSummary[],
+    inboxFresh: [] as boolean[],
     workflows: [] as PrWorkflow[],
     order: null as SidebarOrderPrefs | null,
     attention: [] as number[],
@@ -118,13 +120,15 @@ function setup(initial: SessionMeta[], options: { failFirstCompute?: boolean } =
     gitStatus: (id) => state.git.get(id) ?? null,
     summaryLookup: () => state.lookup,
     detail: () => undefined,
+    inboxItems: () => state.inbox,
     workflows: () => state.workflows,
     sidebarOrder: () => state.order,
     setSidebarOrder: (order) => {
       state.order = order;
     },
     publishAttention: (count) => state.attention.push(count),
-    watchWorkingSet: (ids) => state.watched.push(ids)
+    watchWorkingSet: (ids) => state.watched.push(ids),
+    keepPrInboxFresh: (on) => state.inboxFresh.push(on)
   });
   hub.register(sidebar);
   const data = () => hub.subscribe(ctx, [SIDEBAR_TOPIC])[SIDEBAR_TOPIC]?.data as Record<string, unknown>;
@@ -210,6 +214,24 @@ describe("SidebarService", () => {
     expect(state.watched).toEqual([[], ["a"], ["a", "b"], []]);
   });
 
+  test("the PR inbox is kept fresh only while the sidebar topic has subscribers", () => {
+    const { state, hub } = setup([]);
+    expect(state.inboxFresh).toEqual([false]);
+    hub.subscribe(ctx, [SIDEBAR_TOPIC]);
+    hub.unsubscribe(ctx, [SIDEBAR_TOPIC]);
+    expect(state.inboxFresh).toEqual([false, true, false]);
+  });
+
+  test("the PR attention count uses the freshest summary of each inbox item", async () => {
+    const { state, sidebar, layout } = setup([]);
+    const reviewRequest: PrSummary = { ...mergeReadySummary(), ref: { ...REF, number: 8 }, viewerIsAuthor: false, reviewRequestedFromViewer: true };
+    state.inbox = [mergeReadySummary(), reviewRequest];
+    state.lookup = new Map([[prKey(REF), { ...mergeReadySummary(), ci: "failing" }]]);
+    sidebar.invalidate();
+    await settle();
+    expect(layout().quickCounts).toEqual({ pr: 0, prAttention: 2 });
+  });
+
   test("the watched working set is capped to the most recently updated sessions", () => {
     const sessions = Array.from({ length: MAX_WATCHED_WORKING_SET + 5 }, (_, index) =>
       session(`s${String(index).padStart(2, "0")}`, "working", { updatedAt: index })
@@ -222,7 +244,7 @@ describe("SidebarService", () => {
 
   test("a failing initial compute starts with an empty layout and recovers on the next recompute", async () => {
     const { sidebar, data, layout } = setup([session("a", "idle")], { failFirstCompute: true });
-    expect(data().layout).toEqual({ needsYou: [], workingSet: [], main: [], resolved: [], quickCounts: { pr: 0 } });
+    expect(data().layout).toEqual({ needsYou: [], workingSet: [], main: [], resolved: [], quickCounts: { pr: 0, prAttention: 0 } });
     expect(data().defaults).toEqual({ restoreSessionId: null, restoreProjectId: null, projectsByRecency: [] });
     sidebar.invalidate();
     await settle();

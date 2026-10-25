@@ -227,7 +227,8 @@ export function createServices(stores: { sessionStore: SessionStore; settingsSto
     projects: () => sessions.listProjects(),
     githubRemote: (rootPath) => git.githubRemote(rootPath),
     fetchInbox: (force) => pullRequests.inbox(force),
-    fetchDetail: (ref) => pullRequests.detail(ref)
+    fetchDetail: (ref) => pullRequests.detail(ref),
+    watchedDetails: () => hooks.clientInputs.watchedPrs()
   });
   const prTracker: PrTracker = new PrTracker(
     () => sessions.getSettings(),
@@ -331,11 +332,13 @@ export function createServices(stores: { sessionStore: SessionStore; settingsSto
     gitStatus: (sessionId) => sourceControl.status(sessionId),
     summaryLookup: () => prStore.summaryLookup(),
     detail: (key) => prStore.detail(key),
+    inboxItems: () => prStore.inbox()?.items ?? [],
     workflows: () => sessions.getSettings().prWorkflows,
     sidebarOrder: () => preferences.sidebarOrder(),
     setSidebarOrder: (order) => preferences.setSidebarOrder(order),
     publishAttention: (count) => appTopic.setAttention(count),
-    watchWorkingSet: (sessionIds) => sourceControl.setWorkingSet(sessionIds)
+    watchWorkingSet: (sessionIds) => sourceControl.setWorkingSet(sessionIds),
+    keepPrInboxFresh: (on) => prStore.keepInboxFresh(on)
   });
   const githubSearch = new GitHubSearchService(() => sessions.getSettings());
   const runs = new RunsService(() => sessions.getSettings());

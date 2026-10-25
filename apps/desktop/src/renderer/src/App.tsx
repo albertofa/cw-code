@@ -27,7 +27,6 @@ import { useResizableWidth } from "./components/useResizableWidth.js";
 import { usePanelAnimationMs, usePresence } from "./components/usePresence.js";
 import { Notifications } from "./components/Notifications.js";
 import { useNotificationSounds } from "./components/useNotificationSounds.js";
-import { useHoldPrs } from "./components/usePrs.js";
 import { visibleLayerOpen } from "./components/openLayer.js";
 import { useAppStore, type ChatMessage } from "./stores/appStore.js";
 import { rightOpenTabs } from "./stores/panelLayout.js";
@@ -59,7 +58,6 @@ function sameSubagentStats(a: SubagentStats, b: SubagentStats): boolean {
 }
 
 export function App() {
-  useHoldPrs();
   useNotificationSounds();
   const activeSessionId = useAppStore((s) => s.activeSessionId);
   const mainView = usePrStore((s) => s.mainView);

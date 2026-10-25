@@ -1,34 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import type { DriverName } from "../cw.js";
-import { fallbackHarness, installedHarnesses, isHarnessSkipped, pickableHarnesses } from "./harnessAvailability.js";
-
-function check(binary: DriverName, found: boolean, configured = false) {
-  return { binary, found, configured };
-}
-
-describe("isHarnessSkipped", () => {
-  it("skips only a harness that was not found on its default path", () => {
-    expect(isHarnessSkipped(check("codex", false))).toBe(true);
-    expect(isHarnessSkipped(check("codex", false, true))).toBe(false);
-    expect(isHarnessSkipped(check("codex", true))).toBe(false);
-  });
-});
-
-describe("installedHarnesses", () => {
-  it("keeps canonical order and drops skipped harnesses", () => {
-    expect(installedHarnesses([check("codex", false), check("claude", true), check("opencode", true)])).toEqual([
-      "claude",
-      "opencode"
-    ]);
-  });
-
-  it("keeps a broken harness the user configured explicitly", () => {
-    expect(installedHarnesses([check("claude", true), check("opencode", false), check("codex", false, true)])).toEqual([
-      "claude",
-      "codex"
-    ]);
-  });
-});
+import { fallbackHarness, pickableHarnesses } from "./harnessAvailability.js";
 
 describe("pickableHarnesses", () => {
   it("offers every harness until availability is known or when none is installed", () => {

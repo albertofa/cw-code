@@ -131,10 +131,6 @@ export function usePrInbox(): PrInboxState | undefined {
   return useTopicEntry<PrInboxState>(PRS_TOPIC, "inbox");
 }
 
-export function useGitHubContext(): GitHubContext | undefined {
-  return useTopicEntry<GitHubContext>(PRS_TOPIC, "context");
-}
-
 const deriveSummaries: Derive<PrSummaryLookup> = (data, previous) => stableMap(data, SUMMARY_PREFIX, previous, NO_SUMMARIES);
 
 const deriveDetailEntries: Derive<ReadonlyMap<string, PrDetailEntry>> = (data, previous) => stableMap(data, DETAIL_PREFIX, previous, NO_ENTRIES);
@@ -187,12 +183,16 @@ export function usePrsTopicError(): string | null {
   return useTopicSelect<string | null>(PRS_TOPIC, (state: TopicState | undefined) => (state?.status === "error" ? (state.error ?? "unknown error") : null));
 }
 
-export function useHoldPrs(): void {
-  useTopicSelect(PRS_TOPIC, () => null);
-}
-
 export function useSessionBabysit(sessionId: string | null | undefined): BabysitState | null {
   return useTopicEntry<BabysitState | null>(sessionId ? sessionTopic(sessionId) : null, "babysit") ?? null;
+}
+
+export function watchPrDetail(ref: PrRef): () => void {
+  const warn = (action: string) => (err: unknown) => console.warn(`[pr] could not ${action} ${prRefLabel(ref)}: ${errorMessage(err)}`);
+  window.cw.watchPrDetail(ref).catch(warn("watch"));
+  return () => {
+    window.cw.unwatchPrDetail(ref).catch(warn("unwatch"));
+  };
 }
 
 export async function requestPrDetail(ref: PrRef): Promise<void> {

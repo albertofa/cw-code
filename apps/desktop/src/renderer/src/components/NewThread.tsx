@@ -35,7 +35,7 @@ export function NewThread({
   const settings = useAppSettings();
   const workspace = useAppStore((s) => s.pendingWorkspace);
   const newSessionError = useAppStore((s) => s.newSessionError);
-  const installed = useAppStore((s) => s.installedHarnesses);
+  const installed = useAppStore((s) => s.availableHarnesses);
   const homeDir = useAppStore((s) => s.homeDir);
   const project = useAppStore((s) => (projectId ? s.projects.find((p) => p.id === projectId) : undefined));
   const [branches, setBranches] = useState<GitBranchInfo[]>([]);

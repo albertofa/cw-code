@@ -6,10 +6,10 @@ import { useAppStore } from "../stores/appStore.js";
 import { useSettingsDraftStore } from "../stores/settingsDraftStore.js";
 import { bindTopic } from "./topics.js";
 
-export function applyInstalledHarnesses(installed: DriverKind[]): void {
+export function applyAvailableHarnesses(installed: DriverKind[]): void {
   const app = useAppStore.getState();
   const pending = app.pendingDriver;
-  useAppStore.setState({ installedHarnesses: installed, lastDriver: fallbackHarness(app.lastDriver, installed) });
+  useAppStore.setState({ availableHarnesses: installed, lastDriver: fallbackHarness(app.lastDriver, installed) });
   if (pending !== null) useAppStore.getState().setPendingDriver(fallbackHarness(pending, installed));
 }
 
@@ -41,7 +41,7 @@ export function startAppBridge(): () => void {
     }
     if (harnesses && harnesses.checkedAt !== null && JSON.stringify(harnesses.installed) !== installedKey) {
       installedKey = JSON.stringify(harnesses.installed);
-      applyInstalledHarnesses(harnesses.installed);
+      applyAvailableHarnesses(harnesses.installed);
     }
   });
 }

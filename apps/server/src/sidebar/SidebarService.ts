@@ -1,6 +1,7 @@
 import type {
   GitStatus,
   PrDetail,
+  PrSummary,
   PrWorkflow,
   Project,
   SessionMeta,
@@ -16,6 +17,7 @@ import { SIDEBAR_TOPIC } from "@cw-code/shared/topics";
 import type { ChangeSource } from "../app/ShutdownPublisher.js";
 import { babysitState } from "../prEngine/babysit.js";
 import { firstUnseenPr, needsYouEntries, sessionAttention } from "../prEngine/needsYou.js";
+import { needsAttentionCount } from "../prEngine/subjectRelations.js";
 import { displayChip, linksTitle, mostUrgentLink, sessionLinks, type PrSummaryLookup } from "../prEngine/sessionPrLinks.js";
 import { latestUnseenPrUpdateAt } from "../prEngine/soundFacts.js";
 import type { SessionRuntime } from "../threads/ThreadService.js";
@@ -33,11 +35,13 @@ export interface SidebarServiceDeps {
   gitStatus(sessionId: string): GitStatus | null;
   summaryLookup(): PrSummaryLookup;
   detail(key: string): PrDetail | undefined;
+  inboxItems(): PrSummary[];
   workflows(): PrWorkflow[];
   sidebarOrder(): SidebarOrderPrefs | null;
   setSidebarOrder(order: SidebarOrderPrefs): void;
   publishAttention(count: number): void;
   watchWorkingSet(sessionIds: string[]): void;
+  keepPrInboxFresh(on: boolean): void;
 }
 
 export type SidebarStatusAction = "resolve" | "restore";
@@ -58,7 +62,7 @@ interface Computed {
 
 const LOG_PREFIX = "[sidebar]";
 
-const EMPTY_LAYOUT: SidebarLayout = { needsYou: [], workingSet: [], main: [], resolved: [], quickCounts: { pr: 0 } };
+const EMPTY_LAYOUT: SidebarLayout = { needsYou: [], workingSet: [], main: [], resolved: [], quickCounts: { pr: 0, prAttention: 0 } };
 const EMPTY_DEFAULTS: SidebarDefaults = { restoreSessionId: null, restoreProjectId: null, projectsByRecency: [] };
 
 function describeError(error: unknown): string {
@@ -100,6 +104,7 @@ export class SidebarService implements TopicProvider {
   private publishedAttention: number | null = null;
   private workingSetIds: string[] = [];
   private watchedKey: string | null = null;
+  private inboxKeptFresh: boolean | null = null;
   private timer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(
@@ -200,7 +205,12 @@ export class SidebarService implements TopicProvider {
   }
 
   private syncWatched(): void {
-    const watched = this.hub.subscribers(SIDEBAR_TOPIC) > 0 ? this.workingSetIds : [];
+    const subscribed = this.hub.subscribers(SIDEBAR_TOPIC) > 0;
+    if (this.inboxKeptFresh !== subscribed) {
+      this.inboxKeptFresh = subscribed;
+      this.deps.keepPrInboxFresh(subscribed);
+    }
+    const watched = subscribed ? this.workingSetIds : [];
     const watchedKey = watched.join("|");
     if (this.watchedKey === watchedKey) return;
     this.watchedKey = watchedKey;
@@ -228,7 +238,10 @@ export class SidebarService implements TopicProvider {
       workingSet: workingSet.map((session) => session.id),
       main: sections.main.map((session) => session.id),
       resolved: sections.resolved.map((session) => session.id),
-      quickCounts: { pr: workingSet.filter((session) => !isClosed(session) && sessionLinks(session).length > 0).length }
+      quickCounts: {
+        pr: workingSet.filter((session) => !isClosed(session) && sessionLinks(session).length > 0).length,
+        prAttention: needsAttentionCount(this.deps.inboxItems().map((item) => lookup.get(prKey(item.ref)) ?? item))
+      }
     };
     const byProject = groupByProject(allSessions);
     const defaults: SidebarDefaults = {
