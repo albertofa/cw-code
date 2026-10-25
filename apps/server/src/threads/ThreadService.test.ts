@@ -168,6 +168,51 @@ describe("ThreadService history", () => {
     expect(itemIds(snapshot("s1"))).toEqual(["h1", "h2"]);
   });
 
+  test("a release during a reload's retry wait keeps a loaded thread loaded", async () => {
+    let calls = 0;
+    const { threads, hub, subscribe, unsubscribe, snapshot } = setup({
+      history: async () => {
+        calls += 1;
+        if (calls === 2) throw new Error("transient");
+        return HISTORY;
+      },
+      retryDelayMs: 50
+    });
+    subscribe("s1");
+    await waitFor(() => expect(snapshot("s1").history.state).toBe("loaded"));
+    const reload = threads.reloadHistory("s1");
+    await waitFor(() => expect(snapshot("s1").history.retrying).toBe(true), { interval: 2 });
+    hub.unsubscribeClient("probe", [sessionTopic("s1")]);
+    unsubscribe("s1");
+    await reload;
+
+    const after = subscribe("s1", "c2");
+    expect(after.history).toEqual({ state: "loaded", error: null, retrying: false });
+    expect(itemIds(after)).toEqual(["h1", "h2"]);
+    expect(calls).toBe(2);
+  });
+
+  test("a history load that never settles times out into the error state", async () => {
+    const { subscribe, snapshot } = setup({ history: () => new Promise<HistoryMessage[]>(() => {}), historyTimeoutMs: 10 });
+    subscribe("s1");
+    await waitFor(() => expect(snapshot("s1").history).toEqual({ state: "error", error: "history did not load within 10 ms", retrying: false }), {
+      interval: 2
+    });
+  });
+
+  test("a history merge that throws reports the error instead of rejecting", async () => {
+    const { threads, subscribe, snapshot } = setup({
+      loadHistoryOnSubscribe: false,
+      history: async () => HISTORY,
+      liveTasks: () => {
+        throw new Error("live tasks broke");
+      }
+    });
+    subscribe("s1");
+    await threads.reloadHistory("s1");
+    expect(snapshot("s1").history).toEqual({ state: "error", error: "live tasks broke", retrying: false });
+  });
+
   test("history is not loaded on subscribe when that is turned off", async () => {
     const { historyCalls, subscribe } = setup({ loadHistoryOnSubscribe: false });
     subscribe("s1");
@@ -254,6 +299,55 @@ describe("ThreadService runtime", () => {
     threads.onDriverEvent("s1", done("turn-1"));
     threads.onDriverEvent("s1", { type: "turn.error", turnId: "turn-2", message: "x" });
     expect(settled).toEqual(["s1:turn-1:turn.done", "s1:turn-2:turn.error"]);
+  });
+
+  test("events without a session id are ignored", () => {
+    const { threads } = setup();
+    const changed: string[] = [];
+    const settled: string[] = [];
+    threads.onRuntimeChanged((sessionId) => changed.push(sessionId));
+    threads.onTurnSettled((sessionId) => settled.push(sessionId));
+    threads.onDriverEvent("", { type: "turn.error", turnId: "stray", message: "x" });
+    threads.onDriverEvent("", delta("stray", "text"));
+    expect(changed).toEqual([]);
+    expect(settled).toEqual([]);
+  });
+
+  test("dispose then resume keeps listeners and fires each exactly once", () => {
+    const { threads, subscribe, snapshot } = setup({ loadHistoryOnSubscribe: false });
+    subscribe("s1");
+    const changed: string[] = [];
+    const settled: string[] = [];
+    threads.onRuntimeChanged((sessionId) => changed.push(sessionId));
+    threads.onTurnSettled((sessionId) => settled.push(sessionId));
+    threads.dispose();
+    threads.resume();
+    threads.onDriverEvent("s1", started("turn-1"));
+    threads.onDriverEvent("s1", done("turn-1"));
+    expect(changed).toEqual(["s1", "s1"]);
+    expect(settled).toEqual(["s1"]);
+    expect(itemIds(snapshot("s1"))).toEqual(["turn-1-u"]);
+  });
+
+  test("resume restarts a history load interrupted by dispose", async () => {
+    let calls = 0;
+    const first = deferred<HistoryMessage[]>();
+    const { threads, subscribe, snapshot } = setup({
+      history: () => {
+        calls += 1;
+        return calls === 1 ? first.promise : Promise.resolve(HISTORY);
+      }
+    });
+    subscribe("s1");
+    await waitFor(() => expect(calls).toBe(1), { interval: 2 });
+    threads.dispose();
+    first.resolve([]);
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    expect(snapshot("s1").history.state).toBe("loading");
+    threads.resume();
+    await waitFor(() => expect(snapshot("s1").history.state).toBe("loaded"), { interval: 2 });
+    expect(calls).toBe(2);
+    expect(itemIds(snapshot("s1"))).toEqual(["h1", "h2"]);
   });
 });
 

@@ -55,10 +55,12 @@ export interface ThreadServiceDeps {
   loadHistoryOnSubscribe?: boolean;
   now?: () => number;
   retryDelayMs?: number;
+  historyTimeoutMs?: number;
   idleThreadLimit?: number;
 }
 
 export const HISTORY_RETRY_DELAY_MS = 2_000;
+export const HISTORY_TIMEOUT_MS = 60_000;
 export const IDLE_THREAD_LIMIT = 20;
 
 type ThreadStore = TopicStore<ThreadTopicData>;
@@ -76,7 +78,15 @@ interface ThreadEntry {
   store: ThreadStore | null;
   generation: number;
   loading: Promise<void> | null;
+  loadMode: LoadMode | null;
+  interruptedLoad: LoadMode | null;
   retry: { timer: ReturnType<typeof setTimeout>; resolve: () => void } | null;
+}
+
+class HistoryTimeoutError extends Error {
+  constructor(ms: number) {
+    super(`history did not load within ${ms} ms`);
+  }
 }
 
 function errorMessage(error: unknown): string {
@@ -105,6 +115,7 @@ export class ThreadService {
   constructor(private readonly deps: ThreadServiceDeps) {}
 
   onDriverEvent(sessionId: string, event: ThreadEvent): void {
+    if (!sessionId) return;
     const entry = this.entry(sessionId);
     this.apply(entry, reduceThreadEvent(entry.state, event, this.now()));
     if (event.type === "turn.done" || event.type === "turn.error") {
@@ -200,7 +211,7 @@ export class ThreadService {
     entry.store = null;
     if (entry.retry) {
       this.cancelLoad(entry);
-      entry.history = HISTORY_LOADING;
+      entry.history = this.settledHistory(entry);
     }
     this.retain(entry);
   }
@@ -208,12 +219,25 @@ export class ThreadService {
   dispose(): void {
     this.disposed = true;
     for (const entry of this.entries.values()) {
+      if (entry.loading) entry.interruptedLoad = entry.loadMode;
       this.cancelLoad(entry);
-      entry.store = null;
     }
-    this.idle.clear();
-    this.runtimeListeners.clear();
-    this.settledListeners.clear();
+  }
+
+  resume(): void {
+    if (!this.disposed) return;
+    this.disposed = false;
+    for (const entry of this.entries.values()) {
+      const mode = entry.interruptedLoad;
+      entry.interruptedLoad = null;
+      if (mode === null) continue;
+      if (entry.store) {
+        void this.load(entry, mode);
+        continue;
+      }
+      entry.history = this.settledHistory(entry);
+      this.retain(entry);
+    }
   }
 
   private now(): number {
@@ -230,6 +254,8 @@ export class ThreadService {
       store: null,
       generation: 0,
       loading: null,
+      loadMode: null,
+      interruptedLoad: null,
       retry: null
     };
     this.entries.set(sessionId, entry);
@@ -290,6 +316,10 @@ export class ThreadService {
     }
   }
 
+  private settledHistory(entry: ThreadEntry): ThreadHistory {
+    return entry.state.historyLoaded ? HISTORY_LOADED : HISTORY_LOADING;
+  }
+
   private setHistory(entry: ThreadEntry, history: ThreadHistory): void {
     entry.history = history;
     entry.store?.upsert("history", history);
@@ -337,6 +367,7 @@ export class ThreadService {
   private cancelLoad(entry: ThreadEntry): void {
     entry.generation += 1;
     entry.loading = null;
+    entry.loadMode = null;
     const retry = entry.retry;
     if (!retry) return;
     entry.retry = null;
@@ -347,9 +378,26 @@ export class ThreadService {
   private load(entry: ThreadEntry, mode: LoadMode): Promise<void> {
     if (entry.loading && mode === "subscribe") return entry.loading;
     this.cancelLoad(entry);
-    const loading = this.runLoad(entry, entry.generation, mode);
+    const generation = entry.generation;
+    const loading = this.runLoad(entry, generation, mode).catch((error: unknown) => {
+      const message = errorMessage(error);
+      console.warn(`[threads] history for session ${entry.sessionId} failed: ${message}`);
+      if (entry.generation === generation && !this.disposed) this.setHistory(entry, { state: "error", error: message, retrying: false });
+    });
     entry.loading = loading;
+    entry.loadMode = mode;
     return loading;
+  }
+
+  private fetchHistory(sessionId: string): Promise<HistoryMessage[]> {
+    const pending = this.deps.history(sessionId);
+    const ms = this.deps.historyTimeoutMs ?? HISTORY_TIMEOUT_MS;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timeout = new Promise<never>((_resolve, reject) => {
+      timer = setTimeout(() => reject(new HistoryTimeoutError(ms)), ms);
+      timer.unref?.();
+    });
+    return Promise.race([pending, timeout]).finally(() => clearTimeout(timer));
   }
 
   private async runLoad(entry: ThreadEntry, generation: number, mode: LoadMode): Promise<void> {
@@ -361,11 +409,11 @@ export class ThreadService {
       for (let attempt = 1; ; attempt++) {
         let history: HistoryMessage[];
         try {
-          history = await this.deps.history(entry.sessionId);
+          history = await this.fetchHistory(entry.sessionId);
         } catch (error) {
           if (!isCurrent()) return;
           const message = errorMessage(error);
-          if (attempt > 1) {
+          if (attempt > 1 || error instanceof HistoryTimeoutError) {
             console.warn(`[threads] history for session ${entry.sessionId} failed after a retry: ${message}`);
             this.setHistory(entry, { state: "error", error: message, retrying: false });
             return;
@@ -382,6 +430,7 @@ export class ThreadService {
     } finally {
       if (entry.generation === generation && !this.disposed) {
         entry.loading = null;
+        entry.loadMode = null;
         this.retain(entry);
       }
     }

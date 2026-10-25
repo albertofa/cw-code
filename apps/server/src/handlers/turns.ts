@@ -3,7 +3,7 @@ import { isSkillMentionList } from "@cw-code/shared/skillMentions";
 import type { ServerApp } from "../app/ServerApp.js";
 import { assertPrRef } from "../github/PullRequestService.js";
 import type { Router } from "../transport/Router.js";
-import { handle } from "./shared.js";
+import { handle, knownSessionId } from "./shared.js";
 
 interface TurnPrefs {
   model?: string;
@@ -55,7 +55,7 @@ export function registerTurnHandlers(router: Router, app: ServerApp): void {
     });
   });
   handle<{ turnId: string }>(router, "turns.interrupt", (args) => sessions().interrupt(args.turnId));
-  handle<{ sessionId: string }>(router, "turns.stop", (args) => turns().stop(args.sessionId));
+  handle<{ sessionId: string }>(router, "turns.stop", (args) => turns().stop(knownSessionId(sessions(), args.sessionId)));
   handle<{ sessionId: string; requestId: string; decision: ApprovalDecision }>(router, "approvals.respond", (args) =>
     sessions().respondApproval(args.requestId, args.decision)
   );

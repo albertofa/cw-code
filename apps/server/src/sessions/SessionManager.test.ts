@@ -4690,6 +4690,65 @@ describe("SessionManager status machine", () => {
     }
   });
 
+  it("restores the previous idleSince and updatedAt when the turn fails to start", async () => {
+    const { manager } = makeManager();
+    const project = manager.addProject("C:\\proj-status-revert-idle");
+    const session = await manager.createSession(project.id, "claude");
+    const before = { ...storeOf(manager).getSession(session.id) };
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    (manager as unknown as { ensureWorktree(sessionId: string): Promise<string> }).ensureWorktree = () => Promise.reject(new Error("worktree boom"));
+
+    const [result] = await Promise.allSettled([manager.startTurn(session.id, "hello")]);
+
+    expect(result.status).toBe("rejected");
+    const after = storeOf(manager).getSession(session.id);
+    expect(after?.status).toBe("idle");
+    expect(after?.idleSince).toBe(before.idleSince);
+    expect(after?.updatedAt).toBe(before.updatedAt);
+    manager.dispose();
+  });
+
+  it("late turn.done while a start is pending keeps working", async () => {
+    const { manager, fake } = makeManager();
+    const project = manager.addProject("C:\\proj-status-late-done");
+    const session = await manager.createSession(project.id, "claude");
+    const interrupted = await manager.startTurn(session.id, "first");
+    manager.interrupt(interrupted);
+    expect(storeOf(manager).getSession(session.id)?.status).toBe("holding");
+    const startTurn = fake.startTurn.bind(fake);
+    fake.startTurn = (request) => {
+      fake.complete(interrupted);
+      expect(storeOf(manager).getSession(session.id)?.status).toBe("working");
+      return startTurn(request);
+    };
+
+    const turnId = await manager.startTurn(session.id, "second");
+
+    expect(storeOf(manager).getSession(session.id)?.status).toBe("working");
+    expect(storeOf(manager).getSession(session.id)?.resumeCursor).toBe(`cursor-${interrupted}`);
+    expect(manager.listActiveTurns().map((turn) => turn.turnId)).toEqual([turnId]);
+    manager.dispose();
+  });
+
+  it("restores working when a late turn.error lands while a start is pending", async () => {
+    const { manager, fake } = makeManager();
+    const project = manager.addProject("C:\\proj-status-late-error");
+    const session = await manager.createSession(project.id, "claude");
+    const interrupted = await manager.startTurn(session.id, "first");
+    manager.interrupt(interrupted);
+    const routeEvent = (manager as unknown as { routeEvent(e: ThreadEvent): void }).routeEvent.bind(manager);
+    const startTurn = fake.startTurn.bind(fake);
+    fake.startTurn = (request) => {
+      routeEvent({ type: "turn.error", turnId: interrupted, message: "late" });
+      return startTurn(request);
+    };
+
+    await manager.startTurn(session.id, "second");
+
+    expect(storeOf(manager).getSession(session.id)?.status).toBe("working");
+    manager.dispose();
+  });
+
   it("does not touch the status when a second start is rejected as busy", async () => {
     const { manager, fake } = makeManager();
     const project = manager.addProject("C:\\proj-status-busy");
@@ -4758,14 +4817,13 @@ describe("SessionManager status machine", () => {
     expect(store.getSession(done.id)?.status).toBe("done");
     expect(manager.openSession(archived.id, "restore")).toBeNull();
     expect(manager.openSession("missing", "restore")).toBeNull();
+    expect(manager.openSession(resolved.id, "select")).toBeNull();
+    expect(manager.openSession(resolved.id, "restore")).toBeNull();
+    expect(store.getSession(resolved.id)?.status).toBe("resolved");
     expect(emitted).toEqual([]);
 
-    expect(manager.openSession(resolved.id, "select")?.status).toBe("idle");
     expect(manager.openSession(done.id, "restore")?.status).toBe("holding");
-    expect(emitted.map((item) => item.status)).toEqual(["idle", "holding"]);
-
-    await manager.resolveSession(resolved.id, "resolved");
-    expect(manager.openSession(resolved.id, "restore")?.status).toBe("idle");
+    expect(emitted.map((item) => item.status)).toEqual(["holding"]);
     manager.dispose();
   });
 

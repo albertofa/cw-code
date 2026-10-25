@@ -14,7 +14,7 @@ export interface StartTurnInput {
 }
 
 export interface TurnServiceDeps {
-  sessions: Pick<SessionManager, "startTurn" | "interrupt" | "listActiveTurns">;
+  sessions: Pick<SessionManager, "assertCanStartTurn" | "startTurn" | "interrupt" | "listActiveTurns">;
   threads: ThreadService;
 }
 
@@ -31,6 +31,7 @@ export class TurnService {
 
   async start(sessionId: string, prompt: string, input: StartTurnInput = {}): Promise<string> {
     const { auto = false, ...options } = input;
+    this.deps.sessions.assertCanStartTurn(sessionId);
     const begun = this.deps.threads.beginTurn(sessionId, prompt, auto);
     const starting: StartingTurn = { stopRequested: false };
     this.starting.set(sessionId, starting);
@@ -39,22 +40,32 @@ export class TurnService {
       turnId = await this.deps.sessions.startTurn(sessionId, prompt, options);
     } catch (error) {
       this.deps.threads.abortTurn(sessionId, begun);
+      if (starting.stopRequested) this.notifyStopped(sessionId);
       throw error;
     } finally {
       if (this.starting.get(sessionId) === starting) this.starting.delete(sessionId);
     }
     this.deps.threads.commitTurn(sessionId, begun.pendingId, turnId);
     notifyAll(this.startedListeners, "[turns] turn started", sessionId, auto);
-    if (starting.stopRequested) this.deps.sessions.interrupt(turnId);
+    if (starting.stopRequested) {
+      this.deps.sessions.interrupt(turnId);
+      this.notifyStopped(sessionId);
+    }
     return turnId;
   }
 
   stop(sessionId: string): void {
     const active = this.deps.sessions.listActiveTurns().filter((turn) => turn.sessionId === sessionId);
-    const starting = this.starting.get(sessionId);
-    if (active.length === 0 && !starting) return;
+    if (active.length === 0) {
+      const starting = this.starting.get(sessionId);
+      if (starting) starting.stopRequested = true;
+      return;
+    }
     for (const turn of active) this.deps.sessions.interrupt(turn.turnId);
-    if (active.length === 0 && starting) starting.stopRequested = true;
+    this.notifyStopped(sessionId);
+  }
+
+  private notifyStopped(sessionId: string): void {
     notifyAll(this.stoppedListeners, "[turns] turn stopped", sessionId);
   }
 

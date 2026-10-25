@@ -32,8 +32,14 @@ beforeEach(() => {
       },
       restoreSession: async (sessionId: string) => {
         calls.push(["restoreSession", sessionId]);
-      }
+      },
+      openSession: (sessionId: string, reason: string) => {
+        calls.push(["openSession", sessionId, reason]);
+        return null;
+      },
+      hasSession: (sessionId: string) => sessionId === "s1"
     },
+    threads: { reloadHistory: async (sessionId: string) => calls.push(["reloadHistory", sessionId]) },
     fileWatcher: { unwatch: async (sessionId: string) => calls.push(["unwatch", sessionId]) },
     ptys: { killSession: (sessionId: string) => calls.push(["killSession", sessionId]) }
   };
@@ -85,6 +91,31 @@ describe("sidebar.reorder", () => {
       dispatch({ ...REQUEST, before: "yes" })
     ]);
     expect(results.map((result) => result.status)).toEqual(["rejected", "rejected", "rejected", "rejected"]);
+    expect(calls).toEqual([]);
+  });
+});
+
+describe("sessions.open", () => {
+  test("rejects unknown open reasons", async () => {
+    const results = await Promise.allSettled([
+      router.dispatch("sessions.open", { sessionId: "s1", reason: "resume" }, ctx),
+      router.dispatch("sessions.open", { sessionId: "s1" }, ctx),
+      router.dispatch("sessions.open", { sessionId: 1, reason: "select" }, ctx)
+    ]);
+    expect(results.map((result) => result.status)).toEqual(["rejected", "rejected", "rejected"]);
+    expect(calls).toEqual([]);
+  });
+
+  test("passes a valid reason through", async () => {
+    await router.dispatch("sessions.open", { sessionId: "s1", reason: "restore" }, ctx);
+    expect(calls).toEqual([["openSession", "s1", "restore"]]);
+  });
+});
+
+describe("threads.reloadHistory", () => {
+  test("rejects unknown sessions", async () => {
+    const [result] = await Promise.allSettled([router.dispatch("threads.reloadHistory", { sessionId: "missing" }, ctx)]);
+    expect(result?.status).toBe("rejected");
     expect(calls).toEqual([]);
   });
 });

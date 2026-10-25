@@ -15,10 +15,15 @@ import type { ServerApp } from "../app/ServerApp.js";
 import type { Services } from "../app/services.js";
 import type { SessionStatusReason } from "../debug/sessionStatusTrace.js";
 import type { Router } from "../transport/Router.js";
-import { handle, parseArgs, parseBoolean, parseString, subscribeIfConnected } from "./shared.js";
+import { handle, knownSessionId, parseArgs, parseBoolean, parseString, subscribeIfConnected } from "./shared.js";
 
 function parseSection(value: unknown, name: string): SidebarSection {
   if (value !== "main" && value !== "resolved") throw new Error(`${name} must be main or resolved`);
+  return value;
+}
+
+function parseOpenReason(value: unknown): SessionOpenReason {
+  if (value !== "select" && value !== "restore") throw new Error("reason must be select or restore");
   return value;
 }
 
@@ -84,9 +89,10 @@ export function registerSessionHandlers(router: Router, app: ServerApp): void {
   handle<{ sessionId: string }>(router, "sessions.markWorking", (args) => services().sessions.markWorking(args.sessionId));
   handle<{ sessionId: string }>(router, "sessions.restore", (args) => services().sessions.restoreSession(args.sessionId));
   handle<{ sessionId: string }>(router, "sessions.markTurnSeen", (args) => services().sessions.markTurnSeen(args.sessionId));
-  handle<{ sessionId: string; reason: SessionOpenReason }>(router, "sessions.open", (args) =>
-    services().sessions.openSession(args.sessionId, args.reason)
-  );
+  handle<unknown>(router, "sessions.open", (value) => {
+    const args = parseArgs(value, "sessions.open");
+    return services().sessions.openSession(parseString(args.sessionId, "sessionId"), parseOpenReason(args.reason));
+  });
   handle<{ sessionId: string }>(router, "sessions.pauseAutoFollowUp", (args) => {
     if (!services().autoFollowUp.pause(args.sessionId)) throw new Error(`unknown session ${args.sessionId}`);
   });
@@ -126,5 +132,8 @@ export function registerSessionHandlers(router: Router, app: ServerApp): void {
     threads.replaceHistory(args.sessionId, result.history);
     return result;
   });
-  handle<{ sessionId: string }>(router, "threads.reloadHistory", (args) => services().threads.reloadHistory(args.sessionId));
+  handle<{ sessionId: string }>(router, "threads.reloadHistory", (args) => {
+    const { sessions, threads } = services();
+    return threads.reloadHistory(knownSessionId(sessions, args.sessionId));
+  });
 }

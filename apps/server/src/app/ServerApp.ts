@@ -379,7 +379,6 @@ export class ServerApp {
   private handleShutdownRecovered(failure: string | null): void {
     this.servicesDisposed = false;
     this.startSessionSweeps();
-    if (this.services) this.wireShutdownPublishing(this.services);
     this.topics.resync();
     this.emitShutdownChanged();
     if (!failure) return;
@@ -429,6 +428,7 @@ export class ServerApp {
     this.sessionSettleTimer.unref?.();
     this.services?.prTracker.start();
     this.services?.prStore.resume();
+    this.services?.threads.resume();
     this.services?.autoFollowUp.reactivate();
     this.services?.sourceControl.start();
   }

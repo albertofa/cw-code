@@ -25,7 +25,12 @@ function setup(startTurn: Sessions["startTurn"]) {
   hub.register(createThreadTopicProvider(threads));
   const active: Array<{ sessionId: string; turnId: string; startedAt: number }> = [];
   const interrupted: string[] = [];
+  const known = new Set(["s1"]);
   const sessions: Sessions = {
+    assertCanStartTurn: (sessionId) => {
+      if (!known.has(sessionId)) throw new Error(`unknown session ${sessionId}`);
+      return {} as ReturnType<Sessions["assertCanStartTurn"]>;
+    },
     startTurn,
     interrupt: (turnId) => {
       interrupted.push(turnId);
@@ -120,20 +125,39 @@ describe("TurnService", () => {
           };
         })
     );
-    const stopped: string[] = [];
-    ctx.turns.onTurnStopped((sessionId) => stopped.push(sessionId));
+    const order: string[] = [];
+    ctx.turns.onTurnStarted((sessionId, auto) => order.push(`started:${sessionId}:${auto}`));
+    ctx.turns.onTurnStopped((sessionId) => order.push(`stopped:${sessionId}:${ctx.interrupted.join(",")}`));
     const start = ctx.turns.start("s1", "hello", {});
 
     ctx.turns.stop("s1");
     expect(ctx.interrupted).toEqual([]);
-    expect(stopped).toEqual(["s1"]);
+    expect(order).toEqual([]);
 
     release();
     await start;
 
     expect(ctx.interrupted).toEqual(["turn-1"]);
+    expect(order).toEqual(["started:s1:false", "stopped:s1:turn-1"]);
     expect(ctx.snapshot().turn).toBeNull();
     expect(ctx.threads.runtime("s1").busy).toBe(false);
+  });
+
+  test("an unknown session is rejected before any echo is published", async () => {
+    let calls = 0;
+    const ctx = setup(async () => {
+      calls += 1;
+      return "turn-1";
+    });
+    const before = ctx.log.length;
+
+    const [outcome] = await Promise.allSettled([ctx.turns.start("missing", "hello", {})]);
+
+    expect(outcome.status).toBe("rejected");
+    expect(((outcome as PromiseRejectedResult).reason as Error).message).toBe("unknown session missing");
+    expect(calls).toBe(0);
+    expect(ctx.log.length).toBe(before);
+    expect(ctx.threads.runtime("missing").busy).toBe(false);
   });
 
   test("stop interrupts a running turn and does nothing when idle", async () => {

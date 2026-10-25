@@ -719,6 +719,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       return;
     }
     const result = await window.cw.resolveSession(sessionId, status, true, false);
+    if (get().activeSessionId === sessionId) return;
     if (result.destroyScriptError) {
       useNotifs.getState().push({ kind: "error", title: "Destroy script failed", message: result.destroyScriptError });
     }

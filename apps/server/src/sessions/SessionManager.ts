@@ -52,7 +52,7 @@ import { type SessionStatusReason } from "../debug/sessionStatusTrace.js";
 import { isWorkingSetStatus } from "@cw-code/shared/workingSet";
 import { expiredHoldingIds } from "../sidebar/workingSet.js";
 import { autoFollowUpWorkflow, babysitsOpenPr } from "@cw-code/shared/autoFollowUp";
-import { SessionStore, type AutoFollowUpMeta } from "./SessionStore.js";
+import { SessionStore, type AutoFollowUpMeta, type SessionStatusSnapshot } from "./SessionStore.js";
 import {
   addUnlinkedKey,
   applyFinalReview,
@@ -531,23 +531,17 @@ export class SessionManager {
     if (event.type === "turn.done") {
       this.recordUsage(event, countUsageTurn);
       const backgroundTasks = event.backgroundTasks ?? 0;
+      const wasActive = this.activeTurns.has(event.turnId);
       if (backgroundTasks > 0) {
-        this.store.updateSession(
-          event.sessionId,
-          {
-            resumeCursor: event.resumeCursor,
-            status: "working"
-          },
-          "turn-done-background"
-        );
+        if (wasActive) this.store.updateSession(event.sessionId, { resumeCursor: event.resumeCursor, status: "working" }, "turn-done-background");
+        else this.store.updateSession(event.sessionId, { resumeCursor: event.resumeCursor });
         this.emitIfKnown(event.sessionId);
       } else {
-        const wasActive = this.activeTurns.has(event.turnId);
         const turnStartedAt = this.activeTurns.get(event.turnId)?.startedAt;
         this.settleTurn(event.turnId, event.sessionId);
         this.dropPendingRequests(this.pendingRequests.clearTurn(event.turnId));
         const stillActive = [...this.activeTurns.values()].some((entry) => entry.sessionId === event.sessionId);
-        if (stillActive) {
+        if (!wasActive || stillActive) {
           this.store.updateSession(event.sessionId, { resumeCursor: event.resumeCursor });
         } else {
           this.store.updateSession(event.sessionId, { resumeCursor: event.resumeCursor, status: this.turnEndStatus(event.sessionId) }, "turn-done");
@@ -563,6 +557,7 @@ export class SessionManager {
       }
     }
     if (event.type === "turn.error") {
+      const wasActive = this.activeTurns.has(event.turnId);
       if (sessionId) this.settleTurn(event.turnId, sessionId);
       else this.activeTurns.delete(event.turnId);
       this.dropPendingRequests(this.pendingRequests.clearTurn(event.turnId));
@@ -570,15 +565,10 @@ export class SessionManager {
       this.turnFinalReviews.delete(event.turnId);
       if (sessionId) {
         this.captureEndSnapshot(sessionId, event.turnId);
-        this.store.updateSession(
-          sessionId,
-          {
-            status: "holding",
-            ...(event.resumeCursor ? { resumeCursor: event.resumeCursor } : {})
-          },
-          "turn-error"
-        );
-        this.emitIfKnown(sessionId);
+        const resumeCursor = event.resumeCursor ? { resumeCursor: event.resumeCursor } : {};
+        if (wasActive) this.store.updateSession(sessionId, { status: "holding", ...resumeCursor }, "turn-error");
+        else if (event.resumeCursor) this.store.updateSession(sessionId, resumeCursor);
+        if (wasActive || event.resumeCursor) this.emitIfKnown(sessionId);
       }
     }
     if (event.type === "approval.request" || event.type === "question.request") {
@@ -985,11 +975,6 @@ export class SessionManager {
   openSession(sessionId: string, reason: SessionOpenReason): SessionMeta | null {
     const session = this.store.getSession(sessionId);
     if (!session) return null;
-    if (session.status === "resolved") {
-      if (this.pendingRestores.has(sessionId) || this.pendingResolves.has(sessionId)) return null;
-      this.store.updateSession(sessionId, { status: "idle" }, reason === "select" ? "reopen-on-select" : "reopen-on-restore");
-      return this.emitSession(sessionId);
-    }
     if (reason === "restore" && session.status === "done") {
       this.store.updateSession(sessionId, { status: "holding" }, "reopen-on-restore");
       return this.emitSession(sessionId);
@@ -2094,19 +2079,11 @@ export class SessionManager {
     return false;
   }
 
-  async startTurn(
-    sessionId: string,
-    prompt: string,
-    opts?: {
-      prefs?: ComposerPrefs;
-      attachments?: string[];
-      command?: CommandInvocation;
-      skills?: string[];
-      prRefs?: PrRef[];
-      finalReview?: { ref: PrRef; sha: string };
-      acceptFolderHead?: string;
-    }
-  ): Promise<string> {
+  hasSession(sessionId: string): boolean {
+    return this.store.getSession(sessionId) !== undefined;
+  }
+
+  assertCanStartTurn(sessionId: string): { session: SessionMeta; project: Project } {
     this.assertNotReserved();
     const session = this.store.getSession(sessionId);
     if (!session) throw new Error(`unknown session ${sessionId}`);
@@ -2123,12 +2100,29 @@ export class SessionManager {
     if (this.undoPendingOnRoot(session)) throw new Error("session busy (undo pending)");
     if (this.branchSwitchPendingOnRoot(session)) throw new Error(`${project.name} is switching branches — try again in a moment`);
     if (this.pendingRestores.has(sessionId)) throw new Error("session busy (restore pending)");
+    return { session, project };
+  }
+
+  async startTurn(
+    sessionId: string,
+    prompt: string,
+    opts?: {
+      prefs?: ComposerPrefs;
+      attachments?: string[];
+      command?: CommandInvocation;
+      skills?: string[];
+      prRefs?: PrRef[];
+      finalReview?: { ref: PrRef; sha: string };
+      acceptFolderHead?: string;
+    }
+  ): Promise<string> {
+    const { session, project } = this.assertCanStartTurn(sessionId);
     this.pendingTurns.add(sessionId);
-    const previousStatus = session.status;
+    const previous: SessionStatusSnapshot = { status: session.status, idleSince: session.idleSince, updatedAt: session.updatedAt };
     this.store.updateSession(sessionId, { status: "working" }, "turn-start");
     this.emitSession(sessionId);
     try {
-      if (previousStatus === "idle" && session.resumeCursor) {
+      if (previous.status === "idle" && session.resumeCursor) {
         await this.dropFinishedPrLinks(sessionId, [...(opts?.prRefs ?? []), ...(opts?.finalReview ? [opts.finalReview.ref] : [])]);
       }
       const cwd = await this.ensureWorktree(sessionId);
@@ -2164,30 +2158,32 @@ export class SessionManager {
       });
       const startedAt = Date.now();
       this.activeTurns.set(handle.turnId, { sessionId, startedAt });
+      const restoreWorking = this.store.getSession(sessionId)?.status !== "working";
+      if (restoreWorking) this.store.updateSession(sessionId, { status: "working" }, "turn-start");
       this.onEvent(sessionId, { type: "turn.started", turnId: handle.turnId, sessionId, startedAt, prompt });
       if (opts?.prRefs && opts.prRefs.length > 0) this.turnPrRefs.set(handle.turnId, opts.prRefs);
       if (opts?.finalReview) this.turnFinalReviews.set(handle.turnId, opts.finalReview);
       const lastTurnSnapshot = snapshot ? { turnId: handle.turnId, ...snapshot } : undefined;
       const snapshotChanged = lastTurnSnapshot !== undefined || session.lastTurnSnapshot !== undefined;
-      this.store.updateSession(sessionId, { lastTurnSnapshot });
-      if (snapshotChanged) this.emitSession(sessionId);
+      if (snapshotChanged) this.store.updateSession(sessionId, { lastTurnSnapshot });
+      if (restoreWorking || snapshotChanged) this.emitSession(sessionId);
       if (firstMessage) this.maybeAutoTitle(sessionId, prompt, placeholder);
       return handle.turnId;
     } catch (err) {
-      this.revertFailedTurnStart(sessionId, previousStatus);
+      this.revertFailedTurnStart(sessionId, previous);
       throw err;
     } finally {
       this.pendingTurns.delete(sessionId);
     }
   }
 
-  private revertFailedTurnStart(sessionId: string, previousStatus: SessionStatus): void {
+  private revertFailedTurnStart(sessionId: string, previous: SessionStatusSnapshot): void {
     const current = this.store.getSession(sessionId);
     if (!current || current.status !== "working") return;
     for (const entry of this.activeTurns.values()) {
       if (entry.sessionId === sessionId) return;
     }
-    this.store.updateSession(sessionId, { status: previousStatus }, "turn-start-failed");
+    this.store.revertStatus(sessionId, previous, "turn-start-failed");
     this.emitSession(sessionId);
   }
 

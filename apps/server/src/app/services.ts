@@ -99,7 +99,11 @@ function wireServiceEvents(
 ): void {
   sessions.setEmitter((sessionId, event) => {
     emit("turn.event", { sessionId, event });
-    threads.onDriverEvent(sessionId, event);
+    try {
+      threads.onDriverEvent(sessionId, event);
+    } catch (error) {
+      console.warn(`[threads] ${event.type} for session ${sessionId} failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
     if (event.type === "turn.interrupted") autoFollowUp.turnInterrupted(sessionId, event.reason);
     sourceControl.onThreadEvent(sessionId, event);
   });

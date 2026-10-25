@@ -81,6 +81,10 @@ function closeTurn(state: ThreadState, turnId: string | undefined, now: number, 
   }
 }
 
+function noteSettled(state: ThreadState, turnId: string): void {
+  if (state.turn !== null && state.turn.turnId === null) state.settledWhilePending.add(turnId);
+}
+
 function clearPendingRequests(state: ThreadState, changes: ChangeSet): void {
   if (state.approvals.length > 0) {
     state.approvals = [];
@@ -195,6 +199,7 @@ function applyTurnDone(state: ThreadState, event: Extract<ThreadEvent, { type: "
   const busyMatch = state.turn !== null && state.turn.turnId === event.turnId;
   const isFinal = busyMatch && backgroundTasks === 0;
   const superseded = state.turn !== null && !busyMatch;
+  if (backgroundTasks === 0) noteSettled(state, event.turnId);
   if (isFinal) closeTurn(state, event.turnId, now, changes);
   if (busyMatch) clearPendingRequests(state, changes);
   finalizeTurnTools(state, event.turnId, now, changes);
@@ -225,6 +230,7 @@ function applyTurnDone(state: ThreadState, event: Extract<ThreadEvent, { type: "
 
 function applyTurnError(state: ThreadState, event: Extract<ThreadEvent, { type: "turn.error" }>, now: number, changes: ChangeSet): void {
   closeReasoning(state, now, changes);
+  noteSettled(state, event.turnId);
   if (state.turn !== null && state.turn.turnId === event.turnId) closeTurn(state, event.turnId, now, changes);
   clearPendingRequests(state, changes);
   finalizeTurnTools(state, event.turnId, now, changes);
@@ -331,6 +337,7 @@ function applyEvent(state: ThreadState, event: ThreadEvent, now: number, changes
     return;
   }
   if (event.type === "turn.interrupted") {
+    noteSettled(state, event.turnId);
     if (state.turn?.turnId !== event.turnId) return;
     closeTurn(state, event.turnId, now, changes);
     clearPendingRequests(state, changes);
@@ -444,6 +451,7 @@ export function beginTurn(state: ThreadState, input: { prompt: string; now: numb
   const previousTurn = state.turn;
   const pendingId = `${PENDING_PREFIX}${state.nextSeq}`;
   state.ignoredTurnStart = null;
+  state.settledWhilePending.clear();
   state.turn = { phase: "starting", turnId: null, startedAt: input.now, auto: input.auto };
   changes.touch("turn");
   setTodos(state, [], changes);
@@ -476,6 +484,7 @@ function takePendingEcho(state: ThreadState, pendingId: string): ItemFields | nu
 export function commitTurn(state: ThreadState, pendingId: string, turnId: string): ThreadChange {
   const changes = new ChangeSet();
   state.ignoredTurnStart = null;
+  state.settledWhilePending.clear();
   const pendingEcho = takePendingEcho(state, pendingId);
   if (state.turn !== null && state.turn.turnId === null) {
     state.turn = { ...state.turn, phase: "running", turnId };
@@ -502,7 +511,9 @@ export function abortTurn(state: ThreadState, pendingId: string, previousTodos: 
   takePendingEcho(state, pendingId);
   removeItem(state, pendingId, changes);
   if (state.turn === null || state.turn.turnId !== null) return changes.build();
-  if (previousTurn) {
+  const restorable = previousTurn !== null && (previousTurn.turnId === null || !state.settledWhilePending.has(previousTurn.turnId));
+  state.settledWhilePending.clear();
+  if (previousTurn && restorable) {
     state.turn = previousTurn;
     changes.touch("turn");
   } else {

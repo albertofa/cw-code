@@ -22,6 +22,7 @@ import { isMetadataDocument, type MetadataDocument, type MetadataMigration, type
 import { LastGoodRefresher, loadVersionedJson } from "../storage/versionedJson.js";
 
 export type AutoFollowUpMeta = NonNullable<SessionMeta["autoFollowUp"]>;
+export type SessionStatusSnapshot = Pick<SessionMeta, "status" | "idleSince" | "updatedAt">;
 
 const AUTO_FOLLOW_UP_PAUSES: ReadonlySet<AutoFollowUpPause> = new Set(["user", "interrupted", "error"]);
 
@@ -413,6 +414,18 @@ export class SessionStore {
         reason: reason ?? "unknown"
       });
     }
+    this.persist();
+  }
+
+  revertStatus(id: string, previous: SessionStatusSnapshot, reason: SessionStatusReason): void {
+    const current = this.getSession(id);
+    if (!current) return;
+    const from = current.status;
+    current.status = previous.status;
+    current.updatedAt = previous.updatedAt;
+    if (previous.idleSince === undefined) delete current.idleSince;
+    else current.idleSince = previous.idleSince;
+    if (from !== previous.status) traceSessionStatus({ sessionId: id, driver: current.driver, from, to: previous.status, reason });
     this.persist();
   }
 

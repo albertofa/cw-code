@@ -669,6 +669,23 @@ describe("thread reducer begin, commit and abort", () => {
     expect(state.turn).toEqual(running);
     expect(items(state).map((m) => m.id)).toEqual(["turn-0-u"]);
   });
+
+  it("does not restore a running turn that settled while the failed start was pending", () => {
+    for (const settle of [
+      turnDone({ turnId: "turn-0" }),
+      { type: "turn.error", turnId: "turn-0", message: "x" } satisfies ThreadEvent,
+      { type: "turn.interrupted", turnId: "turn-0", sessionId: "s" } satisfies ThreadEvent
+    ]) {
+      const state = createThreadState();
+      apply(state, started("turn-0", 100, "first"));
+      const begun = beginTurn(state, { prompt: "second", now: 500, auto: false });
+      apply(state, settle);
+
+      abortTurn(state, begun.pendingId, begun.previousTodos, begun.previousTurn);
+
+      expect(state.turn).toBeNull();
+    }
+  });
 });
 
 describe("thread reducer item indexes", () => {

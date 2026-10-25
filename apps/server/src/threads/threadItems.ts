@@ -38,6 +38,7 @@ export interface ThreadState {
   pendingEcho: ItemFields | null;
   lastItemId: string | null;
   openReasoningIds: Set<string>;
+  settledWhilePending: Set<string>;
 }
 
 export interface ThreadChange {
@@ -112,7 +113,8 @@ export function createThreadState(): ThreadState {
     ignoredTurnStart: null,
     pendingEcho: null,
     lastItemId: null,
-    openReasoningIds: new Set()
+    openReasoningIds: new Set(),
+    settledWhilePending: new Set()
   };
 }
 
