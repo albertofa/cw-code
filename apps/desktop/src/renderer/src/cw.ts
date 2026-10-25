@@ -1,3 +1,4 @@
+import type { TopicCache } from "@cw-code/client";
 import type {
   AccountUsageOk,
   AccountUsageSnapshot,
@@ -578,6 +579,7 @@ export interface AppSettings {
 export type SettingsPatch = Partial<AppSettings>;
 
 export interface CwApi {
+  topics: TopicCache;
   getStartupState(): Promise<StartupState>;
   recovery: {
     openDataDir(): Promise<void>;
@@ -690,7 +692,6 @@ export interface CwApi {
   watchGitHubRuns(refs: RunRef[]): Promise<void>;
   onGitHubRunsChanged(cb: (runs: WorkflowRunSummary[]) => void): () => void;
   onGitHubCiActivity(cb: () => void): () => void;
-  subscribeTopics(topics: readonly string[]): () => void;
   cloneGitHubRepo(repo: RepoRef): Promise<Project>;
   getProjectGitHubRepos(): Promise<ProjectGitHubRepo[]>;
   linkSessionPr(sessionId: string, link: SessionPrLink): Promise<Session>;

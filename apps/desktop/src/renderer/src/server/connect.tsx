@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useState, type ReactNode } from "react";
-import { ServerClient } from "@cw-code/client";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { ServerClient, TopicCache } from "@cw-code/client";
 import type { DesktopApi } from "@cw-code/contracts";
 import { ipcErrorMessage } from "../components/ipcError.js";
 import { useEditorBuffers } from "../stores/editorBuffers.js";
 import { createCwApi, type ShutdownHandlers } from "./createCwApi.js";
+import { initTopics } from "./topics.js";
 
 type Phase = { kind: "connecting" } | { kind: "failed"; message: string } | { kind: "ready" };
 type Link = "up" | "reconnecting" | "stale" | "lost";
@@ -17,6 +18,7 @@ function reload(): void {
 export function ServerGate({ desktop, children }: { desktop: DesktopApi; children: ReactNode }) {
   const [client] = useState(() => new ServerClient({ endpoint: () => desktop.serverEndpoint(), client: "desktop-ui", reconnect: true }));
   const [shutdownHandlers] = useState<ShutdownHandlers>(() => new Set());
+  const topicCache = useRef<TopicCache | null>(null);
   const [phase, setPhase] = useState<Phase>({ kind: "connecting" });
   const [link, setLink] = useState<Link>("up");
 
@@ -24,7 +26,9 @@ export function ServerGate({ desktop, children }: { desktop: DesktopApi; childre
     setPhase({ kind: "connecting" });
     client.connect().then(
       () => {
-        window.cw = createCwApi(client, desktop, shutdownHandlers);
+        topicCache.current ??= new TopicCache(client);
+        initTopics(topicCache.current);
+        window.cw = createCwApi(client, topicCache.current, desktop, shutdownHandlers);
         setPhase({ kind: "ready" });
       },
       (err) => setPhase({ kind: "failed", message: ipcErrorMessage(err) })

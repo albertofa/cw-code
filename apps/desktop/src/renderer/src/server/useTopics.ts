@@ -15,11 +15,7 @@ export function useTopics(topics: readonly string[]): void {
     }
     for (const topic of wanted) {
       if (active.has(topic)) continue;
-      try {
-        active.set(topic, window.cw.subscribeTopics([topic]));
-      } catch (error) {
-        console.warn(`[useTopics] cannot subscribe to ${topic}:`, error);
-      }
+      active.set(topic, window.cw.topics.acquire(topic));
     }
   }, [key]);
 

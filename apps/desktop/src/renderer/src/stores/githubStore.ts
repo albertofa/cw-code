@@ -341,11 +341,7 @@ let runsTopicDisposer: (() => void) | null = null;
 
 function holdRunsTopic(): void {
   if (runsTopicDisposer) return;
-  try {
-    runsTopicDisposer = window.cw.subscribeTopics([GITHUB_RUNS_TOPIC]);
-  } catch (err) {
-    console.warn(`[github] cannot subscribe to ${GITHUB_RUNS_TOPIC}:`, err);
-  }
+  runsTopicDisposer = window.cw.topics.acquire(GITHUB_RUNS_TOPIC);
 }
 
 function releaseRunsTopic(): void {

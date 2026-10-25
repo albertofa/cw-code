@@ -1,4 +1,4 @@
-import type { ServerClient } from "@cw-code/client";
+import type { ServerClient, TopicCache } from "@cw-code/client";
 import type {
   AccountUsageSnapshot,
   AppSettings,
@@ -68,7 +68,7 @@ function toBase64(data: Uint8Array): string {
 
 export type ShutdownHandlers = Set<(event: ShutdownRequestedEvent) => void>;
 
-export function createCwApi(client: ServerClient, desktop: DesktopApi, shutdownHandlers: ShutdownHandlers): CwApi {
+export function createCwApi(client: ServerClient, topics: TopicCache, desktop: DesktopApi, shutdownHandlers: ShutdownHandlers): CwApi {
   const call = <T>(method: string, params?: unknown): Promise<T> => client.call<T>(method, params);
   const callVoid = (method: string, params?: unknown): Promise<void> => client.call(method, params).then(() => undefined);
   const subscribe = <T>(channel: string, cb: (payload: T) => void): (() => void) => client.on(channel, (payload) => cb(payload as T));
@@ -81,6 +81,7 @@ export function createCwApi(client: ServerClient, desktop: DesktopApi, shutdownH
   }
 
   return {
+    topics,
     getStartupState: () => call<StartupState>("startup.state"),
     recovery: {
       openDataDir: async () => {
@@ -222,7 +223,6 @@ export function createCwApi(client: ServerClient, desktop: DesktopApi, shutdownH
     watchGitHubRuns: (refs) => callVoid("github.watchRuns", { refs }),
     onGitHubRunsChanged: (cb) => subscribe("github.runsChanged", cb),
     onGitHubCiActivity: (cb) => client.on("github.ciActivity", () => cb()),
-    subscribeTopics: (topics) => client.subscribe(topics),
     cloneGitHubRepo: (repo) => call<Project>("github.clone", { repo }),
     getProjectGitHubRepos: () => call<ProjectGitHubRepo[]>("prs.projectRepos"),
     linkSessionPr: (sessionId, link) => call<Session>("sessions.linkPr", { sessionId, link }),

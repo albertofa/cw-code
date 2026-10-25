@@ -88,7 +88,7 @@ function installBridge(): void {
       return () => {};
     },
     onSessionTitle: noop,
-    subscribeTopics: () => () => {},
+    topics: { acquire: () => () => {} },
     shutdown: { onRequested: noop, onExpired: noop },
     onWindowMaximized: noop,
     isWindowMaximized: async () => false
