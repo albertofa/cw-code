@@ -64,6 +64,11 @@ export function createWatchControls(hub: TopicHub, services: Services, { clientI
     }
   };
 
+  const openTurnChanges = (topic: string): void => {
+    const sessionId = topicId(topic, THREAD_TOPIC_PREFIX);
+    if (sessionId) services.turnChanges.opened(sessionId);
+  };
+
   const providers: TopicProvider[] = [
     services.gitTopic,
     services.filesTopic,
@@ -86,9 +91,17 @@ export function createWatchControls(hub: TopicHub, services: Services, { clientI
       onSubscribe: (clientId, topic) => {
         pushPendingRequests(clientId, topic);
         services.prStore.reevaluate();
+        openTurnChanges(topic);
       },
-      onUnsubscribe: () => services.prStore.reevaluate(),
-      resync: () => services.prStore.reevaluate()
+      onUnsubscribe: (_clientId, topic) => {
+        services.prStore.reevaluate();
+        const sessionId = topicId(topic, THREAD_TOPIC_PREFIX);
+        if (sessionId) services.turnChanges.closed(sessionId);
+      },
+      resync: (topic) => {
+        services.prStore.reevaluate();
+        openTurnChanges(topic);
+      }
     })
   ];
 

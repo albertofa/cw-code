@@ -32,6 +32,7 @@ import { SkillsStore } from "../skills/SkillsStore.js";
 import { GitTopic } from "../sourceControl/GitTopic.js";
 import { SourceControlService } from "../sourceControl/SourceControlService.js";
 import { ThreadService } from "../threads/ThreadService.js";
+import { TurnChangesModel } from "../threads/TurnChangesModel.js";
 import { TurnService } from "../threads/TurnService.js";
 import type { TopicHub } from "../topics/TopicHub.js";
 import { AccountUsageService } from "../usage/AccountUsageService.js";
@@ -69,6 +70,7 @@ export interface Services {
   turns: TurnService;
   autoFollowUp: AutoFollowUpEngine;
   sessionPrs: SessionPrModel;
+  turnChanges: TurnChangesModel;
   sidebar: SidebarService;
 }
 
@@ -106,6 +108,11 @@ function wireSessionPrs({ sessionPrs, threads, prStore, sourceControl, autoFollo
     (onChange) => sourceControl.onPublished(onChange),
     (onChange) => autoFollowUp.onChanged(onChange)
   );
+}
+
+function wireTurnChanges({ turnChanges, threads, sessions }: Services): void {
+  threads.registerExtras((sessionId) => turnChanges.extras(sessionId));
+  sessions.onSnapshotChanged((sessionId) => turnChanges.snapshotChanged(sessionId));
 }
 
 function wireSidebar({ sidebar, threads, sourceControl, prStore, autoFollowUp, preferences }: Services): void {
@@ -311,6 +318,13 @@ export function createServices(stores: { sessionStore: SessionStore; settingsSto
       sessions.markPrSeen(sessionId, ref, headSha, seenAt);
     }
   });
+  const turnChanges = new TurnChangesModel({
+    sessions: () => sessions.listAllSessions(),
+    projects: () => sessions.listProjects(),
+    isOpen: (sessionId) => threads.isOpen(sessionId),
+    turnChanges: (sessionId) => sessions.turnChanges(sessionId),
+    refresh: (sessionId) => threads.refreshExtras(sessionId)
+  });
   const sidebar = new SidebarService(hooks.topics, {
     sessions: () => sessions.listAllSessions(),
     projects: () => sessions.listProjects(),
@@ -383,12 +397,14 @@ export function createServices(stores: { sessionStore: SessionStore; settingsSto
     turns,
     autoFollowUp,
     sessionPrs,
+    turnChanges,
     sidebar
   };
   wireServiceEvents(services, hooks);
   wireAutoFollowUp(services);
   wireUsage(services);
   wireSessionPrs(services);
+  wireTurnChanges(services);
   wireSidebar(services);
   wireGitTopic(services);
   wireFilesTopic(services);

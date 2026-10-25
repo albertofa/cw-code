@@ -182,30 +182,6 @@
   flex: none;
 }
 
-.turn-changes-icon {
-  position: relative;
-  flex: none;
-  display: inline-flex;
-  align-items: center;
-  border: 0;
-  border-radius: var(--r-sm);
-  background: transparent;
-  color: var(--muted);
-  padding: 3px;
-  cursor: pointer;
-}
-
-.turn-changes-icon::before {
-  content: "";
-  position: absolute;
-  inset: -3px;
-}
-
-.turn-changes-icon:hover {
-  background: var(--hover);
-  color: var(--text);
-}
-
 .turn-undo-confirm p {
   margin: 0 0 8px;
 }

@@ -1,13 +1,12 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
-import { ChevronRight, FileDiff, RefreshCw, RotateCcw, TriangleAlert } from "lucide-react";
+import { ChevronRight, FileDiff, RotateCcw, TriangleAlert } from "lucide-react";
 import type { TurnChanges, TurnFileChange, TurnSnapshot } from "../cw.js";
 import { useConfirm } from "./ConfirmDialog.js";
 import { useNotifs } from "./Notifications.js";
 import { FileIcon } from "./fileIcons.js";
 import { ipcErrorMessage, isFileNotFound } from "./ipcError.js";
-import { sameRootSessionIds, snapshotKey, splitRepoPath, turnTotals } from "./turnChanges.js";
-import { useAppStore } from "../stores/appStore.js";
+import { splitRepoPath, turnTotals } from "./turnChanges.js";
 import { isThreadBusy, useThreadEntry } from "./useThread.js";
 import { buffersForPaths, isDirtyBuffer, useEditorBuffers, type EditorBuffer } from "../stores/editorBuffers.js";
 import { usePanelStore } from "../stores/panelStore.js";
@@ -19,40 +18,9 @@ const CHANGE_BADGE: Record<TurnFileChange["change"], string> = {
   modified: "M"
 };
 
-const CACHE_TTL_MS = 30_000;
 const TURN_RUNNING = "A turn is running";
 
-const changesCache = new Map<string, { at: number; changes: TurnChanges | null }>();
-
-type LoadState =
-  | { status: "loading" }
-  | { status: "ready"; changes: TurnChanges | null }
-  | { status: "error"; message: string };
-
 type UndoPhase = "idle" | "checking" | "undoing";
-
-function cacheId(sessionId: string, key: string): string {
-  return `${sessionId}\n${key}`;
-}
-
-function cachedChanges(sessionId: string, key: string): TurnChanges | null | undefined {
-  const entry = changesCache.get(cacheId(sessionId, key));
-  if (!entry || Date.now() - entry.at > CACHE_TTL_MS) return undefined;
-  return entry.changes;
-}
-
-function cacheChanges(sessionId: string, key: string, changes: TurnChanges | null): void {
-  const now = Date.now();
-  for (const [id, entry] of changesCache) {
-    if (now - entry.at > CACHE_TTL_MS) changesCache.delete(id);
-  }
-  changesCache.set(cacheId(sessionId, key), { at: now, changes });
-}
-
-function initialState(sessionId: string, key: string): LoadState {
-  const cached = cachedChanges(sessionId, key);
-  return cached === undefined ? { status: "loading" } : { status: "ready", changes: cached };
-}
 
 function dirtyPaths(buffers: Record<string, EditorBuffer>, sessionIds: readonly string[], files: readonly TurnFileChange[]): string[] {
   const matched = buffersForPaths(buffers, sessionIds, files.map((file) => file.path));
@@ -97,16 +65,11 @@ function plural(count: number, word: string): string {
   return `${count} ${word}${count === 1 ? "" : "s"}`;
 }
 
-function Warning({ children, onRetry }: { children: ReactNode; onRetry?: () => void }) {
+function Warning({ children }: { children: ReactNode }) {
   return (
     <div className="turn-changes-warn" role="status">
       <TriangleAlert size={13} aria-hidden="true" />
       <span className="turn-changes-warn-text">{children}</span>
-      {onRetry && (
-        <button type="button" className="turn-changes-icon" onClick={onRetry} title="Retry" aria-label="Retry loading changes">
-          <RefreshCw size={12} aria-hidden="true" />
-        </button>
-      )}
     </div>
   );
 }
@@ -132,44 +95,15 @@ function UndoMessage({ files }: { files: TurnFileChange[] }) {
 }
 
 export function TurnChangesCard({ sessionId, snapshot }: { sessionId: string; snapshot: TurnSnapshot }) {
-  const key = snapshotKey(snapshot);
-  const hasStart = Boolean(snapshot.sha);
-  const [state, setState] = useState<LoadState>(() => initialState(sessionId, key));
-  const [refresh, setRefresh] = useState(0);
   const [phase, setPhase] = useState<UndoPhase>("idle");
   const [undoneLocally, setUndoneLocally] = useState(false);
   const [expanded, setExpanded] = useState(false);
   const turnRunning = useThreadEntry(sessionId, "turn") != null;
-  const rootIdsKey = useAppStore((s) => sameRootSessionIds(s.sessionsByProject, s.projects, sessionId).join("\n"));
-  const rootIds = rootIdsKey.split("\n");
+  const entry = useThreadEntry(sessionId, "turnChanges") ?? null;
+  const rootIds = entry?.rootSessionIds ?? [sessionId];
   const { confirm, dialog } = useConfirm();
 
-  useEffect(() => {
-    if (!hasStart) return;
-    if (refresh === 0) {
-      const cached = cachedChanges(sessionId, key);
-      if (cached !== undefined) {
-        setState({ status: "ready", changes: cached });
-        return;
-      }
-    }
-    let active = true;
-    window.cw
-      .getTurnChanges(sessionId)
-      .then((changes) => {
-        cacheChanges(sessionId, key, changes);
-        if (active) setState({ status: "ready", changes });
-      })
-      .catch((err: unknown) => {
-        if (active) setState({ status: "error", message: ipcErrorMessage(err) });
-      });
-    return () => {
-      active = false;
-    };
-  }, [sessionId, key, hasStart, refresh]);
-
-  const refetch = () => setRefresh((value) => value + 1);
-  const changes = state.status === "ready" && state.changes?.turnId === snapshot.turnId ? state.changes : null;
+  const changes = entry?.changes?.turnId === snapshot.turnId ? entry.changes : null;
   const undone = snapshot.undoneAt !== undefined || undoneLocally;
   const dirtyKey = useEditorBuffers((s) => (changes ? dirtyPaths(s.buffers, rootIds, changes.files).join("\n") : ""));
   const dirty = dirtyKey ? dirtyKey.split("\n") : [];
@@ -188,14 +122,10 @@ export function TurnChangesCard({ sessionId, snapshot }: { sessionId: string; sn
     try {
       fresh = await window.cw.getTurnChanges(sessionId);
     } catch (err) {
-      const message = ipcErrorMessage(err);
-      setState({ status: "error", message });
-      useNotifs.getState().push({ kind: "error", title: "Could not undo this turn", message });
+      useNotifs.getState().push({ kind: "error", title: "Could not undo this turn", message: ipcErrorMessage(err) });
       setPhase("idle");
       return;
     }
-    cacheChanges(sessionId, key, fresh);
-    setState({ status: "ready", changes: fresh });
     const endSha = fresh?.endSha;
     if (!fresh || !endSha || fresh.turnId !== snapshot.turnId || currentBlockers(fresh).length > 0) {
       setPhase("idle");
@@ -233,7 +163,6 @@ export function TurnChangesCard({ sessionId, snapshot }: { sessionId: string; sn
       useNotifs.getState().push({ kind: "error", title: "Could not undo this turn", message: ipcErrorMessage(err) });
     } finally {
       setPhase("idle");
-      refetch();
     }
   };
 
@@ -242,8 +171,8 @@ export function TurnChangesCard({ sessionId, snapshot }: { sessionId: string; sn
   let body: ReactNode = null;
   if (snapshot.error) {
     body = <Warning>No change summary for this turn: the snapshot failed ({snapshot.error})</Warning>;
-  } else if (state.status === "error") {
-    body = <Warning onRetry={refetch}>Could not load this turn’s changes: {state.message}</Warning>;
+  } else if (entry?.error) {
+    body = <Warning>Could not load this turn’s changes: {entry.error}</Warning>;
   } else if (changes && changes.files.length === 0 && snapshot.endError) {
     body = <Warning>End-of-turn snapshot failed: {snapshot.endError}</Warning>;
   } else if (changes && changes.files.length > 0) {

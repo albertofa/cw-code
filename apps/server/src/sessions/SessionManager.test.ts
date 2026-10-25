@@ -1554,6 +1554,27 @@ describe("SessionManager", () => {
     manager.dispose();
   });
 
+  it("announces snapshot changes after the end snapshot is written and after an undo", async () => {
+    const { manager, fake, project } = makeGitSandboxManager("cw-turn-snapshot-listener-");
+    const session = await manager.createSession(project.id, "claude", { baseBranch: "main" });
+    const worktreePath = session.worktreePath;
+    if (!worktreePath) throw new Error("expected a worktree-backed session");
+    const changed: string[] = [];
+    manager.onSnapshotChanged((sessionId) => changed.push(sessionId));
+
+    const turnId = await manager.startTurn(session.id, "edit");
+    writeFileSync(join(worktreePath, "created.txt"), "created", "utf8");
+    expect(changed).toEqual([]);
+    fake.completeAll();
+    const endSha = (await manager.turnChanges(session.id))?.endSha;
+    if (!endSha) throw new Error("expected an end snapshot");
+    expect(changed).toEqual([session.id]);
+
+    await manager.undoTurn(session.id, turnId, endSha);
+    expect(changed).toEqual([session.id, session.id]);
+    manager.dispose();
+  });
+
   it("treats nested project roots as shared by the undo guard, but not sibling folders with a common prefix", async () => {
     const { manager, fake, project, repository } = makeGitSandboxManager("cw-turn-nested-root-");
     const nestedRoot = join(repository, "sub");

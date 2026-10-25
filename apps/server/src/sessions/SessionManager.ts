@@ -238,6 +238,7 @@ export class SessionManager {
   private drivers: Record<DriverKind, CliDriver>;
   private readonly driverActivityListeners = new Set<() => void>();
   private readonly checkoutListeners = new Set<(change: CheckoutChange) => void>();
+  private readonly snapshotListeners = new Set<(sessionId: string) => void>();
   private readonly usageRecordedListeners = new Set<(sessionId: string) => void>();
   private unwatchDriverActivity: () => void = () => {};
   private driverFactory: DriverFactory;
@@ -323,6 +324,11 @@ export class SessionManager {
   onCheckoutChanged(listener: (change: CheckoutChange) => void): () => void {
     this.checkoutListeners.add(listener);
     return () => this.checkoutListeners.delete(listener);
+  }
+
+  onSnapshotChanged(listener: (sessionId: string) => void): () => void {
+    this.snapshotListeners.add(listener);
+    return () => this.snapshotListeners.delete(listener);
   }
 
   private notifyCheckoutChanged(change: CheckoutChange): void {
@@ -1960,6 +1966,7 @@ export class SessionManager {
     if (snapshot?.turnId !== turnId || snapshot.endedAt !== undefined || this.endSnapshots.has(turnId)) return;
     if (!snapshot.sha) {
       this.store.updateSession(sessionId, { lastTurnSnapshot: { ...snapshot, endedAt: Date.now() } });
+      notifyAll(this.snapshotListeners, "snapshot", sessionId);
       return;
     }
     const task = (settled ? settled() : Promise.resolve())
@@ -1986,6 +1993,7 @@ export class SessionManager {
     if (current?.turnId !== turnId) return;
     this.store.updateSession(sessionId, { lastTurnSnapshot: { ...current, ...result, endedAt } });
     this.emitSession(sessionId);
+    notifyAll(this.snapshotListeners, "snapshot", sessionId);
   }
 
   private async driverSettled(driver: CliDriver, sessionId: string): Promise<void> {
@@ -2109,7 +2117,10 @@ export class SessionManager {
       return { turnId, files: restored, endSha, undoable: false, reason: "This turn was already undone", conflicts: [] };
     } finally {
       this.pendingUndos.delete(sessionId);
-      if (touched) this.notifySessionCheckoutChanged(sessionId, []);
+      if (touched) {
+        this.notifySessionCheckoutChanged(sessionId, []);
+        notifyAll(this.snapshotListeners, "snapshot", sessionId);
+      }
     }
   }
 
