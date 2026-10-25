@@ -8,6 +8,7 @@ import { GitService } from "../fs/GitService.js";
 import { configureGitHubAccounts, defaultGitHubAccounts } from "../github/GitHubAccounts.js";
 import { githubCliBinary } from "../github/githubAccount.js";
 import { GitHubSearchService } from "../github/GitHubSearchService.js";
+import { GitHubViews } from "../github/GitHubViews.js";
 import { PrTracker } from "../github/PrTracker.js";
 import { snapshotOf } from "../github/prTracking.js";
 import { PullRequestService } from "../github/PullRequestService.js";
@@ -47,6 +48,7 @@ export interface Services {
   githubSearch: GitHubSearchService;
   runs: RunsService;
   runWatcher: RunWatcher;
+  githubViews: GitHubViews;
   ptys: PtyPool;
   accountUsage: AccountUsageService;
   shutdown: ShutdownCoordinator;
@@ -93,8 +95,12 @@ function wireSidebar({ sidebar, threads, sourceControl, prStore, autoFollowUp, p
   );
 }
 
+function wireGitHubViews({ githubViews, prStore }: Services): void {
+  prStore.onChanged(() => githubViews.reevaluate());
+}
+
 function wireServiceEvents(
-  { sessions, sourceControl, prTracker, prStore, ptys, runWatcher, threads, autoFollowUp, sidebar }: Services,
+  { sessions, sourceControl, prTracker, prStore, ptys, runWatcher, githubViews, threads, autoFollowUp, sidebar }: Services,
   { emit, dropTopic }: ServiceHooks
 ): void {
   sessions.setEmitter((sessionId, event) => {
@@ -115,6 +121,7 @@ function wireServiceEvents(
     emit("session.updated", session);
     prTracker.setTracked(sessions.trackedPrRefs());
     prStore.onSessionsChanged();
+    githubViews.reevaluate();
     autoFollowUp.reevaluate();
     sidebar.invalidate();
   });
@@ -127,8 +134,14 @@ function wireServiceEvents(
     emit("pty.exit", { ptyId, token, exitCode });
     if (!ptys.has(ptyId)) dropTopic(ptyTopic(ptyId));
   });
-  runWatcher.onRunsChanged = (changed) => emit("github.runsChanged", changed);
-  runWatcher.onCiActivity = () => emit("github.ciActivity");
+  runWatcher.onRunsChanged = (changed) => {
+    emit("github.runsChanged", changed);
+    githubViews.runsChanged(changed);
+  };
+  runWatcher.onCiActivity = () => {
+    emit("github.ciActivity");
+    githubViews.ciActivity();
+  };
 }
 
 export function createServices(stores: { sessionStore: SessionStore; settingsStore: SettingsStore }, hooks: ServiceHooks): Services {
@@ -247,6 +260,24 @@ export function createServices(stores: { sessionStore: SessionStore; settingsSto
     publishAttention: (count) => appTopic.setAttention(count),
     watchWorkingSet: (sessionIds) => sourceControl.setWorkingSet(sessionIds)
   });
+  const githubSearch = new GitHubSearchService(() => sessions.getSettings());
+  const runs = new RunsService(() => sessions.getSettings());
+  const runWatcher = new RunWatcher(() => sessions.getSettings());
+  const githubViews = new GitHubViews(hooks.topics, {
+    settings: () => sessions.getSettings(),
+    sessions: () => sessions.listAllSessions(),
+    context: () => prStore.context(),
+    inbox: () => prStore.inbox(),
+    summaryLookup: () => prStore.summaryLookup(),
+    ensureContext: () => prStore.refreshProjectRepos(),
+    refreshInbox: (force) => prStore.refreshInbox(force),
+    searchPrs: (query, countBase, force) => githubSearch.search("pr", query, countBase, force),
+    searchIssues: (query, countBase, force) => githubSearch.search("issue", query, countBase, force),
+    fetchRuns: (sources, force) => runs.runs(sources, force),
+    counts: (kind, queries) => githubSearch.counts(kind, queries),
+    watchRuns: (refs) => runWatcher.watch(refs),
+    setRunWatchActive: (active) => runWatcher.setActive(active)
+  });
   const services: Services = {
     sessions,
     skills: new SkillsStore(),
@@ -257,9 +288,10 @@ export function createServices(stores: { sessionStore: SessionStore; settingsSto
     prTracker,
     prStore,
     sourceControl,
-    githubSearch: new GitHubSearchService(() => sessions.getSettings()),
-    runs: new RunsService(() => sessions.getSettings()),
-    runWatcher: new RunWatcher(() => sessions.getSettings()),
+    githubSearch,
+    runs,
+    runWatcher,
+    githubViews,
     ptys,
     accountUsage: new AccountUsageService(() => sessions.driversForProbe()),
     shutdown,
@@ -274,5 +306,6 @@ export function createServices(stores: { sessionStore: SessionStore; settingsSto
   wireServiceEvents(services, hooks);
   wireAutoFollowUp(services);
   wireSidebar(services);
+  wireGitHubViews(services);
   return services;
 }

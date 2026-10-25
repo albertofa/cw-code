@@ -48,7 +48,7 @@ const FAILED_CONCLUSIONS: ReadonlySet<RunConclusion> = new Set<RunConclusion>(["
 
 const NO_PR_LOOKUP: PrLookup = () => undefined;
 
-function sameLogin(a: string | null | undefined, b: string | null | undefined): boolean {
+export function sameLogin(a: string | null | undefined, b: string | null | undefined): boolean {
   return !!a && !!b && a.toLowerCase() === b.toLowerCase();
 }
 
@@ -56,8 +56,17 @@ function sameRepo(a: { host: string; owner: string; repo: string }, b: { host: s
   return sameLogin(a.host, b.host) && sameLogin(a.owner, b.owner) && sameLogin(a.repo, b.repo);
 }
 
-function isRunFailed(run: Pick<WorkflowRunSummary, "status" | "conclusion">): boolean {
+export function isRunFailed(run: Pick<WorkflowRunSummary, "status" | "conclusion">): boolean {
   return run.status === "completed" && run.conclusion !== null && FAILED_CONCLUSIONS.has(run.conclusion);
+}
+
+export function involvesViewer(pr: PrSummary, viewer: string | null): boolean {
+  return (
+    pr.viewerIsAuthor ||
+    pr.reviewRequestedFromViewer ||
+    pr.assignees.some((login) => sameLogin(login, viewer)) ||
+    pr.reviewers.some((reviewer) => sameLogin(reviewer.login, viewer))
+  );
 }
 
 export function prBucket(pr: PrSummary): PrBucket {
@@ -149,12 +158,12 @@ function latestSession(sessions: SessionMeta[]): SessionMeta | null {
   return sessions.reduce<SessionMeta | null>((latest, session) => (latest === null || session.updatedAt > latest.updatedAt ? session : latest), null);
 }
 
-function sessionHasUnseenIssue(issue: IssueSummary, session: SessionMeta): boolean {
+export function sessionHasUnseenIssue(issue: IssueSummary, session: SessionMeta): boolean {
   const link = issueLinkFor(session, issue.ref);
   return link !== undefined && issue.updatedAt > link.lastSeenAt;
 }
 
-function sessionHasUnseenPr(pr: PrSummary, session: SessionMeta): boolean {
+export function sessionHasUnseenPr(pr: PrSummary, session: SessionMeta): boolean {
   const link = linkFor(session, pr.ref);
   return link !== undefined && hasUnseen(pr, link);
 }

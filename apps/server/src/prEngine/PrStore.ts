@@ -1,5 +1,6 @@
 import type {
   AppSettings,
+  GitHubContext,
   PrDetail,
   PrDetailEntry,
   PrInboxResult,
@@ -131,6 +132,14 @@ export class PrStore {
 
   detail(key: string): PrDetail | undefined {
     return this.details.get(key);
+  }
+
+  context(): GitHubContext {
+    return githubContext(this.repos, this.viewer());
+  }
+
+  inbox(): PrInboxResult | null {
+    return this.inboxResult;
   }
 
   loadDetail(ref: PrRef): Promise<PrDetail> {
@@ -523,7 +532,7 @@ export class PrStore {
       viewer,
       lookupPr: (ref) => lookup.get(prKey(ref))
     };
-    const data: Record<string, unknown> = { inbox: this.inboxState(), context: githubContext(this.repos, viewer) };
+    const data: Record<string, unknown> = { inbox: this.inboxState(), context: this.context() };
     for (const [key, summary] of lookup) {
       data[`summary/${key}`] = this.summaryEntry(key, summary);
       data[`rel/${key}`] = this.relationsFor(key, summary, context);

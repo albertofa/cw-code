@@ -1,4 +1,4 @@
-import type { SettingsPatch } from "@cw-code/contracts";
+import type { AppSettings, SettingsPatch } from "@cw-code/contracts";
 import type { ServerApp } from "../app/ServerApp.js";
 import type { CliVersionCheck } from "@cw-code/contracts";
 import { checkCliVersion } from "../cliVersions.js";
@@ -7,13 +7,25 @@ import { configuredCliBinaryPath } from "../settings/settingsUtils.js";
 import type { Router } from "../transport/Router.js";
 import { handle, requireOwner } from "./shared.js";
 
+export function commitSettings(app: ServerApp, patch: SettingsPatch): AppSettings {
+  const { sessions, appTopic, prStore, autoFollowUp, sidebar, githubViews } = app.requireServices();
+  const saved = sessions.setSettings(patch);
+  appTopic.setSettings(saved);
+  prStore.onSettingsChanged();
+  autoFollowUp.reevaluate();
+  sidebar.invalidate();
+  githubViews.onSettingsChanged();
+  app.emit("settings.changed", saved);
+  return saved;
+}
+
 export function registerSettingsHandlers(router: Router, app: ServerApp): void {
   const services = () => app.requireServices();
   handle(router, "settings.get", () => services().sessions.getSettings());
   handle(router, "settings.prWorkflowDefaults", () => defaultPrWorkflows());
   handle<SettingsPatch>(router, "settings.set", async (patch, ctx) => {
     if (patch.serverBindHost !== undefined) requireOwner(ctx, "changing serverBindHost");
-    const { sessions, accountUsage, appTopic, harnessMonitor } = services();
+    const { sessions, accountUsage, harnessMonitor } = services();
     const current = sessions.getSettings();
     const normalized = { ...patch };
     const checks: Array<Promise<CliVersionCheck>> = [];
@@ -48,12 +60,7 @@ export function registerSettingsHandlers(router: Router, app: ServerApp): void {
       throw new Error(`${name} CLI could not be verified at '${failed.binaryPath}'. ${reason}`);
     }
     if (patch.opencodeGoUsage !== undefined) accountUsage.invalidate("opencode");
-    const saved = sessions.setSettings(normalized);
-    appTopic.setSettings(saved);
-    services().prStore.onSettingsChanged();
-    services().autoFollowUp.reevaluate();
-    services().sidebar.invalidate();
-    app.emit("settings.changed", saved);
+    const saved = commitSettings(app, normalized);
     if (checks.length > 0) void harnessMonitor.check("settings");
     return saved;
   });

@@ -1,4 +1,15 @@
-import type { GitHubKind, IssueSummary, PrSummary, RepoRef, RunConclusion, RunRef, RunSources, WorkflowRunSummary } from "@cw-code/contracts";
+import type {
+  GitHubKind,
+  GitHubTabBadge,
+  IssueSummary,
+  PrSummary,
+  ProjectGitHubRepo,
+  RepoRef,
+  RunRef,
+  RunSources,
+  SessionMeta,
+  WorkflowRunSummary
+} from "@cw-code/contracts";
 import {
   DEFAULT_REMOTE_SORT,
   DEFAULT_RUN_SORT,
@@ -16,6 +27,17 @@ import {
   type QueryToken
 } from "@cw-code/shared/githubQueryDsl";
 import { BUILTIN_VIEWS } from "@cw-code/shared/githubViews";
+import {
+  involvesViewer,
+  isRunFailed,
+  needsAttentionCount,
+  sameLogin,
+  sessionHasUnseenIssue,
+  sessionHasUnseenPr,
+  sessionsForIssue,
+  sessionsForPr,
+  sessionsForRun
+} from "../prEngine/subjectRelations.js";
 import { MAX_RUN_ORGS, MAX_RUN_REPOS } from "./runQueries.js";
 
 export interface LocalFilter {
@@ -50,7 +72,7 @@ export type BadgeKind = "issue" | "run";
 
 const OR_KEYS: ReadonlySet<string> = new Set(["repo", "org", "user", "author", "actor", "workflow", "branch", "event", "status"]);
 const DEFAULT_HOST = "github.com";
-const FAILED_CONCLUSIONS: ReadonlySet<RunConclusion> = new Set<RunConclusion>(["failure", "timed_out", "startup_failure"]);
+const MENTION_KEYS: ReadonlySet<string> = new Set(["mentions", "involves"]);
 
 const SCOPING_KEYS: ReadonlySet<string> = new Set([
   "author",
@@ -168,10 +190,6 @@ function loginFromQuery(value: string, viewer: string): string {
   if (value.toLowerCase() === ME) return viewer;
   if (value.toLowerCase().startsWith("app/")) return `${value.slice(4)}[bot]`;
   return value;
-}
-
-function sameLogin(a: string | null | undefined, b: string | null | undefined): boolean {
-  return !!a && !!b && a.toLowerCase() === b.toLowerCase();
 }
 
 function matchesQueryLogin(login: string | null, value: string, viewer: string): boolean {
@@ -308,15 +326,6 @@ export function badgeSearchKeys(clonedRepos: RepoRef[]): Record<BadgeKind, strin
   };
 }
 
-function involvesViewer(pr: PrSummary, viewer: string | null): boolean {
-  return (
-    pr.viewerIsAuthor ||
-    pr.reviewRequestedFromViewer ||
-    pr.assignees.some((login) => sameLogin(login, viewer)) ||
-    pr.reviewers.some((reviewer) => sameLogin(reviewer.login, viewer))
-  );
-}
-
 export function involvedPrKeysOf(inboxItems: PrSummary[], cachedPrs: PrSummary[], viewer: string | null): Set<string> {
   const keys = new Set<string>();
   for (const pr of inboxItems) keys.add(prKeyOf(pr.ref, pr.ref.number));
@@ -338,10 +347,98 @@ export function assignedOpenIssueCount(issues: IssueSummary[], viewer: string | 
   return issues.filter((issue) => issue.state === "OPEN" && issue.assignees.some((login) => sameLogin(login, viewer))).length;
 }
 
-function isRunFailed(run: Pick<WorkflowRunSummary, "status" | "conclusion">): boolean {
-  return run.status === "completed" && run.conclusion !== null && FAILED_CONCLUSIONS.has(run.conclusion);
-}
-
 export function failingInvolvedRunCount(runs: WorkflowRunSummary[], context: RunContext): number {
   return runs.filter((run) => isRunFailed(run) && runMatches(run, "involves:@me", context)).length;
+}
+
+export function prBadge(inboxItems: PrSummary[]): GitHubTabBadge {
+  return { count: needsAttentionCount(inboxItems), tone: "default" };
+}
+
+function isPr(item: PrSummary | IssueSummary): item is PrSummary {
+  return "headRefName" in item;
+}
+
+export function buildLocalContext(sessions: SessionMeta[], isCloned: (repo: RepoRef) => boolean): LocalContext {
+  return {
+    hasSession: (item) => (isPr(item) ? sessionsForPr(item, sessions) : sessionsForIssue(item, sessions)).length > 0,
+    isCloned,
+    isUnread: (item) =>
+      isPr(item) ? sessions.some((session) => sessionHasUnseenPr(item, session)) : sessions.some((session) => sessionHasUnseenIssue(item, session))
+  };
+}
+
+export function buildRunContext(viewer: string | null, involvedPrKeys: ReadonlySet<string>, sessions: SessionMeta[]): RunContext {
+  return {
+    viewer: viewer ?? "",
+    involvedPrKeys,
+    isDefaultBranchRun: (run) => run.onDefaultBranch,
+    hasSession: (run) => sessionsForRun(run, sessions).length > 0
+  };
+}
+
+export function clonedReposOf(repos: ProjectGitHubRepo[]): RepoRef[] {
+  return repos.filter((repo) => repo.host.toLowerCase() === DEFAULT_HOST).map((repo) => ({ host: repo.host, owner: repo.owner, repo: repo.repo }));
+}
+
+export function isClonedIn(repos: ProjectGitHubRepo[], ref: RepoRef): boolean {
+  return repos.some((repo) => sameLogin(repo.host, ref.host) && sameLogin(repo.owner, ref.owner) && sameLogin(repo.repo, ref.repo));
+}
+
+export function mentionsMode(query: string): boolean {
+  return tokenize(query).some((token) => token.kind === "qual" && !token.neg && MENTION_KEYS.has(token.key ?? "") && lowerValue(token) === ME);
+}
+
+export function viewSort(kind: GitHubKind, query: string): string {
+  const valid = sortKeysFor(kind);
+  let sort = kind === "run" ? DEFAULT_RUN_SORT : DEFAULT_REMOTE_SORT;
+  for (const token of tokenize(query)) {
+    if (token.kind === "qual" && !token.neg && token.key === "sort" && valid.includes(lowerValue(token))) sort = lowerValue(token);
+  }
+  return sort;
+}
+
+export function mergeRun(existing: WorkflowRunSummary, update: WorkflowRunSummary): WorkflowRunSummary {
+  return { ...existing, status: update.status, conclusion: update.conclusion, jobs: update.jobs, updatedAt: update.updatedAt };
+}
+
+export function applyRunUpdates(runs: WorkflowRunSummary[], updates: ReadonlyMap<number, WorkflowRunSummary>): WorkflowRunSummary[] {
+  if (!runs.some((run) => updates.has(run.ref.runId))) return runs;
+  return runs.map((run) => {
+    const update = updates.get(run.ref.runId);
+    return update ? mergeRun(run, update) : run;
+  });
+}
+
+export function reconcileRuns(incoming: WorkflowRunSummary[], known: Iterable<WorkflowRunSummary>): WorkflowRunSummary[] {
+  const newest = new Map<number, WorkflowRunSummary>();
+  for (const run of known) {
+    const seen = newest.get(run.ref.runId);
+    if (!seen || run.updatedAt > seen.updatedAt) newest.set(run.ref.runId, run);
+  }
+  return incoming.map((run) => {
+    const latest = newest.get(run.ref.runId);
+    return latest && latest.updatedAt > run.updatedAt ? mergeRun(run, latest) : run;
+  });
+}
+
+function liveRank(run: WorkflowRunSummary): number {
+  return run.status === "in_progress" ? 0 : 1;
+}
+
+function runRefKey(ref: RunRef): string {
+  return `${ref.host}/${ref.owner}/${ref.repo}#${ref.runId}`.toLowerCase();
+}
+
+export function watchedRunRefs(listings: WorkflowRunSummary[][], max: number): RunRef[] {
+  const unique = new Map<string, WorkflowRunSummary>();
+  for (const run of listings.flat()) {
+    const key = runRefKey(run.ref);
+    if (isLiveRun(run) && !unique.has(key)) unique.set(key, run);
+  }
+  return [...unique.values()]
+    .map((run, index) => ({ run, index }))
+    .sort((a, b) => liveRank(a.run) - liveRank(b.run) || b.run.updatedAt - a.run.updatedAt || a.index - b.index)
+    .slice(0, max)
+    .map(({ run }) => run.ref);
 }

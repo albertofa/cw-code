@@ -27,5 +27,7 @@ export function registerTopicProviders(hub: TopicHub, services: Services, deps: 
   hub.register(services.sidebar);
   for (const provider of watch.providers) hub.register(provider);
   hub.register(createPrsProvider(hub, services, deps));
+  hub.register(services.githubViews.metaProvider);
+  hub.register(services.githubViews.viewProvider);
   return { syncWatchedRuns: watch.syncWatchedRuns, applyFiles: watch.applyFiles };
 }

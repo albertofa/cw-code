@@ -429,6 +429,7 @@ export class ServerApp {
     this.services?.prTracker.start();
     this.services?.prStore.resume();
     this.services?.threads.resume();
+    this.services?.githubViews.resume();
     this.services?.autoFollowUp.reactivate();
     this.services?.sourceControl.start();
   }
@@ -464,6 +465,7 @@ export class ServerApp {
     services.prStore.dispose();
     services.threads.dispose();
     void services.sourceControl.dispose();
+    services.githubViews.dispose();
     services.runWatcher.dispose();
     void services.fileWatcher.dispose();
     services.sessions.dispose();

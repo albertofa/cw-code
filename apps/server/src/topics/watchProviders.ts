@@ -60,12 +60,7 @@ export function createWatchControls(hub: TopicHub, services: Services, { clientI
 
   const syncWatchedRuns = (): void => {
     const clientIds = [...hub.subscriberIds(GITHUB_RUNS_TOPIC)];
-    services.runWatcher.watch(clientInputs.runRefsUnion(clientIds, MAX_WATCHED_RUNS));
-  };
-
-  const stopWatchingRuns = (): void => {
-    services.runWatcher.setActive(false);
-    services.runWatcher.watch([]);
+    services.githubViews.setLegacyRunRefs(clientInputs.runRefsUnion(clientIds, MAX_WATCHED_RUNS));
   };
 
   const applyFiles = (sessionId: string): void => {
@@ -140,17 +135,13 @@ export function createWatchControls(hub: TopicHub, services: Services, { clientI
       }
     }),
     emptyStoreProvider(hub, ownsExact(GITHUB_RUNS_TOPIC), {
-      onAcquire: () => services.runWatcher.setActive(true),
       onSubscribe: syncWatchedRuns,
       onUnsubscribe: (clientId) => {
         clientInputs.clearRunRefs(clientId);
         syncWatchedRuns();
       },
-      onRelease: stopWatchingRuns,
-      resync: () => {
-        services.runWatcher.setActive(true);
-        syncWatchedRuns();
-      }
+      onRelease: syncWatchedRuns,
+      resync: syncWatchedRuns
     }),
     createThreadTopicProvider(services.threads, {
       onSubscribe: (clientId, topic) => {
