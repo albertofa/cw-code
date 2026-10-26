@@ -3,7 +3,7 @@ import { isSkillMentionList } from "@cw-code/shared/skillMentions";
 import type { ServerApp } from "../app/ServerApp.js";
 import { assertPrRef } from "../github/PullRequestService.js";
 import type { Router } from "../transport/Router.js";
-import { handle } from "./shared.js";
+import { handle, knownSessionId } from "./shared.js";
 
 interface TurnPrefs {
   model?: string;
@@ -20,7 +20,6 @@ interface StartTurnArgs {
   command?: CommandInvocation;
   skills?: string[];
   prRefs?: PrRef[];
-  finalReview?: { ref: PrRef; sha: string };
   acceptFolderHead?: string;
 }
 
@@ -31,26 +30,22 @@ interface DriverTarget {
 
 export function registerTurnHandlers(router: Router, app: ServerApp): void {
   const sessions = () => app.requireServices().sessions;
+  const turns = () => app.requireServices().turns;
   handle<StartTurnArgs>(router, "turns.start", (args) => {
     if (args.skills !== undefined && !isSkillMentionList(args.skills)) throw new Error("invalid skills");
     if (args.prRefs !== undefined && !Array.isArray(args.prRefs)) throw new Error("invalid prRefs");
     if (args.acceptFolderHead !== undefined && typeof args.acceptFolderHead !== "string") throw new Error("invalid acceptFolderHead");
     for (const ref of args.prRefs ?? []) assertPrRef(ref);
-    if (args.finalReview !== undefined) {
-      assertPrRef(args.finalReview.ref);
-      if (typeof args.finalReview.sha !== "string" || args.finalReview.sha === "") throw new Error("invalid finalReview sha");
-    }
-    return sessions().startTurn(args.sessionId, args.prompt, {
+    return turns().start(args.sessionId, args.prompt, {
       prefs: args.prefs,
       attachments: args.attachments,
       ...(args.command ? { command: args.command } : {}),
       ...(args.skills?.length ? { skills: args.skills } : {}),
       prRefs: args.prRefs,
-      ...(args.finalReview ? { finalReview: args.finalReview } : {}),
       ...(args.acceptFolderHead !== undefined ? { acceptFolderHead: args.acceptFolderHead } : {})
     });
   });
-  handle<{ turnId: string }>(router, "turns.interrupt", (args) => sessions().interrupt(args.turnId));
+  handle<{ sessionId: string }>(router, "turns.stop", (args) => turns().stop(knownSessionId(sessions(), args.sessionId)));
   handle<{ sessionId: string; requestId: string; decision: ApprovalDecision }>(router, "approvals.respond", (args) =>
     sessions().respondApproval(args.requestId, args.decision)
   );

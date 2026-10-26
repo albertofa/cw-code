@@ -47,8 +47,5 @@ export function isHarnessTabId(tab: DockableTabId): tab is DriverName {
 export function toolTabTitle(tab: DockableTabId): string {
   return TOOL_TABS.find((item) => item.id === tab)?.title ?? tab;
 }
-export function harnessLabel(driver: DriverName): string {
-  if (driver === "claude") return "Claude";
-  if (driver === "opencode") return "OpenCode";
-  return "Codex";
-}
+
+export { harnessLabel } from "@cw-code/shared/harnessLabels";

@@ -1,5 +1,5 @@
 import { homedir } from "node:os";
-import type { AppSettings, GitHubSearchResult, IssueDetail, IssueRef, IssueSummary, PrSummary } from "@cw-code/contracts";
+import type { AppSettings, IssueDetail, IssueRef, IssueSummary, PrSummary } from "@cw-code/contracts";
 import { authenticatedEnvironment, execText, execWithStatus, type ExecStatusResult } from "../fs/GitService.js";
 import { githubCliBinary, resolveGitHubAccount } from "./githubAccount.js";
 import { ISSUE_DETAIL_QUERY, ISSUE_SEARCH_QUERY, MAX_COUNT_QUERIES, countsQuery } from "./issueQueries.js";
@@ -7,6 +7,7 @@ import { parseCounts, parseIssueDetail, parseIssueSearch } from "./issueParsers.
 import { INBOX_SEARCH_LIMIT, PR_SEARCH_QUERY } from "./prQueries.js";
 import { graphqlOutcome, graphqlPartialFailure, parsePrSearch } from "./prParsers.js";
 import { assertIssueRef } from "./githubRefs.js";
+import type { GitHubSearchResult } from "./results.js";
 
 const SEARCH_CACHE_TTL_MS = 30_000;
 const REQUEST_TIMEOUT_MS = 20_000;

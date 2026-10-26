@@ -1,12 +1,15 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { BookmarkPlus, Pencil, Settings2, Trash2 } from "lucide-react";
 import type { GitHubKind } from "../cw.js";
-import { SAVED_VIEW_ICON, resolveViews, useGitHubStore, type GitHubView } from "../stores/githubStore.js";
+import { useGitHubStore, type GitHubView } from "../stores/githubStore.js";
 import { AnchoredPopover, type AnchorRect } from "./AnchoredPopover.js";
+import { errorMessage } from "./errorMessage.js";
 import { KIND_ICONS, NamedIcon } from "./GitHubIcon.js";
-import { KIND_LABELS, currentViewOf, isViewEdited } from "./githubViewModel.js";
+import { KIND_LABELS, KIND_ORDER, currentViewOf, isViewEdited } from "./githubViewModel.js";
+import { useGitHubViews } from "./useGitHubMeta.js";
 
 const COUNTED_KINDS: GitHubKind[] = ["pr", "issue"];
+const NO_VIEWS: GitHubView[] = [];
 
 function ViewIcon({ view, kind }: { view: GitHubView; kind: GitHubKind }) {
   if (view.kind === kind) return <NamedIcon name={view.icon} size={14} />;
@@ -26,14 +29,12 @@ function ViewText({ view }: { view: GitHubView }) {
 export function GitHubViewMenu({ anchor, initialSaving, onClose }: { anchor: AnchorRect; initialSaving: boolean; onClose: () => void }) {
   const kind = useGitHubStore((s) => s.kind);
   const tab = useGitHubStore((s) => s.tabs[s.kind]);
-  const org = useGitHubStore((s) => s.org);
-  const savedViews = useGitHubStore((s) => s.savedViews);
-  const viewCounts = useGitHubStore((s) => s.viewCounts);
+  const allViews = useGitHubViews();
   const selectView = useGitHubStore((s) => s.selectView);
   const saveView = useGitHubStore((s) => s.saveView);
   const renameView = useGitHubStore((s) => s.renameView);
   const deleteView = useGitHubStore((s) => s.deleteView);
-  const loadViewCounts = useGitHubStore((s) => s.loadViewCounts);
+  const [viewCounts, setViewCounts] = useState<Record<string, number | null>>({});
 
   const [saving, setSaving] = useState(initialSaving);
   const [name, setName] = useState("");
@@ -43,24 +44,36 @@ export function GitHubViewMenu({ anchor, initialSaving, onClose }: { anchor: Anc
   const [confirmingDeleteId, setConfirmingDeleteId] = useState<string | null>(null);
   const renamingRef = useRef<string | null>(null);
 
-  const views = useMemo(() => resolveViews(kind, org, savedViews), [kind, org, savedViews]);
+  const views = allViews?.[kind] ?? NO_VIEWS;
   const builtin = useMemo(() => views.filter((view) => !view.saved), [views]);
   const saved = useMemo(() => {
-    const all = savedViews.map((view): GitHubView => ({ ...view, icon: SAVED_VIEW_ICON, saved: true }));
-    return [...all.filter((view) => view.kind === kind), ...all.filter((view) => view.kind !== kind)];
-  }, [savedViews, kind]);
+    const order = [kind, ...KIND_ORDER.filter((candidate) => candidate !== kind)];
+    return order.flatMap((candidate) => (allViews?.[candidate] ?? NO_VIEWS).filter((view) => view.saved));
+  }, [allViews, kind]);
   const canSave = isViewEdited(currentViewOf(views, tab.viewId), tab.query);
 
-  const countedKinds = useMemo(
-    () => COUNTED_KINDS.filter((candidate) => candidate === kind || savedViews.some((view) => view.kind === candidate)),
-    [kind, savedViews]
-  );
+  const countedKey = COUNTED_KINDS.filter((candidate) => candidate === kind || saved.some((view) => view.kind === candidate)).join(",");
   useEffect(() => {
-    for (const counted of countedKinds) void loadViewCounts(counted);
-  }, [countedKinds, loadViewCounts]);
+    let live = true;
+    for (const counted of countedKey.split(",").filter((value): value is GitHubKind => value !== "")) {
+      window.cw.githubViewCounts(counted).then(
+        (counts) => {
+          if (live) setViewCounts((current) => ({ ...current, ...counts }));
+        },
+        (err: unknown) => {
+          const message = errorMessage(err);
+          console.warn(`[github] view counts failed for ${counted}: ${message}`);
+          if (live) useGitHubStore.setState({ error: message });
+        }
+      );
+    }
+    return () => {
+      live = false;
+    };
+  }, [countedKey]);
 
   const pick = (view: GitHubView) => {
-    selectView(view.id);
+    selectView(view);
     onClose();
   };
 

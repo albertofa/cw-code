@@ -5,20 +5,16 @@ import { useAppStore, type ShutdownUiState } from "./appStore.js";
 import { useEditorBuffers, type DirtyBuffer } from "./editorBuffers.js";
 
 export const SHUTDOWN_PREPARE_TIMEOUT_MS = 10_000;
-const WAIT_POLL_MS = 2_000;
 
 interface ActiveFlow {
   reason: ShutdownReason;
   token: string | null;
   promise: Promise<{ token: string } | null>;
   resolve: (result: { token: string } | null) => void;
-  stopWaiting: (() => void) | null;
   preparing: boolean;
 }
 
 let active: ActiveFlow | null = null;
-let refreshing: Promise<void> | null = null;
-let refreshQueued = false;
 
 export function hasShutdownBlockers(assessment: ShutdownAssessment, dirty: DirtyBuffer[]): boolean {
   return assessment.activeTurns.length > 0 || assessment.terminals.length > 0 || dirty.length > 0;
@@ -41,15 +37,9 @@ function showUi(state: ShutdownUiState): void {
   useAppStore.setState({ shutdown: state });
 }
 
-function stopWaiting(): void {
-  active?.stopWaiting?.();
-  if (active) active.stopWaiting = null;
-}
-
 function finish(result: { token: string } | null, error?: { title: string; message: string }): void {
   const flow = active;
   if (!flow) return;
-  stopWaiting();
   active = null;
   useAppStore.setState({ shutdown: null });
   if (error) useNotifs.getState().push({ kind: "error", title: error.title, message: error.message, sticky: true });
@@ -66,7 +56,7 @@ export function runShutdownFlow(reason: ShutdownReason): Promise<{ token: string
   const promise = new Promise<{ token: string } | null>((settle) => {
     resolve = settle;
   });
-  active = { reason, token: null, promise, resolve, stopWaiting: null, preparing: false };
+  active = { reason, token: null, promise, resolve, preparing: false };
   void begin(active);
   return promise;
 }
@@ -120,11 +110,6 @@ async function prepareOnce(flow: ActiveFlow, assessment: ShutdownAssessment, sto
     });
     return;
   }
-  if ((result.ok || result.code === "timeout") && result.stoppedTurnIds.length > 0) {
-    const stopped = new Set(result.stoppedTurnIds);
-    const sessionIds = assessment.activeTurns.filter((turn) => stopped.has(turn.turnId)).map((turn) => turn.sessionId);
-    useAppStore.getState().markTurnsInterrupted(sessionIds);
-  }
   if (active !== flow) {
     if (result.ok || result.code === "timeout") void window.cw.shutdown.cancel(result.token).catch(() => {});
     return;
@@ -159,63 +144,32 @@ async function prepareOnce(flow: ActiveFlow, assessment: ShutdownAssessment, sto
   finish(null, { title: `${actionLabel(flow.reason)} cancelled`, message: "Another quit or restart is already in progress." });
 }
 
-export function refreshShutdownAssessment(): Promise<void> {
-  if (refreshing) {
-    refreshQueued = true;
-    return refreshing;
-  }
-  const run = (async () => {
-    try {
-      do {
-        refreshQueued = false;
-        await refreshOnce();
-      } while (refreshQueued);
-    } finally {
-      refreshing = null;
-    }
-  })();
-  refreshing = run;
-  return run;
-}
-
-async function refreshOnce(): Promise<void> {
+export async function applyShutdownAssessment(assessment: ShutdownAssessment): Promise<void> {
   const flow = active;
-  let assessment: ShutdownAssessment;
-  try {
-    assessment = await window.cw.shutdown.assess();
-  } catch {
-    return;
-  }
   const current = ui();
-  if (active !== flow || !flow || !current || (current.phase !== "review" && current.phase !== "waiting")) return;
+  if (!flow || !current || (current.phase !== "review" && current.phase !== "waiting")) return;
   const dirty = useEditorBuffers.getState().dirty();
   patchUi({ assessment, dirty });
-  if (current.phase === "waiting" && assessment.activeTurns.length === 0) {
-    if (active !== flow || flow.preparing || ui()?.phase !== "waiting") return;
-    stopWaiting();
-    if (dirty.length === 0) await prepare(flow, assessment, false);
-    else patchUi({ phase: "review" });
+  if (current.phase !== "waiting" || assessment.activeTurns.length > 0 || flow.preparing) return;
+  if (dirty.length === 0) await prepare(flow, assessment, false);
+  else patchUi({ phase: "review" });
+}
+
+export async function refreshShutdownAssessment(): Promise<void> {
+  try {
+    await applyShutdownAssessment(await window.cw.shutdown.assess());
+  } catch {
+    return;
   }
 }
 
 export function shutdownWait(): void {
-  const flow = active;
-  if (!flow || ui()?.phase !== "review") return;
+  if (ui()?.phase !== "review") return;
   patchUi({ phase: "waiting", error: null });
-  const unsubscribe = useAppStore.subscribe((state, previous) => {
-    if (state.busyTurns !== previous.busyTurns) void refreshShutdownAssessment();
-  });
-  const timer = window.setInterval(() => void refreshShutdownAssessment(), WAIT_POLL_MS);
-  flow.stopWaiting = () => {
-    unsubscribe();
-    window.clearInterval(timer);
-  };
-  void refreshShutdownAssessment();
 }
 
 export function shutdownStopWaiting(): void {
   if (ui()?.phase !== "waiting") return;
-  stopWaiting();
   patchUi({ phase: "review" });
 }
 

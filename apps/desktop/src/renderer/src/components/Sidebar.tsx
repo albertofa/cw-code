@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
 import { Activity, Archive, ArchiveRestore, Bell, ChartColumn, Check, ChevronDown, ChevronRight, ChevronUp, CircleCheck, CircleHelp, Clock, Copy, GitBranch, GitPullRequest, Hash, LoaderCircle, Pause, Pencil, Play, Plus, Search, Settings, ShieldAlert, Sparkles, X, type LucideIcon } from "lucide-react";
-import type { DriverName, PrSummary, Session, SessionStatus } from "../cw.js";
+import type { Attention, AttentionKind, BabysitState, NeedsYouSlot, SessionRow, SidebarLayout, SidebarReorderRequest, SidebarSection, SidebarTopicData } from "@cw-code/contracts";
+import { SIDEBAR_TOPIC } from "@cw-code/shared/topics";
+import type { DriverName, Session, SessionStatus } from "../cw.js";
 import { useAppStore } from "../stores/appStore.js";
 import { usePrStore } from "../stores/prStore.js";
 import { DriverIcon } from "./DriverIcon.js";
@@ -8,17 +10,15 @@ import { UpdateIndicator } from "./UpdateIndicator.js";
 import { useNotifs } from "./Notifications.js";
 import { getLastModel } from "./lastModel.js";
 import { ProjectMonogram } from "./ProjectMonogram.js";
-import { mergeAwayIds } from "./sidebarOrder.js";
-import { compareWorkingSet, isWorkingSetStatus } from "./workingSet.js";
 import { shortenHome } from "./pathDisplay.js";
 import { PrChipBadge } from "./PrChipBadge.js";
-import { babysitPhaseLabel, babysitStatusText, type BabysitState } from "./prSessionModel.js";
-import { useBabysitStates } from "./useBabysit.js";
-import { needsAttentionCount } from "./prInbox.js";
-import { anyLinkUnseen, displayChip, linksTitle, mostUrgentLink, sessionLinks } from "./sessionPrLinks.js";
-import { matchesQuickFilter, matchesSessionQuery, quickFilterCounts, toggleQuickFilter, type QuickFilter, type QuickFilterFacts } from "./sidebarQuickFilters.js";
-import { needsYouEntries, type Attention, type AttentionKind } from "./needsYou.js";
-import { useNeedsYou } from "./useNeedsYou.js";
+import { babysitPhaseLabel, babysitStatusText } from "./babysitLabels.js";
+import { sessionLinks } from "./sessionPrLinks.js";
+import { matchesQuickFilter, matchesSessionQuery, toggleQuickFilter, type QuickFilter, type QuickFilterFacts } from "./sidebarQuickFilters.js";
+import { useSessions, useSidebarLayout } from "./useSessions.js";
+import { useGitStatus } from "./useGit.js";
+import { ipcErrorMessage } from "./ipcError.js";
+import { peekTopic } from "../server/topics.js";
 import { useMenuPosition } from "./menuPosition.js";
 import { useConfirm } from "./ConfirmDialog.js";
 import { ARCHIVE_CONFIRM, restoreConfirm } from "./sessionLifecycle.js";
@@ -27,7 +27,8 @@ import appIcon from "../assets/console-c.svg";
 const IDLE_LIMIT = 4;
 const FLIP_MS_FALLBACK = 150;
 const FLIP_EASING_FALLBACK = "cubic-bezier(0.22, 1, 0.36, 1)";
-const ORDER_KEY = "cw:order:all";
+const PENDING_MOVE_MS = 1500;
+const EMPTY_LAYOUT: SidebarLayout = { needsYou: [], workingSet: [], main: [], resolved: [], quickCounts: { pr: 0, prAttention: 0 } };
 
 const ATTENTION_ACTION: Record<AttentionKind, { verb: string; Icon: LucideIcon }> = {
   approval: { verb: "Approve", Icon: ShieldAlert },
@@ -86,10 +87,6 @@ const DRIVER_LABEL: Record<DriverName, string> = {
   codex: "Codex"
 };
 
-function sessionHasUnseen(session: Session, summaryByKey: Map<string, PrSummary>): boolean {
-  return anyLinkUnseen(sessionLinks(session), summaryByKey);
-}
-
 const QUICK_FILTER_UI: Array<{ id: Exclude<QuickFilter, "all">; label: string; hint: string; Icon: LucideIcon }> = [
   { id: "pr", label: "Linked to a PR", hint: "Linked to a PR", Icon: GitPullRequest }
 ];
@@ -101,12 +98,38 @@ function quickFacts(s: Session): QuickFilterFacts {
 const HOVER_DELAY = 350;
 const HOVER_FALLBACK_HEIGHT = 280;
 
-type SidebarSection = "main" | "resolved";
+interface DropSlot {
+  targetId: string | null;
+  section: SidebarSection;
+  before: boolean;
+}
 
-interface SidebarOrder {
-  main: string[];
-  resolved: string[];
-  pinned: string[];
+interface DropMove {
+  dragged: { id: string; section: SidebarSection };
+  preview: DropSlot;
+}
+
+interface PendingMove extends DropMove {
+  settledLayout: SidebarLayout | null;
+}
+
+interface NeedsYouRow {
+  row: SessionRow;
+  slot: NeedsYouSlot;
+}
+
+function isAttentionSlot(slot: NeedsYouSlot): slot is AttentionKind {
+  return slot === "approval" || slot === "question" || slot === "update";
+}
+
+function currentLayout(): SidebarLayout | null {
+  return peekTopic<Partial<SidebarTopicData>>(SIDEBAR_TOPIC)?.data.layout ?? null;
+}
+
+function moveFailureTitle(move: DropMove, status: SessionStatus | undefined): string {
+  if (move.dragged.section === move.preview.section) return "Could not move session";
+  if (move.preview.section === "resolved") return "Could not update session";
+  return status === "resolved" ? "Could not restore session" : "Could not move session";
 }
 
 interface SlotRow {
@@ -156,8 +179,8 @@ function slotInRows(
 function previewPlacement(
   orderedMain: Session[],
   orderedResolved: Session[],
-  dragged: { id: string; section: SidebarSection } | null,
-  preview: { targetId: string | null; section: SidebarSection; before: boolean } | null,
+  dragged: DropMove["dragged"] | null,
+  preview: DropSlot | null,
   section: SidebarSection
 ): Session[] {
   if (!dragged || !preview) return section === "main" ? orderedMain : orderedResolved;
@@ -171,38 +194,11 @@ function previewPlacement(
   return base;
 }
 
-function readStoredOrder(key: string): SidebarOrder | null {
-  try {
-    const raw = window.localStorage.getItem(key);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw) as Partial<SidebarOrder>;
-    if (!Array.isArray(parsed.main) || !Array.isArray(parsed.resolved)) return null;
-    const pinned = Array.isArray(parsed.pinned) ? parsed.pinned.filter((id): id is string => typeof id === "string") : [];
-    return {
-      main: parsed.main.filter((id): id is string => typeof id === "string"),
-      resolved: parsed.resolved.filter((id): id is string => typeof id === "string"),
-      pinned,
-    };
-  } catch {
-    return null;
-  }
-}
-
-function writeStoredOrder(key: string, order: SidebarOrder): void {
-  try {
-    window.localStorage.setItem(key, JSON.stringify(order));
-  } catch {
-    return;
-  }
-}
-
-function orderByStored(current: Session[], ids: string[]): Session[] {
-  const index = new Map(ids.map((id, i) => [id, i]));
-  const known = current
-    .filter((s) => index.has(s.id))
-    .sort((a, b) => (index.get(a.id) ?? 0) - (index.get(b.id) ?? 0));
-  const unknown = current.filter((s) => !index.has(s.id)).sort((a, b) => b.updatedAt - a.updatedAt);
-  return [...known, ...unknown];
+function sessionsIn(ids: readonly string[], rowById: ReadonlyMap<string, SessionRow>): Session[] {
+  return ids.flatMap((id) => {
+    const row = rowById.get(id);
+    return row ? [row.session] : [];
+  });
 }
 
 function DebugMenu() {
@@ -277,9 +273,10 @@ export function Sidebar({ onOpenSkills, skillsOpen = false, hidden = false }: { 
   const hiddenRef = useRef(hidden);
   hiddenRef.current = hidden;
   const projects = useAppStore((s) => s.projects);
-  const sessionsByProject = useAppStore((s) => s.sessionsByProject);
+  const rows = useSessions();
+  const layout = useSidebarLayout() ?? EMPTY_LAYOUT;
   const activeSessionId = useAppStore((s) => s.activeSessionId);
-  const gitStatusBySession = useAppStore((s) => s.gitStatusBySession);
+  const activeGitStatus = useGitStatus(activeSessionId);
   const homeDir = useAppStore((s) => s.homeDir);
   const pendingDriver = useAppStore((s) => s.pendingDriver);
   const selectStoreSession = useAppStore((s) => s.selectSession);
@@ -291,9 +288,6 @@ export function Sidebar({ onOpenSkills, skillsOpen = false, hidden = false }: { 
   const restoreSession = useAppStore((s) => s.restoreSession);
   const { confirm, dialog: confirmDialog } = useConfirm();
   const shortPath = (value: string): string => shortenHome(value, homeDir ?? undefined);
-  const inbox = usePrStore((s) => s.inbox);
-  const { attentionOf, babysitPhaseOf, summaryByKey } = useNeedsYou();
-  const babysitOf = useBabysitStates();
   const mainView = usePrStore((s) => s.mainView);
   const openGitHub = usePrStore((s) => s.openGitHub);
   const openSessionView = usePrStore((s) => s.openSessionView);
@@ -306,11 +300,11 @@ export function Sidebar({ onOpenSkills, skillsOpen = false, hidden = false }: { 
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameDraft, setRenameDraft] = useState("");
   const [dragged, setDragged] = useState<{ id: string; section: SidebarSection; title: string } | null>(null);
-  const [preview, setPreview] = useState<{ targetId: string | null; section: SidebarSection; before: boolean } | null>(null);
+  const [preview, setPreview] = useState<DropSlot | null>(null);
+  const [pendingMove, setPendingMove] = useState<PendingMove | null>(null);
   const [landedId, setLandedId] = useState<string | null>(null);
   const [idleShowAll, setIdleShowAll] = useState(false);
   const [resolvedOpen, setResolvedOpen] = useState(false);
-  const [storedOrder, setStoredOrder] = useState<SidebarOrder | null>(() => readStoredOrder(ORDER_KEY));
   const [hover, setHover] = useState<{ id: string; x: number; y: number } | null>(null);
   const hoverTimer = useRef<number | null>(null);
 
@@ -385,59 +379,56 @@ export function Sidebar({ onOpenSkills, skillsOpen = false, hidden = false }: { 
 
   const trimmedQuery = query.trim();
   const projectNameById = useMemo<Record<string, string>>(() => Object.fromEntries(projects.map((p) => [p.id, p.name])), [projects]);
-  const source = useMemo<Session[]>(() => Object.values(sessionsByProject).flat(), [sessionsByProject]);
-  const inboxItems = inbox?.items;
-  const branchOf = useCallback((s: Session): string | undefined => gitStatusBySession[s.id]?.branch ?? s.branch, [gitStatusBySession]);
-  const needsYouAll = useMemo(() => needsYouEntries(source, attentionOf, babysitPhaseOf), [source, attentionOf, babysitPhaseOf]);
-  const attentionIds = useMemo(() => new Set(needsYouAll.map((entry) => entry.session.id)), [needsYouAll]);
+  const rowById = useMemo(() => new Map(rows.map((row) => [row.session.id, row])), [rows]);
+  const source = useMemo<Session[]>(() => rows.map((row) => row.session), [rows]);
+  const branchOf = useCallback((s: Session): string | undefined => rowById.get(s.id)?.branch ?? undefined, [rowById]);
+  const babysitOf = useCallback((s: Session) => rowById.get(s.id)?.babysit ?? null, [rowById]);
+  const needsYouAll = useMemo<NeedsYouRow[]>(
+    () =>
+      layout.needsYou.flatMap((entry) => {
+        const row = rowById.get(entry.sessionId);
+        return row ? [{ row, slot: entry.slot }] : [];
+      }),
+    [layout.needsYou, rowById]
+  );
   const matchesQuery = useCallback(
     (s: Session) => matchesSessionQuery(trimmedQuery, { title: s.title, project: projectNameById[s.projectId] ?? "", branch: branchOf(s) }),
     [trimmedQuery, projectNameById, branchOf]
   );
-  const needsYouShown = useMemo(() => needsYouAll.filter((entry) => matchesQuery(entry.session)), [needsYouAll, matchesQuery]);
-  const workingSetAll = useMemo(
-    () => source.filter((s) => isWorkingSetStatus(s.status) && !attentionIds.has(s.id)).sort(compareWorkingSet),
-    [source, attentionIds]
-  );
-  const quickCounts = useMemo(() => quickFilterCounts(workingSetAll.map(quickFacts)), [workingSetAll]);
+  const needsYouShown = useMemo(() => needsYouAll.filter((entry) => matchesQuery(entry.row.session)), [needsYouAll, matchesQuery]);
+  const workingSetAll = useMemo(() => sessionsIn(layout.workingSet, rowById), [layout.workingSet, rowById]);
+  const quickCounts = layout.quickCounts;
   const workingSetShown = useMemo(
     () => workingSetAll.filter((s) => matchesQuery(s) && matchesQuickFilter(quickFilter, quickFacts(s))),
     [workingSetAll, matchesQuery, quickFilter]
   );
-  const awayIds = useMemo(() => new Set([...attentionIds, ...workingSetAll.map((s) => s.id)]), [attentionIds, workingSetAll]);
-  const { orderedMainAll, orderedResolvedAll } = useMemo(() => {
-    const storedMain = (storedOrder?.main ?? []).filter((id) => !awayIds.has(id));
-    const storedResolved = (storedOrder?.resolved ?? []).filter((id) => !awayIds.has(id));
-    const pinnedSet = new Set((storedOrder?.pinned ?? []).filter((id) => !awayIds.has(id)));
-    const storedMainSet = new Set(storedMain);
-    const storedResolvedSet = new Set(storedResolved);
-    const effectiveSection = (s: Session): SidebarSection | null => {
-      if (s.status === "archived") return null;
-      if (pinnedSet.has(s.id)) {
-        const inMain = storedMainSet.has(s.id);
-        const inResolved = storedResolvedSet.has(s.id);
-        if (inMain !== inResolved) return inMain ? "main" : "resolved";
-      }
-      if (s.status === "resolved") return "resolved";
-      return "main";
-    };
-    const byRecency = (a: Session, b: Session) => b.updatedAt - a.updatedAt;
-    const mainAll = source.filter((s) => !awayIds.has(s.id) && effectiveSection(s) === "main");
-    const resolvedAll = source.filter((s) => !awayIds.has(s.id) && effectiveSection(s) === "resolved");
-    return {
-      orderedMainAll: [...mainAll].sort(byRecency),
-      orderedResolvedAll: storedOrder ? orderByStored(resolvedAll, storedResolved) : [...resolvedAll].sort(byRecency)
-    };
-  }, [source, awayIds, storedOrder]);
-  const previewing = dragged !== null && preview !== null;
+  const orderedMainAll = useMemo(() => sessionsIn(layout.main, rowById), [layout.main, rowById]);
+  const orderedResolvedAll = useMemo(() => sessionsIn(layout.resolved, rowById), [layout.resolved, rowById]);
+  const placement = useMemo<DropMove | null>(
+    () => (dragged !== null && preview !== null ? { dragged, preview } : pendingMove),
+    [dragged, preview, pendingMove]
+  );
   const idleFiltered = useMemo(
-    () => (previewing ? previewPlacement(orderedMainAll, orderedResolvedAll, dragged, preview, "main") : orderedMainAll).filter(matchesQuery),
-    [previewing, orderedMainAll, orderedResolvedAll, dragged, preview, matchesQuery]
+    () => (placement ? previewPlacement(orderedMainAll, orderedResolvedAll, placement.dragged, placement.preview, "main") : orderedMainAll).filter(matchesQuery),
+    [placement, orderedMainAll, orderedResolvedAll, matchesQuery]
   );
   const resolvedShown = useMemo(
-    () => (previewing ? previewPlacement(orderedMainAll, orderedResolvedAll, dragged, preview, "resolved") : orderedResolvedAll).filter(matchesQuery),
-    [previewing, orderedMainAll, orderedResolvedAll, dragged, preview, matchesQuery]
+    () =>
+      (placement ? previewPlacement(orderedMainAll, orderedResolvedAll, placement.dragged, placement.preview, "resolved") : orderedResolvedAll).filter(
+        matchesQuery
+      ),
+    [placement, orderedMainAll, orderedResolvedAll, matchesQuery]
   );
+
+  useEffect(() => {
+    if (!pendingMove?.settledLayout) return;
+    if (layout !== pendingMove.settledLayout) {
+      setPendingMove(null);
+      return;
+    }
+    const timer = window.setTimeout(() => setPendingMove((current) => (current === pendingMove ? null : current)), PENDING_MOVE_MS);
+    return () => window.clearTimeout(timer);
+  }, [pendingMove, layout]);
   const idleUnlimited = trimmedQuery !== "" || idleShowAll;
   const draggedId = dragged?.id;
   const idleShown = useMemo(() => {
@@ -448,7 +439,7 @@ export function Sidebar({ onOpenSkills, skillsOpen = false, hidden = false }: { 
   const idleToggleVisible = trimmedQuery === "" && idleFiltered.length > IDLE_LIMIT;
   const resolvedExpanded = trimmedQuery !== "" || resolvedOpen;
   const rowOrderKey = [
-    needsYouShown.map((entry) => entry.session.id),
+    needsYouShown.map((entry) => entry.row.session.id),
     workingSetShown.map((s) => s.id),
     idleShown.map((s) => s.id),
     resolvedExpanded ? resolvedShown.map((s) => s.id) : []
@@ -484,8 +475,8 @@ export function Sidebar({ onOpenSkills, skillsOpen = false, hidden = false }: { 
     prevRects.current = next;
   }, [rowOrderKey]);
   const workingSetVisible = source.length > 0 || quickFilter !== "all";
-  const attentionCount = useMemo(() => needsAttentionCount(inboxItems ?? []), [inboxItems]);
-  const anyUnseen = useMemo(() => source.some((s) => sessionHasUnseen(s, summaryByKey)), [source, summaryByKey]);
+  const attentionCount = quickCounts.prAttention;
+  const anyUnseen = useMemo(() => rows.some((row) => row.latestUnseenPrUpdateAt !== null), [rows]);
   const inboxActive = mainView.kind === "github" || mainView.kind === "pr";
   const usageActive = mainView.kind === "usage";
   const newSessionActive = !inboxActive && !usageActive && (pendingDriver !== null || !activeSessionId);
@@ -648,67 +639,43 @@ export function Sidebar({ onOpenSkills, skillsOpen = false, hidden = false }: { 
     slotSnap.current = null;
     setPreview(null);
     if (targetId === fromId && fromSection === toSection) return;
+    const move: DropMove = { dragged: { id: fromId, section: fromSection }, preview: { targetId, section: toSection, before } };
     const restoring = fromSection === "resolved" && toSection === "main" ? source.find((s) => s.id === fromId) : undefined;
     const request = restoring?.status === "resolved" ? restoreConfirm(restoring) : null;
     if (!request) {
-      commitDrop(fromId, fromSection, toSection, targetId, before);
+      commitDrop(move);
       return;
     }
     void confirm(request).then((ok) => {
-      if (ok) commitDrop(fromId, fromSection, toSection, targetId, before);
+      if (ok) commitDrop(move);
     });
   };
 
-  const commitDrop = (fromId: string, fromSection: SidebarSection, toSection: SidebarSection, targetId: string | null, before: boolean) => {
-    const nextMain = orderedMainAll.filter((s) => s.id !== fromId);
-    const nextResolved = orderedResolvedAll.filter((s) => s.id !== fromId);
-    const moving = [...orderedMainAll, ...orderedResolvedAll].find((s) => s.id === fromId);
-    if (!moving) {
+  const commitDrop = (move: DropMove) => {
+    const fromId = move.dragged.id;
+    const status = source.find((s) => s.id === fromId)?.status;
+    if (status === undefined) {
       console.warn(`[sidebar] drop ignored: session ${fromId} not found`);
       return;
     }
-    if (toSection === "main") {
-      if (targetId) {
-        const idx = nextMain.findIndex((s) => s.id === targetId);
-        if (idx === -1) nextMain.push(moving);
-        else nextMain.splice(before ? idx : idx + 1, 0, moving);
-      } else {
-        nextMain.push(moving);
-      }
-    } else {
-      if (targetId) {
-        const idx = nextResolved.findIndex((s) => s.id === targetId);
-        if (idx === -1) nextResolved.push(moving);
-        else nextResolved.splice(before ? idx : idx + 1, 0, moving);
-      } else {
-        nextResolved.push(moving);
-      }
-    }
-    const nextMainIds = nextMain.map((s) => s.id);
-    const nextResolvedIds = nextResolved.map((s) => s.id);
-    const cross = fromSection !== toSection;
-    const prevPinned = storedOrder?.pinned ?? [];
-    const pinned = cross ? Array.from(new Set([...prevPinned, fromId])) : [];
-    const nextOrder: SidebarOrder = {
-      main: mergeAwayIds(storedOrder?.main ?? nextMainIds, nextMainIds, awayIds),
-      resolved: mergeAwayIds(storedOrder?.resolved ?? nextResolvedIds, nextResolvedIds, awayIds),
-      pinned
+    const request: SidebarReorderRequest = {
+      sessionId: fromId,
+      from: move.dragged.section,
+      to: move.preview.section,
+      targetId: move.preview.targetId,
+      before: move.preview.before
     };
-    writeStoredOrder(ORDER_KEY, nextOrder);
-    setStoredOrder(nextOrder);
-    if (cross && toSection === "resolved") setStatus(fromId, "resolved");
-    else if (cross && source.find((s) => s.id === fromId)?.status === "resolved") restore(fromId);
+    const pending: PendingMove = { ...move, settledLayout: null };
+    setPendingMove(pending);
     setLandedId(fromId);
     window.setTimeout(() => setLandedId((id) => (id === fromId ? null : id)), 850);
-  };
-
-  const prBadge = (s: Session) => {
-    const links = sessionLinks(s);
-    const gitPr = gitStatusBySession[s.id]?.pullRequest ?? null;
-    const urgent = mostUrgentLink(links, summaryByKey, gitPr);
-    const chip = urgent ? displayChip(urgent, summaryByKey, gitPr) : null;
-    const chipTitle = chip ? (links.length > 1 ? linksTitle(links, summaryByKey, gitPr) : chip.title) : null;
-    return { links, chip, chipTitle };
+    window.cw.reorderSidebar(request).then(
+      () => setPendingMove((current) => (current === pending ? { ...pending, settledLayout: currentLayout() ?? EMPTY_LAYOUT } : current)),
+      (err: unknown) => {
+        setPendingMove((current) => (current === pending ? null : current));
+        useNotifs.getState().push({ kind: "error", title: moveFailureTitle(move, status), message: ipcErrorMessage(err) });
+      }
+    );
   };
 
   const renderBabysitBadge = (s: Session) => {
@@ -723,8 +690,8 @@ export function Sidebar({ onOpenSkills, skillsOpen = false, hidden = false }: { 
   };
 
   const renderPrChip = (s: Session) => {
-    const { links, chip, chipTitle } = prBadge(s);
-    return chip ? <PrChipBadge chip={chip} extra={links.length - 1} title={chipTitle ?? undefined} /> : null;
+    const badge = rowById.get(s.id)?.prBadge;
+    return badge ? <PrChipBadge chip={badge.chip} extra={badge.linkCount - 1} title={badge.title} /> : null;
   };
 
   const rowProps = (s: Session) => ({
@@ -865,11 +832,12 @@ export function Sidebar({ onOpenSkills, skillsOpen = false, hidden = false }: { 
   };
 
   const renderFlatRow = (s: Session, section: SidebarSection) => {
-    const git = gitStatusBySession[s.id];
-    const { chipTitle } = prBadge(s);
+    const git = s.id === activeSessionId ? activeGitStatus : null;
+    const chipTitle = rowById.get(s.id)?.prBadge?.title ?? null;
     const projectName = projectNameById[s.projectId] ?? "";
+    const branch = branchOf(s);
     const gitSummary = [
-      git?.branch ?? s.branch ? `Branch: ${git?.branch ?? s.branch}` : null,
+      branch ? `Branch: ${branch}` : null,
       git?.worktreePath ?? s.worktreePath ? `Worktree: ${git?.worktreeName ?? shortPath(git?.worktreePath ?? s.worktreePath ?? "")}` : null,
       chipTitle,
       git && !git.clean ? `${git.dirtyCount} changed ${git.dirtyCount === 1 ? "file" : "files"}` : null
@@ -1062,7 +1030,9 @@ export function Sidebar({ onOpenSkills, skillsOpen = false, hidden = false }: { 
                 <span className="side-needs-n">{needsYouAll.length}</span>
               </div>
               {needsYouShown.map((entry) =>
-                entry.attention ? renderAttentionRow(entry.session, entry.attention) : renderWorkingRow(entry.session)
+                isAttentionSlot(entry.slot) && entry.row.attention
+                  ? renderAttentionRow(entry.row.session, entry.row.attention)
+                  : renderWorkingRow(entry.row.session)
               )}
             </div>
           )}

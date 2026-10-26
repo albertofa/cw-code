@@ -367,7 +367,7 @@ describe("WsServer", () => {
     expect(silent.messages).toEqual([]);
   });
 
-  test("sendTo reaches only the named authenticated clients", async () => {
+  test("sendEvent reaches only the named authenticated clients", async () => {
     const { server, url } = startServer();
     const target = newClient(url);
     const other = newClient(url);
@@ -375,10 +375,21 @@ describe("WsServer", () => {
     other.on("direct", (payload) => otherSaw.push(payload));
     const received = new Promise<unknown>((resolve) => target.on("direct", resolve));
     const [targetWelcome] = await Promise.all([target.connect(), other.connect()]);
-    server.sendTo([targetWelcome.clientId, "unknown-client"], "direct", { n: 1 });
+    server.sendEvent([targetWelcome.clientId, "unknown-client"], "direct", { n: 1 });
     expect(await received).toEqual({ n: 1 });
     await sleep(100);
     expect(otherSaw).toEqual([]);
+  });
+
+  test("sendTo delivers a preserialized frame only to the named clients", async () => {
+    const { server, url } = startServer();
+    const target = await authenticatedSocket(url);
+    const other = await authenticatedSocket(url);
+    const [first] = server.clients();
+    server.sendTo([first!.clientId], JSON.stringify({ t: "patch", topic: "x", rev: 1, ops: [] }));
+    await sleep(100);
+    const received = [...target.messages, ...other.messages];
+    expect(received).toEqual([{ t: "patch", topic: "x", rev: 1, ops: [] }]);
   });
 
   test("closeClients closes only the matching sockets and reports the count", async () => {

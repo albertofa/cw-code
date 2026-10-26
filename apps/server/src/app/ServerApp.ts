@@ -17,13 +17,14 @@ import { DeviceTokens } from "../transport/deviceTokens.js";
 import { createOriginPolicy, createRejectedOriginLogger } from "../transport/originPolicy.js";
 import { loadOrCreateOwnerToken, tokensEqual } from "../transport/ownerToken.js";
 import { Router, type ClientAuth } from "../transport/Router.js";
-import { TopicRegistry } from "../transport/TopicRegistry.js";
+import { TopicHub } from "../topics/TopicHub.js";
+import { registerTopicProviders } from "../topics/providers.js";
 import { WsServer } from "../transport/WsServer.js";
 import { ClientInputs } from "./clientInputs.js";
 import { eventAudience } from "./eventAudience.js";
 import { eventTopic, isRoutableTopic } from "./eventTopics.js";
 import { createServices, type Services } from "./services.js";
-import { wireTopics } from "./topicWiring.js";
+import { ShutdownPublisher } from "./ShutdownPublisher.js";
 
 const SESSION_SETTLE_INTERVAL_MS = 60_000;
 const SESSION_SETTLE_INITIAL_DELAY_MS = 5_000;
@@ -42,9 +43,8 @@ function isProcessGone(pid: number): boolean {
 
 export class ServerApp {
   readonly router = new Router();
-  readonly topics = new TopicRegistry();
+  readonly topics = new TopicHub((clientIds, frame) => this.ws?.sendTo(clientIds, frame));
   readonly clientInputs = new ClientInputs();
-  private readonly topicWiring = wireTopics(this);
   private deviceTokens: DeviceTokens | null = null;
   private services: Services | null = null;
   private state: StartupState = { mode: "ready" };
@@ -55,6 +55,8 @@ export class ServerApp {
   private parentTimer: ReturnType<typeof setInterval> | null = null;
   private stopping = false;
   private lastShutdownStatus: ShutdownStatus = { idle: true, committed: false, reason: null };
+  private readonly shutdownPublisher = new ShutdownPublisher(() => this.publishShutdown());
+  private unwireShutdownPublishing: () => void = () => {};
   private pendingShellNotices: AppNotice[] = [];
 
   constructor(
@@ -78,9 +80,9 @@ export class ServerApp {
       return;
     }
     if (!isRoutableTopic(channel, topic)) return;
-    const subscribers = this.topics.subscribers(topic);
+    const subscribers = this.topics.subscriberIds(topic);
     if (subscribers.size === 0) return;
-    this.ws?.sendTo(subscribers, channel, payload);
+    this.ws?.sendEvent(subscribers, channel, payload);
   }
 
   isConnected(clientId: string): boolean {
@@ -88,7 +90,7 @@ export class ServerApp {
   }
 
   sendTo(clientId: string, channel: string, payload?: unknown): void {
-    this.ws?.sendTo([clientId], channel, payload);
+    this.ws?.sendEvent([clientId], channel, payload);
   }
 
   get devices(): DeviceTokens {
@@ -111,12 +113,8 @@ export class ServerApp {
     this.emitDevicesChanged();
   }
 
-  syncWatchedRuns(): void {
-    this.topicWiring.syncWatchedRuns();
-  }
-
   applyWatchedFiles(sessionId: string): void {
-    this.topicWiring.applyFiles(sessionId);
+    this.services?.filesTopic.applyWatched(sessionId);
   }
 
   currentServices(): Services | null {
@@ -190,8 +188,8 @@ export class ServerApp {
       this.emitDevicesChanged();
     });
     ws.onClientClosed((ctx) => {
-      this.topics.dropClient(ctx.clientId);
-      this.clientInputs.dropClient(ctx.clientId);
+      this.topics.clientClosed(ctx);
+      if (this.clientInputs.dropClient(ctx.clientId).prsChanged) this.services?.prStore.reevaluate();
       if (ctx.auth.kind === "device" && !this.stopping) this.emitDevicesChanged();
       if (ctx.client === "desktop-ui" && !this.stopping && !ws.clients().some((other) => other.client === "desktop-ui")) {
         this.handleUiDisconnected();
@@ -221,7 +219,27 @@ export class ServerApp {
     };
   }
 
+  private publishShutdown(): void {
+    const services = this.services;
+    if (!services) return;
+    if (this.servicesDisposed) {
+      services.appTopic.setShutdownStatus(this.shutdownStatus());
+      return;
+    }
+    services.appTopic.setShutdown(this.shutdownStatus(), services.shutdown.assess());
+  }
+
+  private wireShutdownPublishing(services: Services): void {
+    this.unwireShutdownPublishing();
+    this.unwireShutdownPublishing = this.shutdownPublisher.watch(
+      (onChange) => services.threads.onRuntimeChanged(onChange),
+      (onChange) => services.sessions.onDriverActivityChanged(onChange),
+      (onChange) => services.ptys.onChanged(onChange)
+    );
+  }
+
   emitShutdownChanged(): void {
+    this.shutdownPublisher.schedule();
     const status = this.shutdownStatus();
     const last = this.lastShutdownStatus;
     if (last.idle === status.idle && last.committed === status.committed && last.reason === status.reason) return;
@@ -276,6 +294,7 @@ export class ServerApp {
     if (this.parentTimer) clearInterval(this.parentTimer);
     this.parentTimer = null;
     try {
+      this.shutdownPublisher.dispose();
       this.stopSessionSweeps();
       this.disposeServices();
     } catch (err) {
@@ -314,7 +333,10 @@ export class ServerApp {
     initClaudeCommandsCache(claudeCommandsCachePath());
     const services = createServices(stores, {
       emit: (channel, payload) => this.emit(channel, payload),
+      topics: this.topics,
+      clientInputs: this.clientInputs,
       dropTopic: (topic) => this.topics.dropTopic(topic),
+      assessmentChanged: () => this.shutdownPublisher.schedule(),
       legacyAppRoots: this.args.legacyUserData,
       onShutdownRecovered: (failure) => this.handleShutdownRecovered(failure),
       onShutdownExpired: (reason) => this.handleShutdownExpired(reason)
@@ -322,6 +344,7 @@ export class ServerApp {
     this.services = services;
     this.servicesDisposed = false;
     this.state = { mode: "ready" };
+    this.wireShutdownPublishing(services);
     services.sessions.warmOpencodeModels();
     reapOrphanedServers()
       .then((reaped) => {
@@ -338,13 +361,16 @@ export class ServerApp {
         console.warn(`turn snapshot index sweep failed: ${(err as Error).message}`);
       });
     this.startSessionSweeps();
-    this.topicWiring.resync();
+    this.topics.clearProviders();
+    registerTopicProviders(this.topics, services);
+    this.topics.reacquireAll();
+    void services.harnessMonitor.check("startup");
   }
 
   private handleShutdownRecovered(failure: string | null): void {
     this.servicesDisposed = false;
     this.startSessionSweeps();
-    this.topicWiring.resync();
+    this.topics.resync();
     this.emitShutdownChanged();
     if (!failure) return;
     appendCrashLog(`shutdown recovery could not restart CLI drivers: ${failure}`);
@@ -379,6 +405,7 @@ export class ServerApp {
     if (!running || !running.shutdown.isIdle()) return;
     void running.sessions.settleFinishedPrSessions();
     void running.sessions.resolveExpiredIdleSessions();
+    running.sessions.expireDueHoldingSessions();
   }
 
   private startSessionSweeps(): void {
@@ -391,6 +418,12 @@ export class ServerApp {
     this.sessionSettleTimer = setInterval(() => this.runSessionSweeps(), SESSION_SETTLE_INTERVAL_MS);
     this.sessionSettleTimer.unref?.();
     this.services?.prTracker.start();
+    this.services?.prStore.resume();
+    this.services?.threads.resume();
+    this.services?.githubViews.resume();
+    this.services?.usageTopic.resume();
+    this.services?.filesTopic.resume();
+    this.services?.autoFollowUp.reactivate();
     this.services?.sourceControl.start();
   }
 
@@ -416,8 +449,19 @@ export class ServerApp {
     } catch (err) {
       console.warn(`flush before exit failed: ${(err as Error).message}`);
     }
+    try {
+      services.preferences.dispose();
+    } catch (err) {
+      console.warn(`preferences flush before exit failed: ${(err as Error).message}`);
+    }
+    services.autoFollowUp.dispose();
+    services.prStore.dispose();
+    services.threads.dispose();
     void services.sourceControl.dispose();
+    services.githubViews.dispose();
+    services.usageTopic.dispose();
     services.runWatcher.dispose();
+    services.filesTopic.dispose();
     void services.fileWatcher.dispose();
     services.sessions.dispose();
     services.ptys.dispose();

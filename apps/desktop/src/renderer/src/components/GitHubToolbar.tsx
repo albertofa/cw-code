@@ -2,7 +2,7 @@ import { useState } from "react";
 import { ArrowDownWideNarrow, Check, ChevronDown, CircleDot, GitPullRequest, TriangleAlert } from "lucide-react";
 import type { GitHubKind, GitHubViewGroup } from "../cw.js";
 import { AnchoredPopover, anchorRectOf, type AnchorRect } from "./AnchoredPopover.js";
-import { SORT_LABELS, sortKeysFor, stateOf, withQualifier, withState } from "./githubQuery.js";
+import { SORT_LABELS, sortKeysFor, stateOf, withQualifier, withState } from "@cw-code/shared/githubQueryDsl";
 import { GROUP_LABELS, sortOf } from "./githubViewModel.js";
 import { Spinner } from "./Loading.js";
 

@@ -30,6 +30,7 @@ import { formatFileSubject, looksLikeFileMention, shortenHomeInText, stripMentio
 import { FileIcon } from "./fileIcons.js";
 import { isPreviewablePath } from "./Markdown.js";
 import { useElapsed } from "./useElapsed.js";
+import { useThreadEntry } from "./useThread.js";
 
 export type ToolStatus = "complete" | "error" | "running" | "waiting" | "pending" | "stopped" | "interrupted" | "unknown";
 
@@ -112,12 +113,8 @@ export function ToolRow({
 }
 
 function useApprovalWait(sessionId: string | undefined, toolName: string, running: boolean): boolean {
-  return useAppStore((s) => {
-    if (!running || sessionId === undefined) return false;
-    const pending = s.pendingApprovals[sessionId];
-    if (!pending || pending.length === 0) return false;
-    return pending.some((a) => a.toolName !== undefined && a.toolName.toLowerCase() === toolName);
-  });
+  const pending = useThreadEntry(running ? sessionId : undefined, "approvals");
+  return pending?.some((a) => a.toolName !== undefined && a.toolName.toLowerCase() === toolName) ?? false;
 }
 
 export const ToolCard = memo(function ToolCard({

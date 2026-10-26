@@ -1,5 +1,5 @@
 import type { PrSuggestCondition, PrWorkflow } from "@cw-code/contracts";
-import { TEMPLATE_VARS_BY_TARGET } from "./prWorkflows.js";
+import { TEMPLATE_VARS_BY_TARGET } from "@cw-code/shared/workflowTemplates";
 import { INHERITED_HARNESS } from "./workflowHarness.js";
 
 export type WorkflowTarget = PrWorkflow["target"];

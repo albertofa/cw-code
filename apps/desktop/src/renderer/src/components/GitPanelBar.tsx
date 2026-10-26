@@ -18,6 +18,7 @@ import { MenuSelect } from "./MenuSelect.js";
 import { GitHubMark } from "./GitHubMark.js";
 import { shortenHome } from "./pathDisplay.js";
 import { useThreadVisible } from "./threadVisibility.js";
+import { refreshGit, useGitError, useGitStatus } from "./useGit.js";
 
 export function GitPanelBar({ sessionId }: { sessionId: string }) {
   const [branches, setBranches] = useState<GitBranchInfo[]>([]);
@@ -32,8 +33,8 @@ export function GitPanelBar({ sessionId }: { sessionId: string }) {
   const visible = useThreadVisible();
   const cardRef = useRef<HTMLDivElement | null>(null);
   const closeTimer = useRef<number | null>(null);
-  const refreshGitStatus = useAppStore((state) => state.refreshGitStatus);
-  const status = useAppStore((state) => state.gitStatusBySession[sessionId] ?? null);
+  const status = useGitStatus(sessionId);
+  const gitError = useGitError(sessionId);
   const homeDir = useAppStore((state) => state.homeDir);
   const shortPath = (value: string): string => shortenHome(value, homeDir ?? undefined);
 
@@ -101,11 +102,12 @@ export function GitPanelBar({ sessionId }: { sessionId: string }) {
       }).catch((reason: Error) => { if (active) setError(reason.message); });
     };
     setError("");
-    void refreshGitStatus(sessionId);
+    refreshGit(sessionId);
     updateBranches();
     return () => { active = false; };
-  }, [sessionId, refreshGitStatus]);
+  }, [sessionId]);
 
+  if (!status && gitError) return <div className="gitbar gitbar-head"><span className="gitbar-dim" title={gitError}>Git unavailable: {gitError}</span></div>;
   if (!status) return <div className="gitbar gitbar-head"><span className="gitbar-dim">Loading Git…</span></div>;
   if (!status.available) return <div className="gitbar gitbar-head"><span className="gitbar-dim">Not a Git repository</span></div>;
 
@@ -128,10 +130,7 @@ export function GitPanelBar({ sessionId }: { sessionId: string }) {
   const switchBranch = (branch: string) => {
     setSwitching(true);
     setError("");
-    window.cw.switchGitBranch(sessionId, branch).then(() => {
-      void useAppStore.getState().refreshProjectCheckoutGitStatus(sessionId);
-      return window.cw.listGitBranches(sessionId);
-    }).then(setBranches).catch((reason: Error) => setError(reason.message)).finally(() => setSwitching(false));
+    window.cw.switchGitBranch(sessionId, branch).then(() => window.cw.listGitBranches(sessionId)).then(setBranches).catch((reason: Error) => setError(reason.message)).finally(() => setSwitching(false));
   };
 
   const notAvailable = (action: string) => {

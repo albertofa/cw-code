@@ -1,11 +1,11 @@
 import { useState } from "react";
 import { Activity, Circle, CircleCheck, CircleX, ExternalLink, Pause, Play, Square } from "lucide-react";
-import type { PrDetail } from "@cw-code/contracts";
-import { useAppStore } from "../stores/appStore.js";
+import type { BabysitPhase, BabysitState, PrDetail } from "@cw-code/contracts";
 import { usePrStore } from "../stores/prStore.js";
+import { babysitStatusText } from "./babysitLabels.js";
 import { mergeBoxState, type MergeRow } from "./prDetailModel.js";
 import { prKey } from "./prInbox.js";
-import { babysitStatusText, type BabysitPhase, type BabysitState } from "./prSessionModel.js";
+import { usePrDetail } from "./usePrs.js";
 import { prRefLabel } from "./sessionPrLinks.js";
 import { ipcErrorMessage } from "./ipcError.js";
 
@@ -43,16 +43,33 @@ function StatusMark({ phase }: { phase: BabysitPhase["kind"] }) {
 }
 
 export function BabysitHead({ sessionId, state }: { sessionId: string; state: BabysitState }) {
-  const pause = useAppStore((s) => s.pauseAutoFollowUp);
-  const resume = useAppStore((s) => s.resumeAutoFollowUp);
-  const applySession = useAppStore((s) => s.applySession);
   const openPr = usePrStore((s) => s.openPr);
-  const detail = usePrStore((s) => s.detailByKey[prKey(state.link.ref)]);
+  const detail = usePrDetail(prKey(state.link.ref))?.detail ?? null;
   const [stopping, setStopping] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const { link, workflow, phase } = state;
   const paused = phase.kind === "paused";
+
+  const pause = async () => {
+    setError(null);
+    try {
+      await window.cw.pauseAutoFollowUp(sessionId);
+    } catch (err) {
+      setError(`Could not pause ${workflow.label}: ${ipcErrorMessage(err)}`);
+    }
+  };
+
+  const resume = () => window.cw.resumeAutoFollowUp(sessionId);
+
+  const resumeClicked = async () => {
+    setError(null);
+    try {
+      await resume();
+    } catch (err) {
+      setError(`Could not resume ${workflow.label}: ${ipcErrorMessage(err)}`);
+    }
+  };
 
   const stop = async () => {
     if (stopping) return;
@@ -60,10 +77,16 @@ export function BabysitHead({ sessionId, state }: { sessionId: string; state: Ba
     setError(null);
     const { workflowId: _workflowId, ...rest } = link;
     try {
-      applySession(await window.cw.linkSessionPr(sessionId, rest));
-      resume(sessionId);
+      await window.cw.linkSessionPr(sessionId, rest);
     } catch (err) {
       setError(`Could not stop ${workflow.label}: ${ipcErrorMessage(err)}`);
+      setStopping(false);
+      return;
+    }
+    try {
+      await resume();
+    } catch (err) {
+      setError(`Stopped ${workflow.label}, but could not clear its pause: ${ipcErrorMessage(err)}`);
     } finally {
       setStopping(false);
     }
@@ -87,12 +110,12 @@ export function BabysitHead({ sessionId, state }: { sessionId: string; state: Ba
           View PR
         </button>
         {paused ? (
-          <button className="pr-detail-btn sm" onClick={() => resume(sessionId)}>
+          <button className="pr-detail-btn sm" onClick={() => void resumeClicked()}>
             <Play size={12} aria-hidden="true" />
             Resume
           </button>
         ) : (
-          <button className="pr-detail-btn sm" onClick={() => pause(sessionId)} title="Stop sending updates on their own until you resume">
+          <button className="pr-detail-btn sm" onClick={() => void pause()} title="Stop sending updates on their own until you resume">
             <Pause size={12} aria-hidden="true" />
             Pause
           </button>

@@ -12,71 +12,39 @@ import {
   Settings2,
   X
 } from "lucide-react";
-import type {
-  ComposerPrefs,
-  CreateSessionOptions,
-  DriverName,
-  ModelOption,
-  PermissionOption,
-  PrLinkOrigin,
-  PrRef,
-  PrWorkflow,
-  RepoRef,
-  Session,
-  WorkflowSubject
-} from "../cw.js";
-import type { PrWorkspaceChoice } from "@cw-code/contracts";
-import { useAppStore, DEFAULT_COMPOSER } from "../stores/appStore.js";
-import { useGitHubStore } from "../stores/githubStore.js";
+import type { PrLinkOrigin, PrWorkflow, RepoRef, Session, WorkflowSubject } from "../cw.js";
+import type { PrWorkspaceChoice, WorkflowPreviewRequest, WorkflowRunResume, WorkflowRunStage } from "@cw-code/contracts";
+import { selectWhenListed, useAppStore } from "../stores/appStore.js";
 import { usePrStore, type RunModalState } from "../stores/prStore.js";
-import { babysittingSession, resolveTemplate } from "./prWorkflows.js";
 import { harnessLabel } from "./toolTabs.js";
-import { pickableHarnesses } from "./harnessAvailability.js";
-import { getRecentModels } from "./lastModel.js";
-import { harnessSummary, INHERITED_HARNESS, resolveWorkflowHarness, workflowDriver } from "./workflowHarness.js";
+import { INHERITED_HARNESS } from "./workflowHarness.js";
 import { workflowIcon } from "./workflowIcons.js";
 import { shortenHome } from "./pathDisplay.js";
 import { DriverIcon } from "./DriverIcon.js";
 import { MenuSelect } from "./MenuSelect.js";
-import { errorMessage } from "./errorMessage.js";
 import { ipcErrorMessage } from "./ipcError.js";
-import { findSession, usePrSettings } from "./useLinkedPr.js";
+import { findSession } from "../server/sidebarData.js";
+import { useAppSettings, useAppSettingsError } from "./useAppSettings.js";
 import { prKey } from "./prInbox.js";
-import { linkWithWorkflow } from "./sessionPrLinks.js";
-import { startsAutoFollowUp, withAutomatedWorkflowNote } from "./prSessionModel.js";
+import { usePrDataRevision } from "./usePrs.js";
 import { IssueCard, PrCard, RunCard } from "./WorkflowSubjectCards.js";
 import { SubjectCardSkeleton } from "./GitHubSkeletons.js";
 import { Spinner } from "./Loading.js";
 import { useRestoreBeforeSend } from "./sessionLifecycle.js";
-import { useWorkflowSubjectData } from "./useWorkflowSubjectData.js";
+import { useServerPreview } from "./useServerPreview.js";
+import { useSessionRow } from "./useSessions.js";
 import {
   baseWorkspaceHint,
-  effectiveSubject,
-  findCachedRun,
-  isLinkedTo,
-  issueDataTime,
-  otherSessionCandidates,
+  issueKey,
   prWorkspaceHint,
   repoOf,
-  resolveIssueBase,
-  resolveRunBase,
+  runKey,
   subjectKey,
-  subjectLabel,
-  subjectLink,
-  workflowsForSubject,
-  type WorkflowBase
+  subjectLink
 } from "./workflowSubject.js";
 
 const READ_ONLY_NOTICE =
   "cw-code only reads from GitHub. Anything the session commits, pushes, or posts goes through the CLI's own permissions.";
-
-interface HarnessOptions {
-  driver: DriverName;
-  projectId: string | null;
-  models: ModelOption[];
-  permissions: PermissionOption[];
-  error: string | null;
-}
 
 const ORIGIN_LABEL: Record<PrLinkOrigin, string> = {
   opened: "opened here",
@@ -84,15 +52,13 @@ const ORIGIN_LABEL: Record<PrLinkOrigin, string> = {
   linked: "linked manually"
 };
 
-type Stage = "clone" | "create" | "link" | "send" | "seen";
-
 const SUBJECT_NOUN: Record<WorkflowSubject["kind"], string> = {
   pr: "pull request",
   issue: "issue",
   run: "workflow run"
 };
 
-function stageLabel(stage: Stage, noun: string): string {
+function stageLabel(stage: WorkflowRunStage, noun: string): string {
   switch (stage) {
     case "clone":
       return "Cloning repository";
@@ -107,10 +73,6 @@ function stageLabel(stage: Stage, noun: string): string {
   }
 }
 
-function pushNote(ref: PrRef, headRefName: string, sessionBranch: string): string {
-  return `You are on branch ${sessionBranch}, not the PR head. To update PR #${ref.number}, push with: git push origin HEAD:${headRefName}`;
-}
-
 function isTextEntry(target: EventTarget | null): boolean {
   return target instanceof HTMLElement && (target.closest(".menu-panel") !== null || target.matches("textarea, input, select"));
 }
@@ -119,6 +81,21 @@ function clonePathHint(root: string, ref: RepoRef, includeOwner: boolean): strin
   const sep = root.includes("\\") ? "\\" : "/";
   const base = root.replace(/[\\/]+$/, "");
   return includeOwner ? `${base}${sep}${ref.owner}${sep}${ref.repo}` : `${base}${sep}${ref.repo}`;
+}
+
+function linkSignature(sessions: Session[]): string {
+  return JSON.stringify(
+    sessions.map((s) => [
+      s.id,
+      s.status,
+      s.projectId,
+      s.driver,
+      s.worktreePath ?? null,
+      (s.prs ?? []).map((link) => [prKey(link.ref), link.workflowId ?? null, link.lastSeenSha, link.lastSeenAt]),
+      (s.issues ?? []).map((link) => [issueKey(link.ref), link.lastSeenAt]),
+      (s.runs ?? []).map((link) => runKey(link.ref))
+    ])
+  );
 }
 
 function Segment<T extends string>({
@@ -160,176 +137,113 @@ function Segment<T extends string>({
 
 export function WorkflowRunModal({ request }: { request: RunModalState }) {
   const baseSubject = request.subject;
-  const projectRepos = usePrStore((s) => s.projectRepos);
-  const projectIdForRef = usePrStore((s) => s.projectIdForRef);
-  const refreshProjectRepos = usePrStore((s) => s.refreshProjectRepos);
   const openSessionView = usePrStore((s) => s.openSessionView);
   const closeRunModal = usePrStore((s) => s.closeRunModal);
-  const runCaches = useGitHubStore((s) => s.runResults);
   const sessionsByProject = useAppStore((s) => s.sessionsByProject);
   const projects = useAppStore((s) => s.projects);
   const pendingPrefs = useAppStore((s) => s.pendingPrefs);
   const composerDriver = useAppStore((s) => s.pendingDriver ?? s.lastDriver);
-  const defaultModelByDriver = useAppStore((s) => s.defaultModelByDriver);
   const composerBySession = useAppStore((s) => s.composerBySession);
-  const busyTurns = useAppStore((s) => s.busyTurns);
   const homeDir = useAppStore((s) => s.homeDir);
-  const settingsVersion = useAppStore((s) => s.settingsVersion);
-  const installedHarnesses = useAppStore((s) => s.installedHarnesses);
+  const availableHarnesses = useAppStore((s) => s.availableHarnesses);
 
-  const { settings, error: settingsError } = usePrSettings();
-  const [reposReady, setReposReady] = useState(false);
+  const settings = useAppSettings();
+  const settingsError = useAppSettingsError();
   const [workflowId, setWorkflowId] = useState(request.workflowId);
   const [target, setTarget] = useState(request.continueSessionId ?? "");
-  const [options, setOptions] = useState<HarnessOptions | null>(null);
   const [workspaceChoice, setWorkspaceChoice] = useState<PrWorkspaceChoice | null>(null);
   const [prompt, setPrompt] = useState("");
-  const [stage, setStage] = useState<Stage | null>(null);
+  const [stage, setStage] = useState<WorkflowRunStage | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [linkedHere, setLinkedHere] = useState<string | null>(null);
-  const [created, setCreated] = useState<{ sessionId: string; linked: boolean; note: string | null } | null>(null);
+  const [resume, setResume] = useState<WorkflowRunResume | null>(null);
+  const [uncertain, setUncertain] = useState(false);
+  const runIdRef = useRef<string | null>(null);
   const [dirty, setDirty] = useState(false);
   const runningRef = useRef(false);
   const dialogRef = useRef<HTMLDivElement>(null);
 
-  const cachedRun = useMemo(
-    () => (baseSubject.kind === "run" ? findCachedRun(runCaches, baseSubject.ref) : undefined),
-    [runCaches, baseSubject]
+  const previewRequest = useMemo<WorkflowPreviewRequest>(
+    () => ({
+      workflowId,
+      subject: baseSubject,
+      continueSessionId: target || null,
+      workspace: workspaceChoice,
+      promptOverride: request.promptOverride ?? null,
+      composerDriver,
+      pendingPrefs
+    }),
+    [workflowId, baseSubject, target, workspaceChoice, request.promptOverride, composerDriver, pendingPrefs]
   );
-  const workflows = useMemo(
-    () => workflowsForSubject(settings?.prWorkflows ?? [], baseSubject, cachedRun),
-    [settings, baseSubject, cachedRun]
+  const requestKey = useMemo(() => JSON.stringify(previewRequest), [previewRequest]);
+  const continueSession: Session | undefined = target ? findSession(sessionsByProject, target) : undefined;
+  const sessionsSignature = useMemo(() => linkSignature(Object.values(sessionsByProject).flat()), [sessionsByProject]);
+  const [previewSubject, setPreviewSubject] = useState<WorkflowSubject>(baseSubject);
+  const subjectPrKey = previewSubject.kind === "pr" ? prKey(previewSubject.ref) : null;
+  const prRevision = usePrDataRevision(subjectPrKey);
+  const previewState = useServerPreview(
+    requestKey,
+    (retry) => window.cw.workflowPreview({ ...previewRequest, retry }),
+    (value) => value.logsNeeded && !value.logsReady && !value.logsError,
+    [prRevision, settings, sessionsSignature, availableHarnesses]
   );
-  const basePrState = usePrStore((s) => {
-    if (baseSubject.kind !== "pr") return undefined;
-    const refKey = prKey(baseSubject.ref);
-    return (s.detailByKey[refKey] ?? s.inbox?.items.find((item) => prKey(item.ref) === refKey))?.state;
-  });
-  const babysitWorkflow = useMemo(() => {
-    if (!target || baseSubject.kind !== "pr" || (basePrState !== undefined && basePrState !== "OPEN")) return null;
-    const session = findSession(sessionsByProject, target);
-    return session ? (babysittingSession([session], baseSubject.ref, workflows)?.workflow ?? null) : null;
-  }, [target, baseSubject, basePrState, sessionsByProject, workflows]);
-  const activeWorkflowId = babysitWorkflow?.id ?? workflowId;
-  const pickable = babysitWorkflow ? [babysitWorkflow] : workflows.filter((w) => w.enabled || w.id === workflowId);
+  const preview = previewState.value;
+  const live = preview !== null && previewState.current;
+  const subject = preview?.subject ?? baseSubject;
+  const activeWorkflowId = preview && (live || preview.babysitLocked) ? preview.activeWorkflowId : workflowId;
+  const workflows = settings?.prWorkflows ?? [];
   const workflow: PrWorkflow | undefined = workflows.find((w) => w.id === activeWorkflowId);
-  const subject = useMemo(() => effectiveSubject(baseSubject, workflow, cachedRun), [baseSubject, workflow, cachedRun]);
-  const key = subjectKey(subject);
+  const pickable = (preview?.pickableWorkflowIds ?? [workflowId]).flatMap((id) => workflows.find((w) => w.id === id) ?? []);
   const noun = SUBJECT_NOUN[subject.kind];
   const repo = repoOf(subject);
-
-  const allSessions = useMemo(() => Object.values(sessionsByProject).flat(), [sessionsByProject]);
-  const linkedSessions = useMemo(
-    () =>
-      allSessions
-        .filter((s) => s.status !== "archived" && isLinkedTo(s, subject))
-        .sort((a, b) => b.updatedAt - a.updatedAt),
-    [allSessions, key]
-  );
+  const sessionsFor = (ids: string[] | undefined): Session[] => (ids ?? []).flatMap((id) => findSession(sessionsByProject, id) ?? []);
+  const linkedOptions = sessionsFor(preview?.linkedSessionIds);
+  const otherSessions = sessionsFor(preview?.otherSessionIds);
   const { ensureOpen, dialog: restoreDialog } = useRestoreBeforeSend();
-  const continueSession: Session | undefined = target ? allSessions.find((s) => s.id === target) : undefined;
-  const projectId = useMemo(() => projectIdForRef(repo), [projectIdForRef, projectRepos, key]);
-  const continueAlreadyLinked = continueSession ? isLinkedTo(continueSession, subject) : false;
-  const continueLinkKey = continueSession ? `${continueSession.id}\n${key}` : null;
-  const adoptedLink =
-    continueSession !== undefined && subject.kind === "pr" && !request.promptOverride?.trim()
-      ? linkWithWorkflow(continueSession, subject.ref, activeWorkflowId)
-      : null;
-  const updateMode = continueSession !== undefined && continueAlreadyLinked && adoptedLink === null && linkedHere !== continueLinkKey;
-  const linkedOptions: Session[] =
-    continueSession && continueAlreadyLinked && !linkedSessions.includes(continueSession)
-      ? [continueSession, ...linkedSessions]
-      : linkedSessions;
-  const otherSessions = useMemo(
-    () => otherSessionCandidates(allSessions, subject, projectId, continueAlreadyLinked ? undefined : continueSession?.id),
-    [allSessions, key, projectId, continueSession?.id, continueAlreadyLinked]
-  );
+  const projectId = preview?.projectId ?? null;
+  const updateMode = preview?.updateMode ?? false;
+  const babysitLocked = preview?.babysitLocked ?? false;
   const projectNameOf = (id: string) => projects.find((p) => p.id === id)?.name ?? "another project";
-  const otherSessionsLabel = otherSessions.every((s) => s.projectId === projectId)
-    ? `Other sessions in ${projectNameOf(projectId ?? "")}`
-    : "Other sessions";
-  const needsClone = !continueSession && reposReady && projectId === null;
+  const needsClone = !continueSession && (preview?.needsClone ?? false);
   const harnessConfig = workflow?.harness ?? INHERITED_HARNESS;
-  const driver = workflowDriver(harnessConfig, composerDriver);
-  const driverMissing = !continueSession && !created && !pickableHarnesses(installedHarnesses).includes(driver);
-  const resolveHarness = (lists: { models: ModelOption[]; permissions: PermissionOption[] }) =>
-    resolveWorkflowHarness(harnessConfig, {
-      composerDriver,
-      pendingPrefs,
-      defaultModel: defaultModelByDriver[driver],
-      recentModels: getRecentModels(driver),
-      models: lists.models,
-      permissions: lists.permissions
-    });
-  const optionsReady = !driverMissing && options !== null && options.driver === driver && options.projectId === projectId;
-  const resolvedHarness = optionsReady ? resolveHarness(options) : null;
-  const effectiveDriver = continueSession?.driver ?? driver;
-  const harness = harnessLabel(effectiveDriver);
-  const linkedWorktree =
-    subject.kind === "pr" ? linkedSessions.find((s) => s.worktreePath && s.projectId === projectId) : undefined;
-  const requestedWorkspace = workspaceChoice ?? workflow?.workspace ?? "worktree";
-  const workspace: PrWorkspaceChoice = requestedWorkspace === "linked" && !linkedWorktree ? "worktree" : requestedWorkspace;
-  const template = workflow ? (updateMode ? workflow.updatePrompt : workflow.startPrompt) : "";
-  const data = useWorkflowSubjectData({
-    subject,
-    cachedRun,
-    template,
-    continueSession: updateMode ? continueSession : undefined,
-    settings,
-    hasWorkflow: workflow !== undefined,
-    harness
-  });
-  const base: WorkflowBase | null =
-    subject.kind === "issue" ? resolveIssueBase() : subject.kind === "run" ? resolveRunBase(data.run) : null;
+  const harnessResult = preview?.harness ?? null;
+  const driver = harnessResult?.resolved.driver ?? harnessConfig.driver ?? composerDriver;
+  const driverMissing = !continueSession && !resume && (preview?.driverMissing ?? false);
+  const linkedWorktree = preview?.linkedWorktreeSessionId ? findSession(sessionsByProject, preview.linkedWorktreeSessionId) : undefined;
+  const workspace: PrWorkspaceChoice = live ? preview.workspace : (workspaceChoice ?? preview?.workspace ?? "worktree");
+  const base = preview?.base ?? null;
+  const subjectText = preview?.subjectLabel ?? "";
   const working = stage !== null;
-  const sessionBusy = continueSession ? busyTurns[continueSession.id] !== undefined : false;
+  const sessionBusy = (useSessionRow(continueSession?.id)?.busy ?? false) && !resume?.sent;
+  const locked = resume !== null || uncertain;
+  const lastActiveWorkflow = useRef(activeWorkflowId);
+  const lastSubjectKind = useRef(preview?.subject.kind);
 
   useEffect(() => {
-    void refreshProjectRepos().finally(() => setReposReady(true));
-  }, []);
+    if (subjectKey(subject) !== subjectKey(previewSubject)) setPreviewSubject(subject);
+  }, [subjectKey(subject)]);
 
   useEffect(() => {
+    if (lastActiveWorkflow.current === activeWorkflowId) return;
+    lastActiveWorkflow.current = activeWorkflowId;
     setWorkspaceChoice(null);
   }, [activeWorkflowId]);
+
+  useEffect(() => {
+    const previous = lastSubjectKind.current;
+    const next = preview?.subject.kind;
+    lastSubjectKind.current = next;
+    if (previous !== undefined && next !== undefined && previous !== next) setTarget("");
+  }, [preview?.subject.kind]);
 
   useEffect(() => {
     if (continueSession) void useAppStore.getState().ensureComposer(continueSession.id);
   }, [continueSession?.id]);
 
+  const revision = live ? preview.revision : null;
   useEffect(() => {
-    if (continueSession || driverMissing) return;
-    let active = true;
-    const errors: string[] = [];
-    const failed = (what: string) => (err: unknown) => {
-      errors.push(`${what}: ${errorMessage(err)}`);
-      return [];
-    };
-    void Promise.all([
-      (projectId ? window.cw.listModelsFor(projectId, driver) : window.cw.listModelsForHarness(driver)).catch(failed("models")),
-      (projectId ? window.cw.listPermissionsFor(projectId, driver) : window.cw.listPermissionsForHarness(driver)).catch(
-        failed("permission modes")
-      )
-    ]).then(([models, permissions]) => {
-      if (active) setOptions({ driver, projectId, models, permissions, error: errors.length > 0 ? errors.join("; ") : null });
-    });
-    return () => {
-      active = false;
-    };
-  }, [driver, driverMissing, projectId, continueSession?.id, settingsVersion]);
-
-  const resolved = useMemo(() => {
-    if (!data.vars || !workflow) return null;
-    const text = withAutomatedWorkflowNote(workflow, resolveTemplate(template, data.vars));
-    const override = request.promptOverride?.trim();
-    if (!override) return text;
-    return updateMode ? override : `${text}\n\n${override}`;
-  }, [data.vars, workflow, updateMode, template, request.promptOverride]);
-
-  const prefillKey = resolved === null ? null : [activeWorkflowId, target, data.revision, effectiveDriver].join("\n");
-  useEffect(() => {
-    if (prefillKey === null || resolved === null || dirty) return;
-    setPrompt(resolved);
-  }, [prefillKey]);
+    if (!live || preview.prompt === null || dirty) return;
+    setPrompt(preview.prompt);
+  }, [revision]);
 
   useEffect(() => {
     dialogRef.current?.focus();
@@ -337,9 +251,9 @@ export function WorkflowRunModal({ request }: { request: RunModalState }) {
 
   const pickWorkflow = (id: string) => {
     setDirty(false);
-    setWorkflowId(id);
     const next = workflows.find((w) => w.id === id);
-    if (effectiveSubject(baseSubject, next, cachedRun).kind !== subject.kind) setTarget("");
+    if (next && next.target !== subject.kind) setTarget("");
+    setWorkflowId(id);
   };
 
   const pickTarget = (id: string) => {
@@ -363,82 +277,11 @@ export function WorkflowRunModal({ request }: { request: RunModalState }) {
     return () => window.removeEventListener("keydown", onKey, true);
   });
 
-  const workspaceOptions = (targetProjectId: string | null): CreateSessionOptions => {
-    const mode = workspace === "checkout" ? "current" : "new";
-    switch (subject.kind) {
-      case "pr": {
-        const detail = data.prDetail;
-        if (!detail) throw new Error("pull request details are not loaded");
-        const prHead = {
-          number: subject.ref.number,
-          headRefName: detail.headRefName,
-          headRefOid: detail.headRefOid,
-          viewerIsAuthor: detail.viewerIsAuthor
-        };
-        if (workspace === "linked" && linkedWorktree?.worktreePath && linkedWorktree.projectId === targetProjectId) {
-          return { mode: "previous", reuseWorktreePath: linkedWorktree.worktreePath, prHead };
-        }
-        return { mode, prHead };
-      }
-      case "issue":
-        return base?.baseBranch ? { mode, baseBranch: base.baseBranch } : { mode };
-      case "run":
-        return base?.baseBranch ? { mode, baseBranch: base.baseBranch, baseFallback: "default" } : { mode };
-    }
-  };
-
-  const linkSession = (sessionId: string, workflowIdToLink: string, deferSeen = false): Promise<Session> => {
-    switch (subject.kind) {
-      case "pr": {
-        const detail = data.prDetail;
-        if (!detail) throw new Error("pull request details are not loaded");
-        return window.cw.linkSessionPr(sessionId, {
-          ref: subject.ref,
-          origin: "workflow",
-          workflowId: workflowIdToLink,
-          lastSeenSha: deferSeen ? "" : detail.headRefOid,
-          lastSeenAt: deferSeen ? 0 : detail.updatedAt
-        });
-      }
-      case "issue": {
-        const issue = data.issue;
-        if (!issue) throw new Error("issue details are not loaded");
-        return window.cw.linkSessionIssue(sessionId, {
-          ref: subject.ref,
-          origin: "workflow",
-          workflowId: workflowIdToLink,
-          lastSeenAt: deferSeen ? 0 : issueDataTime(issue)
-        });
-      }
-      case "run":
-        return window.cw.linkSessionRun(sessionId, {
-          ref: subject.ref,
-          origin: "workflow",
-          workflowId: workflowIdToLink,
-          lastSeenAt: deferSeen ? 0 : (data.run?.updatedAt ?? Date.now())
-        });
-    }
-  };
-
-  const markSeen = async (sessionId: string): Promise<Session | null> => {
-    switch (subject.kind) {
-      case "pr": {
-        const detail = data.prDetail;
-        if (!detail) return null;
-        return window.cw.markSessionPrSeen(sessionId, subject.ref, detail.headRefOid, detail.updatedAt);
-      }
-      case "issue":
-        return data.issue ? window.cw.markSessionIssueSeen(sessionId, subject.ref, issueDataTime(data.issue)) : null;
-      case "run":
-        return data.run ? window.cw.markSessionRunSeen(sessionId, subject.ref, data.run.updatedAt) : null;
-    }
-  };
-
-  const sendOptions = subject.kind === "pr" ? { prRefs: [subject.ref] } : undefined;
-
-  const finish = (sessionId: string) => {
-    openSessionView();
-    useAppStore.getState().selectSession(sessionId);
+  const finish = async (sessionId: string) => {
+    await selectWhenListed(sessionId, () => {
+      openSessionView();
+      useAppStore.getState().selectSession(sessionId);
+    });
     closeRunModal();
   };
 
@@ -448,94 +291,41 @@ export function WorkflowRunModal({ request }: { request: RunModalState }) {
     usePrStore.getState().openWorkflowSettings(workflow.id);
   };
 
+  const expectedStage = (): WorkflowRunStage => {
+    if (continueSession) return resume?.sent ? (resume.linked ? "seen" : "link") : "send";
+    if (!resume) return needsClone ? "clone" : "create";
+    return !resume.linked ? "link" : !resume.sent ? "send" : "seen";
+  };
+
   const run = async () => {
-    let harnessChoice = resolvedHarness;
-    if (!data.loaded || !workflow || runningRef.current || !prompt.trim()) return;
+    if (!live || !preview.loaded || !workflow || runningRef.current || !prompt.trim()) return;
     runningRef.current = true;
-    const app = useAppStore.getState();
     setError(null);
-    let current: Stage = "send";
+    setStage(expectedStage());
     try {
-      if (continueSession) {
-        current = "send";
-        setStage(current);
-        if (!(await ensureOpen(continueSession.id))) return;
-        await app.ensureComposer(continueSession.id);
-        await app.sendPromptTo(continueSession.id, prompt, undefined, sendOptions);
-        const sent = findSession(useAppStore.getState().sessionsByProject, continueSession.id) ?? continueSession;
-        const adopt = adoptedLink && subject.kind === "pr" ? linkWithWorkflow(sent, subject.ref, activeWorkflowId) : null;
-        if (!isLinkedTo(sent, subject)) {
-          current = "link";
-          setStage(current);
-          app.applySession(await linkSession(continueSession.id, workflow.id, true));
-          setLinkedHere(continueLinkKey);
-        } else if (adopt) {
-          current = "link";
-          setStage(current);
-          app.applySession(await window.cw.linkSessionPr(continueSession.id, adopt));
-          setLinkedHere(continueLinkKey);
-        }
-        current = "seen";
-        setStage(current);
-        const updated = await markSeen(continueSession.id);
-        if (updated) app.applySession(updated);
-        finish(continueSession.id);
+      if (continueSession && !resume && !uncertain && !(await ensureOpen(continueSession.id))) return;
+      runIdRef.current ??= crypto.randomUUID();
+      const result = await window.cw.runWorkflow({
+        ...previewRequest,
+        runId: runIdRef.current,
+        prompt,
+        expectedRevision: preview.revision,
+        resume
+      });
+      setUncertain(false);
+      if (result.ok) {
+        if (!continueSession) useAppStore.setState({ lastDriver: driver });
+        await finish(result.sessionId);
         return;
       }
-      let sessionId = created?.sessionId ?? null;
-      let note = created?.note ?? null;
-      if (!sessionId) {
-        if (!harnessChoice) throw new Error("the harness options are still loading");
-        let targetProjectId = projectId;
-        if (!targetProjectId) {
-          current = "clone";
-          setStage(current);
-          const project = await window.cw.cloneGitHubRepo(subject.ref);
-          await Promise.all([refreshProjectRepos(), app.loadProjects()]);
-          targetProjectId = project.id;
-          const [models, permissions] = await Promise.all([
-            window.cw.listModelsFor(targetProjectId, driver),
-            window.cw.listPermissionsFor(targetProjectId, driver)
-          ]);
-          harnessChoice = resolveHarness({ models, permissions });
-        }
-        current = "create";
-        setStage(current);
-        const prefs: ComposerPrefs = {
-          ...DEFAULT_COMPOSER,
-          ...pendingPrefs,
-          model: harnessChoice.model,
-          effort: harnessChoice.effort,
-          permissionMode: harnessChoice.permissionMode
-        };
-        const session = await app.createSessionIn(targetProjectId, harnessChoice.driver, prefs, workspaceOptions(targetProjectId));
-        sessionId = session.id;
-        const detail = data.prDetail;
-        note =
-          subject.kind === "pr" &&
-          detail &&
-          detail.viewerIsAuthor &&
-          session.branch &&
-          session.branch !== detail.headRefName
-            ? pushNote(subject.ref, detail.headRefName, session.branch)
-            : null;
-        setCreated({ sessionId, linked: false, note });
-      }
-      if (!created?.linked) {
-        current = "link";
-        setStage(current);
-        const linked = await linkSession(sessionId, workflow.id);
-        useAppStore.getState().applySession(linked);
-        setCreated({ sessionId, linked: true, note });
-      }
-      current = "send";
-      setStage(current);
-      await useAppStore.getState().sendPromptTo(sessionId, note ? `${prompt}\n\n${note}` : prompt, undefined, sendOptions);
-      finish(sessionId);
+      setResume(result.resume);
+      setError(`${stageLabel(result.stage, noun)} failed: ${result.message}`);
+      if (!result.resume) previewState.refresh();
     } catch (err) {
       const message = ipcErrorMessage(err);
-      console.warn(`[workflow] ${subject.kind} run failed at ${current}: ${message}`);
-      setError(`${stageLabel(current, noun)} failed: ${message}`);
+      console.warn(`[workflow] ${subject.kind} run call failed: ${message}`);
+      setUncertain(true);
+      setError(`The run may have started on the server (${message}). Retry to check.`);
     } finally {
       runningRef.current = false;
       setStage(null);
@@ -549,10 +339,7 @@ export function WorkflowRunModal({ request }: { request: RunModalState }) {
       ? `Run workflow · ${workflow.label}`
       : "Run workflow";
   const continueModel = continueSession ? composerBySession[continueSession.id]?.model : undefined;
-  const summary =
-    resolvedHarness && options
-      ? harnessSummary(harnessConfig, resolvedHarness, { models: options.models, permissions: options.permissions, pendingPrefs })
-      : null;
+  const summary = harnessResult?.summary ?? null;
   const hasOverride = Boolean(request.promptOverride?.trim());
   const promptLabel = !continueSession
     ? "Prompt"
@@ -561,23 +348,19 @@ export function WorkflowRunModal({ request }: { request: RunModalState }) {
       : hasOverride
         ? "Follow-up prompt"
         : "Follow-up prompt (the workflow's “on update” template)";
-  const showPushNote = subject.kind === "pr" && !continueSession && data.pr?.viewerIsAuthor === true;
+  const showPushNote = subject.kind === "pr" && !continueSession && preview?.pr?.viewerIsAuthor === true;
   const blocked =
-    !data.loaded ||
+    !live ||
+    !preview.loaded ||
     !workflow ||
     !prompt.trim() ||
-    !data.logsReady ||
+    !preview.logsReady ||
     sessionBusy ||
     driverMissing ||
-    (!continueSession && (!reposReady || (!created && !resolvedHarness)));
-  const startsContinuous =
-    subject.kind === "pr" &&
-    !babysitWorkflow &&
-    startsAutoFollowUp({ status: continueSession?.status ?? "idle" }, workflow, basePrState ? { state: basePrState } : null) &&
-    (!continueAlreadyLinked || adoptedLink !== null);
-  const actionLabel =
-    created && !continueSession
-      ? "Retry"
+    (!continueSession && !resume && !preview.harness);
+  const startsContinuous = preview?.startsContinuous === true;
+  const actionLabel = locked
+    ? "Retry"
       : startsContinuous && workflow
         ? `Start ${workflow.label}`
         : continueSession
@@ -585,15 +368,16 @@ export function WorkflowRunModal({ request }: { request: RunModalState }) {
           : "Start session";
   const projectName = projectId ? projectNameOf(projectId) : repo.repo;
   const workspaceHint = (mode: "worktree" | "checkout"): string =>
-    base ? baseWorkspaceHint(base, mode, projectName) : prWorkspaceHint(data.pr?.headRefName ?? null, mode, projectName);
-  const card =
-    subject.kind === "pr" ? (
-      data.pr && <PrCard pr={data.pr} />
-    ) : subject.kind === "issue" ? (
-      data.issue && <IssueCard issue={data.issue} />
-    ) : (
-      <RunCard run={data.run} runRef={subject.ref} />
-    );
+    base ? baseWorkspaceHint(base, mode, projectName) : prWorkspaceHint(preview?.pr?.headRefName ?? null, mode, projectName);
+  const card = !preview ? null : subject.kind === "pr" ? (
+    preview.pr && <PrCard pr={preview.pr} />
+  ) : subject.kind === "issue" ? (
+    preview.issue && <IssueCard issue={preview.issue} />
+  ) : (
+    <RunCard run={preview.run ?? undefined} runRef={subject.ref} />
+  );
+  const loadError = preview?.error ?? null;
+  const previewError = previewState.error;
 
   return (
     <>
@@ -616,16 +400,24 @@ export function WorkflowRunModal({ request }: { request: RunModalState }) {
           </div>
 
           <div className="wf-run-body">
-            {card || (!data.error && <SubjectCardSkeleton label={`Loading ${noun}`} />)}
-            {data.error && (
+            {card || (!loadError && !previewError && <SubjectCardSkeleton label={`Loading ${noun}`} />)}
+            {loadError && (
               <div className="wf-run-error" role="alert">
-                Could not load the {noun}: {data.error}
-                <button className="btn" onClick={data.retry}>
+                Could not load the {noun}: {loadError}
+                <button className="btn" onClick={previewState.retry}>
                   Retry
                 </button>
               </div>
             )}
-            {subject.kind === "run" && !data.run && (
+            {previewError && (
+              <div className="wf-run-error" role="alert">
+                Could not prepare this workflow run: {previewError}
+                <button className="btn" onClick={previewState.retry}>
+                  Retry
+                </button>
+              </div>
+            )}
+            {subject.kind === "run" && preview && !preview.run && (
               <div className="wf-run-status">
                 <AlertTriangle size={12} aria-hidden="true" /> This run isn't in the loaded results, so its details are
                 unavailable. Prompt variables that need them will be empty.
@@ -673,7 +465,7 @@ export function WorkflowRunModal({ request }: { request: RunModalState }) {
                       label: w.label,
                       description: w.description,
                       icon: <Icon size={13} />,
-                      disabled: working || created !== null
+                      disabled: working || locked
                     };
                   })}
                   onPick={pickWorkflow}
@@ -704,7 +496,7 @@ export function WorkflowRunModal({ request }: { request: RunModalState }) {
                           ? `${harnessLabel(driver)} · not installed`
                           : "Loading…"}
                     </span>
-                    <button type="button" className="wf-run-config" onClick={configure} disabled={working || !workflow || created !== null}>
+                    <button type="button" className="wf-run-config" onClick={configure} disabled={working || !workflow || locked}>
                       <Settings2 size={12} aria-hidden="true" /> Configure
                     </button>
                   </div>
@@ -719,9 +511,9 @@ export function WorkflowRunModal({ request }: { request: RunModalState }) {
                 change requests and comments until the PR is merged or closed. Pause or stop it from the session.
               </div>
             )}
-            {options?.error && !continueSession && (
+            {harnessResult?.error && !continueSession && (
               <div className="wf-run-error" role="alert">
-                Could not list harness options: {options.error}
+                Could not list harness options: {harnessResult.error}
               </div>
             )}
             {driverMissing && (
@@ -736,14 +528,14 @@ export function WorkflowRunModal({ request }: { request: RunModalState }) {
                 <Segment
                   label="Session"
                   value={target}
-                  disabled={working || created !== null || babysitWorkflow !== null}
+                  disabled={working || locked || babysitLocked}
                   onPick={pickTarget}
                   options={[
                     {
                       id: "",
                       icon: <Plus size={14} />,
                       title: "New session",
-                      hint: `linked to ${subjectLabel(subject, data.run?.runNumber)}`
+                      hint: `linked to ${subjectText}`
                     },
                     ...linkedOptions.map((s) => {
                       const link = subjectLink(s, subject);
@@ -761,7 +553,7 @@ export function WorkflowRunModal({ request }: { request: RunModalState }) {
 
             {otherSessions.length > 0 && (
               <div className="wf-run-field">
-                <span className="wf-run-label">{otherSessionsLabel}</span>
+                <span className="wf-run-label">{preview?.otherSessionsLabel ?? "Other sessions"}</span>
                 <MenuSelect
                   label="Other sessions"
                   direction="down"
@@ -771,9 +563,9 @@ export function WorkflowRunModal({ request }: { request: RunModalState }) {
                   options={otherSessions.map((s) => ({
                     id: s.id,
                     label: s.title,
-                    hint: `will be linked to ${subjectLabel(subject, data.run?.runNumber)}${s.projectId === projectId ? "" : ` · ${projectNameOf(s.projectId)}`}`,
+                    hint: `will be linked to ${subjectText}${s.projectId === projectId ? "" : ` · ${projectNameOf(s.projectId)}`}`,
                     icon: <DriverIcon driver={s.driver} size={13} />,
-                    disabled: working || created !== null || babysitWorkflow !== null
+                    disabled: working || locked || babysitLocked
                   }))}
                   onPick={pickTarget}
                   searchable={otherSessions.length > 5}
@@ -788,7 +580,7 @@ export function WorkflowRunModal({ request }: { request: RunModalState }) {
                 <Segment
                   label="Workspace"
                   value={workspace}
-                  disabled={working || created !== null}
+                  disabled={working || locked}
                   onPick={setWorkspaceChoice}
                   options={[
                     {
@@ -815,10 +607,10 @@ export function WorkflowRunModal({ request }: { request: RunModalState }) {
                       : [])
                   ]}
                 />
-                {showPushNote && data.pr && (
+                {showPushNote && preview?.pr && (
                   <span className="wf-run-muted wf-run-note">
-                    Unless your local {data.pr.headRefName} matches the PR head, the session works on a new cw/ branch. The
-                    prompt will tell it to update the PR with: git push origin HEAD:{data.pr.headRefName}
+                    Unless your local {preview.pr.headRefName} matches the PR head, the session works on a new cw/ branch. The
+                    prompt will tell it to update the PR with: git push origin HEAD:{preview.pr.headRefName}
                   </span>
                 )}
               </div>
@@ -837,17 +629,20 @@ export function WorkflowRunModal({ request }: { request: RunModalState }) {
                 }}
                 disabled={working}
                 spellCheck={false}
-                placeholder={resolved === null ? "Resolving template…" : undefined}
+                placeholder={!preview || preview.prompt === null ? "Resolving template…" : undefined}
               />
             </label>
-            {data.logsNeeded && !data.logsReady && !data.logsError && (
+            {preview?.logsNeeded && !preview.logsReady && !preview.logsError && (
               <div className="wf-run-status">
                 <Spinner size={12} /> Fetching failed {subject.kind === "pr" ? "check" : "run"} logs…
               </div>
             )}
-            {data.logsError && (
+            {preview?.logsError && (
               <div className="wf-run-error" role="alert">
-                Could not fetch failed {subject.kind === "pr" ? "check" : "run"} logs: {data.logsError}
+                Could not fetch failed {subject.kind === "pr" ? "check" : "run"} logs: {preview.logsError}
+                <button className="btn" onClick={previewState.retry}>
+                  Retry
+                </button>
               </div>
             )}
             {sessionBusy && <div className="wf-run-status">This session is running a turn. Wait for it to finish before sending.</div>}

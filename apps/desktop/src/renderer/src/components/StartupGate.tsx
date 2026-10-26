@@ -1,5 +1,7 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { StartupState } from "@cw-code/contracts";
+import { reload } from "../server/connect.js";
+import { useConnectionEpoch } from "../server/topics.js";
 import { ipcErrorMessage } from "./ipcError.js";
 import { RecoveryScreen } from "./RecoveryScreen.js";
 
@@ -23,6 +25,20 @@ export function StartupGate({ children }: { children: ReactNode }) {
       active = false;
     };
   }, []);
+
+  const epoch = useConnectionEpoch();
+  const checkedEpoch = useRef(epoch);
+  const shownMode = gate.phase === "loaded" ? gate.state.mode : null;
+  useEffect(() => {
+    if (checkedEpoch.current === epoch || shownMode === null) return;
+    checkedEpoch.current = epoch;
+    window.cw
+      .getStartupState()
+      .then((state) => {
+        if (state.mode !== shownMode) reload();
+      })
+      .catch((err) => console.warn(`[cw-code] could not recheck the startup state after reconnecting: ${ipcErrorMessage(err)}`));
+  }, [epoch, shownMode]);
 
   if (gate.phase === "loading") return null;
   if (gate.phase === "error") return <div className="preload-error">cw-code could not determine its startup state: {gate.message}</div>;

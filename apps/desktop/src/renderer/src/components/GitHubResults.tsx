@@ -1,34 +1,45 @@
-import { Fragment, useCallback, useMemo, type ReactNode } from "react";
+import { useMemo } from "react";
 import { ChevronDown, ChevronRight } from "lucide-react";
-import type { GitHubViewGroup, IssueSummary, PrSummary, RepoRef, WorkflowRunSummary } from "../cw.js";
+import type { GitHubRow as GitHubRowData, GitHubSubject } from "@cw-code/contracts";
+import type { GitHubKind, GitHubViewGroup, RepoRef } from "../cw.js";
 import { GitHubRow } from "./GitHubRow.js";
 import { NamedIcon } from "./GitHubIcon.js";
-import { issueBucket, runBucket } from "./githubRowModel.js";
-import { ISSUE_BUCKETS, PR_BUCKETS, RUN_BUCKETS, groupItems, type ResultGroup } from "./githubViewModel.js";
-import { prBucket, prKey } from "./prInbox.js";
+import { ISSUE_BUCKETS, PR_BUCKETS, RUN_BUCKETS, groupItems, type BucketDef } from "./githubViewModel.js";
+import { prKey } from "./prInbox.js";
 
-export type Listing =
-  | { kind: "pr"; items: PrSummary[] }
-  | { kind: "issue"; items: IssueSummary[] }
-  | { kind: "run"; items: WorkflowRunSummary[] };
+const BUCKETS: Record<GitHubKind, BucketDef[]> = { pr: PR_BUCKETS, issue: ISSUE_BUCKETS, run: RUN_BUCKETS };
 
-function GroupList<T>({
-  groups,
+function rowKeyOf(subject: GitHubSubject): string {
+  if (subject.kind === "pr") return prKey(subject.pr.ref);
+  if (subject.kind === "issue") return prKey(subject.issue.ref);
+  const { host, owner, repo, runId } = subject.run.ref;
+  return `${host}/${owner}/${repo}#${runId}`;
+}
+
+export function GitHubResults({
+  kind,
+  rows,
+  mode,
   collapsed,
-  keyOf,
-  renderRow,
-  onToggle
+  viewer,
+  isCloned,
+  onToggle,
+  onAddQualifier
 }: {
-  groups: ResultGroup<T>[];
+  kind: GitHubKind;
+  rows: GitHubRowData[];
+  mode: GitHubViewGroup;
   collapsed: string[];
-  keyOf: (item: T) => string;
-  renderRow: (item: T) => ReactNode;
+  viewer: string | null;
+  isCloned: (repo: RepoRef) => boolean;
   onToggle: (groupId: string) => void;
+  onAddQualifier: (key: string, value: string) => void;
 }) {
-  const rows = (items: T[]) => (
+  const groups = useMemo(() => groupItems(rows, mode, { buckets: BUCKETS[kind], isCloned }), [rows, mode, kind, isCloned]);
+  const list = (items: GitHubRowData[]) => (
     <div className="pr-inbox-rows">
-      {items.map((item) => (
-        <Fragment key={keyOf(item)}>{renderRow(item)}</Fragment>
+      {items.map((row) => (
+        <GitHubRow key={rowKeyOf(row.subject)} row={row} viewer={viewer} isCloned={isCloned} onAddQualifier={onAddQualifier} />
       ))}
     </div>
   );
@@ -38,7 +49,7 @@ function GroupList<T>({
         if (group.flat) {
           return (
             <section key={group.id} className="pr-inbox-group">
-              {rows(group.items)}
+              {list(group.items)}
             </section>
           );
         }
@@ -52,84 +63,10 @@ function GroupList<T>({
               <span className="pr-inbox-group-count">{group.items.length}</span>
               <span className="pr-inbox-group-hint">{group.hint}</span>
             </button>
-            {!isCollapsed && rows(group.items)}
+            {!isCollapsed && list(group.items)}
           </section>
         );
       })}
     </div>
   );
-}
-
-interface ResultsProps {
-  mode: GitHubViewGroup;
-  collapsed: string[];
-  viewer: string | null;
-  isCloned: (repo: RepoRef) => boolean;
-  onToggle: (groupId: string) => void;
-  onAddQualifier: (key: string, value: string) => void;
-}
-
-function PrResults({ items, mode, collapsed, viewer, isCloned, onToggle, onAddQualifier }: ResultsProps & { items: PrSummary[] }) {
-  const groups = useMemo(
-    () => groupItems(items, mode, { buckets: PR_BUCKETS, bucketOf: prBucket, repoOf: (pr) => pr.ref, isCloned }),
-    [items, mode, isCloned]
-  );
-  const renderRow = useCallback(
-    (pr: PrSummary) => <GitHubRow kind="pr" item={pr} viewer={viewer} onAddQualifier={onAddQualifier} />,
-    [viewer, onAddQualifier]
-  );
-  return <GroupList groups={groups} collapsed={collapsed} keyOf={(pr) => prKey(pr.ref)} renderRow={renderRow} onToggle={onToggle} />;
-}
-
-function IssueResults({
-  items,
-  mode,
-  collapsed,
-  viewer,
-  mentionsMode,
-  isCloned,
-  onToggle,
-  onAddQualifier
-}: ResultsProps & { items: IssueSummary[]; mentionsMode: boolean }) {
-  const groups = useMemo(
-    () =>
-      groupItems(items, mode, {
-        buckets: ISSUE_BUCKETS,
-        bucketOf: (issue) => issueBucket(issue, viewer, mentionsMode),
-        repoOf: (issue) => issue.ref,
-        isCloned
-      }),
-    [items, mode, viewer, mentionsMode, isCloned]
-  );
-  const renderRow = useCallback(
-    (issue: IssueSummary) => <GitHubRow kind="issue" item={issue} viewer={viewer} onAddQualifier={onAddQualifier} />,
-    [viewer, onAddQualifier]
-  );
-  return <GroupList groups={groups} collapsed={collapsed} keyOf={(issue) => prKey(issue.ref)} renderRow={renderRow} onToggle={onToggle} />;
-}
-
-function RunResults({ items, mode, collapsed, viewer, isCloned, onToggle, onAddQualifier }: ResultsProps & { items: WorkflowRunSummary[] }) {
-  const groups = useMemo(
-    () => groupItems(items, mode, { buckets: RUN_BUCKETS, bucketOf: runBucket, repoOf: (run) => run.ref, isCloned }),
-    [items, mode, isCloned]
-  );
-  const renderRow = useCallback(
-    (run: WorkflowRunSummary) => <GitHubRow kind="run" item={run} viewer={viewer} onAddQualifier={onAddQualifier} />,
-    [viewer, onAddQualifier]
-  );
-  return (
-    <GroupList
-      groups={groups}
-      collapsed={collapsed}
-      keyOf={(run) => `${run.ref.host}/${run.ref.owner}/${run.ref.repo}#${run.ref.runId}`}
-      renderRow={renderRow}
-      onToggle={onToggle}
-    />
-  );
-}
-
-export function GitHubResults({ listing, mentionsMode, ...rest }: ResultsProps & { listing: Listing; mentionsMode: boolean }) {
-  if (listing.kind === "pr") return <PrResults items={listing.items} {...rest} />;
-  if (listing.kind === "issue") return <IssueResults items={listing.items} mentionsMode={mentionsMode} {...rest} />;
-  return <RunResults items={listing.items} {...rest} />;
 }

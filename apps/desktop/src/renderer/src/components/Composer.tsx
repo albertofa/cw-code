@@ -2,16 +2,18 @@ import { useEffect, type ReactNode } from "react";
 import type { DriverName } from "../cw.js";
 import { useAppStore, DEFAULT_COMPOSER } from "../stores/appStore.js";
 import { usePanelStore } from "../stores/panelStore.js";
-import { useBranchStore } from "../stores/branchStore.js";
 import { useSessionSkillsStore } from "../stores/sessionSkillsStore.js";
 import { ComposerView, type ComposerBackend } from "./ComposerView.js";
-import { useBranchMismatch } from "./useBranchMismatch.js";
+import { useAppSettings } from "./useAppSettings.js";
+import { useBranchMismatch } from "./useGit.js";
 import { ContextRing } from "./ContextRing.js";
 import { restoreConfirm } from "./sessionLifecycle.js";
+import { useThreadBusy } from "./useThread.js";
 
 export function Composer({ sessionId, driver, top }: { sessionId: string; driver: DriverName; top?: ReactNode }) {
   const prefs = useAppStore((s) => s.composerBySession[sessionId] ?? DEFAULT_COMPOSER);
-  const busy = useAppStore((s) => s.busyTurns[sessionId] !== undefined);
+  const prefsLoaded = useAppStore((s) => s.composerLoadedBySession[sessionId] === true);
+  const busy = useThreadBusy(sessionId);
   const projectId = useAppStore((s) => {
     for (const [pid, list] of Object.entries(s.sessionsByProject)) {
       if (list.some((session) => session.id === sessionId)) return pid;
@@ -27,8 +29,8 @@ export function Composer({ sessionId, driver, top }: { sessionId: string; driver
   });
   const effectivePermissionMode = session?.effectivePermissionMode;
 
-  const modelsRefreshKey = useAppStore((s) => s.settingsVersion);
-  const { mismatch } = useBranchMismatch(sessionId);
+  const settings = useAppSettings();
+  const mismatch = useBranchMismatch(sessionId);
 
   useEffect(() => {
     void useAppStore.getState().ensureComposer(sessionId);
@@ -37,15 +39,16 @@ export function Composer({ sessionId, driver, top }: { sessionId: string; driver
   const backend: ComposerBackend = {
     imageTarget: { sessionId, projectId: projectId ?? undefined },
     prefs,
+    prefsLoaded,
     busy,
     effectivePermissionMode,
     branchGuard: {
       mismatch,
       switchBranch: async () => {
-        if (mismatch) await useBranchStore.getState().switchToSessionBranch(sessionId, mismatch.sessionBranch);
+        if (mismatch) await window.cw.switchGitBranch(sessionId, mismatch.sessionBranch);
       },
-      acceptFolderHead: () => useBranchStore.getState().acceptFolderHead(sessionId),
-      refreshMismatch: () => useBranchStore.getState().refreshMismatch(sessionId)
+      acceptFolderHead: () => window.cw.keepFolderHead(sessionId),
+      refreshMismatch: () => window.cw.checkBranchMismatch(sessionId)
     },
     loadModels: () => window.cw.listModels(sessionId),
     loadPermissions: () => window.cw.listPermissions(sessionId),
@@ -79,7 +82,7 @@ export function Composer({ sessionId, driver, top }: { sessionId: string; driver
       backend={backend}
       driver={driver}
       resetKey={sessionId}
-      modelsRefreshKey={modelsRefreshKey}
+      settings={settings}
       usageSlot={<ContextRing sessionId={sessionId} driver={driver} />}
       top={top}
     />

@@ -1,11 +1,10 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { useShallow } from "zustand/react/shallow";
-import { Bot, ChartColumn, ChevronDown, Gauge, GitBranch, ListChecks, RefreshCw, Sparkles } from "lucide-react";
+import { Bot, ChartColumn, ChevronDown, Gauge, GitBranch, ListChecks, Sparkles } from "lucide-react";
+import type { SessionPrItem } from "@cw-code/contracts";
 import type { AccountUsageOk, DriverName, TodoItem } from "../cw.js";
-import { useAppStore } from "../stores/appStore.js";
+import { useAppStore, type ChatMessage } from "../stores/appStore.js";
 import { usePrStore } from "../stores/prStore.js";
 import { useSkillsStore } from "../stores/skillsStore.js";
-import { useUsageStore } from "../stores/usageStore.js";
 import { DriverIcon } from "./DriverIcon.js";
 import { PrChipBadge } from "./PrChipBadge.js";
 import { PlanMeters } from "./PlanMeters.js";
@@ -14,27 +13,43 @@ import { formatRelativeAge } from "./prInboxModel.js";
 import { collectSubagents, formatTokensShort, isSubagentMessage, subagentStateLabel } from "./subagents.js";
 import { formatDuration } from "./toolSummaries.js";
 import { harnessLabel } from "./toolTabs.js";
-import { findSession, useSessionPrItems } from "./useLinkedPr.js";
 import { formatCostUsd, useNow } from "./usageFormat.js";
-import { contextMeter, totals, turnTokens } from "./usageModel.js";
+import { useGitStatus } from "./useGit.js";
+import { useThreadEntry, useThreadItemsSelect } from "./useThread.js";
+import { useAccountUsage } from "./useUsage.js";
+import { findSession, sameItems } from "../server/sidebarData.js";
 import "./sessionOverview.css";
 
 const EMPTY_TODOS: TodoItem[] = [];
+const EMPTY_PR_ITEMS: SessionPrItem[] = [];
+
+function subagentItems(items: ChatMessage[]): ChatMessage[] {
+  return items.filter(isSubagentMessage);
+}
 
 function Section({
   icon,
   title,
   summary,
   defaultOpen = true,
+  open: controlledOpen,
+  onOpenChange,
   children
 }: {
   icon: ReactNode;
   title: string;
   summary?: ReactNode;
   defaultOpen?: boolean;
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
   children: ReactNode;
 }) {
-  const [open, setOpen] = useState(defaultOpen);
+  const [localOpen, setLocalOpen] = useState(defaultOpen);
+  const open = controlledOpen ?? localOpen;
+  const setOpen = (next: boolean) => {
+    setLocalOpen(next);
+    onOpenChange?.(next);
+  };
   return (
     <section className={`ov-sec${open ? "" : " closed"}`} aria-label={title}>
       <div className="ov-h">
@@ -66,8 +81,9 @@ function Note({ children, tone }: { children: ReactNode; tone?: "error" }) {
 }
 
 function ContextSection({ sessionId }: { sessionId: string }) {
-  const context = useAppStore((s) => s.turnUsageBySession[sessionId]?.context);
-  const meter = context ? contextMeter(context) : null;
+  const usage = useThreadEntry(sessionId, "usage");
+  const context = usage?.context ?? null;
+  const meter = usage?.meter ?? null;
   const percentLabel = meter ? Math.round(meter.percent * 100) : null;
   return (
     <Section icon={<Gauge size={14} aria-hidden="true" />} title="Context" summary={percentLabel === null ? undefined : <span className="mono">{percentLabel}%</span>}>
@@ -102,7 +118,7 @@ function ChangesSummary({ dirtyCount, addedLines, deletedLines }: { dirtyCount: 
 }
 
 function PullRequestRow({ sessionId, githubError }: { sessionId: string; githubError: string | null }) {
-  const { items } = useSessionPrItems(sessionId);
+  const items = useThreadEntry(sessionId, "prItems") ?? EMPTY_PR_ITEMS;
   const openPr = usePrStore((s) => s.openPr);
   if (items.length > 0) {
     return (
@@ -132,7 +148,7 @@ function PullRequestRow({ sessionId, githubError }: { sessionId: string; githubE
 }
 
 function WorkspaceSection({ sessionId }: { sessionId: string }) {
-  const status = useAppStore((s) => s.gitStatusBySession[sessionId]);
+  const status = useGitStatus(sessionId);
   const summary = status?.available ? (status.isWorktree ? "worktree" : "checkout") : undefined;
   return (
     <Section icon={<GitBranch size={14} aria-hidden="true" />} title="Workspace" summary={summary}>
@@ -159,41 +175,17 @@ function WorkspaceSection({ sessionId }: { sessionId: string }) {
 }
 
 function SessionUsageSection({ sessionId }: { sessionId: string }) {
-  const rows = useUsageStore((s) => s.sessionRowsById[sessionId]);
-  const loading = useUsageStore((s) => !!s.sessionLoading[sessionId]);
-  const error = useUsageStore((s) => s.sessionError[sessionId]);
-  const ensureSessionRows = useUsageStore((s) => s.ensureSessionRows);
-  const lastTurn = useAppStore((s) => s.turnUsageBySession[sessionId]?.lastTurn);
-  const sessionTotals = useMemo(() => totals(rows ?? []), [rows]);
-
-  useEffect(() => {
-    void ensureSessionRows(sessionId);
-    return window.cw.onTurnEvent((msg) => {
-      if (msg.event.type !== "turn.done" || msg.sessionId !== sessionId) return;
-      void ensureSessionRows(sessionId);
-    });
-  }, [sessionId, ensureSessionRows]);
-
-  const refresh = (
-    <button
-      type="button"
-      className="ov-icon-btn"
-      onClick={() => void ensureSessionRows(sessionId)}
-      disabled={loading}
-      title="Refresh session usage"
-      aria-label="Refresh session usage"
-    >
-      <RefreshCw size={12} className={loading ? "ov-spin" : undefined} aria-hidden="true" />
-    </button>
-  );
+  const sessionTotals = useThreadEntry(sessionId, "usageTotals");
+  const totalsError = useThreadEntry(sessionId, "usageTotalsError");
+  const lastTurn = useThreadEntry(sessionId, "usage")?.lastTurn ?? null;
 
   return (
-    <Section icon={<ChartColumn size={14} aria-hidden="true" />} title="This session" summary={refresh}>
-      {!rows && (loading || !error) ? (
+    <Section icon={<ChartColumn size={14} aria-hidden="true" />} title="This session">
+      {totalsError ? (
+        <Note tone="error">Couldn&apos;t load usage: {totalsError}</Note>
+      ) : sessionTotals === undefined ? (
         <Note>Loading…</Note>
-      ) : !rows && error ? (
-        <Note tone="error">Couldn&apos;t load session usage: {error}</Note>
-      ) : rows && rows.length === 0 ? (
+      ) : sessionTotals === null ? (
         <Note>No usage recorded yet.</Note>
       ) : (
         <>
@@ -210,7 +202,7 @@ function SessionUsageSection({ sessionId }: { sessionId: string }) {
           <Row label="Last turn">
             <span className="mono">
               {lastTurn
-                ? `${formatTokensShort(turnTokens(lastTurn))} tok${lastTurn.durationMs !== undefined ? ` · ${formatDuration(lastTurn.durationMs)}` : ""}`
+                ? `${formatTokensShort(lastTurn.tokens)} tok${lastTurn.durationMs !== null ? ` · ${formatDuration(lastTurn.durationMs)}` : ""}`
                 : "—"}
             </span>
           </Row>
@@ -219,7 +211,6 @@ function SessionUsageSection({ sessionId }: { sessionId: string }) {
           </Row>
         </>
       )}
-      {rows && error && <Note tone="error">Couldn&apos;t refresh session usage: {error}</Note>}
     </Section>
   );
 }
@@ -236,16 +227,11 @@ function PlanLimits({ driver, state, stale }: { driver: DriverName; state: Accou
 }
 
 function PlanSection({ driver }: { driver: DriverName }) {
-  const snapshot = useUsageStore((s) => s.accountByDriver[driver]);
-  const loading = useUsageStore((s) => !!s.accountLoading[driver]);
-  const error = useUsageStore((s) => s.accountError[driver]);
-  const refreshAccount = useUsageStore((s) => s.refreshAccount);
+  const [open, setOpen] = useState(true);
+  const { snapshot: account, loading, error } = useAccountUsage(driver, open);
+  const snapshot = account ?? undefined;
   const openUsage = usePrStore((s) => s.openUsage);
   const now = useNow();
-
-  useEffect(() => {
-    void refreshAccount([driver], false);
-  }, [driver, refreshAccount]);
 
   const state = snapshot?.state;
   const shownState = state?.status === "ok" ? state : state?.status === "error" ? snapshot?.lastGood?.state : undefined;
@@ -256,6 +242,8 @@ function PlanSection({ driver }: { driver: DriverName }) {
     <Section
       icon={<DriverIcon driver={driver} size={14} />}
       title={title}
+      open={open}
+      onOpenChange={setOpen}
       summary={fetchedAt !== undefined ? <span className="ov-faint">Updated {formatRelativeAge(fetchedAt, now)} ago</span> : undefined}
     >
       <div className={`ov-plan ${driver}`}>
@@ -291,7 +279,7 @@ function PlanSection({ driver }: { driver: DriverName }) {
 }
 
 function TodosSection({ sessionId }: { sessionId: string }) {
-  const todos = useAppStore((s) => s.todosBySession[sessionId] ?? EMPTY_TODOS);
+  const todos = useThreadEntry(sessionId, "todos") ?? EMPTY_TODOS;
   const total = todos.length;
   const done = todos.filter((t) => t.status === "completed").length;
   const current = todos.find((t) => t.status === "in_progress") ?? todos.find((t) => t.status === "pending");
@@ -316,7 +304,7 @@ function TodosSection({ sessionId }: { sessionId: string }) {
 }
 
 function SubagentsSection({ sessionId }: { sessionId: string }) {
-  const subagentMessages = useAppStore(useShallow((s) => (s.messagesBySession[sessionId] ?? []).filter(isSubagentMessage)));
+  const subagentMessages = useThreadItemsSelect(sessionId, subagentItems, sameItems);
   const agents = useMemo(() => collectSubagents(subagentMessages), [subagentMessages]);
   return (
     <Section icon={<Bot size={14} aria-hidden="true" />} title="Subagents" summary={agents.length > 0 ? agents.length : undefined}>

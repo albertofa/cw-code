@@ -1,20 +1,17 @@
-import { Fragment, useCallback, useEffect, useLayoutEffect, useRef, useState, type DragEvent, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, type RefObject } from "react";
+import { Fragment, useEffect, useLayoutEffect, useRef, useState, type DragEvent, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, type RefObject } from "react";
 import { AlertTriangle, Bot, Copy, Folder, FolderGit2, Gauge, GitFork, GitPullRequest, GripVertical, History, Pencil, Plus, RefreshCw, RotateCcw, ShieldCheck, Trash2, type LucideIcon } from "lucide-react";
 import type { PrSuggestCondition, PrWorkflow, PrWorkflowHarness, PrWorkflowIcon, PrWorkspaceChoice } from "@cw-code/contracts";
-import type { AppSettings, DriverName, PrDetail, PrSummary } from "../cw.js";
+import type { AppSettings, DriverName, PrSummary } from "../cw.js";
 import { useAppStore } from "../stores/appStore.js";
-import { usePrStore } from "../stores/prStore.js";
 import { useSettingsDraftStore } from "../stores/settingsDraftStore.js";
 import { DriverIcon } from "./DriverIcon.js";
 import { errorMessage } from "./errorMessage.js";
 import { MenuSelect } from "./MenuSelect.js";
 import { PromptPreviewSkeleton } from "./GitHubSkeletons.js";
-import { isHarnessSkipped } from "./harnessAvailability.js";
 import { InlineLoading } from "./Loading.js";
 import { EFFORTS, effortLabel, effortOptionsFor } from "./modelMenus.js";
 import { useNotifs } from "./Notifications.js";
 import { prKey } from "./prInbox.js";
-import { needsFailedLogs } from "./prSessionModel.js";
 import {
   changeWorkflowTarget,
   CONDITIONS_BY_TARGET,
@@ -35,13 +32,17 @@ import {
   type TemplateVarIssues,
   type WorkflowTarget
 } from "./prWorkflowEditor.js";
-import { attributionText, loadFailedLogs, resolveTemplate, TEMPLATE_VARS_BY_TARGET, templateVars } from "./prWorkflows.js";
+import { attributionText, TEMPLATE_VARS_BY_TARGET } from "@cw-code/shared/workflowTemplates";
+import { usePrDataRevision, usePrInbox, usePrInboxItems, usePrsTopicError } from "./usePrs.js";
+import { useServerPreview } from "./useServerPreview.js";
 import { SettingsPageHead, SettingsSwitch } from "./SettingsLayout.js";
 import { HARNESS_IDS, HARNESS_NAMES } from "./settingsSections.js";
-import { getRecentModels } from "./lastModel.js";
+import { useRecentModels } from "./lastModel.js";
 import { harnessLabel } from "./toolTabs.js";
-import { PERMISSION_LABELS, PERMISSION_MODES, workflowDriver, workflowModel } from "./workflowHarness.js";
+import { PERMISSION_LABELS, PERMISSION_MODES } from "./workflowHarness.js";
 import { WORKFLOW_ICONS, workflowIcon } from "./workflowIcons.js";
+
+const TEMPLATE_PREVIEW_DEBOUNCE_MS = 400;
 
 const CONDITION_LABELS: Record<PrSuggestCondition, string> = {
   "review-requested": "Review requested from me",
@@ -78,66 +79,10 @@ const TARGET_SUBJECTS: Record<WorkflowTarget, string> = {
 
 const ICON_IDS = Object.keys(WORKFLOW_ICONS) as PrWorkflowIcon[];
 
-const NO_PRS: PrSummary[] = [];
 
 type ResetScope = "workflow" | PromptField;
 
 type PromptField = "startPrompt" | "updatePrompt";
-
-interface FailedLogsEntry {
-  text: string;
-  error: string | null;
-}
-
-interface FailedLogsCache {
-  entries: Record<string, FailedLogsEntry>;
-  request: (id: string, detail: PrDetail) => void;
-  retry: (id: string, detail: PrDetail) => void;
-}
-
-function useFailedLogsCache(): FailedLogsCache {
-  const [entries, setEntries] = useState<Record<string, FailedLogsEntry>>({});
-  const requested = useRef(new Set<string>());
-  const mounted = useRef(true);
-
-  useEffect(() => {
-    mounted.current = true;
-    return () => {
-      mounted.current = false;
-    };
-  }, []);
-
-  const request = useCallback((id: string, detail: PrDetail) => {
-    if (requested.current.has(id)) return;
-    requested.current.add(id);
-    loadFailedLogs(detail)
-      .then(
-        (text): FailedLogsEntry => ({ text, error: null }),
-        (err: unknown): FailedLogsEntry => {
-          requested.current.delete(id);
-          return { text: "", error: errorMessage(err) || "Could not load failed check logs" };
-        }
-      )
-      .then((entry) => {
-        if (mounted.current) setEntries((prev) => ({ ...prev, [id]: entry }));
-      });
-  }, []);
-
-  const retry = useCallback(
-    (id: string, detail: PrDetail) => {
-      if (requested.current.has(id)) return;
-      setEntries((prev) => {
-        const next = { ...prev };
-        delete next[id];
-        return next;
-      });
-      request(id, detail);
-    },
-    [request]
-  );
-
-  return { entries, request, retry };
-}
 
 function rootDuration(name: string, fallback: number): number {
   const raw = window.getComputedStyle(document.documentElement).getPropertyValue(name).trim();
@@ -352,7 +297,6 @@ function PromptPreview({
   prKeyValue,
   onPickPr,
   settings,
-  failedLogs,
   driver
 }: {
   template: string;
@@ -360,37 +304,33 @@ function PromptPreview({
   prKeyValue: string | null;
   onPickPr: (key: string) => void;
   settings: AppSettings;
-  failedLogs: FailedLogsCache;
   driver: DriverName;
 }) {
-  const inboxError = usePrStore((s) => s.inboxError);
-  const inboxLoading = usePrStore((s) => s.inboxLoading);
-  const refreshInbox = usePrStore((s) => s.refreshInbox);
-  const loadDetail = usePrStore((s) => s.loadDetail);
+  const inbox = usePrInbox();
+  const topicError = usePrsTopicError();
+  const inboxError = inbox?.error ?? topicError;
+  const inboxLoading = topicError === null && (inbox?.loading ?? true);
   const selected = prs.find((pr) => prKey(pr.ref) === prKeyValue) ?? prs[0];
   const key = selected ? prKey(selected.ref) : null;
-  const detail: PrDetail | undefined = usePrStore((s) => (key ? s.detailByKey[key] : undefined));
-  const detailError = usePrStore((s) => (key ? s.detailErrorByKey[key] : undefined));
-  const detailLoading = usePrStore((s) => (key ? s.detailLoadingByKey[key] === true : false));
-  const needsLogs = needsFailedLogs(template);
-  const logsId = detail ? `${prKey(detail.ref)}@${detail.headRefOid}` : null;
-  const logs = logsId ? failedLogs.entries[logsId] : undefined;
-  const requestLogs = failedLogs.request;
-
-  useEffect(() => {
-    if (selected && !detail && !detailLoading && !detailError) void loadDetail(selected.ref);
-  }, [key]);
-
-  useEffect(() => {
-    if (needsLogs && detail && logsId && !logs) requestLogs(logsId, detail);
-  }, [needsLogs, logsId, logs, requestLogs]);
+  const prRevision = usePrDataRevision(key);
+  const harness = harnessLabel(driver);
+  const request = selected ? { template, ref: selected.ref, driver, attribution: attributionText(settings, harness) } : null;
+  const preview = useServerPreview(
+    request ? JSON.stringify(request) : null,
+    (retry) => (request ? window.cw.workflowTemplatePreview({ ...request, retry }) : Promise.reject(new Error("no pull request to preview with"))),
+    (value) => value.logsNeeded && !value.logsReady && !value.logsError,
+    [prRevision],
+    TEMPLATE_PREVIEW_DEBOUNCE_MS
+  );
+  const value = preview.current ? preview.value : null;
+  const loadError = value?.error ?? preview.error;
 
   if (prs.length === 0) {
     return (
       <div className="sp-code sp-preview-empty" role={inboxError ? "alert" : undefined}>
         {inboxLoading ? <InlineLoading label="Loading pull requests" /> : inboxError ? `Could not load pull requests: ${inboxError}` : "No pull requests to preview with"}
         {inboxError && !inboxLoading && (
-          <button type="button" className="btn sp-btn-sm" onClick={() => void refreshInbox(true)}>
+          <button type="button" className="btn sp-btn-sm" onClick={() => void window.cw.refreshPrInbox(true).catch((err: unknown) => console.warn(`[pr] inbox refresh failed: ${errorMessage(err)}`))}>
             <RefreshCw size={12} aria-hidden="true" /> Retry
           </button>
         )}
@@ -398,9 +338,7 @@ function PromptPreview({
     );
   }
 
-  const harness = harnessLabel(driver);
-  const logsReady = !needsLogs || logs !== undefined;
-  const text = detail && logsReady ? resolveTemplate(template, templateVars(detail, { attribution: attributionText(settings, harness), harness, failedLogs: needsLogs ? logs?.text : undefined })) : null;
+  const text = value?.text ?? null;
 
   return (
     <>
@@ -423,24 +361,24 @@ function PromptPreview({
         />
         <span className="sp-hint">Harness: {harness}</span>
       </div>
-      {detailError && (
+      {loadError && (
         <div className="settings-error sp-preview-error" role="alert">
-          Could not load the pull request: {detailError}
-          <button type="button" className="btn sp-btn-sm" onClick={() => selected && void loadDetail(selected.ref)} disabled={detailLoading}>
+          Could not load the pull request: {loadError}
+          <button type="button" className="btn sp-btn-sm" onClick={preview.retry} disabled={preview.loading}>
             Retry
           </button>
         </div>
       )}
-      {needsLogs && logs?.error && (
+      {value?.logsError && (
         <div className="settings-error sp-preview-error" role="alert">
-          Could not load failed check logs: {logs.error}
-          <button type="button" className="btn sp-btn-sm" onClick={() => detail && logsId && failedLogs.retry(logsId, detail)}>
+          Could not load failed check logs: {value.logsError}
+          <button type="button" className="btn sp-btn-sm" onClick={preview.retry} disabled={preview.loading}>
             <RefreshCw size={12} aria-hidden="true" /> Retry
           </button>
         </div>
       )}
-      {text === null && !detailError ? (
-        <PromptPreviewSkeleton label={!detail ? "Loading pull request" : "Loading failed check logs"} />
+      {text === null && !loadError ? (
+        <PromptPreviewSkeleton label={value?.logsNeeded && !value.logsReady ? "Loading failed check logs" : "Loading pull request"} />
       ) : (
         <pre className="sp-code sp-preview" aria-label="Resolved prompt" tabIndex={0}>
           {text ?? ""}
@@ -570,13 +508,22 @@ function WorkflowHarnessFields({ workflow, onChange }: { workflow: PrWorkflow; o
   const composerDriver = useAppStore((s) => s.pendingDriver ?? s.lastDriver);
   const checks = useSettingsDraftStore((s) => s.harnessChecks);
   const config = workflow.harness;
-  const driver = workflowDriver(config, composerDriver);
+  const pendingPrefs = useAppStore((s) => s.pendingPrefs);
+  const driver = config.driver ?? composerDriver;
   const defaultModel = useAppStore((s) => s.defaultModelByDriver[driver]);
+  const recentModels = useRecentModels(driver);
   const models = useHarnessOptions(driver, (d) => window.cw.listModelsForHarness(d));
   const permissions = useHarnessOptions(driver, (d) => window.cw.listPermissionsForHarness(d));
   const driverModels = models.list ?? [];
   const modelList = config.driver ? driverModels : [];
-  const effectiveModel = workflowModel(config, { defaultModel, recentModels: getRecentModels(driver), models: driverModels });
+  const harnessRequest = { config, composerDriver, pendingPrefs, projectId: null };
+  const effective = useServerPreview(
+    JSON.stringify(harnessRequest),
+    () => window.cw.workflowHarness(harnessRequest),
+    () => false,
+    [defaultModel, recentModels]
+  );
+  const effectiveModel = effective.current ? effective.value?.resolved.model : undefined;
   const efforts = effortOptionsFor(driver, driverModels, effectiveModel);
   const permissionList = permissions.list && permissions.list.length > 0 ? permissions.list : null;
   const permissionsLoading = permissions.list === null;
@@ -609,7 +556,7 @@ function WorkflowHarnessFields({ workflow, onChange }: { workflow: PrWorkflow; o
               { id: "", label: "Composer default", hint: "Composer default", description: `Currently ${HARNESS_NAMES[composerDriver]}` },
               ...HARNESS_IDS.map((id) => {
                 const check = checks?.find((item) => item.binary === id);
-                const unavailable = check !== undefined && isHarnessSkipped(check);
+                const unavailable = check?.skipped === true;
                 return {
                   id,
                   label: HARNESS_NAMES[id],
@@ -717,14 +664,13 @@ function WorkflowEditor({ workflow, settings, onChange, onDuplicate, onDelete, o
   resetBusy: ResetScope | null;
   resetError: string | null;
 }) {
-  const prs = usePrStore((s) => s.inbox?.items ?? NO_PRS);
+  const prs = usePrInboxItems();
   const [previewPr, setPreviewPr] = useState<string | null>(null);
-  const failedLogs = useFailedLogsCache();
-  const driver = useAppStore((s) => workflowDriver(workflow.harness, s.pendingDriver ?? s.lastDriver));
+  const driver = useAppStore((s) => workflow.harness.driver ?? s.pendingDriver ?? s.lastDriver);
   const issues = templateVarIssues(workflow);
   const preview = (template: string) =>
     workflow.target === "pr" ? (
-      <PromptPreview template={template} prs={prs} prKeyValue={previewPr} onPickPr={setPreviewPr} settings={settings} failedLogs={failedLogs} driver={driver} />
+      <PromptPreview template={template} prs={prs} prKeyValue={previewPr} onPickPr={setPreviewPr} settings={settings} driver={driver} />
     ) : (
       <div className="sp-code sp-preview-empty">Preview is available for pull request workflows.</div>
     );
@@ -881,11 +827,6 @@ export function PrWorkflowSettings({ focusWorkflowId }: { focusWorkflowId?: stri
   const [selectedId, setSelectedId] = useState<string | null>(focusWorkflowId ?? null);
   const [resetBusy, setResetBusy] = useState<{ id: string; scope: ResetScope } | null>(null);
   const [resetError, setResetError] = useState<string | null>(null);
-
-  useEffect(() => {
-    const prStore = usePrStore.getState();
-    if (!prStore.inbox && !prStore.inboxLoading) void prStore.refreshInbox();
-  }, []);
 
   useEffect(() => {
     if (!invalidWorkflowId) return;

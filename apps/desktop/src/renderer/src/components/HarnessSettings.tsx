@@ -2,16 +2,15 @@ import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { AlertTriangle, ChartColumn, Check, CheckCircle2, RefreshCw, Search, Star, XCircle } from "lucide-react";
 import type { AccountUsageSnapshot, AppSettings, DriverName, ModelOption } from "../cw.js";
 import { useSettingsDraftStore, type HarnessCheck } from "../stores/settingsDraftStore.js";
-import { useUsageStore } from "../stores/usageStore.js";
 import { BinaryPicker } from "./BinaryPicker.js";
 import { DriverIcon } from "./DriverIcon.js";
 import { errorMessage } from "./errorMessage.js";
 import { CLAUDE_CURATED_MODELS, defaultModelPatch, groupModels, pickerSections } from "./modelMenus.js";
 import { HARNESS_NAMES } from "./settingsSections.js";
-import { isHarnessSkipped } from "./harnessAvailability.js";
 import { SettingsGroup, SettingsRow, SettingsSwitch, type BinaryPickHandler } from "./SettingsLayout.js";
 import { unavailableTitle } from "./UsagePlanCard.js";
 import { useRefreshFeedback } from "./refreshFeedback.js";
+import { accountRefreshFailed, useAccountUsage } from "./useUsage.js";
 
 const ARGS_PLACEHOLDER: Record<DriverName, string> = {
   claude: "--dangerously-skip-permissions",
@@ -270,7 +269,7 @@ function LiveModels({ driver, draft, set }: { driver: DriverName; draft: AppSett
   );
 }
 
-function accountText(snapshot: AccountUsageSnapshot | undefined, loading: boolean, error: string | undefined): { account: string; plan: string; bad: boolean } {
+function accountText(snapshot: AccountUsageSnapshot | undefined, loading: boolean, error: string | null): { account: string; plan: string; bad: boolean } {
   if (!snapshot) {
     if (error) return { account: `Couldn't load: ${error}`, plan: "—", bad: true };
     return { account: loading ? "Loading…" : "Not checked yet", plan: "—", bad: false };
@@ -288,22 +287,13 @@ function StatusCard({ driver, check, onOpenUsage }: { driver: DriverName; check:
   const checksLoading = useSettingsDraftStore((s) => s.harnessChecksLoading);
   const checksError = useSettingsDraftStore((s) => s.harnessChecksError);
   const recheckHarnesses = useSettingsDraftStore((s) => s.recheckHarnesses);
-  const snapshot = useUsageStore((s) => s.accountByDriver[driver]);
-  const accountLoading = useUsageStore((s) => s.accountLoading[driver] === true);
-  const accountError = useUsageStore((s) => s.accountError[driver]);
-  const refreshAccount = useUsageStore((s) => s.refreshAccount);
-
-  useEffect(() => {
-    const usage = useUsageStore.getState();
-    if (!usage.accountByDriver[driver] && !usage.accountLoading[driver]) void refreshAccount([driver]);
-  }, [driver, refreshAccount]);
+  const { snapshot: currentSnapshot, loading: accountLoading, error: accountError } = useAccountUsage(driver);
+  const snapshot = currentSnapshot ?? undefined;
 
   const runRecheck = useCallback(async () => {
-    await Promise.all([recheckHarnesses(), refreshAccount([driver], true)]);
-    const usage = useUsageStore.getState();
-    const failed = usage.accountError[driver] || usage.accountByDriver[driver]?.state.status === "error";
-    if (failed || useSettingsDraftStore.getState().harnessChecksError) throw new Error("Recheck failed");
-  }, [recheckHarnesses, refreshAccount, driver]);
+    await Promise.all([recheckHarnesses(), window.cw.refreshAccountUsage(true, [driver])]);
+    if (accountRefreshFailed(driver) || useSettingsDraftStore.getState().harnessChecksError) throw new Error("Recheck failed");
+  }, [recheckHarnesses, driver]);
   const recheck = useRefreshFeedback(runRecheck);
   const rechecking = recheck.busy || checksLoading || accountLoading;
 
@@ -311,7 +301,7 @@ function StatusCard({ driver, check, onOpenUsage }: { driver: DriverName; check:
     ? { tone: "bad", icon: <XCircle size={14} aria-hidden="true" />, text: "Version check failed" }
     : !check
       ? { tone: "muted", icon: <RefreshCw size={14} aria-hidden="true" />, text: "Checking…" }
-      : isHarnessSkipped(check)
+      : check.skipped
         ? { tone: "muted", icon: <XCircle size={14} aria-hidden="true" />, text: "Not installed" }
         : !check.available
           ? { tone: "bad", icon: <XCircle size={14} aria-hidden="true" />, text: "Executable not found" }
@@ -329,7 +319,7 @@ function StatusCard({ driver, check, onOpenUsage }: { driver: DriverName; check:
         {status.text}
       </div>
       {checksError && <p className="sp-aside-error">{checksError}</p>}
-      {check && !check.available && !isHarnessSkipped(check) && check.error && <p className="sp-aside-error">{check.error}</p>}
+      {check && !check.available && !check.skipped && check.error && <p className="sp-aside-error">{check.error}</p>}
       {check && check.available && check.actual === null && check.error && (
         <p className="sp-aside-faint" title={check.error}>
           {check.error}

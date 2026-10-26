@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Check, ChevronDown, Copy, Sparkles, TriangleAlert } from "lucide-react";
 import type { DockableTabId } from "@cw-code/contracts";
 import { useAppStore, type ChatMessage } from "../stores/appStore.js";
 import { useNotifs } from "./Notifications.js";
+import { ipcErrorMessage } from "./ipcError.js";
 import { Md, StreamingMd, resolvePreviewPaths } from "./Markdown.js";
 import { BottomPanel } from "./BottomPanel.js";
 import { MainTabStrip } from "./MainTabStrip.js";
@@ -24,7 +25,6 @@ import { BranchMismatchDock } from "./BranchMismatchNotice.js";
 import { PrUpdateDock } from "./PrUpdateDock.js";
 import { WorkingDock } from "./WorkingDock.js";
 import { PrSessionChip } from "./PrSessionPanel.js";
-import { useLinkedPrLoader } from "./useLinkedPr.js";
 import { useMarkTurnSeen } from "./useTurnSeen.js";
 import { sessionLinks } from "./sessionPrLinks.js";
 import { TurnBlock } from "./TurnBlock.js";
@@ -46,8 +46,8 @@ import { useSessionSkillNames } from "../stores/sessionSkillsStore.js";
 import { PromptRail, type PromptMark } from "./PromptRail.js";
 import { ThreadFindBar } from "./ThreadFindBar.js";
 import { useThreadFind } from "./useThreadFind.js";
+import { runningTurnId, useThreadEntry, useThreadItems, useThreadTopicError } from "./useThread.js";
 
-const EMPTY_MESSAGES: ChatMessage[] = [];
 const SKILL_TOKEN_HINT = /(^|\s)[$/][A-Za-z0-9]/;
 const FOLLOW_BAND = 64;
 const SCROLL_UP_KEYS = new Set(["PageUp", "Home", "ArrowUp"]);
@@ -70,7 +70,13 @@ function nestedScrollerTakesUpward(target: EventTarget | null, root: HTMLElement
   return false;
 }
 
-function UserMessage({
+function reloadHistory(sessionId: string): void {
+  void window.cw.reloadHistory(sessionId).catch((err: unknown) => {
+    useNotifs.getState().push({ kind: "error", title: "Could not load history", message: ipcErrorMessage(err) });
+  });
+}
+
+const UserMessage = memo(function UserMessage({
   message,
   sessionId,
   projectId,
@@ -149,7 +155,7 @@ function UserMessage({
       </div>
     </div>
   );
-}
+});
 
 export function ThreadView({ hidden = false }: { hidden?: boolean }) {
   const activeProjectId = useAppStore((s) => s.activeProjectId);
@@ -165,21 +171,39 @@ export function ThreadView({ hidden = false }: { hidden?: boolean }) {
     return undefined;
   });
   const project = useAppStore((s) => s.projects.find((p) => p.id === activeProjectId));
-  const messages = useAppStore((s) =>
-    activeSessionId ? (s.messagesBySession[activeSessionId] ?? EMPTY_MESSAGES) : EMPTY_MESSAGES
-  );
+  const messages = useThreadItems(activeSessionId);
   const wantsSkills = useMemo(
     () => messages.some((m) => m.role === "user" && SKILL_TOKEN_HINT.test(m.text)),
     [messages]
   );
   const skillNames = useSessionSkillNames(activeSessionId ?? "", Boolean(activeSessionId) && wantsSkills);
-  const busyTurn = useAppStore((s) => (activeSessionId ? s.busyTurns[activeSessionId] : undefined));
+  const turn = useThreadEntry(activeSessionId, "turn");
+  const busyTurn = runningTurnId(turn, messages);
   const hasPreview = useAppStore((s) =>
     activeSessionId ? (s.previewBySession[activeSessionId] ?? null) !== null : false
   );
-  const historyLoading = useAppStore((s) => (activeSessionId ? !!s.loadingHistory[activeSessionId] : false));
-  const historyError = useAppStore((s) => (activeSessionId ? s.historyErrorBySession[activeSessionId] : undefined));
-  const ensureHistory = useAppStore((s) => s.ensureHistory);
+  const history = useThreadEntry(activeSessionId, "history");
+  const topicError = useThreadTopicError(activeSessionId);
+  const historyError = history?.state === "error" ? (history.error ?? "unknown error") : (topicError ?? undefined);
+  const historyLoading = !historyError && history?.state !== "loaded";
+  const hasMessages = messages.length > 0;
+  const notifiedHistoryError = useRef<string | null>(null);
+  useEffect(() => {
+    if (!historyError) {
+      notifiedHistoryError.current = null;
+      return;
+    }
+    if (!activeSessionId || !hasMessages) return;
+    const key = `${activeSessionId}:${historyError}`;
+    if (notifiedHistoryError.current === key) return;
+    notifiedHistoryError.current = key;
+    useNotifs.getState().push({
+      kind: "error",
+      title: "Could not load history",
+      message: historyError,
+      actions: [{ label: "Retry", primary: true, onClick: () => reloadHistory(activeSessionId) }]
+    });
+  }, [activeSessionId, historyError, hasMessages]);
   const retryConnection = useAppStore((s) => s.retryConnection);
   const reasoningExpanded = useAppStore((s) => (session ? s.reasoningExpandedByDriver[session.driver] : false));
   const openPreview = useAppStore((s) => s.openPreview);
@@ -193,8 +217,8 @@ export function ThreadView({ hidden = false }: { hidden?: boolean }) {
   const dropMain = useDockDrop("main", activeSessionId ?? undefined);
   const draggingTab = usePanelStore((s) => s.draggingTab);
   const setPendingDriver = useAppStore((s) => s.setPendingDriver);
-  const turnStartedAt = useAppStore((s) => (activeSessionId ? s.turnStartedAt[activeSessionId] : undefined));
-  const turnDurations = useAppStore((s) => (activeSessionId ? s.turnDurations[activeSessionId] : undefined));
+  const turnStartedAt = turn?.startedAt;
+  const turnDurations = useThreadEntry(activeSessionId, "durations");
   const subagents = useMemo(() => collectSubagents(messages), [messages]);
   const nestedIds = useMemo(() => new Set(subagents.map((s) => s.id)), [subagents]);
   const turns = useMemo(
@@ -204,6 +228,7 @@ export function ThreadView({ hidden = false }: { hidden?: boolean }) {
         const known = turnDurations?.[slice.turnId];
         const first = slice.messages[0];
         return {
+          key: slice.messages[0].seq,
           turnId: slice.turnId,
           pieces: splitTurn(slice.messages, nestedIds, running),
           running,
@@ -225,7 +250,6 @@ export function ThreadView({ hidden = false }: { hidden?: boolean }) {
   }, [messages, busyTurn]);
   const showNew = pendingDriver !== null || !session;
   const hasPr = !showNew && sessionLinks(session).length > 0;
-  useLinkedPrLoader(showNew ? undefined : session?.id);
   useMarkTurnSeen(showNew ? undefined : session?.id, session?.status, !hidden);
   const scrollRef = useRef<HTMLDivElement>(null);
   const innerRef = useRef<HTMLDivElement>(null);
@@ -584,7 +608,7 @@ export function ThreadView({ hidden = false }: { hidden?: boolean }) {
               <div className="notif-msg">{historyError}</div>
               <button
                 className="btn btn-primary"
-                onClick={() => void ensureHistory(session.id, { force: true, isRetry: true })}
+                onClick={() => reloadHistory(session.id)}
               >
                 Retry
               </button>
@@ -598,7 +622,7 @@ export function ThreadView({ hidden = false }: { hidden?: boolean }) {
           )}
           {turns.map((turn, index) => (
             <TurnBlock
-              key={`${turn.turnId}:${index}`}
+              key={turn.key}
               running={turn.running}
               startedAt={turn.startedAt}
               durationMs={turn.durationMs}

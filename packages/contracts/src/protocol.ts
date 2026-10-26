@@ -1,3 +1,5 @@
+import type { TopicPatch } from "./topics.js";
+
 export type ClientKind = "desktop-ui" | "desktop-shell" | "web";
 
 export interface RpcError {
@@ -13,7 +15,8 @@ export type ServerMessage =
   | { t: "welcome"; protocol: number; serverVersion: string; clientId: string }
   | { t: "result"; id: number; ok: true; value: unknown }
   | { t: "result"; id: number; ok: false; error: RpcError }
-  | { t: "event"; channel: string; payload: unknown };
+  | { t: "event"; channel: string; payload: unknown }
+  | ({ t: "patch" } & TopicPatch);
 
 export interface ServerEndpoint {
   url: string;
@@ -31,8 +34,6 @@ export interface ServerReady {
 export interface TopicsParams {
   topics: string[];
 }
-
-export type TopicSubscribeResult = Record<string, { rev: number; data: unknown }>;
 
 export interface DeviceInfo {
   id: string;

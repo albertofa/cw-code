@@ -29,11 +29,12 @@ import { openExternalLink } from "./externalLink.js";
 import { PrFilesPanel } from "./PrFilesPanel.js";
 import { CheckLogSkeleton, PrDetailSkeleton } from "./GitHubSkeletons.js";
 import { prKey } from "./prInbox.js";
-import { firstUnseenIndex } from "./prUpdates.js";
-import { usePrSettings } from "./useLinkedPr.js";
-import { suggestedWorkflow } from "./prWorkflows.js";
-import { groupCommitsByDay, linkedSessionsBarState, mergeBoxState, relativeTime, threadQuoteText, threadSendTarget, type LinkedBarState } from "./prDetailModel.js";
-import { linkFor, pickMainSession, sessionsLinkedTo } from "./sessionPrLinks.js";
+import { useAppSettings, useAppSettingsError } from "./useAppSettings.js";
+import { suggestedWorkflow } from "@cw-code/shared/workflowSuggestions";
+import { groupCommitsByDay, linkedBarState, mergeBoxState, relativeTime, threadQuoteText, threadSendTarget, type LinkedBarState } from "./prDetailModel.js";
+import { linkFor } from "./sessionPrLinks.js";
+import { requestPrDetail, usePrDetail, usePrRelations, usePrsTopicError, watchPrDetail } from "./usePrs.js";
+import { useConnectionEpoch } from "../server/topics.js";
 
 const MAX_LOG_LINES = 2000;
 
@@ -151,19 +152,23 @@ function ThreadCard({
 
 export function PrDetailView({ prRef }: { prRef: PrRef }) {
   const key = prKey(prRef);
-  const detail = usePrStore((s) => s.detailByKey[key]);
-  const loading = usePrStore((s) => s.detailLoadingByKey[key] ?? false);
-  const error = usePrStore((s) => s.detailErrorByKey[key]);
+  const entry = usePrDetail(key);
+  const relations = usePrRelations(key);
+  const topicError = usePrsTopicError();
+  const epoch = useConnectionEpoch();
+  const detail = entry?.detail ?? undefined;
+  const error = entry?.error ?? (detail ? undefined : (topicError ?? undefined));
+  const loading = !error && (entry?.loading ?? true);
   const activeTab = usePrStore((s) => (s.mainView.kind === "pr" ? s.mainView.tab : "conversation"));
   const openGitHub = usePrStore((s) => s.openGitHub);
   const setPrTab = usePrStore((s) => s.setPrTab);
-  const loadDetail = usePrStore((s) => s.loadDetail);
   const loadDiff = usePrStore((s) => s.loadDiff);
   const openRunModal = usePrStore((s) => s.openRunModal);
   const openSessionView = usePrStore((s) => s.openSessionView);
   const sessionsByProject = useAppStore((s) => s.sessionsByProject);
   const selectSession = useAppStore((s) => s.selectSession);
-  const { settings, error: settingsError } = usePrSettings();
+  const settings = useAppSettings();
+  const settingsError = useAppSettingsError();
   const workflows = useMemo<PrWorkflow[]>(() => (settings?.prWorkflows ?? []).filter((workflow) => workflow.target === "pr"), [settings]);
   const [selectedCheckIndex, setSelectedCheckIndex] = useState<number | null>(null);
   const [logByRunId, setLogByRunId] = useState<Record<number, string>>({});
@@ -172,15 +177,24 @@ export function PrDetailView({ prRef }: { prRef: PrRef }) {
   const [expandedLogRunId, setExpandedLogRunId] = useState<number | null>(null);
   const lastHeadRef = useRef<string | null>(null);
 
-  const allSessions = useMemo(() => Object.values(sessionsByProject).flat(), [sessionsByProject]);
-  const linkedSessions = useMemo(() => sessionsLinkedTo(allSessions, prRef), [allSessions, key]);
+  const sessionById = useMemo(() => new Map(Object.values(sessionsByProject).flat().map((session) => [session.id, session])), [sessionsByProject]);
+  const sessionOf = (id: string): Session | undefined => sessionById.get(id);
+  const linkedSessions = useMemo(
+    () => (relations?.linkedSessionIds ?? []).flatMap((id) => sessionById.get(id) ?? []),
+    [relations, sessionById]
+  );
 
-  const barState: LinkedBarState = detail ? linkedSessionsBarState(detail, linkedSessions, workflows) : { kind: "none" };
-  const mainSession = useMemo(() => pickMainSession(linkedSessions, prRef), [linkedSessions, key]);
+  const barState: LinkedBarState = detail ? linkedBarState(detail, relations, sessionOf, workflows) : { kind: "none" };
+  const mainSession = (relations?.mainSessionId ? sessionById.get(relations.mainSessionId) : undefined) ?? null;
   const mainLink = mainSession ? linkFor(mainSession, prRef) : undefined;
   const babysitter = barState.kind === "babysit" ? barState : null;
   const suggested = detail ? suggestedWorkflow(detail, workflows) : null;
   const fixCiWorkflow = workflows.find((w) => w.id === "fix-ci" && w.enabled) ?? suggested;
+
+  useEffect(() => {
+    void requestPrDetail(prRef);
+    return watchPrDetail(prRef);
+  }, [key, epoch]);
 
   useEffect(() => {
     if (!detail) return;
@@ -191,7 +205,7 @@ export function PrDetailView({ prRef }: { prRef: PrRef }) {
   }, [detail?.headRefOid, prRef, loadDiff]);
 
   const refresh = () => {
-    void loadDetail(prRef);
+    void requestPrDetail(prRef);
     void loadDiff(prRef, true);
   };
 
@@ -267,7 +281,7 @@ export function PrDetailView({ prRef }: { prRef: PrRef }) {
     return Array.from(groups.entries());
   }, [detail]);
 
-  const newSinceIndex = detail && mainLink ? firstUnseenIndex(detail.timeline, mainLink.lastSeenAt) : -1;
+  const newSinceIndex = detail && mainLink ? detail.timeline.findIndex((item) => item.at > mainLink.lastSeenAt) : -1;
 
   return (
     <div className="thread-col pr-view">
@@ -304,7 +318,7 @@ export function PrDetailView({ prRef }: { prRef: PrRef }) {
         {error && (
           <div className="pr-view-error" role="alert">
             {error}
-            <button className="pr-view-retry" onClick={() => void loadDetail(prRef)}>Retry</button>
+            <button className="pr-view-retry" onClick={() => void requestPrDetail(prRef)}>Retry</button>
           </div>
         )}
         {settingsError && (

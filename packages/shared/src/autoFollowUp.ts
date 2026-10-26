@@ -1,5 +1,7 @@
 import type { PrRef, PrWorkflow, SessionPrLink } from "@cw-code/contracts";
 
+export const AUTO_FOLLOW_UP_LIMIT = 8;
+
 export const AUTOMATED_WORKFLOW_NOTE = `This session runs as an automated workflow: cw-code sends you PR updates as new turns and nobody reads your end-of-turn message.
 When you need a human decision or input, ask it with your ask-user question tool (AskUserQuestion) and wait for the answer. Never end the turn with a question.`;
 

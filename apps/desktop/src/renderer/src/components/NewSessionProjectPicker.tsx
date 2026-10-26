@@ -4,13 +4,20 @@ import type { Project } from "../cw.js";
 import { useAppStore } from "../stores/appStore.js";
 import { ProjectMonogram } from "./ProjectMonogram.js";
 import { shortenHome } from "./pathDisplay.js";
-import { projectsByRecentActivity } from "./projectRecency.js";
 import { useNotifs } from "./Notifications.js";
 import "./modelPicker.css";
 
+function byRecency(projects: Project[], recency: string[]): Project[] {
+  const rank = new Map(recency.map((id, index) => [id, index]));
+  return projects
+    .map((project, index) => ({ project, index, rank: rank.get(project.id) ?? Number.POSITIVE_INFINITY }))
+    .sort((a, b) => a.rank - b.rank || a.index - b.index)
+    .map((entry) => entry.project);
+}
+
 export function NewSessionProjectPicker({ project }: { project: Project | undefined }) {
   const projects = useAppStore((s) => s.projects);
-  const sessionsByProject = useAppStore((s) => s.sessionsByProject);
+  const projectsByRecency = useAppStore((s) => s.projectsByRecency);
   const homeDir = useAppStore((s) => s.homeDir);
   const setPendingProject = useAppStore((s) => s.setPendingProject);
   const addProjectForNewSession = useAppStore((s) => s.addProjectForNewSession);
@@ -30,7 +37,7 @@ export function NewSessionProjectPicker({ project }: { project: Project | undefi
   };
 
   const q = query.trim().toLowerCase();
-  const ordered = projectsByRecentActivity(projects, sessionsByProject);
+  const ordered = byRecency(projects, projectsByRecency);
   const visible = q
     ? ordered.filter((p) => p.name.toLowerCase().includes(q) || p.rootPath.toLowerCase().includes(q))
     : ordered;
@@ -47,9 +54,7 @@ export function NewSessionProjectPicker({ project }: { project: Project | undefi
   const pick = (id: string) => {
     close();
     if (id === project?.id) return;
-    void setPendingProject(id).catch((err: Error) => {
-      useNotifs.getState().push({ kind: "error", title: "Could not switch project", message: err.message });
-    });
+    setPendingProject(id);
   };
 
   const addFolder = () => {

@@ -17,9 +17,10 @@ import {
   Trash2,
   X
 } from "lucide-react";
-import type { DirEntry, FsChangeEvent, GitBaseline } from "@cw-code/contracts";
+import type { DirEntry, FsChangeEvent, GitBaseline, GitDecorations, GitFileState } from "@cw-code/contracts";
 import { filesTopic } from "@cw-code/shared/topics";
-import { useDocumentVisible, useTopics } from "../server/useTopics.js";
+import { useConnectionEpoch, useTopicEntry } from "../server/topics.js";
+import { useDocumentVisible } from "../server/topics.js";
 import { useConfirm } from "./ConfirmDialog.js";
 import { ipcErrorMessage } from "./ipcError.js";
 import { isAbsolutePath } from "./Markdown.js";
@@ -42,8 +43,6 @@ const WRAP_KEY = "cw-code:editor-wrap";
 const SIDE_MIN = 170;
 const SIDE_MAX = 640;
 const WATCH_DEBOUNCE_MS = 150;
-const DECORATION_DEBOUNCE_MS = 600;
-const GIT_POLL_MS = 15_000;
 const NOTICE_MS = 7000;
 const INVALID_NAME = /[<>:"|?*\u0000-\u001f]/;
 
@@ -123,7 +122,6 @@ function FileWorkspace({ sessionId }: { sessionId: string }) {
   const [dirErrors, setDirErrors] = useState<Record<string, string>>({});
   const [views, setViews] = useState<Record<string, TabView>>({});
   const [baselines, setBaselines] = useState<Record<string, GitBaseline>>({});
-  const [decorations, setDecorations] = useState<DecorationLookup>(() => NO_DECORATIONS);
   const [focusPath, setFocusPath] = useState<string | null>(null);
   const [treeRevealNonce, setTreeRevealNonce] = useState(0);
   const [edit, setEdit] = useState<InlineEdit | null>(null);
@@ -168,7 +166,6 @@ function FileWorkspace({ sessionId }: { sessionId: string }) {
   viewsRef.current = views;
   const rootPathRef = useRef<string | null>(null);
   const revealNonce = useRef(0);
-  const decorationTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const aliveRef = useRef(true);
 
   useEffect(() => {
@@ -262,22 +259,6 @@ function FileWorkspace({ sessionId }: { sessionId: string }) {
     },
     [sessionId]
   );
-
-  const refreshDecorations = useCallback(() => {
-    if (decorationTimer.current) clearTimeout(decorationTimer.current);
-    decorationTimer.current = setTimeout(() => {
-      decorationTimer.current = null;
-      const active = tabsRef.current.active;
-      const activeView = active ? viewsRef.current[active] : undefined;
-      if (active && activeView?.status === "text" && activeView.readOnlyReason !== "large") refreshBaseline(active);
-      window.cw
-        .gitDecorations(sessionId)
-        .then((result) => {
-          if (aliveRef.current) setDecorations(() => (result.available ? buildDecorationIndex(result.entries) : NO_DECORATIONS));
-        })
-        .catch((err: unknown) => console.warn(`[files] git decorations unavailable: ${ipcErrorMessage(err)}`));
-    }, DECORATION_DEBOUNCE_MS);
-  }, [sessionId, refreshBaseline]);
 
   const releaseTab = useCallback(
     (path: string) => {
@@ -393,20 +374,9 @@ function FileWorkspace({ sessionId }: { sessionId: string }) {
   useEffect(() => {
     loadDir("");
     for (const dir of expandedList ?? []) loadDir(dir);
-    refreshDecorations();
     for (const tab of tabsRef.current.tabs) {
       if (registered.has(bufferKey(sessionId, tab.path))) loadTab(tab.path, true);
     }
-    const onFocus = () => refreshDecorations();
-    window.addEventListener("focus", onFocus);
-    const poll = setInterval(() => {
-      if (document.visibilityState === "visible") refreshDecorations();
-    }, GIT_POLL_MS);
-    return () => {
-      clearInterval(poll);
-      window.removeEventListener("focus", onFocus);
-      if (decorationTimer.current) clearTimeout(decorationTimer.current);
-    };
   }, [sessionId]);
 
   useEffect(() => {
@@ -432,8 +402,25 @@ function FileWorkspace({ sessionId }: { sessionId: string }) {
   const watchedKey = watched.join("\n");
 
   const documentVisible = useDocumentVisible();
-  const filesTopics = useMemo(() => (documentVisible ? [filesTopic(sessionId)] : []), [documentVisible, sessionId]);
-  useTopics(filesTopics);
+  const connectionEpoch = useConnectionEpoch();
+  const topicDecorations = useTopicEntry<GitDecorations>(filesTopic(sessionId), "decorations");
+  const lastDecorations = useRef<{ sessionId: string; value: GitDecorations } | null>(null);
+  if (topicDecorations) lastDecorations.current = { sessionId, value: topicDecorations };
+  const gitDecorations = topicDecorations ?? (lastDecorations.current?.sessionId === sessionId ? lastDecorations.current.value : undefined);
+  const decorations = useMemo<DecorationLookup>(
+    () => (gitDecorations?.available ? buildDecorationIndex(gitDecorations.entries) : NO_DECORATIONS),
+    [gitDecorations]
+  );
+  const activePath = tabsState.active;
+  const activeDecoration: GitFileState | null = activePath ? (decorations(activePath, false)?.state ?? null) : null;
+  const seenDecoration = useRef<{ path: string | null; state: GitFileState | null }>({ path: null, state: null });
+  useEffect(() => {
+    const previous = seenDecoration.current;
+    seenDecoration.current = { path: activePath, state: activeDecoration };
+    if (!activePath || previous.path !== activePath || previous.state === activeDecoration) return;
+    const view = viewsRef.current[activePath];
+    if (view?.status === "text" && view.readOnlyReason !== "large") refreshBaseline(activePath);
+  }, [activePath, activeDecoration, refreshBaseline]);
 
   useEffect(() => {
     if (!documentVisible) return;
@@ -441,7 +428,7 @@ function FileWorkspace({ sessionId }: { sessionId: string }) {
       window.cw.setWatchedPaths(sessionId, watched).catch((err: unknown) => console.warn(`[files] live refresh unavailable: ${ipcErrorMessage(err)}`));
     }, WATCH_DEBOUNCE_MS);
     return () => clearTimeout(timer);
-  }, [watchedKey, sessionId, documentVisible]);
+  }, [watchedKey, sessionId, documentVisible, connectionEpoch]);
 
   useEffect(
     () =>
@@ -457,10 +444,20 @@ function FileWorkspace({ sessionId }: { sessionId: string }) {
         for (const dir of dirs) if (childrenRef.current[dir]) loadDir(dir);
         for (const path of files) if (registered.has(bufferKey(sessionId, path)) || viewsRef.current[path]) loadTab(path, true);
         invalidateQuickOpenCache(sessionId);
-        refreshDecorations();
       }),
-    [sessionId, loadDir, loadTab, refreshDecorations]
+    [sessionId, loadDir, loadTab]
   );
+
+  const resyncedEpoch = useRef(connectionEpoch);
+  useEffect(() => {
+    if (resyncedEpoch.current === connectionEpoch) return;
+    resyncedEpoch.current = connectionEpoch;
+    for (const dir of Object.keys(childrenRef.current)) loadDir(dir);
+    for (const tab of tabsRef.current.tabs) {
+      if (registered.has(bufferKey(sessionId, tab.path)) || viewsRef.current[tab.path]) loadTab(tab.path, true);
+    }
+    invalidateQuickOpenCache(sessionId);
+  }, [connectionEpoch, sessionId, loadDir, loadTab]);
 
   const toggleDir = useCallback(
     (path: string) => {
@@ -502,7 +499,6 @@ function FileWorkspace({ sessionId }: { sessionId: string }) {
       const write = async (expectedMtimeMs: number | undefined) => {
         const stat = await window.cw.writeFileGuarded(sessionId, path, content, expectedMtimeMs);
         useEditorBuffers.getState().markSaved(key, content, stat.mtimeMs);
-        refreshDecorations();
       };
       try {
         await write(buffer.mtimeMs);
@@ -530,7 +526,7 @@ function FileWorkspace({ sessionId }: { sessionId: string }) {
         }
       }
     },
-    [sessionId, refreshDecorations, showNotice]
+    [sessionId, showNotice]
   );
 
   const confirmDiscard = useCallback(
@@ -682,14 +678,13 @@ function FileWorkspace({ sessionId }: { sessionId: string }) {
         setEdit(null);
         setEditError(null);
         invalidateQuickOpenCache(sessionId);
-        refreshDecorations();
         return true;
       } catch (err) {
         setEditError(ipcErrorMessage(err));
         return false;
       }
     },
-    [edit, sessionId, expanded, loadDir, openFile, refreshDecorations, setExpandedPaths]
+    [edit, sessionId, expanded, loadDir, openFile, setExpandedPaths]
   );
 
   const deleteEntry = useCallback(
@@ -717,12 +712,11 @@ function FileWorkspace({ sessionId }: { sessionId: string }) {
         loadDir(parentDir(row.path));
         setFocusPath(parentDir(row.path) || null);
         invalidateQuickOpenCache(sessionId);
-        refreshDecorations();
       } catch (err) {
         showNotice(`Couldn’t delete ${row.name}: ${ipcErrorMessage(err)}`, "error");
       }
     },
-    [confirm, dirtyPaths, sessionId, loadDir, refreshDecorations, setExpandedPaths, showNotice]
+    [confirm, dirtyPaths, sessionId, loadDir, setExpandedPaths, showNotice]
   );
 
   const resolveConflict = useCallback(
@@ -739,8 +733,7 @@ function FileWorkspace({ sessionId }: { sessionId: string }) {
     for (const dir of expanded) loadDir(dir);
     for (const tab of tabsRef.current.tabs) if (registered.has(bufferKey(sessionId, tab.path))) loadTab(tab.path, true);
     invalidateQuickOpenCache(sessionId);
-    refreshDecorations();
-  }, [expanded, loadDir, loadTab, sessionId, refreshDecorations]);
+  }, [expanded, loadDir, loadTab, sessionId]);
 
   const wasVisibleRef = useRef(documentVisible);
   useEffect(() => {

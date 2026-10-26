@@ -1,4 +1,4 @@
-export type { SessionStatusReason } from "./session.js";
+export type { SessionOpenReason, SessionStatusReason } from "./session.js";
 export type {
   DriverKind,
   Project,
@@ -17,7 +17,8 @@ export type {
   GitStatus,
   GitPullRequest,
   GitPullRequestChecks,
-  GitStatusUpdate,
+  BranchMismatch,
+  GitTopicData,
   GitBranchInfo,
   GitDiffMode,
   GitDiffResult,
@@ -56,7 +57,6 @@ export type {
   PrBucket,
   PrAuthor,
   PrSummary,
-  PrInboxResult,
   ProjectGitHubRepo,
   PrCheck,
   PrCommit,
@@ -74,7 +74,22 @@ export type {
   PrWorkspaceChoice,
   PrWorkflowIcon,
   PrWorkflowHarness,
-  PrWorkflow
+  PrWorkflow,
+  PrChipTone,
+  PrChipIcon,
+  PrChip,
+  AutoFollowUpPause,
+  BabysitPhase,
+  BabysitState,
+  SessionPrItem,
+  PrDockEntry,
+  PrDetailEntry,
+  PrInboxState,
+  GitHubContext,
+  SubjectSessionActivity,
+  SubjectAction,
+  SubjectRelations,
+  PrsTopicData
 } from "./pullRequests.js";
 export type {
   RepoRef,
@@ -84,7 +99,6 @@ export type {
   GitHubViewGroup,
   SavedGitHubView,
   GitHubAccountRef,
-  GitHubSearchResult,
   IssueLinkedPr,
   IssueSummary,
   IssueComment,
@@ -93,11 +107,16 @@ export type {
   RunConclusion,
   RunJob,
   WorkflowRunSummary,
-  RunSources,
-  RunsResult,
   SessionIssueLink,
   SessionRunLink,
-  WorkflowSubject
+  WorkflowSubject,
+  GitHubViewDef,
+  GitHubTabBadge,
+  GitHubMetaTopicData,
+  GitHubSubject,
+  GitHubRow,
+  GitHubViewState,
+  GitHubViewTopicData
 } from "./github.js";
 export type { PanelId, DockLocation, DockableTabId, MainTabId, TabDockState, TabAutoLocation, PanelLayoutSnapshot } from "./panels.js";
 export type { CliBinary, BinarySource, CliDiscoveredCandidate, CliDiscoverResult, CliVersionCheck, NodePtyProbeOutcome, ServerPackageProbe } from "./cli.js";
@@ -115,8 +134,15 @@ export type {
   AccountUsageOk,
   AccountUsageState,
   AccountUsageSnapshot,
-  UsageLedgerRow,
-  UsageLedgerQuery
+  UsageTotals,
+  UsageMetric,
+  DailyDriverPoint,
+  ModelUsageRow,
+  SessionUsageRow,
+  AccountUsageEntry,
+  UsageTopicData,
+  UsageReportQuery,
+  UsageReport
 } from "./usage.js";
 export type { MetadataStore, MetadataIssueKind, MetadataBackup, MetadataIssue, StartupState } from "./startup.js";
 export type {
@@ -141,7 +167,6 @@ export type {
   ShutdownRequestedEvent,
   ShutdownExpiredEvent
 } from "./shutdown.js";
-export type { AttentionState } from "./attention.js";
 export type { AppNotice } from "./notices.js";
 export type {
   DirEntry,
@@ -154,8 +179,49 @@ export type {
   TextSearchMatch,
   TextSearchResult,
   GitBaseline,
-  FsChangeEvent
+  FsChangeEvent,
+  FilesTopicData
 } from "./files.js";
 export type { NativeSession, ImportableSession, ImportSessionRequest, ImportSessionResult } from "./importer.js";
-export type { ClientKind, RpcError, ClientMessage, ServerMessage, ServerEndpoint, ServerReady, TopicsParams, TopicSubscribeResult, DeviceInfo, DeviceCreateResult } from "./protocol.js";
+export type { ClientKind, RpcError, ClientMessage, ServerMessage, ServerEndpoint, ServerReady, TopicsParams, DeviceInfo, DeviceCreateResult } from "./protocol.js";
 export type { DesktopApi } from "./desktop.js";
+export type { TopicOp, TopicSnapshot, TopicsSubscribeResult, TopicPatch } from "./topics.js";
+export type {
+  ThreadItem,
+  ThreadTurn,
+  ThreadHistory,
+  ThreadLastTurn,
+  ContextMeter,
+  ThreadUsage,
+  ThreadTurnChanges,
+  ThreadTopicData
+} from "./threads.js";
+export type {
+  AttentionKind,
+  Attention,
+  NeedsYouSlot,
+  SessionRow,
+  SidebarLayout,
+  SidebarDefaults,
+  WorktreeCandidate,
+  SidebarTopicData,
+  SidebarSection,
+  SidebarReorderRequest,
+  SidebarOrderPrefs
+} from "./sidebar.js";
+export type { HarnessIssue, HarnessAvailability, ComposerDraft, AppTopicData, LegacyPreferences } from "./app.js";
+export type {
+  ResolvedWorkflowHarness,
+  HarnessSummaryPart,
+  WorkflowHarnessRequest,
+  WorkflowHarnessResult,
+  WorkflowBase,
+  WorkflowPreviewRequest,
+  WorkflowPreview,
+  WorkflowTemplatePreviewRequest,
+  WorkflowTemplatePreview,
+  WorkflowRunResume,
+  WorkflowRunRequest,
+  WorkflowRunStage,
+  WorkflowRunResult
+} from "./workflows.js";

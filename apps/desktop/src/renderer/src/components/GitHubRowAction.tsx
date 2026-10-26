@@ -1,18 +1,17 @@
 import { useState } from "react";
 import { ChevronDown, Copy, ExternalLink, FileText, GitPullRequest } from "lucide-react";
+import type { SubjectAction, SubjectRelations, SubjectSessionActivity } from "@cw-code/contracts";
 import type { PrWorkflow, Session, WorkflowSubject } from "../cw.js";
 import { useAppStore } from "../stores/appStore.js";
 import { usePrStore } from "../stores/prStore.js";
 import { AnchoredPopover, anchorRectOf, type AnchorRect } from "./AnchoredPopover.js";
 import { DriverIcon } from "./DriverIcon.js";
 import {
-  babysitterFor,
   continueSessionFor,
   enabledWorkflowsFor,
   externalLinkOf,
   isFinished,
   originLabel,
-  rowAction,
   runPrRef,
   sessionLinkOf,
   suggestedWorkflowFor,
@@ -25,6 +24,33 @@ import { formatRelativeAge } from "./prInboxModel.js";
 import { workflowIcon } from "./workflowIcons.js";
 
 type SessionMode = "continue" | "new";
+
+type Babysitter = { session: Session; workflow: PrWorkflow };
+
+type ResolvedAction =
+  | { kind: "session"; session: Session; label: string; mode: "open" | "continue"; workflowId: string | null; meta: SubjectSessionActivity; count: number }
+  | { kind: "workflow"; workflow: PrWorkflow; urgent: boolean }
+  | { kind: "logs" }
+  | { kind: "github" };
+
+function resolveAction(action: SubjectAction, sessions: Session[], workflows: PrWorkflow[]): ResolvedAction {
+  if (action.kind === "session") {
+    const session = sessions.find((candidate) => candidate.id === action.sessionId);
+    return session ? { ...action, session } : { kind: "github" };
+  }
+  if (action.kind === "workflow") {
+    const workflow = workflows.find((candidate) => candidate.id === action.workflowId);
+    return workflow ? { kind: "workflow", workflow, urgent: action.urgent } : { kind: "github" };
+  }
+  return action;
+}
+
+function resolveBabysitter(babysitter: SubjectRelations["babysitter"], sessions: Session[], workflows: PrWorkflow[]): Babysitter | null {
+  if (!babysitter) return null;
+  const session = sessions.find((candidate) => candidate.id === babysitter.sessionId);
+  const workflow = workflows.find((candidate) => candidate.id === babysitter.workflowId);
+  return session && workflow ? { session, workflow } : null;
+}
 
 function modalSubject(subject: RowSubject, target: PrWorkflow["target"]): WorkflowSubject | null {
   if (target === "pr") {
@@ -72,22 +98,22 @@ function WorkflowItems({
 
 function ActionMenu({
   subject,
+  babysitter,
   viewer,
   sessions,
   workflows,
   workflowsError,
-  onReloadWorkflows,
   unseen,
   now,
   anchor,
   onClose
 }: {
   subject: RowSubject;
+  babysitter: Babysitter | null;
   viewer: string | null;
   sessions: Session[];
   workflows: PrWorkflow[];
   workflowsError: string | null;
-  onReloadWorkflows: () => void;
   unseen: ReadonlySet<string>;
   now: number;
   anchor: AnchorRect;
@@ -103,7 +129,6 @@ function ActionMenu({
   const prRef = subject.kind === "run" ? runPrRef(subject.run) : null;
   const suggested = suggestedWorkflowFor(suggestionSubject(subject, viewer), workflows);
   const finishedPr = subject.kind === "pr" && isFinished(subject);
-  const babysitter = babysitterFor(subject, sessions, workflows);
   const ownWorkflows = finishedPr ? [] : enabledWorkflowsFor(subject.kind, workflows);
   const prWorkflows = prRef ? enabledWorkflowsFor("pr", workflows) : [];
 
@@ -210,10 +235,7 @@ function ActionMenu({
           </div>
           {workflowsError && (
             <div className="pr-inbox-popover-empty" role="alert">
-              Could not load workflows: {workflowsError}{" "}
-              <button type="button" className="pr-view-retry" onClick={onReloadWorkflows}>
-                Retry
-              </button>
+              Could not load workflows: {workflowsError}
             </div>
           )}
           {!workflowsError && ownWorkflows.length === 0 && prWorkflows.length === 0 && (
@@ -245,20 +267,20 @@ function ActionMenu({
 
 export function GitHubRowAction({
   subject,
+  relations,
   viewer,
   sessions,
   workflows,
   workflowsError,
-  onReloadWorkflows,
   unseen,
   now
 }: {
   subject: RowSubject;
+  relations: SubjectRelations;
   viewer: string | null;
   sessions: Session[];
   workflows: PrWorkflow[];
   workflowsError: string | null;
-  onReloadWorkflows: () => void;
   unseen: ReadonlySet<string>;
   now: number;
 }) {
@@ -267,7 +289,7 @@ export function GitHubRowAction({
   const openRunModal = usePrStore((s) => s.openRunModal);
   const [menuAnchor, setMenuAnchor] = useState<AnchorRect | null>(null);
 
-  const action = rowAction({ subject, viewer, sessions, workflows, unseen });
+  const action = resolveAction(relations.action, sessions, workflows);
   const closeMenu = () => setMenuAnchor(null);
   const url = externalLinkOf(subject);
 
@@ -288,11 +310,11 @@ export function GitHubRowAction({
   const menu = menuAnchor && (
     <ActionMenu
       subject={subject}
+      babysitter={resolveBabysitter(relations.babysitter, sessions, workflows)}
       viewer={viewer}
       sessions={sessions}
       workflows={workflows}
       workflowsError={workflowsError}
-      onReloadWorkflows={onReloadWorkflows}
       unseen={unseen}
       now={now}
       anchor={menuAnchor}

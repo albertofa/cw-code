@@ -1,4 +1,4 @@
-import type { SessionPrLink } from "./pullRequests.js";
+import type { AutoFollowUpPause, SessionPrLink } from "./pullRequests.js";
 import type { SessionIssueLink, SessionRunLink } from "./github.js";
 import type { CommandInvocation } from "./commands.js";
 
@@ -31,7 +31,10 @@ export type SessionStatusReason =
   | "app-restart-idle"
   | "holding-expired"
   | "idle-expired"
+  | "turn-start-failed"
   | "unknown";
+
+export type SessionOpenReason = "select" | "restore";
 
 export interface ProjectSettings {
   /** Harness preselected when a new session starts in this project. */
@@ -95,6 +98,7 @@ export interface SessionMeta {
   prUnlinked?: string[];
   lastTurnSnapshot?: TurnSnapshot;
   createNotice?: string;
+  autoFollowUp?: { paused?: AutoFollowUpPause; turns: number };
 }
 
 export type ResolvedCheckout = { kind: "worktree"; path: string } | { kind: "root" };
@@ -239,11 +243,6 @@ export interface GitStatus {
   clean: boolean;
 }
 
-export interface GitStatusUpdate {
-  sessionId: string;
-  status: GitStatus;
-}
-
 export type GitHubAccountSelectionSource = "project" | "owner" | "access" | "single" | "active" | "none";
 
 export interface GitHubAccountInfo {
@@ -345,3 +344,11 @@ export interface TurnChanges {
   reason?: string;
   conflicts: string[];
 }
+
+export interface BranchMismatch {
+  sessionBranch: string;
+  folderBranch: string;
+  folderHead: string;
+}
+
+export type GitTopicData = { status: GitStatus | null; error: string | null; mismatch: BranchMismatch | null; branchMismatched: boolean; keptFolderHead: string | null };

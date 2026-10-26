@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
-import type { PrDetail, PrReviewThread, PrSummary, PrWorkflow, SessionMeta } from "@cw-code/contracts";
-import { groupCommitsByDay, linkedSessionsBarState, mergeBoxState, relativeTime, threadQuoteText, threadSendTarget } from "./prDetailModel.js";
+import type { PrDetail, PrReviewThread, PrSummary, PrWorkflow, SessionMeta, SubjectRelations } from "@cw-code/contracts";
+import { groupCommitsByDay, linkedBarState, mergeBoxState, relativeTime, threadQuoteText, threadSendTarget } from "./prDetailModel.js";
 
 describe("relativeTime", () => {
   const now = Date.parse("2026-10-18T12:00:00Z");
@@ -181,39 +181,71 @@ describe("threadQuoteText", () => {
   });
 });
 
-describe("linkedSessionsBarState", () => {
+function relations(overrides: Partial<SubjectRelations> = {}): SubjectRelations {
+  return {
+    linkedSessionIds: [],
+    unseenSessionIds: [],
+    mainSessionId: null,
+    babysitter: null,
+    action: { kind: "github" },
+    delta: null,
+    ...overrides
+  };
+}
+
+function sessionAction(sessionId: string, mode: "open" | "continue", workflowId: string | null = null): SubjectRelations["action"] {
+  return { kind: "session", sessionId, mode, workflowId, label: "Open session", meta: "idle", count: 1 };
+}
+
+describe("linkedBarState", () => {
+  const lookup = (...sessions: SessionMeta[]) => (id: string) => sessions.find((item) => item.id === id);
+
   it("returns continue with the stale review session", () => {
     const pr = prSummary({ headRefOid: "sha2" });
-    const s = session({ prs: [{ ref: pr.ref, origin: "workflow", workflowId: "review", lastSeenSha: "sha1", lastSeenAt: 0 }] });
-    expect(linkedSessionsBarState(pr, [s], [])).toEqual({ kind: "continue", session: s, workflowId: "review" });
+    const s = session();
+    expect(linkedBarState(pr, relations({ action: sessionAction("s1", "continue", "review") }), lookup(s), [])).toEqual({
+      kind: "continue",
+      session: s,
+      workflowId: "review"
+    });
   });
 
   it("returns open with the suggested workflow when the main session is current", () => {
     const pr = prSummary({ headRefOid: "sha1", viewerIsAuthor: true });
-    const s = session({ prs: [{ ref: pr.ref, origin: "opened", lastSeenSha: "sha1", lastSeenAt: 0 }] });
+    const s = session();
     const babysit = workflow({ id: "babysit", suggestWhen: ["author"] });
-    expect(linkedSessionsBarState(pr, [s], [babysit])).toEqual({ kind: "open", session: s, suggested: babysit });
+    expect(linkedBarState(pr, relations({ action: sessionAction("s1", "open") }), lookup(s), [babysit])).toEqual({
+      kind: "open",
+      session: s,
+      suggested: babysit
+    });
   });
 
   it("returns run when nothing is linked but a workflow is suggested", () => {
     const pr = prSummary({ viewerIsAuthor: false, reviewRequestedFromViewer: true });
     const review = workflow({ id: "review", suggestWhen: ["review-requested"] });
-    expect(linkedSessionsBarState(pr, [], [review])).toEqual({ kind: "run", workflowId: "review" });
+    expect(linkedBarState(pr, relations({ action: { kind: "workflow", workflowId: "review", urgent: true } }), lookup(), [review])).toEqual({
+      kind: "run",
+      workflowId: "review"
+    });
+    expect(linkedBarState(pr, relations(), lookup(), [])).toEqual({ kind: "none" });
   });
 
-  it("returns none for a merged PR", () => {
-    const pr = prSummary({ state: "MERGED" });
-    expect(linkedSessionsBarState(pr, [session()], [])).toEqual({ kind: "none" });
+  it("returns none for a merged PR, an unknown session or missing relations", () => {
+    const s = session();
+    expect(linkedBarState(prSummary({ state: "MERGED" }), relations({ action: sessionAction("s1", "open") }), lookup(s), [])).toEqual({ kind: "none" });
+    expect(linkedBarState(prSummary(), relations({ action: sessionAction("gone", "open") }), lookup(s), [])).toEqual({ kind: "none" });
+    expect(linkedBarState(prSummary(), undefined, lookup(s), [])).toEqual({ kind: "none" });
   });
 
   it("points at the babysitting session instead of offering workflows", () => {
     const pr = prSummary({ headRefOid: "sha2", viewerIsAuthor: true });
-    const review = session({ id: "review", updatedAt: 9, prs: [{ ref: pr.ref, origin: "workflow", workflowId: "review", lastSeenSha: "sha1", lastSeenAt: 0 }] });
-    const babysat = session({ id: "babysat", prs: [{ ref: pr.ref, origin: "opened", workflowId: "babysit", lastSeenSha: "sha2", lastSeenAt: 0 }] });
+    const babysat = session({ id: "babysat" });
     const babysit = workflow({ id: "babysit", label: "Babysit", suggestWhen: ["author"], autoFollowUp: true });
-    expect(linkedSessionsBarState(pr, [review, babysat], [babysit])).toEqual({ kind: "babysit", session: babysat, workflow: babysit });
-    expect(linkedSessionsBarState(pr, [babysat], [{ ...babysit, autoFollowUp: false }])).toMatchObject({ kind: "open" });
-    expect(linkedSessionsBarState(pr, [{ ...babysat, status: "archived" }], [babysit])).toMatchObject({ kind: "open" });
+    const rel = relations({ babysitter: { sessionId: "babysat", workflowId: "babysit" }, action: sessionAction("babysat", "open") });
+    expect(linkedBarState(pr, rel, lookup(babysat), [babysit])).toEqual({ kind: "babysit", session: babysat, workflow: babysit });
+    expect(linkedBarState(pr, rel, lookup(babysat), [])).toMatchObject({ kind: "open" });
+    expect(linkedBarState(prSummary({ state: "CLOSED" }), rel, lookup(babysat), [babysit])).toMatchObject({ kind: "open" });
   });
 });
 

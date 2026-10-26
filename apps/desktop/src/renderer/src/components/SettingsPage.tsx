@@ -306,7 +306,6 @@ function SourceControlSettings({ onPickBinary }: { onPickBinary: BinaryPickHandl
     setPruneError(null);
     try {
       const summary = await window.cw.pruneStaleWorktrees();
-      useAppStore.getState().clearSessionWorktrees(summary.clearedSessionIds);
       setPruneSummary(summary);
       setConfirmPrune(false);
       if (summary.failed > 0) {
@@ -555,7 +554,6 @@ export function SettingsPage({
       if (key in patch) copySetting(normalized, stored, key);
     }
     applied(normalized);
-    void recheckHarnesses();
   };
 
   const changedLabels = unsavedSectionLabels(saved, draft, projectsDirty);

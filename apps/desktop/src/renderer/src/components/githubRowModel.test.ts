@@ -1,24 +1,16 @@
 import { describe, expect, it } from "bun:test";
 import type { IssueSummary, PrSummary, PrWorkflow, SessionMeta, WorkflowRunSummary } from "@cw-code/contracts";
 import {
-  babysitterFor,
+  continueSessionFor,
+  deltaLabel,
   diffBlocks,
   formatDuration,
-  issueBucket,
   issueVerdict,
   peopleStack,
   prGates,
   prVerdict,
-  continueSessionFor,
-  rowAction,
-  rowDelta,
-  unseenSessionIds,
-  runBucket,
   runVerdict,
-  sessionsForIssue,
-  sessionsForRun,
-  suggestedWorkflowFor,
-  type LinkedSession
+  suggestedWorkflowFor
 } from "./githubRowModel.js";
 
 function pr(overrides: Partial<PrSummary> = {}): PrSummary {
@@ -189,7 +181,7 @@ describe("issueVerdict", () => {
   });
 });
 
-describe("runVerdict and runBucket", () => {
+describe("runVerdict", () => {
   const job = (name: string, status: "queued" | "in_progress" | "completed", conclusion: WorkflowRunSummary["conclusion"]) => ({
     name,
     status,
@@ -202,14 +194,11 @@ describe("runVerdict and runBucket", () => {
   it("reports failed jobs for a failed run", () => {
     const failed = run({ conclusion: "failure", jobs: [job("a", "completed", "success"), job("b", "completed", "failure")] });
     expect(runVerdict(failed)).toMatchObject({ tone: "bad", text: "Failed · 1 of 2 jobs" });
-    expect(runBucket(failed)).toBe("failing");
   });
 
   it("reports progress for an in-progress run", () => {
     const running = run({ status: "in_progress", conclusion: null, jobs: [job("a", "completed", "success"), job("b", "in_progress", null)] });
     expect(runVerdict(running)).toMatchObject({ tone: "warn", text: "Running · 1/2 jobs", spin: true });
-    expect(runBucket(running)).toBe("running");
-    expect(runBucket(run({ status: "queued", conclusion: null }))).toBe("running");
   });
 
   it("maps the remaining conclusions", () => {
@@ -217,18 +206,6 @@ describe("runVerdict and runBucket", () => {
     expect(runVerdict(run()).text).toBe("Succeeded");
     expect(runVerdict(run({ conclusion: "cancelled" })).text).toBe("Cancelled");
     expect(runVerdict(run({ conclusion: "timed_out" })).text).toBe("Timed out");
-    expect(runBucket(run())).toBe("recent");
-    expect(runBucket(run({ conclusion: "cancelled" }))).toBe("recent");
-  });
-});
-
-describe("issueBucket", () => {
-  it("prefers assigned, then created, then mentions mode", () => {
-    expect(issueBucket(issue({ state: "CLOSED", assignees: ["me"] }), "me")).toBe("closed");
-    expect(issueBucket(issue({ assignees: ["Me"] }), "me")).toBe("assigned");
-    expect(issueBucket(issue({ author: { login: "me", isBot: false } }), "me")).toBe("created");
-    expect(issueBucket(issue(), "me")).toBe("other");
-    expect(issueBucket(issue(), "me", true)).toBe("mentioned");
   });
 });
 
@@ -320,126 +297,6 @@ describe("suggestedWorkflowFor", () => {
   });
 });
 
-describe("session lookup", () => {
-  const sessions: LinkedSession[] = [
-    { id: "pr-session", updatedAt: 1, prs: [{ ref: { host: "github.com", owner: "acme", repo: "widgets", number: 42 }, origin: "opened", lastSeenAt: 0, lastSeenSha: "" }] },
-    {
-      id: "run-session",
-      updatedAt: 2,
-      runs: [{ ref: { host: "GitHub.com", owner: "ACME", repo: "Widgets", runId: 900 }, origin: "workflow", lastSeenAt: 0 }]
-    },
-    { id: "issue-session", updatedAt: 3, issues: [{ ref: { host: "github.com", owner: "Acme", repo: "widgets", number: 7 }, origin: "linked", lastSeenAt: 0 }] },
-    { id: "other", updatedAt: 4 }
-  ];
-
-  it("finds run sessions through the run link case-insensitively and through the run's PR", () => {
-    expect(sessionsForRun(run(), sessions).map((s) => s.id)).toEqual(["run-session"]);
-    expect(sessionsForRun(run({ prNumber: 42 }), sessions).map((s) => s.id)).toEqual(["pr-session", "run-session"]);
-  });
-
-  it("finds issue sessions by issue link", () => {
-    expect(sessionsForIssue(issue(), sessions).map((s) => s.id)).toEqual(["issue-session"]);
-    expect(sessionsForIssue(issue({ ref: { host: "github.com", owner: "acme", repo: "widgets", number: 8 } }), sessions)).toEqual([]);
-  });
-});
-
-type ActInput = Parameters<typeof rowAction>[0];
-
-function act(input: Omit<ActInput, "unseen"> & { unseen?: ReadonlySet<string> }) {
-  return rowAction({ unseen: new Set<string>(), ...input });
-}
-
-describe("rowAction", () => {
-  const prWorkflows = [
-    workflow({ id: "review", label: "Review", suggestWhen: ["review-requested"] }),
-    workflow({ id: "fix-ci", label: "Fix CI", suggestWhen: ["checks-failing"] }),
-    workflow({ id: "implement", label: "Implement", target: "issue", suggestWhen: ["issue-assigned"] })
-  ];
-  const session = (overrides: Partial<SessionMeta> = {}) =>
-    sessionMeta({
-      prs: [{ ref: pr().ref, origin: "workflow", workflowId: "review", lastSeenAt: 5000, lastSeenSha: "abc123" }],
-      ...overrides
-    });
-
-  it("opens the linked session for a PR", () => {
-    const action = act({ subject: { kind: "pr", pr: pr() }, viewer: "me", sessions: [session()], workflows: prWorkflows });
-    expect(action).toMatchObject({ kind: "session", mode: "open", label: "Review", meta: "idle", count: 1 });
-  });
-
-  it("continues a review session when the head moved", () => {
-    const action = act({ subject: { kind: "pr", pr: pr({ headRefOid: "def456" }) }, viewer: "me", sessions: [session()], workflows: prWorkflows });
-    expect(action).toMatchObject({ kind: "session", mode: "continue", label: "Re-review", meta: "new", workflowId: "review" });
-  });
-
-  it("only opens the babysitting session for a PR or its run", () => {
-    const withBabysit = [...prWorkflows, workflow({ id: "babysit", label: "Babysit", autoFollowUp: true })];
-    const reviewer = session({ id: "reviewer", updatedAt: 9 });
-    const babysat = session({
-      id: "babysat",
-      prs: [{ ref: pr().ref, origin: "opened", workflowId: "babysit", lastSeenAt: 5000, lastSeenSha: "abc123" }]
-    });
-    const movedHead = { kind: "pr" as const, pr: pr({ headRefOid: "def456" }) };
-    expect(act({ subject: movedHead, viewer: "me", sessions: [reviewer, babysat], workflows: withBabysit })).toMatchObject({
-      kind: "session",
-      mode: "open",
-      label: "Babysit",
-      session: { id: "babysat" }
-    });
-    const failingRun = { kind: "run" as const, run: run({ prNumber: 42, conclusion: "failure" }) };
-    expect(act({ subject: failingRun, viewer: "dev", sessions: [babysat], workflows: withBabysit })).toMatchObject({
-      kind: "session",
-      mode: "open",
-      session: { id: "babysat" }
-    });
-    expect(babysitterFor({ kind: "pr", pr: pr({ state: "CLOSED" }) }, [babysat], withBabysit)).toBeNull();
-  });
-
-  it("marks a working session", () => {
-    const action = act({ subject: { kind: "pr", pr: pr() }, viewer: "me", sessions: [session({ status: "working" })], workflows: prWorkflows });
-    expect(action).toMatchObject({ kind: "session", meta: "working" });
-  });
-
-  it("suggests a workflow, flagging urgent ones, and falls back to the first enabled", () => {
-    const suggested = act({
-      subject: { kind: "pr", pr: pr({ ci: "failing", viewerIsAuthor: true }) },
-      viewer: "me",
-      sessions: [],
-      workflows: prWorkflows
-    });
-    expect(suggested).toMatchObject({ kind: "workflow", urgent: true });
-    expect(suggested.kind === "workflow" && suggested.workflow.id).toBe("fix-ci");
-    const fallback = act({ subject: { kind: "pr", pr: pr() }, viewer: "me", sessions: [], workflows: prWorkflows });
-    expect(fallback).toMatchObject({ kind: "workflow", urgent: false });
-    expect(fallback.kind === "workflow" && fallback.workflow.id).toBe("review");
-  });
-
-  it("falls back to GitHub for finished subjects and logs for runs without workflows", () => {
-    expect(act({ subject: { kind: "pr", pr: pr({ state: "MERGED" }) }, viewer: "me", sessions: [], workflows: prWorkflows })).toEqual({ kind: "github" });
-    expect(act({ subject: { kind: "issue", issue: issue({ state: "CLOSED" }) }, viewer: "me", sessions: [], workflows: prWorkflows })).toEqual({ kind: "github" });
-    expect(act({ subject: { kind: "run", run: run() }, viewer: "me", sessions: [], workflows: prWorkflows })).toEqual({ kind: "logs" });
-  });
-
-  it("never falls back to the first enabled run workflow", () => {
-    const runWorkflows = [workflow({ id: "run-ci", target: "run", suggestWhen: ["run-failed"] }), workflow({ id: "other-run", target: "run" })];
-    expect(act({ subject: { kind: "run", run: run() }, viewer: "me", sessions: [], workflows: runWorkflows })).toEqual({ kind: "logs" });
-    const failed = act({ subject: { kind: "run", run: run({ conclusion: "failure", actor: "me" }) }, viewer: "me", sessions: [], workflows: runWorkflows });
-    expect(failed).toMatchObject({ kind: "workflow", urgent: true });
-    expect(failed.kind === "workflow" && failed.workflow.id).toBe("run-ci");
-  });
-
-  it("opens the latest session on a merged PR", () => {
-    const action = act({ subject: { kind: "pr", pr: pr({ state: "MERGED" }) }, viewer: "me", sessions: [session()], workflows: prWorkflows });
-    expect(action).toMatchObject({ kind: "session", mode: "open" });
-  });
-
-  it("flags an issue session with new activity as unseen", () => {
-    const issueSession = sessionMeta({ id: "i1", updatedAt: 9, issues: [{ ref: issue().ref, origin: "workflow", lastSeenAt: 500 }] });
-    const subject = { kind: "issue" as const, issue: issue({ updatedAt: 900 }) };
-    const action = act({ subject, viewer: "me", sessions: [issueSession], workflows: prWorkflows, unseen: unseenSessionIds(subject, [issueSession]) });
-    expect(action).toMatchObject({ kind: "session", meta: "unseen" });
-  });
-});
-
 describe("continueSessionFor", () => {
   const prSession = sessionMeta({ id: "pr", updatedAt: 1, prs: [{ ref: pr().ref, origin: "opened", lastSeenAt: 0, lastSeenSha: "" }] });
   const other = sessionMeta({ id: "other", updatedAt: 9 });
@@ -448,6 +305,18 @@ describe("continueSessionFor", () => {
     expect(continueSessionFor({ kind: "pr", pr: pr() }, "pr", [prSession])?.id).toBe("pr");
     expect(continueSessionFor({ kind: "run", run: run({ prNumber: 42 }) }, "pr", [prSession, other])?.id).toBe("pr");
     expect(continueSessionFor({ kind: "run", run: run() }, "pr", [prSession])).toBeNull();
+  });
+
+  it("prefers the session that opened the PR, then a review workflow, then the latest", () => {
+    const ref = pr().ref;
+    const linked = (id: string, updatedAt: number, origin: "opened" | "workflow" | "linked", workflowId?: string) =>
+      sessionMeta({ id, updatedAt, prs: [{ ref, origin, workflowId, lastSeenAt: 0, lastSeenSha: "" }] });
+    const opened = linked("opened", 1, "opened");
+    const review = linked("review", 2, "workflow", "review");
+    const latest = linked("latest", 9, "linked");
+    expect(continueSessionFor({ kind: "pr", pr: pr() }, "pr", [latest, review, opened])?.id).toBe("opened");
+    expect(continueSessionFor({ kind: "pr", pr: pr() }, "pr", [latest, review, other])?.id).toBe("review");
+    expect(continueSessionFor({ kind: "pr", pr: pr() }, "pr", [linked("older", 3, "linked"), latest, other])?.id).toBe("latest");
   });
 
   it("continues only sessions linked to the issue for issue workflows", () => {
@@ -463,34 +332,13 @@ describe("continueSessionFor", () => {
   });
 });
 
-describe("run unseen dot", () => {
-  const prSession = sessionMeta({ id: "pr", prs: [{ ref: pr().ref, origin: "opened", lastSeenAt: 5000, lastSeenSha: "abc123" }] });
-  const runSession = sessionMeta({ id: "run", runs: [{ ref: run().ref, origin: "workflow", lastSeenAt: 2000 }] });
-  const subject = { kind: "run" as const, run: run({ prNumber: 42, updatedAt: 3000 }) };
-
-  it("is set when the run's PR has unseen updates in a linked session", () => {
-    const lookup = (): PrSummary => pr({ updatedAt: 9000 });
-    expect([...unseenSessionIds(subject, [prSession], lookup)]).toEqual(["pr"]);
-    expect(unseenSessionIds(subject, [prSession], () => pr({ updatedAt: 1000 })).size).toBe(0);
-    expect(unseenSessionIds(subject, [prSession]).size).toBe(0);
-  });
-
-  it("is set when a run-linked session last saw the run before its last update", () => {
-    expect([...unseenSessionIds(subject, [runSession])]).toEqual(["run"]);
-    expect(unseenSessionIds({ kind: "run", run: run({ updatedAt: 1500 }) }, [runSession]).size).toBe(0);
-  });
-});
-
-describe("rowDelta", () => {
-  const link = (lastSeenSha: string) => ({ ref: pr().ref, origin: "workflow" as const, lastSeenAt: 500, lastSeenSha });
-  const now = 1000 + 3 * 3_600_000;
-
-  it("says new commits when the head moved and updated <age> otherwise", () => {
-    const moved = sessionMeta({ prs: [link("old")] });
-    expect(rowDelta({ kind: "pr", pr: pr() }, [moved], now)).toBe("new commits");
-    const same = sessionMeta({ prs: [link("abc123")] });
-    expect(rowDelta({ kind: "pr", pr: pr() }, [same], now)).toBe("updated 3h");
-    expect(rowDelta({ kind: "pr", pr: pr({ updatedAt: 100 }) }, [same], now)).toBeNull();
+describe("deltaLabel", () => {
+  it("labels the server-provided delta", () => {
+    const now = 1000 + 3 * 3_600_000;
+    expect(deltaLabel({ kind: "commits" }, now)).toBe("new commits");
+    expect(deltaLabel({ kind: "updated", at: 1000 }, now)).toBe("updated 3h");
+    expect(deltaLabel({ kind: "activity" }, now)).toBe("new activity");
+    expect(deltaLabel(null, now)).toBeNull();
   });
 });
 

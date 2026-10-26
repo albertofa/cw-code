@@ -109,7 +109,7 @@ function ImportRow({
 }
 
 export function ImportSessionsModal({ initialDriver, onClose }: { initialDriver: DriverName; onClose: () => void }) {
-  const installed = useAppStore((s) => s.installedHarnesses);
+  const installed = useAppStore((s) => s.availableHarnesses);
   const homeDir = useAppStore((s) => s.homeDir) ?? undefined;
   const importSession = useAppStore((s) => s.importSession);
   const harnesses = pickableHarnesses(installed);

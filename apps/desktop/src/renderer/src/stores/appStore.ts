@@ -1,22 +1,16 @@
 import { create } from "zustand";
-import type { CommandInvocation, SessionStatusReason } from "@cw-code/contracts";
+import type { CommandInvocation, SessionRow, SessionStatusReason, SidebarDefaults, ThreadItem } from "@cw-code/contracts";
 import type {
-  ActiveTurn,
   AppSettings,
   ApprovalDecision,
-  ApprovalRequest,
   ComposerPrefs,
-  ContextUsage,
   CreateSessionOptions,
   CustomTheme,
   DriverName,
-  HistoryMessage,
-  GitStatus,
   ImportSessionRequest,
   PrRef,
   Project,
   ProjectSettings,
-  QuestionRequest,
   Session,
   SessionStatus,
   NotificationSoundSettings,
@@ -24,68 +18,24 @@ import type {
   ShutdownAssessment,
   ShutdownReason,
   SubagentToolsResult,
-  TaskSnapshot,
-  TodoItem,
-  TokenCounts,
-  TurnEvent,
-  TurnModelUsage,
   UpdateActionResult,
   UpdateChannel,
   UpdateState
 } from "../cw.js";
 import type { DirtyBuffer } from "./editorBuffers.js";
 import { usePanelStore } from "./panelStore.js";
-import { appendAssistantText, appendReasoningText, closeReasoning, upsertToolCall } from "../components/chatMessages.js";
 import { DEFAULT_APPEARANCE, appearanceOf, type AppearancePrefs } from "../appearanceFonts.js";
-import { getLastModel, setLastModel } from "../components/lastModel.js";
+import { getLastModel, pushRecentModel } from "../components/lastModel.js";
 import { defaultModelPatch } from "../components/modelMenus.js";
 import { fallbackHarness } from "../components/harnessAvailability.js";
-import { formatDuration, mergeToolPairs } from "../components/toolSummaries.js";
-import { expiredHoldingIds } from "../components/workingSet.js";
-import { defaultNewSessionProjectId } from "../components/projectRecency.js";
 import { projectDriver, withProjectPrefs } from "../components/projectDefaults.js";
 import { useNotifs } from "../components/Notifications.js";
-import type { AutoFollowUpPause } from "../components/prSessionModel.js";
 import { ipcErrorMessage } from "../components/ipcError.js";
-import { currentCheckoutSessionIds } from "../components/sessionBranch.js";
-import { useBranchStore } from "./branchStore.js";
+import { sameItems, sessionsByProjectOf } from "../server/sidebarData.js";
 import { shouldApplyUpdateState } from "./updateThrottle.js";
 
-const GIT_REFRESH_BATCH = 6;
-const PENDING_PREFIX = "pending:";
-const LOCAL_NOTICE_TURN_ID = "worktree-cleanup";
-
-function hasLoadedMessages(messages: ChatMessage[] | undefined): boolean {
-  return (messages ?? []).some((m) => m.turnId !== LOCAL_NOTICE_TURN_ID);
-}
-
-function historyAheadOfLive(history: ChatMessage[], current: ChatMessage[]): ChatMessage[] {
-  const live = current.filter((m) => m.turnId !== LOCAL_NOTICE_TURN_ID);
-  const ids = new Set(live.map((m) => m.id));
-  const turnIds = new Set(live.map((m) => m.turnId));
-  const stamps = live.flatMap((m) => (m.timestamp !== undefined ? [m.timestamp] : []));
-  const liveSince = stamps.length > 0 ? Math.min(...stamps) : undefined;
-  const earlier = history.filter(
-    (m) =>
-      !ids.has(m.id) &&
-      !turnIds.has(m.turnId) &&
-      (liveSince === undefined || m.timestamp === undefined || m.timestamp < liveSince)
-  );
-  return [...earlier, ...current];
-}
-let pendingSeq = 0;
 let lastUpdateAppliedAt = 0;
 let pendingPromptInFlight = false;
-let appliedSettingsJson: string | null = null;
-
-function nextPendingTurnId(): string {
-  pendingSeq += 1;
-  return `${PENDING_PREFIX}${pendingSeq}`;
-}
-
-function isPendingTurn(value: string | undefined): boolean {
-  return value !== undefined && value.startsWith(PENDING_PREFIX);
-}
 
 export class NewSessionRefusedError extends Error {
   constructor(message: string) {
@@ -94,38 +44,114 @@ export class NewSessionRefusedError extends Error {
   }
 }
 
-interface GitStatusTracker {
-  issued: number;
-  applied: number;
-  latest: Promise<void>;
-}
-
-const gitStatusTrackers = new Map<string, GitStatusTracker>();
-
-async function refreshGitStatusInBatches(ids: string[], refresh: (id: string) => Promise<void>): Promise<void> {
-  for (let i = 0; i < ids.length; i += GIT_REFRESH_BATCH) {
-    await Promise.all(ids.slice(i, i + GIT_REFRESH_BATCH).map((id) => refresh(id)));
-  }
-}
-
-export interface ChatMessage extends HistoryMessage {
-  toolInput?: unknown;
-  toolOutput?: string;
-  toolDone?: boolean;
-  toolStartedAt?: number;
-  toolCompletedAt?: number;
-  reasoningStartedAt?: number;
-  retryable?: boolean;
-  severity?: "warning";
-}
+export type ChatMessage = ThreadItem;
 
 export const DEFAULT_COMPOSER: Required<Pick<ComposerPrefs, "effort" | "permissionMode">> & ComposerPrefs = {
   effort: "medium",
   permissionMode: "auto"
 };
 
+const composerLoads = new Map<string, Promise<void>>();
+const composerFailureNotified = new Set<string>();
+const COMPOSER_SEND_WAIT_MS = 5000;
+const SESSION_ROW_WAIT_MS = 5000;
+const SESSION_ROW_LATE_MS = 60_000;
+
 function defaultWorkspace(defaultUseWorktree: boolean): CreateSessionOptions {
   return { mode: defaultUseWorktree ? "new" : "current" };
+}
+
+function sessionOwnerId(byProject: Record<string, Session[]>, sessionId: string | null): string | undefined {
+  if (!sessionId) return undefined;
+  return Object.entries(byProject).find(([, list]) => list.some((s) => s.id === sessionId))?.[0];
+}
+
+function recentProjectId(state: { projects: Project[]; projectsByRecency: string[] }): string | null {
+  const known = new Set(state.projects.map((p) => p.id));
+  return state.projectsByRecency.find((id) => known.has(id)) ?? state.projects[0]?.id ?? null;
+}
+
+function hasSession(byProject: Record<string, Session[]>, sessionId: string): boolean {
+  return sessionOwnerId(byProject, sessionId) !== undefined;
+}
+
+function waitForSession(sessionId: string, timeoutMs = SESSION_ROW_WAIT_MS): Promise<boolean> {
+  if (hasSession(useAppStore.getState().sessionsByProject, sessionId)) return Promise.resolve(true);
+  return new Promise((resolve) => {
+    const finish = (appeared: boolean): void => {
+      window.clearTimeout(timer);
+      stop();
+      resolve(appeared);
+    };
+    const timer = window.setTimeout(() => finish(false), timeoutMs);
+    const stop = useAppStore.subscribe((state) => {
+      if (hasSession(state.sessionsByProject, sessionId)) finish(true);
+    });
+  });
+}
+
+export async function selectWhenListed(sessionId: string, select: () => void): Promise<void> {
+  const selectedBefore = useAppStore.getState().activeSessionId;
+  if (await waitForSession(sessionId)) {
+    select();
+    return;
+  }
+  useNotifs.getState().push({
+    kind: "warning",
+    title: "Session not listed yet",
+    message: "The new session didn't appear yet — it will show up in the sidebar when ready."
+  });
+  void waitForSession(sessionId, SESSION_ROW_LATE_MS).then((appeared) => {
+    if (appeared && useAppStore.getState().activeSessionId === selectedBefore) select();
+  });
+}
+
+function reportComposerFailure(sessionId: string, err: unknown): void {
+  const message = ipcErrorMessage(err);
+  console.warn(`[cw-code] could not load composer settings for ${sessionId}: ${message}`);
+  if (useAppStore.getState().composerLoadedBySession[sessionId] || composerFailureNotified.has(sessionId)) return;
+  composerFailureNotified.add(sessionId);
+  useNotifs.getState().push({
+    id: `composer-load:${sessionId}`,
+    kind: "warning",
+    title: "Composer settings not loaded",
+    message: `This session's model and permission settings could not be loaded: ${message}. They will be retried before the next send.`
+  });
+}
+
+function loadComposer(sessionId: string): Promise<void> {
+  const load = (async () => {
+    try {
+      useAppStore.getState().applyComposer(sessionId, await window.cw.getComposer(sessionId));
+    } catch (err) {
+      reportComposerFailure(sessionId, err);
+    } finally {
+      composerLoads.delete(sessionId);
+    }
+  })();
+  composerLoads.set(sessionId, load);
+  return load;
+}
+
+function settleWithin(promise: Promise<void>, timeoutMs: number): Promise<void> {
+  return new Promise((resolve) => {
+    const timer = window.setTimeout(resolve, timeoutMs);
+    void promise.finally(() => {
+      window.clearTimeout(timer);
+      resolve();
+    });
+  });
+}
+
+async function composerForSend(sessionId: string): Promise<ComposerPrefs> {
+  if (!useAppStore.getState().composerLoadedBySession[sessionId]) {
+    await settleWithin(useAppStore.getState().ensureComposer(sessionId), COMPOSER_SEND_WAIT_MS);
+  }
+  const state = useAppStore.getState();
+  if (!state.composerLoadedBySession[sessionId]) {
+    throw new Error("this session's model and permission settings have not loaded from the server yet, so the prompt was not sent. Try again in a moment");
+  }
+  return state.composerBySession[sessionId] ?? DEFAULT_COMPOSER;
 }
 
 function withProject(projects: Project[], project: Project): Project[] {
@@ -150,39 +176,6 @@ function defaultModelsFrom(settings: AppSettings): Record<DriverName, string> {
   };
 }
 
-function readComposerMirror(sessionId: string): ComposerPrefs | null {
-  try {
-    const raw = window.localStorage.getItem(`cw:composer:${sessionId}`);
-    if (!raw) return null;
-    return JSON.parse(raw) as ComposerPrefs;
-  } catch {
-    return null;
-  }
-}
-
-export interface TurnUsage {
-  context?: ContextUsage;
-  lastTurn: TokenCounts & { costUsd: number | null; durationMs?: number };
-}
-
-function sumTurnUsage(usage: TurnModelUsage[]): TokenCounts & { costUsd: number | null } {
-  let inputTokens = 0;
-  let cacheReadTokens = 0;
-  let cacheWriteTokens = 0;
-  let outputTokens = 0;
-  let reasoningTokens = 0;
-  let costUsd: number | null = null;
-  for (const entry of usage) {
-    inputTokens += entry.inputTokens;
-    cacheReadTokens += entry.cacheReadTokens;
-    cacheWriteTokens += entry.cacheWriteTokens;
-    outputTokens += entry.outputTokens;
-    reasoningTokens += entry.reasoningTokens;
-    if (entry.costUsd !== null) costUsd = (costUsd ?? 0) + entry.costUsd;
-  }
-  return { inputTokens, cacheReadTokens, cacheWriteTokens, outputTokens, reasoningTokens, costUsd };
-}
-
 export type ShutdownPhase = "review" | "waiting" | "saving" | "preparing" | "timeout";
 
 export interface ShutdownUiState {
@@ -196,11 +189,9 @@ export interface ShutdownUiState {
 
 export interface SendPromptOptions {
   prRefs?: PrRef[];
-  finalReview?: { ref: PrRef; sha: string };
   command?: CommandInvocation;
   skills?: string[];
   acceptFolderHead?: string;
-  auto?: boolean;
 }
 
 export type ComposerSendOptions = Pick<SendPromptOptions, "command" | "skills">;
@@ -216,39 +207,16 @@ interface AppState {
   sessionsByProject: Record<string, Session[]>;
   activeProjectId: string | null;
   activeSessionId: string | null;
-  messagesBySession: Record<string, ChatMessage[]>;
-  todosBySession: Record<string, TodoItem[]>;
-  turnUsageBySession: Record<string, TurnUsage>;
-  busyTurns: Record<string, string>;
-  autoFollowUpTurns: Record<string, number>;
-  autoFollowUpPaused: Record<string, AutoFollowUpPause>;
-  pauseAutoFollowUp(sessionId: string, reason?: AutoFollowUpPause): void;
-  resumeAutoFollowUp(sessionId: string): void;
-  loadingHistory: Record<string, boolean>;
-  historyLoadedBySession: Record<string, boolean>;
-  historyErrorBySession: Record<string, string>;
-  turnStartedAt: Record<string, number>;
-  turnDurations: Record<string, Record<string, number>>;
   composerBySession: Record<string, ComposerPrefs>;
+  composerLoadedBySession: Record<string, boolean>;
   pendingDriver: DriverName | null;
   lastDriver: DriverName;
-  installedHarnesses: DriverName[] | null;
-  setInstalledHarnesses(installed: DriverName[]): void;
-  pendingApprovals: Record<string, ApprovalRequest[]>;
-  pendingQuestions: Record<string, QuestionRequest[]>;
+  availableHarnesses: DriverName[] | null;
   pendingPrefs: ComposerPrefs;
   pendingWorkspace: CreateSessionOptions;
   newSessionError: string | null;
   setPendingPrefs(prefs: ComposerPrefs): void;
   setPendingWorkspace(options: CreateSessionOptions): void;
-  gitStatusBySession: Record<string, GitStatus>;
-  refreshGitStatus(sessionId: string): Promise<void>;
-  applyGitStatus(sessionId: string, status: GitStatus): void;
-  refreshProjectCheckoutGitStatus(sessionId: string): Promise<void>;
-  sourceControlRefreshIntervalSeconds: number;
-  prRefreshIntervalSeconds: number;
-  holdingAutoExpireEnabled: boolean;
-  holdingHours: number;
   defaultUseWorktree: boolean;
   appearance: AppearancePrefs;
   themePreview: ThemePreview | null;
@@ -260,23 +228,22 @@ interface AppState {
   openPreview(sessionId: string, path: string, basePath: string): void;
   closePreview(sessionId: string): void;
   homeDir: string | null;
-  ensureHomeDir(): Promise<string>;
-  loadProjects(): Promise<void>;
+  sidebarLoaded: boolean;
+  projectsByRecency: string[];
+  applySidebar(projects: Project[], rows: SessionRow[], defaults: SidebarDefaults | null): void;
   addProject(rootPath: string): Promise<void>;
   addProjectForNewSession(rootPath: string): Promise<void>;
-  setPendingProject(projectId: string): Promise<void>;
+  setPendingProject(projectId: string): void;
   selectSession(sessionId: string): void;
-  hydrateActiveTurns(): Promise<void>;
   startNewSession(driver?: DriverName): void;
   setPendingDriver(driver: DriverName): void;
   sendPendingPrompt(prompt: string, attachments?: string[], opts?: ComposerSendOptions): Promise<void>;
-  ensureHistory(sessionId: string, opts?: { force?: boolean; isRetry?: boolean }): Promise<void>;
   subagentToolsByKey: Record<string, SubagentToolsResult>;
   subagentToolsLoading: Record<string, boolean>;
   loadSubagentTools(sessionId: string, agentId: string): Promise<void>;
   ensureComposer(sessionId: string): Promise<void>;
+  reloadComposers(): Promise<void>;
   setComposerPrefs(sessionId: string, prefs: ComposerPrefs): Promise<void>;
-  settingsVersion: number;
   settingsLoaded: boolean;
   saveSettings(patch: SettingsPatch): Promise<AppSettings>;
   saveDefaultModel(driver: DriverName, id: string): Promise<void>;
@@ -287,25 +254,18 @@ interface AppState {
   setSessionStatus(sessionId: string, status: SessionStatus, reason?: SessionStatusReason): Promise<void>;
   markSessionWorking(sessionId: string): Promise<void>;
   restoreSession(sessionId: string): Promise<void>;
-  expireHoldingSessions(): Promise<void>;
-  appendSystemNotice(sessionId: string, text: string, isError?: boolean): void;
-  clearSessionWorktrees(sessionIds: string[]): void;
-  createSession(driver: DriverName, prefs?: ComposerPrefs, workspace?: CreateSessionOptions): Promise<void>;
+  createSession(driver: DriverName, prefs?: ComposerPrefs, workspace?: CreateSessionOptions): Promise<Session | null>;
   createSessionIn(projectId: string, driver: DriverName, prefs?: ComposerPrefs, workspace?: CreateSessionOptions): Promise<Session>;
   importSession(request: ImportSessionRequest): Promise<Session>;
-  applySession(session: Session): void;
   applyProject(project: Project): void;
   applySettings(saved: AppSettings): void;
   applyComposer(sessionId: string, prefs: ComposerPrefs): void;
   sendPrompt(prompt: string, attachments?: string[], opts?: ComposerSendOptions): Promise<void>;
   sendPromptTo(sessionId: string, prompt: string, attachments?: string[], opts?: SendPromptOptions): Promise<void>;
   interrupt(): Promise<void>;
-  markTurnsInterrupted(sessionIds: string[]): void;
   retryConnection(sessionId: string): Promise<void>;
   respondApproval(requestId: string, decision: ApprovalDecision): Promise<void>;
-  respondQuestion(sessionId: string, requestId: string, answers: Record<string, string>): Promise<void>;
-  applyEvent(sessionId: string, event: TurnEvent): void;
-  applySessionTitle(sessionId: string, title: string): void;
+  respondQuestion(requestId: string, answers: Record<string, string>): Promise<void>;
   updates: UpdateState | null;
   subscribeUpdates(): () => void;
   applyUpdateState(state: UpdateState): void;
@@ -314,143 +274,6 @@ interface AppState {
   setUpdateChannel(channel: UpdateChannel): Promise<UpdateActionResult>;
   setUpdateBackgroundDownload(enabled: boolean): Promise<AppSettings>;
   updateRestartPending: boolean;
-}
-
-const bufferedTasks = new Map<string, Map<string, TaskSnapshot>>();
-const BUFFERED_TASKS_PER_SESSION = 200;
-
-function bufferTask(sessionId: string, task: TaskSnapshot): void {
-  const forSession = bufferedTasks.get(sessionId) ?? new Map<string, TaskSnapshot>();
-  forSession.delete(task.id);
-  forSession.set(task.id, task);
-  if (forSession.size > BUFFERED_TASKS_PER_SESSION) {
-    const oldest = forSession.keys().next().value;
-    if (oldest !== undefined) forSession.delete(oldest);
-  }
-  bufferedTasks.set(sessionId, forSession);
-}
-
-function takeBufferedTask(sessionId: string, taskId: string): TaskSnapshot | undefined {
-  const forSession = bufferedTasks.get(sessionId);
-  const task = forSession?.get(taskId);
-  if (!forSession || !task) return undefined;
-  forSession.delete(taskId);
-  if (forSession.size === 0) bufferedTasks.delete(sessionId);
-  return task;
-}
-
-function withBufferedTasks(sessionId: string, messages: ChatMessage[]): ChatMessage[] {
-  const forSession = bufferedTasks.get(sessionId);
-  if (!forSession) return messages;
-  bufferedTasks.delete(sessionId);
-  let changed = false;
-  const out = messages.map((m) => {
-    const task = m.role === "tool" ? forSession.get(m.id) : undefined;
-    if (!task) return m;
-    changed = true;
-    return { ...m, task };
-  });
-  return changed ? out : messages;
-}
-
-function finalizeTurnTools(messages: ChatMessage[], turnId: string): ChatMessage[] {
-  let changed = false;
-  const out = messages.map((m) => {
-    if (m.role !== "tool" || m.turnId !== turnId) return m;
-    if (m.toolInput === undefined || m.toolDone === true || m.toolOutput !== undefined) return m;
-    changed = true;
-    return { ...m, toolDone: true, toolCompletedAt: Date.now() };
-  });
-  return changed ? out : messages;
-}
-
-function withoutRetryNotice(messages: ChatMessage[], turnId: string): ChatMessage[] {
-  const id = `${turnId}-retry`;
-  return messages.some((m) => m.id === id) ? messages.filter((m) => m.id !== id) : messages;
-}
-
-function without<T>(record: Record<string, T>, key: string): Record<string, T> {
-  if (!(key in record)) return record;
-  const next = { ...record };
-  delete next[key];
-  return next;
-}
-
-function withAutoPause(
-  paused: Record<string, AutoFollowUpPause>,
-  sessionId: string,
-  reason: AutoFollowUpPause
-): Record<string, AutoFollowUpPause> {
-  return paused[sessionId] === "user" ? paused : { ...paused, [sessionId]: reason };
-}
-
-function withSessionStatus(
-  byProject: Record<string, Session[]>,
-  sessionId: string,
-  status: SessionStatus
-): Record<string, Session[]> {
-  return patchSession(byProject, sessionId, { status, updatedAt: Date.now() });
-}
-
-function patchSession(
-  byProject: Record<string, Session[]>,
-  sessionId: string,
-  patch: Partial<Session>
-): Record<string, Session[]> {
-  const next: Record<string, Session[]> = {};
-  for (const [pid, list] of Object.entries(byProject)) {
-    next[pid] = list.map((s) => (s.id === sessionId ? { ...s, ...patch } : s));
-  }
-  return next;
-}
-
-function upsertInList(list: Session[], session: Session): Session[] {
-  return list.some((s) => s.id === session.id) ? list.map((s) => (s.id === session.id ? session : s)) : [session, ...list];
-}
-
-function upsertSession(byProject: Record<string, Session[]>, session: Session): Record<string, Session[]> {
-  const known = Object.values(byProject).some((list) => list.some((s) => s.id === session.id));
-  if (known) return replaceSession(byProject, session);
-  const list = byProject[session.projectId];
-  return list ? { ...byProject, [session.projectId]: [session, ...list] } : byProject;
-}
-
-function replaceSession(byProject: Record<string, Session[]>, session: Session): Record<string, Session[]> {
-  const next: Record<string, Session[]> = {};
-  for (const [pid, list] of Object.entries(byProject)) {
-    next[pid] = list.map((s) => (s.id === session.id ? session : s));
-  }
-  return next;
-}
-
-interface TurnBookkeeping {
-  busyTurns: Record<string, string>;
-  turnStartedAt: Record<string, number>;
-  turnDurations: Record<string, Record<string, number>>;
-}
-
-function closeTurn(book: TurnBookkeeping, sessionId: string, turnId: string | undefined): TurnBookkeeping {
-  const busyTurns = { ...book.busyTurns };
-  const turnStartedAt = { ...book.turnStartedAt };
-  const turnDurations = { ...book.turnDurations };
-  delete busyTurns[sessionId];
-  const startedAt = turnStartedAt[sessionId];
-  if (turnId !== undefined && startedAt !== undefined) {
-    turnDurations[sessionId] = {
-      ...(turnDurations[sessionId] ?? {}),
-      [turnId]: Math.max(0, Date.now() - startedAt)
-    };
-  }
-  delete turnStartedAt[sessionId];
-  return { busyTurns, turnStartedAt, turnDurations };
-}
-
-type TurnStartedEvent = Extract<TurnEvent, { type: "turn.started" }>;
-
-const ignoredTurnStarts = new Map<string, TurnStartedEvent>();
-
-function knownTurnId(value: string | undefined): string | undefined {
-  return value !== undefined && !isPendingTurn(value) ? value : undefined;
 }
 
 async function answerPendingRequest(answer: Promise<void>): Promise<void> {
@@ -467,35 +290,17 @@ export const useAppStore = create<AppState>((set, get) => ({
   sessionsByProject: {},
   activeProjectId: null,
   activeSessionId: null,
-  messagesBySession: {},
-  todosBySession: {},
-  turnUsageBySession: {},
-  busyTurns: {},
-  autoFollowUpTurns: {},
-  autoFollowUpPaused: {},
-  loadingHistory: {},
-  historyLoadedBySession: {},
-  historyErrorBySession: {},
   subagentToolsByKey: {},
   subagentToolsLoading: {},
-  turnStartedAt: {},
-  turnDurations: {},
   composerBySession: {},
-  settingsVersion: 0,
+  composerLoadedBySession: {},
   settingsLoaded: false,
   pendingDriver: null,
   lastDriver: "claude",
-  installedHarnesses: null,
-  pendingApprovals: {},
-  pendingQuestions: {},
+  availableHarnesses: null,
   pendingPrefs: { ...DEFAULT_COMPOSER },
   pendingWorkspace: defaultWorkspace(true),
   newSessionError: null,
-  gitStatusBySession: {},
-  sourceControlRefreshIntervalSeconds: 30,
-  prRefreshIntervalSeconds: 120,
-  holdingAutoExpireEnabled: false,
-  holdingHours: 6,
   defaultUseWorktree: true,
   appearance: DEFAULT_APPEARANCE,
   themePreview: null,
@@ -551,57 +356,12 @@ export const useAppStore = create<AppState>((set, get) => ({
     set({ pendingWorkspace: { ...get().pendingWorkspace, ...options }, newSessionError: null });
   },
 
-  applyGitStatus(sessionId: string, status: GitStatus) {
-    const tracker = gitStatusTrackers.get(sessionId);
-    if (tracker) tracker.applied = tracker.issued;
-    set({ gitStatusBySession: { ...get().gitStatusBySession, [sessionId]: status } });
-    useBranchStore.getState().reconcileKeptHead(sessionId, status);
-  },
-
-  async refreshGitStatus(sessionId: string) {
-    const tracker = gitStatusTrackers.get(sessionId) ?? { issued: 0, applied: 0, latest: Promise.resolve() };
-    const sequence = tracker.issued + 1;
-    const run = (async () => {
-      try {
-        const status = await window.cw.getGitStatus(sessionId);
-        if (sequence <= tracker.applied) return;
-        tracker.applied = sequence;
-        set({ gitStatusBySession: { ...get().gitStatusBySession, [sessionId]: status } });
-        useBranchStore.getState().reconcileKeptHead(sessionId, status);
-      } catch (err) {
-        console.warn(`git status refresh failed for ${sessionId}: ${ipcErrorMessage(err)}`);
-      }
-    })();
-    tracker.issued = sequence;
-    tracker.latest = run;
-    gitStatusTrackers.set(sessionId, tracker);
-    await run;
-    if (tracker.issued !== sequence) await tracker.latest;
-  },
-
-  async refreshProjectCheckoutGitStatus(sessionId: string) {
-    const session = Object.values(get().sessionsByProject)
-      .flat()
-      .find((item) => item.id === sessionId);
-    const siblings = session && !session.worktreePath
-      ? currentCheckoutSessionIds(get().sessionsByProject[session.projectId] ?? []).filter((id) => id !== sessionId)
-      : [];
-    void refreshGitStatusInBatches(siblings, (id) => get().refreshGitStatus(id));
-    await get().refreshGitStatus(sessionId);
-  },
-
   previewBySession: {},
 
   homeDir: null,
 
-  async ensureHomeDir() {
-    const cached = get().homeDir;
-    if (cached) return cached;
-    const homeDir = await window.cw.getHomeDir();
-    if (typeof homeDir !== "string" || !homeDir) return "";
-    set({ homeDir });
-    return homeDir;
-  },
+  sidebarLoaded: false,
+  projectsByRecency: [],
 
   openPreview(sessionId: string, path: string, basePath: string) {
     set((state) => ({
@@ -625,99 +385,50 @@ export const useAppStore = create<AppState>((set, get) => ({
     });
   },
 
-  async loadProjects() {
-    const [projects, settings] = await Promise.all([window.cw.listProjects(), window.cw.getSettings()]);
-    appliedSettingsJson = JSON.stringify(settings);
-    void get().ensureHomeDir().catch(() => {});
-    set({
-      projects,
-      sourceControlRefreshIntervalSeconds: settings.sourceControlRefreshIntervalSeconds,
-      prRefreshIntervalSeconds: settings.prRefreshIntervalSeconds,
-      holdingAutoExpireEnabled: settings.holdingAutoExpireEnabled,
-      holdingHours: settings.holdingHours,
-      defaultUseWorktree: settings.defaultUseWorktree,
-      settingsLoaded: true,
-      appearance: appearanceOf(settings),
-      notificationSounds: settings.notificationSounds,
-      reasoningExpandedByDriver: reasoningExpandedFrom(settings),
-      defaultModelByDriver: defaultModelsFrom(settings),
-      pendingWorkspace: { ...get().pendingWorkspace, ...defaultWorkspace(settings.defaultUseWorktree) }
-    });
-    void get().hydrateActiveTurns();
-    if (projects.length === 0 || get().activeProjectId) return;
-    const lists = await Promise.all(
-      projects.map((p) =>
-        window.cw.listSessions(p.id).catch((err: Error) => {
-          useNotifs.getState().push({
-            kind: "error",
-            title: "Could not load sessions",
-            message: `${p.name}: ${err.message}`
-          });
-          return [];
-        })
-      )
-    );
-    const sessionsByProject: Record<string, Session[]> = {};
-    projects.forEach((p, i) => {
-      sessionsByProject[p.id] = lists[i];
-    });
-    const all = Object.values(sessionsByProject).flat();
-    const candidates = all
-      .filter((s) => s.status !== "archived")
-      .sort((a, b) => b.updatedAt - a.updatedAt);
-    const picked = candidates.find((s) => !s.autoResolved) ?? null;
-    if (!picked) {
-      const fallback = candidates[0];
-      const fallbackOwnerId = fallback
-        ? fallback.projectId ??
-          projects.find((p) => (sessionsByProject[p.id] ?? []).some((s) => s.id === fallback.id))?.id ??
-          projects[0].id
-        : projects[0].id;
-      set({
-        sessionsByProject,
-        activeProjectId: fallbackOwnerId,
-        activeSessionId: null,
-        pendingDriver: get().lastDriver
-      });
-    } else {
-      const ownerId =
-        picked.projectId ??
-        projects.find((p) => (sessionsByProject[p.id] ?? []).some((s) => s.id === picked.id))?.id ??
-        projects[0].id;
-      set({
-        sessionsByProject,
-        activeProjectId: ownerId,
-        activeSessionId: picked.id,
-        pendingDriver: null
-      });
-      if (picked.status === "done") {
-        void get().setSessionStatus(picked.id, "holding", "reopen-on-restore").catch((err) =>
-          console.warn(`setSessionStatus failed for ${picked.id} -> holding: ${(err as Error).message}`)
-        );
-      }
-      void get().ensureHistory(picked.id);
-      void get().ensureComposer(picked.id);
-      const ordered = [picked.id, ...all.filter((s) => s.id !== picked.id).map((s) => s.id)];
-      void refreshGitStatusInBatches(ordered, (id) => get().refreshGitStatus(id));
+  applySidebar(projects: Project[], rows: SessionRow[], defaults: SidebarDefaults | null) {
+    const current = get();
+    const nextProjects = sameItems(current.projects, projects) ? current.projects : projects;
+    const sessionsByProject = sessionsByProjectOf(projects, rows, current.sessionsByProject);
+    const projectsByRecency =
+      defaults && !sameItems(current.projectsByRecency, defaults.projectsByRecency) ? defaults.projectsByRecency : current.projectsByRecency;
+    if (nextProjects !== current.projects || sessionsByProject !== current.sessionsByProject || projectsByRecency !== current.projectsByRecency) {
+      set({ projects: nextProjects, sessionsByProject, projectsByRecency });
     }
+    if (current.sidebarLoaded || !defaults) return;
+    if (projects.length === 0 && !defaults.restoreSessionId) return;
+    set({ sidebarLoaded: true });
+    if (get().activeProjectId) return;
+    const picked = defaults.restoreSessionId ? rows.find((row) => row.session.id === defaults.restoreSessionId)?.session : undefined;
+    if (!picked) {
+      const projectId = defaults.restoreProjectId ?? projects[0]?.id;
+      if (projectId) set({ activeProjectId: projectId, activeSessionId: null, pendingDriver: get().lastDriver });
+      return;
+    }
+    set({ activeProjectId: picked.projectId, activeSessionId: picked.id, pendingDriver: null });
+    if (picked.status === "done") {
+      void window.cw.openSession(picked.id, "restore").catch((err: Error) =>
+        console.warn(`openSession failed for ${picked.id}: ${err.message}`)
+      );
+    }
+    void get().ensureComposer(picked.id);
   },
 
   async addProject(rootPath: string) {
     const project = await window.cw.addProject(rootPath);
     set({ projects: withProject(get().projects, project) });
-    if (!get().activeProjectId) await get().setPendingProject(project.id);
+    if (!get().activeProjectId) get().setPendingProject(project.id);
   },
 
   async addProjectForNewSession(rootPath: string) {
     const project = await window.cw.addProject(rootPath);
     set({ projects: withProject(get().projects, project) });
-    await get().setPendingProject(project.id);
+    get().setPendingProject(project.id);
   },
 
-  async setPendingProject(projectId: string) {
+  setPendingProject(projectId: string) {
     const pendingDriver = get().pendingDriver;
     const settings = get().projects.find((p) => p.id === projectId)?.settings;
-    const target = pendingDriver === null ? null : fallbackHarness(projectDriver(settings, pendingDriver), get().installedHarnesses);
+    const target = pendingDriver === null ? null : fallbackHarness(projectDriver(settings, pendingDriver), get().availableHarnesses);
     set({
       activeProjectId: projectId,
       activeSessionId: null,
@@ -727,187 +438,59 @@ export const useAppStore = create<AppState>((set, get) => ({
         ? { pendingDriver: target, pendingPrefs: withProjectPrefs(get().pendingPrefs, settings, target, target !== pendingDriver) }
         : {})
     });
-    if (get().sessionsByProject[projectId]) return;
-    try {
-      const sessions = await window.cw.listSessions(projectId);
-      if (!get().sessionsByProject[projectId]) {
-        set({ sessionsByProject: { ...get().sessionsByProject, [projectId]: sessions } });
-      }
-    } catch (err) {
-      const name = get().projects.find((p) => p.id === projectId)?.name ?? projectId;
-      useNotifs.getState().push({
-        kind: "error",
-        title: "Could not load sessions",
-        message: `${name}: ${(err as Error).message}`
-      });
-    }
   },
 
   async renameSession(sessionId: string, title: string) {
     const name = title.trim();
     if (!name) return;
     await window.cw.renameSession(sessionId, name);
-    const byProject = get().sessionsByProject;
-    const next: Record<string, Session[]> = {};
-    for (const [pid, list] of Object.entries(byProject)) {
-      next[pid] = list.map((s) => (s.id === sessionId ? { ...s, title: name } : s));
-    }
-    set({ sessionsByProject: next });
   },
 
   async regenerateSessionTitle(sessionId: string) {
-    const title = await window.cw.regenerateSessionTitle(sessionId);
-    get().applySessionTitle(sessionId, title);
+    await window.cw.regenerateSessionTitle(sessionId);
   },
 
   async setSessionStatus(sessionId: string, status: SessionStatus, reason?: SessionStatusReason) {
-    if (status === "resolved" || status === "archived") {
-      const result = await window.cw.resolveSession(sessionId, status, true, false);
-      const worktreeKept = Boolean(result.dirtyBlocked || result.error);
-      set({
-        sessionsByProject: patchSession(get().sessionsByProject, sessionId, {
-          status: result.status,
-          updatedAt: Date.now(),
-          ...(worktreeKept ? {} : { worktreePath: undefined }),
-          ...(result.branchDeleted ? { branch: undefined } : {})
-        })
-      });
-      if (result.destroyScriptError) {
-        useNotifs.getState().push({ kind: "error", title: "Destroy script failed", message: result.destroyScriptError });
-      }
-      if (result.dirtyBlocked) {
-        get().appendSystemNotice(
-          sessionId,
-          "Worktree kept: it has uncommitted changes. Commit or clean them, then resolve the session again to prune it.",
-          true
-        );
-      } else if (result.error) {
-        useNotifs.getState().push({ kind: "error", title: "Could not prune worktree", message: result.error });
-      } else if (result.worktreeRemoved && !result.branchDeleted) {
-        get().appendSystemNotice(sessionId, "Worktree pruned; its branch was kept.");
-      }
+    if (status !== "resolved" && status !== "archived") {
+      await window.cw.setSessionStatus(sessionId, status, reason);
       return;
     }
-    const updated = await window.cw.setSessionStatus(sessionId, status, reason);
-    set({
-      sessionsByProject: patchSession(get().sessionsByProject, sessionId, {
-        status: updated.status,
-        updatedAt: updated.updatedAt
-      })
-    });
+    const result = await window.cw.resolveSession(sessionId, status, true, false);
+    if (get().activeSessionId === sessionId) return;
+    if (result.destroyScriptError) {
+      useNotifs.getState().push({ kind: "error", title: "Destroy script failed", message: result.destroyScriptError });
+    }
+    if (result.error && !result.dirtyBlocked) {
+      useNotifs.getState().push({ kind: "error", title: "Could not prune worktree", message: result.error });
+    }
   },
 
   async markSessionWorking(sessionId: string) {
-    get().applySession(await window.cw.markSessionWorking(sessionId));
+    await window.cw.markSessionWorking(sessionId);
   },
 
   async restoreSession(sessionId: string) {
-    const restored = await window.cw.restoreSession(sessionId);
-    get().applySession(restored);
-    if (restored.createNotice) get().appendSystemNotice(sessionId, restored.createNotice);
-  },
-
-  async expireHoldingSessions() {
-    if (!get().holdingAutoExpireEnabled) return;
-    const sessions = Object.values(get().sessionsByProject).flat();
-    const ids = expiredHoldingIds(sessions, get().holdingHours, Date.now());
-    if (ids.length === 0) return;
-    try {
-      const expired = await window.cw.expireHolding(ids);
-      if (expired.length === 0) return;
-      let sessionsByProject = get().sessionsByProject;
-      for (const session of expired) {
-        sessionsByProject = patchSession(sessionsByProject, session.id, {
-          status: session.status,
-          updatedAt: session.updatedAt
-        });
-      }
-      set({ sessionsByProject });
-    } catch (err) {
-      console.warn(`expireHolding failed: ${(err as Error).message}`);
-    }
-  },
-
-  appendSystemNotice(sessionId: string, text: string, isError = false) {
-    const notice: ChatMessage = {
-      id: `worktree-notice-${sessionId}-${Date.now()}`,
-      role: "system",
-      text,
-      turnId: LOCAL_NOTICE_TURN_ID,
-      isError
-    };
-    set({
-      messagesBySession: {
-        ...get().messagesBySession,
-        [sessionId]: [...(get().messagesBySession[sessionId] ?? []), notice]
-      }
-    });
-  },
-
-  clearSessionWorktrees(sessionIds: string[]) {
-    let sessionsByProject = get().sessionsByProject;
-    for (const id of sessionIds) sessionsByProject = patchSession(sessionsByProject, id, { worktreePath: undefined });
-    set({ sessionsByProject });
-  },
-
-  async hydrateActiveTurns() {
-    let active: ActiveTurn[] = [];
-    try {
-      active = await window.cw.activeTurns();
-    } catch (err) {
-      console.warn(`activeTurns failed: ${(err as Error).message}`);
-      return;
-    }
-    const localBusy = get().busyTurns;
-    const localStarted = get().turnStartedAt;
-    const durations = get().turnDurations;
-    const busy: Record<string, string> = {};
-    const startedAt: Record<string, number> = {};
-    for (const turn of active) {
-      if (durations[turn.sessionId]?.[turn.turnId] !== undefined) continue;
-      if (isPendingTurn(localBusy[turn.sessionId])) continue;
-      busy[turn.sessionId] = turn.turnId;
-      startedAt[turn.sessionId] = turn.startedAt;
-    }
-    for (const [sessionId, value] of Object.entries(localBusy)) {
-      if (!isPendingTurn(value)) continue;
-      busy[sessionId] = value;
-      startedAt[sessionId] = localStarted[sessionId] ?? Date.now();
-    }
-    set({ busyTurns: busy, turnStartedAt: startedAt });
+    await window.cw.restoreSession(sessionId);
   },
 
   selectSession(sessionId: string) {
-    const byProject = get().sessionsByProject;
-    const ownerId = Object.entries(byProject).find(([, list]) =>
-      list.some((s) => s.id === sessionId)
-    )?.[0];
+    const ownerId = sessionOwnerId(get().sessionsByProject, sessionId);
     set({
       activeSessionId: sessionId,
       pendingDriver: null,
       ...(ownerId && ownerId !== get().activeProjectId ? { activeProjectId: ownerId } : {})
     });
-    void get().ensureHistory(sessionId);
     void get().ensureComposer(sessionId);
-    void get().refreshGitStatus(sessionId);
-    void get().hydrateActiveTurns();
   },
 
   startNewSession(driver?: DriverName) {
     const currentProjectId = get().activeProjectId;
-    const projectId =
-      currentProjectId ??
-      defaultNewSessionProjectId(get().projects, get().sessionsByProject, get().activeSessionId);
+    const projectId = currentProjectId ?? sessionOwnerId(get().sessionsByProject, get().activeSessionId) ?? recentProjectId(get());
     const settings = projectId ? get().projects.find((p) => p.id === projectId)?.settings : undefined;
-    const target = fallbackHarness(driver ?? projectDriver(settings, get().lastDriver), get().installedHarnesses);
+    const target = fallbackHarness(driver ?? projectDriver(settings, get().lastDriver), get().availableHarnesses);
     const previous = get().pendingDriver ?? get().lastDriver;
     const currentModel = get().pendingPrefs.model;
-    if (currentModel && previous !== target) {
-      try {
-        setLastModel(previous, currentModel);
-      } catch {
-      }
-    }
+    if (currentModel && previous !== target) pushRecentModel(previous, currentModel);
     set({
       pendingDriver: target,
       activeSessionId: null,
@@ -915,25 +498,14 @@ export const useAppStore = create<AppState>((set, get) => ({
       newSessionError: null,
       pendingPrefs: withProjectPrefs(get().pendingPrefs, settings, target, true)
     });
-    if (projectId && projectId !== currentProjectId) void get().setPendingProject(projectId);
-  },
-
-  setInstalledHarnesses(installed: DriverName[]) {
-    const pending = get().pendingDriver;
-    set({ installedHarnesses: installed, lastDriver: fallbackHarness(get().lastDriver, installed) });
-    if (pending !== null) get().setPendingDriver(fallbackHarness(pending, installed));
+    if (projectId && projectId !== currentProjectId) get().setPendingProject(projectId);
   },
 
   setPendingDriver(driver: DriverName) {
     const current = get().pendingDriver ?? get().lastDriver;
     if (current === driver && get().pendingDriver !== null) return;
     const currentModel = get().pendingPrefs.model;
-    if (currentModel) {
-      try {
-        setLastModel(current, currentModel);
-      } catch {
-      }
-    }
+    if (currentModel) pushRecentModel(current, currentModel);
     set({ pendingDriver: driver, pendingPrefs: { ...get().pendingPrefs, model: undefined } });
   },
 
@@ -950,77 +522,17 @@ export const useAppStore = create<AppState>((set, get) => ({
     pendingPromptInFlight = true;
     set({ newSessionError: null });
     try {
+      let session: Session | null;
       try {
-        await get().createSession(driver, prefs, workspace);
+        session = await get().createSession(driver, prefs, workspace);
       } catch (err) {
         const message = ipcErrorMessage(err);
         set({ newSessionError: message });
         throw new NewSessionRefusedError(message);
       }
-      await get().sendPrompt(prompt, attachments, opts);
+      if (session) await get().sendPromptTo(session.id, prompt, attachments, opts);
     } finally {
       pendingPromptInFlight = false;
-    }
-  },
-
-  async ensureHistory(sessionId: string, opts?: { force?: boolean; isRetry?: boolean }) {
-    if (!opts?.force) {
-      if (get().historyLoadedBySession[sessionId]) return;
-      if (get().loadingHistory[sessionId]) return;
-    }
-    set({
-      loadingHistory: { ...get().loadingHistory, [sessionId]: true },
-      historyErrorBySession: Object.fromEntries(
-        Object.entries(get().historyErrorBySession).filter(([id]) => id !== sessionId)
-      )
-    });
-    try {
-      const history = await window.cw.getHistory(sessionId);
-      const current = get().messagesBySession[sessionId] ?? [];
-      const firstLoad = !get().historyLoadedBySession[sessionId];
-      set({ historyLoadedBySession: { ...get().historyLoadedBySession, [sessionId]: true } });
-      if (firstLoad && history.length > 0) {
-        const merged = withBufferedTasks(sessionId, mergeToolPairs(history));
-        set({
-          messagesBySession: {
-            ...get().messagesBySession,
-            [sessionId]: hasLoadedMessages(current) ? historyAheadOfLive(merged, current) : [...merged, ...current]
-          }
-        });
-        if (get().todosBySession[sessionId] === undefined) {
-          const seeded = [...merged].reverse().find((m) => m.todos !== undefined)?.todos;
-          if (seeded !== undefined) {
-            set({ todosBySession: { ...get().todosBySession, [sessionId]: seeded } });
-          }
-        }
-      }
-    } catch (err) {
-      const message = (err as Error).message;
-      set({ historyErrorBySession: { ...get().historyErrorBySession, [sessionId]: message } });
-      if (!opts?.isRetry) {
-        window.setTimeout(() => {
-          if (get().historyErrorBySession[sessionId]) {
-            void get().ensureHistory(sessionId, { force: true, isRetry: true });
-          }
-        }, 2000);
-      } else {
-        useNotifs.getState().push({
-          kind: "error",
-          title: "Could not load history",
-          message,
-          actions: [
-            {
-              label: "Retry",
-              primary: true,
-              onClick: () => void get().ensureHistory(sessionId, { force: true, isRetry: true })
-            }
-          ]
-        });
-      }
-    } finally {
-      const loading = { ...get().loadingHistory };
-      delete loading[sessionId];
-      set({ loadingHistory: loading });
     }
   },
 
@@ -1052,54 +564,40 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   async ensureComposer(sessionId: string) {
-    if (get().composerBySession[sessionId]) return;
-    const mirror = readComposerMirror(sessionId);
-    if (mirror) {
-      set({ composerBySession: { ...get().composerBySession, [sessionId]: { ...DEFAULT_COMPOSER, ...mirror } } });
-    } else {
+    const inflight = composerLoads.get(sessionId);
+    if (inflight) return inflight;
+    if (get().composerLoadedBySession[sessionId]) return;
+    if (!get().composerBySession[sessionId]) {
       set({ composerBySession: { ...get().composerBySession, [sessionId]: { ...DEFAULT_COMPOSER } } });
     }
-    try {
-      const prefs = await window.cw.getComposer(sessionId);
-      set({
-        composerBySession: { ...get().composerBySession, [sessionId]: { ...DEFAULT_COMPOSER, ...prefs } }
-      });
-    } catch {
-    }
+    return loadComposer(sessionId);
+  },
+
+  async reloadComposers() {
+    const known = new Set([...Object.keys(get().composerBySession), ...Object.keys(get().composerLoadedBySession)]);
+    await Promise.all([...known].filter((sessionId) => !composerLoads.has(sessionId)).map(loadComposer));
   },
 
   async setComposerPrefs(sessionId: string, prefs: ComposerPrefs) {
+    await composerLoads.get(sessionId);
     const merged = { ...(get().composerBySession[sessionId] ?? DEFAULT_COMPOSER), ...prefs };
     set({ composerBySession: { ...get().composerBySession, [sessionId]: merged } });
     try {
-      window.localStorage.setItem(`cw:composer:${sessionId}`, JSON.stringify(merged));
-    } catch {
-    }
-    try {
-      const saved = await window.cw.setComposer(sessionId, merged);
-      set({ composerBySession: { ...get().composerBySession, [sessionId]: { ...DEFAULT_COMPOSER, ...saved } } });
+      get().applyComposer(sessionId, await window.cw.setComposer(sessionId, merged));
     } catch {
     }
   },
 
   async saveSettings(patch: SettingsPatch) {
     const saved = await window.cw.setSettings(patch);
-    const version = get().settingsVersion;
     get().applySettings(saved);
-    if (get().settingsVersion === version) set({ settingsVersion: version + 1 });
     return saved;
   },
 
   applySettings(saved: AppSettings) {
-    const json = JSON.stringify(saved);
-    const changed = json !== appliedSettingsJson;
-    appliedSettingsJson = json;
+    const first = !get().settingsLoaded;
     set({
-      ...(changed ? { settingsVersion: get().settingsVersion + 1 } : {}),
-      sourceControlRefreshIntervalSeconds: saved.sourceControlRefreshIntervalSeconds,
-      prRefreshIntervalSeconds: saved.prRefreshIntervalSeconds,
-      holdingAutoExpireEnabled: saved.holdingAutoExpireEnabled,
-      holdingHours: saved.holdingHours,
+      ...(first ? { pendingWorkspace: { ...get().pendingWorkspace, ...defaultWorkspace(saved.defaultUseWorktree) } } : {}),
       defaultUseWorktree: saved.defaultUseWorktree,
       settingsLoaded: true,
       appearance: appearanceOf(saved),
@@ -1110,7 +608,11 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   applyComposer(sessionId: string, prefs: ComposerPrefs) {
-    set({ composerBySession: { ...get().composerBySession, [sessionId]: { ...DEFAULT_COMPOSER, ...prefs } } });
+    composerFailureNotified.delete(sessionId);
+    set({
+      composerBySession: { ...get().composerBySession, [sessionId]: { ...DEFAULT_COMPOSER, ...prefs } },
+      composerLoadedBySession: { ...get().composerLoadedBySession, [sessionId]: true }
+    });
   },
 
   async saveDefaultModel(driver: DriverName, id: string) {
@@ -1121,8 +623,6 @@ export const useAppStore = create<AppState>((set, get) => ({
   async setProjectGitHubAccount(projectId: string, account: { host: string; login: string } | null) {
     const updated = await window.cw.setProjectGitHubAccount(projectId, account);
     set({ projects: get().projects.map((project) => project.id === projectId ? updated : project) });
-    const ids = (get().sessionsByProject[projectId] ?? []).map((session) => session.id);
-    void refreshGitStatusInBatches(ids, (id) => get().refreshGitStatus(id));
   },
 
   async updateProjectSettings(projectId: string, settings: ProjectSettings) {
@@ -1132,8 +632,8 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   async createSession(driver: DriverName, prefs?: ComposerPrefs, workspace?: CreateSessionOptions) {
     const projectId = get().activeProjectId;
-    if (!projectId) return;
-    await get().createSessionIn(projectId, driver, prefs, workspace);
+    if (!projectId) return null;
+    return get().createSessionIn(projectId, driver, prefs, workspace);
   },
 
   async createSessionIn(projectId: string, driver: DriverName, prefs?: ComposerPrefs, workspace?: CreateSessionOptions) {
@@ -1155,61 +655,25 @@ export const useAppStore = create<AppState>((set, get) => ({
         ...(stillHeld ? {} : { message: "The requested worktree no longer exists." })
       });
     }
-    set({
-      sessionsByProject: {
-        ...get().sessionsByProject,
-        [projectId]: upsertInList(get().sessionsByProject[projectId] ?? [], session)
-      },
-      activeProjectId: projectId,
-      activeSessionId: session.id,
-      historyLoadedBySession: { ...get().historyLoadedBySession, [session.id]: true },
-      pendingDriver: null,
-      lastDriver: driver
-    });
+    set({ lastDriver: driver });
+    await selectWhenListed(session.id, () => set({ activeProjectId: projectId, activeSessionId: session.id, pendingDriver: null }));
     await get().ensureComposer(session.id);
     if (prefs) await get().setComposerPrefs(session.id, { ...prefs });
-    void get().refreshProjectCheckoutGitStatus(session.id);
     return session;
   },
 
   async importSession(request: ImportSessionRequest) {
     const { project, session } = await window.cw.importSession(request);
-    set({
-      projects: withProject(get().projects, project),
-      sessionsByProject: {
-        ...get().sessionsByProject,
-        [project.id]: upsertInList(get().sessionsByProject[project.id] ?? [], session)
-      }
+    set({ projects: withProject(get().projects, project) });
+    await selectWhenListed(session.id, () => {
+      set({ activeProjectId: project.id });
+      get().selectSession(session.id);
     });
-    get().selectSession(session.id);
     return session;
-  },
-
-  applySession(session: Session) {
-    const { busyTurns, sessionsByProject } = get();
-    const current = busyTurns[session.id]
-      ? Object.values(sessionsByProject)
-          .flat()
-          .find((s) => s.id === session.id)
-      : undefined;
-    const next = current ? { ...session, status: current.status } : session;
-    set({ sessionsByProject: upsertSession(sessionsByProject, next) });
   },
 
   applyProject(project: Project) {
     set({ projects: withProject(get().projects, project) });
-  },
-
-  pauseAutoFollowUp(sessionId: string, reason: AutoFollowUpPause = "user") {
-    const paused = get().autoFollowUpPaused;
-    set({ autoFollowUpPaused: reason === "user" ? { ...paused, [sessionId]: "user" } : withAutoPause(paused, sessionId, reason) });
-  },
-
-  resumeAutoFollowUp(sessionId: string) {
-    set({
-      autoFollowUpPaused: without(get().autoFollowUpPaused, sessionId),
-      autoFollowUpTurns: without(get().autoFollowUpTurns, sessionId)
-    });
   },
 
   async sendPrompt(prompt: string, attachments?: string[], opts?: ComposerSendOptions) {
@@ -1220,619 +684,45 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   async sendPromptTo(sessionId: string, prompt: string, attachments?: string[], opts?: SendPromptOptions) {
     if (!prompt.trim()) return;
-    if (isPendingTurn(get().busyTurns[sessionId])) throw new Error("session busy (turn pending)");
-    const prefs = get().composerBySession[sessionId] ?? DEFAULT_COMPOSER;
-    const previous = Object.values(get().sessionsByProject)
-      .flat()
-      .find((s) => s.id === sessionId);
-    const previousTodos = get().todosBySession[sessionId];
-    const acceptFolderHead = opts?.acceptFolderHead ?? useBranchStore.getState().keptFolderHeadBySession[sessionId];
-    const pending = nextPendingTurnId();
-    const previousAutoTurns = get().autoFollowUpTurns[sessionId];
-    ignoredTurnStarts.delete(sessionId);
-    set({
-      busyTurns: { ...get().busyTurns, [sessionId]: pending },
-      autoFollowUpTurns: { ...get().autoFollowUpTurns, [sessionId]: opts?.auto ? (get().autoFollowUpTurns[sessionId] ?? 0) + 1 : 0 },
-      ...(opts?.auto || get().autoFollowUpPaused[sessionId] === "user"
-        ? {}
-        : { autoFollowUpPaused: without(get().autoFollowUpPaused, sessionId) }),
-      turnStartedAt: { ...get().turnStartedAt, [sessionId]: Date.now() },
-      todosBySession: { ...get().todosBySession, [sessionId]: [] },
-      sessionsByProject: withSessionStatus(get().sessionsByProject, sessionId, "working")
+    const prefs = await composerForSend(sessionId);
+    const acceptFolderHead = opts?.acceptFolderHead;
+    await window.cw.startTurn(sessionId, prompt, {
+      prefs,
+      attachments,
+      ...(opts?.command ? { command: opts.command } : {}),
+      ...(opts?.skills?.length ? { skills: opts.skills } : {}),
+      ...(opts?.prRefs ? { prRefs: opts.prRefs } : {}),
+      ...(acceptFolderHead ? { acceptFolderHead } : {})
     });
-    let turnId: string;
-    try {
-      turnId = await window.cw.startTurn(sessionId, prompt, {
-        prefs,
-        attachments,
-        ...(opts?.command ? { command: opts.command } : {}),
-        ...(opts?.skills?.length ? { skills: opts.skills } : {}),
-        ...(opts?.prRefs ? { prRefs: opts.prRefs } : {}),
-        ...(opts?.finalReview ? { finalReview: opts.finalReview } : {}),
-        ...(acceptFolderHead ? { acceptFolderHead } : {})
-      });
-    } catch (err) {
-      const remoteStart = ignoredTurnStarts.get(sessionId);
-      ignoredTurnStarts.delete(sessionId);
-      if (get().busyTurns[sessionId] === pending) {
-        const revertAutoTurns = opts?.auto && (err as { code?: unknown } | null)?.code === "session-busy";
-        const book = closeTurn(
-          { busyTurns: get().busyTurns, turnStartedAt: get().turnStartedAt, turnDurations: get().turnDurations },
-          sessionId,
-          undefined
-        );
-        set({
-          busyTurns: book.busyTurns,
-          turnStartedAt: book.turnStartedAt,
-          turnDurations: book.turnDurations,
-          ...(revertAutoTurns
-            ? {
-                autoFollowUpTurns:
-                  previousAutoTurns === undefined
-                    ? without(get().autoFollowUpTurns, sessionId)
-                    : { ...get().autoFollowUpTurns, [sessionId]: previousAutoTurns }
-              }
-            : {}),
-          ...(previousTodos && previousTodos.length > 0 && (get().todosBySession[sessionId] ?? []).length === 0
-            ? { todosBySession: { ...get().todosBySession, [sessionId]: previousTodos } }
-            : {}),
-          ...(previous
-            ? { sessionsByProject: withSessionStatus(get().sessionsByProject, sessionId, previous.status) }
-            : {})
-        });
-        if (remoteStart) get().applyEvent(sessionId, remoteStart);
-      }
-      throw err;
-    }
-    ignoredTurnStarts.delete(sessionId);
-    const superseded = get().busyTurns[sessionId] !== pending;
-    const existing = get().messagesBySession[sessionId] ?? [];
-    set({
-      ...(superseded ? {} : { busyTurns: { ...get().busyTurns, [sessionId]: turnId } }),
-      ...(existing.some((m) => m.id === `${turnId}-u`)
-        ? {}
-        : {
-            messagesBySession: {
-              ...get().messagesBySession,
-              [sessionId]: [...existing, { id: `${turnId}-u`, role: "user", text: prompt, turnId, timestamp: Date.now() }]
-            }
-          })
-    });
-    if (superseded) void window.cw.interrupt(turnId);
-    else void get().hydrateActiveTurns();
   },
 
   async interrupt() {
     const sessionId = get().activeSessionId;
-    const turnId = sessionId ? get().busyTurns[sessionId] : undefined;
-    if (!turnId) return;
-    if (!isPendingTurn(turnId)) {
-      try {
-        await window.cw.interrupt(turnId);
-      } catch (err) {
-        useNotifs.getState().push({ kind: "error", title: "Could not stop the turn", message: ipcErrorMessage(err) });
-        return;
+    if (!sessionId) return;
+    try {
+      const { stopped } = await window.cw.stopTurn(sessionId);
+      if (!stopped) {
+        useNotifs.getState().push({ kind: "info", title: "Nothing to stop", message: "This session has no running turn." });
       }
+    } catch (err) {
+      useNotifs.getState().push({ kind: "error", title: "Could not stop the turn", message: ipcErrorMessage(err) });
     }
-    const book = closeTurn(
-      { busyTurns: get().busyTurns, turnStartedAt: get().turnStartedAt, turnDurations: get().turnDurations },
-      sessionId ?? "",
-      knownTurnId(turnId)
-    );
-    set({
-      busyTurns: book.busyTurns,
-      turnStartedAt: book.turnStartedAt,
-      turnDurations: book.turnDurations,
-      ...(sessionId
-        ? {
-            sessionsByProject: patchSession(get().sessionsByProject, sessionId, { status: "holding", updatedAt: Date.now() }),
-            autoFollowUpPaused: withAutoPause(get().autoFollowUpPaused, sessionId, "interrupted")
-          }
-        : {})
-    });
-  },
-
-  markTurnsInterrupted(sessionIds: string[]) {
-    let book: TurnBookkeeping = { busyTurns: get().busyTurns, turnStartedAt: get().turnStartedAt, turnDurations: get().turnDurations };
-    let sessionsByProject = get().sessionsByProject;
-    for (const sessionId of sessionIds) {
-      const turnId = book.busyTurns[sessionId];
-      if (turnId) book = closeTurn(book, sessionId, knownTurnId(turnId));
-      sessionsByProject = patchSession(sessionsByProject, sessionId, { status: "holding", updatedAt: Date.now() });
-    }
-    set({ ...book, sessionsByProject });
   },
 
   async retryConnection(sessionId: string) {
     try {
-      const result = await window.cw.retryConnection(sessionId);
-      const running = result.status === "running" && result.turnId ? result.turnId : undefined;
-      const current = { busyTurns: get().busyTurns, turnStartedAt: get().turnStartedAt, turnDurations: get().turnDurations };
-      const book: TurnBookkeeping = running
-        ? {
-            busyTurns: { ...current.busyTurns, [sessionId]: running },
-            turnStartedAt: { ...current.turnStartedAt, [sessionId]: Date.now() },
-            turnDurations: current.turnDurations
-          }
-        : closeTurn(current, sessionId, knownTurnId(current.busyTurns[sessionId]));
-      set({
-        busyTurns: book.busyTurns,
-        turnStartedAt: book.turnStartedAt,
-        turnDurations: book.turnDurations,
-        sessionsByProject: withSessionStatus(
-          get().sessionsByProject,
-          sessionId,
-          running ? "working" : "idle"
-        ),
-        messagesBySession: {
-          ...get().messagesBySession,
-          [sessionId]: withBufferedTasks(sessionId, mergeToolPairs(result.history))
-        },
-        historyLoadedBySession: { ...get().historyLoadedBySession, [sessionId]: true }
-      });
-      void get().hydrateActiveTurns();
+      await window.cw.retryConnection(sessionId);
     } catch (err) {
-      useNotifs.getState().push({
-        kind: "error",
-        title: "Could not reconnect",
-        message: (err as Error).message
-      });
+      useNotifs.getState().push({ kind: "error", title: "Could not reconnect", message: ipcErrorMessage(err) });
     }
   },
 
   async respondApproval(requestId: string, decision: ApprovalDecision) {
     await answerPendingRequest(window.cw.respondApproval(requestId, decision));
-    const approvals = get().pendingApprovals;
-    let changed = false;
-    const next: Record<string, ApprovalRequest[]> = {};
-    for (const [sessionId, list] of Object.entries(approvals)) {
-      const filtered = list.filter((p) => p.requestId !== requestId);
-      if (filtered.length !== list.length) changed = true;
-      next[sessionId] = filtered;
-    }
-    if (changed) set({ pendingApprovals: next });
   },
 
-  async respondQuestion(sessionId: string, requestId: string, answers: Record<string, string>) {
+  async respondQuestion(requestId: string, answers: Record<string, string>) {
     await answerPendingRequest(window.cw.respondQuestion(requestId, answers));
-    const pending = get().pendingQuestions[sessionId] ?? [];
-    set({
-      pendingQuestions: {
-        ...get().pendingQuestions,
-        [sessionId]: pending.filter((q) => q.requestId !== requestId)
-      }
-    });
-  },
-
-  applyEvent(sessionId: string, event: TurnEvent) {
-    let messages = get().messagesBySession[sessionId] ?? [];
-    if (event.type === "task.updated") {
-      const idx = messages.findIndex((m) => m.role === "tool" && m.id === event.task.id);
-      if (idx < 0) {
-        bufferTask(sessionId, event.task);
-        return;
-      }
-      set({
-        messagesBySession: {
-          ...get().messagesBySession,
-          [sessionId]: [...messages.slice(0, idx), { ...messages[idx], task: event.task }, ...messages.slice(idx + 1)]
-        }
-      });
-      return;
-    }
-    if (event.type === "session.notice") {
-      const id = `notice-${event.noticeId}`;
-      const notice: ChatMessage = {
-        id,
-        role: "system",
-        text: event.text,
-        turnId: LOCAL_NOTICE_TURN_ID,
-        ...(event.severity === "error" ? { isError: true } : event.severity === "warning" ? { severity: "warning" as const } : {})
-      };
-      const idx = messages.findIndex((m) => m.id === id);
-      set({
-        messagesBySession: {
-          ...get().messagesBySession,
-          [sessionId]: idx >= 0 ? [...messages.slice(0, idx), notice, ...messages.slice(idx + 1)] : [...messages, notice]
-        }
-      });
-      return;
-    }
-    if (event.type === "turn.started") {
-      const current = get().busyTurns[sessionId];
-      if (isPendingTurn(current)) {
-        ignoredTurnStarts.set(sessionId, event);
-        return;
-      }
-      if (current === event.turnId) return;
-      const userId = `${event.turnId}-u`;
-      set({
-        busyTurns: { ...get().busyTurns, [sessionId]: event.turnId },
-        turnStartedAt: { ...get().turnStartedAt, [sessionId]: event.startedAt },
-        todosBySession: { ...get().todosBySession, [sessionId]: [] },
-        sessionsByProject: withSessionStatus(get().sessionsByProject, sessionId, "working"),
-        ...(event.prompt === "" || messages.some((m) => m.id === userId)
-          ? {}
-          : {
-              messagesBySession: {
-                ...get().messagesBySession,
-                [sessionId]: [...messages, { id: userId, role: "user", text: event.prompt, turnId: event.turnId, timestamp: event.startedAt }]
-              }
-            })
-      });
-      return;
-    }
-    if (event.type === "turn.interrupted") {
-      if (get().busyTurns[sessionId] !== event.turnId) return;
-      const book = closeTurn(
-        { busyTurns: get().busyTurns, turnStartedAt: get().turnStartedAt, turnDurations: get().turnDurations },
-        sessionId,
-        event.turnId
-      );
-      const approvals = { ...get().pendingApprovals };
-      delete approvals[sessionId];
-      const questions = { ...get().pendingQuestions };
-      delete questions[sessionId];
-      set({
-        busyTurns: book.busyTurns,
-        turnStartedAt: book.turnStartedAt,
-        turnDurations: book.turnDurations,
-        pendingApprovals: approvals,
-        pendingQuestions: questions,
-        ...(event.reason === "shutdown" ? {} : { autoFollowUpPaused: withAutoPause(get().autoFollowUpPaused, sessionId, "interrupted") }),
-        sessionsByProject: patchSession(get().sessionsByProject, sessionId, { status: "holding", updatedAt: Date.now() })
-      });
-      return;
-    }
-    if (event.type !== "turn.retry" && event.type !== "turn.done" && event.type !== "turn.error" && "turnId" in event) {
-      const stripped = withoutRetryNotice(messages, event.turnId);
-      if (stripped !== messages) {
-        messages = stripped;
-        set({ messagesBySession: { ...get().messagesBySession, [sessionId]: stripped } });
-      }
-    }
-    if (event.type === "reasoning.delta") {
-      set({
-        messagesBySession: {
-          ...get().messagesBySession,
-          [sessionId]: appendReasoningText(messages, event.turnId, event.text, Date.now())
-        }
-      });
-      return;
-    }
-    messages = closeReasoning(messages, Date.now());
-    if (event.type === "assistant.delta") {
-      set({
-        messagesBySession: {
-          ...get().messagesBySession,
-          [sessionId]: appendAssistantText(messages, event.turnId, event.text)
-        }
-      });
-    } else if (event.type === "context.compacted") {
-      const id = `${event.turnId}-compaction`;
-      const marker: ChatMessage = {
-        id,
-        role: "system",
-        text: "Context compacted",
-        turnId: event.turnId,
-        compaction: event.compaction
-      };
-      const idx = messages.findIndex((m) => m.id === id);
-      const nextMessages =
-        idx >= 0
-          ? [...messages.slice(0, idx), marker, ...messages.slice(idx + 1)]
-          : [...messages, marker];
-      const usage = get().turnUsageBySession[sessionId];
-      set({
-        messagesBySession: { ...get().messagesBySession, [sessionId]: nextMessages },
-        ...(event.context
-          ? {
-              turnUsageBySession: {
-                ...get().turnUsageBySession,
-                [sessionId]: {
-                  context: event.context,
-                  lastTurn:
-                    usage?.lastTurn ?? {
-                      inputTokens: 0,
-                      cacheReadTokens: 0,
-                      cacheWriteTokens: 0,
-                      outputTokens: 0,
-                      reasoningTokens: 0,
-                      costUsd: null
-                    }
-                }
-              }
-            }
-          : {})
-      });
-    } else if (event.type === "approval.request") {
-      const pending = get().pendingApprovals[sessionId] ?? [];
-      if (pending.some((p) => p.requestId === event.request.requestId)) return;
-      set({
-        pendingApprovals: {
-          ...get().pendingApprovals,
-          [sessionId]: [...pending, event.request]
-        },
-        sessionsByProject: withSessionStatus(get().sessionsByProject, sessionId, "input-required")
-      });
-    } else if (event.type === "approval.resolved") {
-      const pending = (get().pendingApprovals[sessionId] ?? []).filter(
-        (p) => p.requestId !== event.requestId
-      );
-      set({
-        pendingApprovals: {
-          ...get().pendingApprovals,
-          [sessionId]: pending
-        },
-        ...(pending.length > 0
-          ? { sessionsByProject: withSessionStatus(get().sessionsByProject, sessionId, "input-required") }
-          : get().busyTurns[sessionId]
-            ? { sessionsByProject: withSessionStatus(get().sessionsByProject, sessionId, "working") }
-            : {})
-      });
-    } else if (event.type === "question.request") {
-      const pending = get().pendingQuestions[sessionId] ?? [];
-      if (pending.some((q) => q.requestId === event.request.requestId)) return;
-      set({
-        pendingQuestions: {
-          ...get().pendingQuestions,
-          [sessionId]: [...pending, event.request]
-        },
-        sessionsByProject: withSessionStatus(get().sessionsByProject, sessionId, "input-required")
-      });
-    } else if (event.type === "question.resolved") {
-      const pending = (get().pendingQuestions[sessionId] ?? []).filter(
-        (q) => q.requestId !== event.requestId
-      );
-      const notes: ChatMessage[] = event.answers
-        ? [
-            {
-              id: `${event.requestId}-ans`,
-              role: "tool",
-              text: Object.entries(event.answers)
-                .map(([q, a]) => `${q} → ${a}`)
-                .join("\n"),
-              turnId: event.turnId,
-              toolCompletedAt: Date.now()
-            }
-          ]
-        : [];
-      set({
-        pendingQuestions: {
-          ...get().pendingQuestions,
-          [sessionId]: pending
-        },
-        messagesBySession: {
-          ...get().messagesBySession,
-          [sessionId]: [...messages, ...notes]
-        },
-        ...(pending.length > 0
-          ? { sessionsByProject: withSessionStatus(get().sessionsByProject, sessionId, "input-required") }
-          : get().busyTurns[sessionId]
-            ? { sessionsByProject: withSessionStatus(get().sessionsByProject, sessionId, "working") }
-            : {})
-      });
-    } else if (event.type === "tool.call") {
-      const buffered = takeBufferedTask(sessionId, event.toolCallId);
-      set({
-        messagesBySession: {
-          ...get().messagesBySession,
-          [sessionId]: upsertToolCall(messages, buffered && !event.task ? { ...event, task: buffered } : event, Date.now())
-        }
-      });
-    } else if (event.type === "tool.result") {
-      const idx = messages.findIndex((m) => m.role === "tool" && (m.id === event.toolCallId || m.id === `${event.toolCallId}-r`));
-      if (idx >= 0 && messages[idx].role === "tool") {
-        const updated = [...messages];
-        const call = updated[idx];
-        updated[idx] = {
-          ...call,
-          ...(call.id === `${event.toolCallId}-r` ? { text: event.output.slice(0, 1000) } : {}),
-          toolOutput: event.output.slice(0, 8000),
-          toolDone: true,
-          toolCompletedAt: Date.now(),
-          isError: call.isError === true || event.isError,
-          ...(event.outputEmpty !== undefined ? { toolOutputEmpty: event.outputEmpty } : {}),
-          ...(event.usage ? { toolUsage: event.usage } : {}),
-          ...(event.agentId ? { subagentAgentId: event.agentId } : {}),
-          ...(event.model ? { subagentModel: event.model } : {})
-        };
-        set({
-          messagesBySession: { ...get().messagesBySession, [sessionId]: updated }
-        });
-      } else {
-        set({
-          messagesBySession: {
-            ...get().messagesBySession,
-            [sessionId]: [
-              ...messages,
-              {
-                id: `${event.toolCallId}-r`,
-                role: "tool",
-                text: event.output.slice(0, 1000),
-                turnId: event.turnId,
-                isError: event.isError,
-                ...(event.outputEmpty !== undefined ? { toolOutputEmpty: event.outputEmpty } : {}),
-                ...(event.usage ? { toolUsage: event.usage } : {}),
-                ...(event.agentId ? { subagentAgentId: event.agentId } : {}),
-                ...(event.model ? { subagentModel: event.model } : {}),
-                toolCompletedAt: Date.now()
-              }
-            ]
-          }
-        });
-      }
-    } else if (event.type === "todo.updated") {
-      set({
-        todosBySession: { ...get().todosBySession, [sessionId]: event.todos }
-      });
-    } else if (event.type === "turn.retry") {
-      const id = `${event.turnId}-retry`;
-      const now = Date.now();
-      const attempt = event.attempt > 0 ? ` (attempt ${event.attempt})` : "";
-      const wait = event.retryAt > now ? ` in ${formatDuration(event.retryAt - now)}` : "";
-      const lines = [`Retrying${wait}${attempt}: ${event.message}`];
-      if (event.detail) lines.push(event.detail);
-      if (event.link) lines.push(event.link);
-      const text = lines.join("\n");
-      const idx = messages.findIndex((m) => m.id === id);
-      const notice: ChatMessage = { id, role: "system", text, turnId: event.turnId, severity: "warning" };
-      set({
-        messagesBySession: {
-          ...get().messagesBySession,
-          [sessionId]:
-            idx >= 0
-              ? [...messages.slice(0, idx), { ...messages[idx], text }, ...messages.slice(idx + 1)]
-              : [...messages, notice]
-        }
-      });
-    } else if (event.type === "turn.done") {
-      const backgroundTasks = event.backgroundTasks ?? 0;
-      const busyForSession = get().busyTurns[sessionId];
-      const busyMatch = busyForSession === event.turnId;
-      const isFinal = busyMatch && backgroundTasks === 0;
-      const superseded = busyForSession !== undefined && !busyMatch;
-      const book = isFinal
-        ? closeTurn(
-            { busyTurns: get().busyTurns, turnStartedAt: get().turnStartedAt, turnDurations: get().turnDurations },
-            sessionId,
-            event.turnId
-          )
-        : { busyTurns: get().busyTurns, turnStartedAt: get().turnStartedAt, turnDurations: get().turnDurations };
-      const approvals = { ...get().pendingApprovals };
-      if (busyMatch) delete approvals[sessionId];
-      const questions = { ...get().pendingQuestions };
-      if (busyMatch) delete questions[sessionId];
-      let turnMessages = finalizeTurnTools(messages, event.turnId).filter(
-        (m) => m.id !== `${event.turnId}-retry`
-      );
-      if (!event.isError) {
-        const resultText = event.resultText ?? "";
-        if (resultText.trim()) {
-          const shown = turnMessages
-            .filter((m) => m.role === "assistant" && m.turnId === event.turnId)
-            .map((m) => m.text)
-            .join("\n");
-          const squash = (s: string) => s.replace(/\s+/g, " ").trim();
-          const alreadyShown = shown.includes(resultText) || squash(shown).includes(squash(resultText));
-          if (!alreadyShown) {
-            const last = turnMessages[turnMessages.length - 1];
-            const lastIsAssistant = !!last && last.role === "assistant" && last.turnId === event.turnId;
-            const prefixSource =
-              shown.trim() && resultText.startsWith(shown)
-                ? shown
-                : lastIsAssistant && last.text.trim() && resultText.startsWith(last.text)
-                  ? last.text
-                  : null;
-            if (prefixSource !== null) {
-              const suffix = resultText.slice(prefixSource.length);
-              if (suffix.trim()) turnMessages = appendAssistantText(turnMessages, event.turnId, suffix);
-            } else {
-              turnMessages = appendAssistantText(turnMessages, event.turnId, resultText);
-            }
-          }
-        }
-      }
-      if (event.isError && !turnMessages.some((m) => m.id === `${event.turnId}-e`)) {
-        turnMessages = [
-          ...turnMessages,
-          {
-            id: `${event.turnId}-e`,
-            role: "system",
-            text: `Error: ${event.resultText || "Claude reported an error with no output."}`,
-            turnId: event.turnId,
-            isError: true
-          }
-        ];
-      }
-      set({
-        busyTurns: book.busyTurns,
-        turnStartedAt: book.turnStartedAt,
-        turnDurations: book.turnDurations,
-        pendingApprovals: approvals,
-        pendingQuestions: questions,
-        ...(event.isError ? { autoFollowUpPaused: withAutoPause(get().autoFollowUpPaused, sessionId, "error") } : {}),
-        sessionsByProject: isFinal
-          ? withSessionStatus(get().sessionsByProject, sessionId, "done")
-          : busyMatch
-            ? withSessionStatus(get().sessionsByProject, sessionId, "working")
-            : get().sessionsByProject,
-        messagesBySession: {
-          ...get().messagesBySession,
-          [sessionId]: turnMessages
-        },
-        turnUsageBySession: superseded
-          ? get().turnUsageBySession
-          : {
-              ...get().turnUsageBySession,
-              [sessionId]: {
-                context: event.context ?? get().turnUsageBySession[sessionId]?.context,
-                lastTurn: {
-                  ...sumTurnUsage(event.usage),
-                  durationMs: book.turnDurations[sessionId]?.[event.turnId]
-                }
-              }
-            }
-      });
-    } else if (event.type === "session.branch.updated") {
-      const byProject = get().sessionsByProject;
-      const next: Record<string, Session[]> = {};
-      for (const [pid, list] of Object.entries(byProject)) {
-        next[pid] = list.map((s) => (s.id === sessionId ? { ...s, branch: event.branch } : s));
-      }
-      set({ sessionsByProject: next });
-    } else if (event.type === "turn.error") {
-      const book =
-        get().busyTurns[sessionId] === event.turnId
-          ? closeTurn(
-              { busyTurns: get().busyTurns, turnStartedAt: get().turnStartedAt, turnDurations: get().turnDurations },
-              sessionId,
-              event.turnId
-            )
-          : { busyTurns: get().busyTurns, turnStartedAt: get().turnStartedAt, turnDurations: get().turnDurations };
-      const approvals = { ...get().pendingApprovals };
-      delete approvals[sessionId];
-      const questions = { ...get().pendingQuestions };
-      delete questions[sessionId];
-      set({
-        busyTurns: book.busyTurns,
-        turnStartedAt: book.turnStartedAt,
-        turnDurations: book.turnDurations,
-        pendingApprovals: approvals,
-        pendingQuestions: questions,
-        autoFollowUpPaused: withAutoPause(get().autoFollowUpPaused, sessionId, "error"),
-        sessionsByProject: patchSession(get().sessionsByProject, sessionId, { status: "holding", updatedAt: Date.now() }),
-        messagesBySession: {
-          ...get().messagesBySession,
-          [sessionId]: [
-            ...finalizeTurnTools(messages, event.turnId).filter((m) => m.id !== `${event.turnId}-retry`),
-            {
-              id: `${event.turnId}-e`,
-              role: "system",
-              text: `Error: ${event.message}`,
-              turnId: event.turnId,
-              isError: true,
-              ...(event.retryable ? { retryable: true } : {})
-            }
-          ]
-        }
-      });
-    }
-  },
-
-  applySessionTitle(sessionId: string, title: string) {
-    const byProject = get().sessionsByProject;
-    let changed = false;
-    const next: Record<string, Session[]> = {};
-    for (const [pid, list] of Object.entries(byProject)) {
-      next[pid] = list.map((s) => {
-        if (s.id !== sessionId || s.title === title) return s;
-        changed = true;
-        return { ...s, title };
-      });
-    }
-    if (!changed) return;
-    set({ sessionsByProject: next });
   }
 }));
 

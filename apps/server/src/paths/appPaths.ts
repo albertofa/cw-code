@@ -24,6 +24,10 @@ export function settingsFilePath(home?: string, env?: NodeJS.ProcessEnv): string
   return join(userdataDir(home, env), "cw-settings.json");
 }
 
+export function preferencesFilePath(home?: string, env?: NodeJS.ProcessEnv): string {
+  return join(userdataDir(home, env), "preferences.json");
+}
+
 export function attachmentsDir(home?: string, env?: NodeJS.ProcessEnv): string {
   return join(userdataDir(home, env), "attachments");
 }

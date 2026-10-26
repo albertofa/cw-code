@@ -177,6 +177,11 @@ export function removeUnlinkedKey(existing: string[] | undefined, key: string): 
   return next.length > 0 ? next : undefined;
 }
 
+export function withNewerSeen(link: SessionPrLink, existing: SessionPrLink | undefined): SessionPrLink {
+  if (!existing || existing.lastSeenAt <= link.lastSeenAt) return link;
+  return { ...link, lastSeenSha: existing.lastSeenSha, lastSeenAt: existing.lastSeenAt };
+}
+
 export function markSeen(link: SessionPrLink, headSha: string | null, now: number): SessionPrLink {
   return { ...link, lastSeenSha: headSha ?? link.lastSeenSha, lastSeenAt: Math.max(link.lastSeenAt, now) };
 }

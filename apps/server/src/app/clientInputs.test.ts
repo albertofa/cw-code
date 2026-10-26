@@ -1,38 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import type { RunRef } from "@cw-code/contracts";
-import { ClientInputs } from "./clientInputs.js";
-
-const run = (runId: number, owner = "o"): RunRef => ({ host: "github.com", owner, repo: "r", runId });
-const ids = (refs: RunRef[]): number[] => refs.map((ref) => ref.runId);
-
-describe("ClientInputs run refs", () => {
-  test("round-robins across clients so every client's first refs get in", () => {
-    const inputs = new ClientInputs();
-    inputs.setRunRefs("a", [run(1), run(2), run(3)]);
-    inputs.setRunRefs("b", [run(4), run(5)]);
-    expect(ids(inputs.runRefsUnion(["a", "b"], 3))).toEqual([1, 4, 2]);
-  });
-
-  test("dedupes by run key ignoring case", () => {
-    const inputs = new ClientInputs();
-    inputs.setRunRefs("a", [run(1, "Acme"), run(2)]);
-    inputs.setRunRefs("b", [run(1, "acme"), run(3)]);
-    expect(ids(inputs.runRefsUnion(["a", "b"], 10))).toEqual([1, 2, 3]);
-  });
-
-  test("ignores clients outside the requested list and cleared clients", () => {
-    const inputs = new ClientInputs();
-    inputs.setRunRefs("a", [run(1)]);
-    inputs.setRunRefs("b", [run(2)]);
-    expect(ids(inputs.runRefsUnion(["b"], 10))).toEqual([2]);
-    inputs.clearRunRefs("b");
-    expect(ids(inputs.runRefsUnion(["a", "b"], 10))).toEqual([1]);
-  });
-
-  test("returns nothing for no clients", () => {
-    expect(new ClientInputs().runRefsUnion([], 5)).toEqual([]);
-  });
-});
+import { ClientInputs, MAX_WATCHED_PRS_PER_CLIENT } from "./clientInputs.js";
 
 describe("ClientInputs paths", () => {
   test("unions deduped sorted paths per session", () => {
@@ -51,12 +18,41 @@ describe("ClientInputs paths", () => {
     expect(inputs.pathsUnion("s1", ["a"])).toEqual([]);
   });
 
-  test("dropClient forgets runs and paths", () => {
+  test("dropClient forgets paths", () => {
     const inputs = new ClientInputs();
-    inputs.setRunRefs("a", [run(1)]);
     inputs.setPaths("a", "s1", ["a.ts"]);
     inputs.dropClient("a");
-    expect(inputs.runRefsUnion(["a"], 5)).toEqual([]);
     expect(inputs.pathsUnion("s1", ["a"])).toEqual([]);
+  });
+});
+
+describe("ClientInputs watched pull requests", () => {
+  const ref = (number: number) => ({ host: "github.com", owner: "o", repo: "r", number });
+
+  test("unions refs across clients until each client unwatches", () => {
+    const inputs = new ClientInputs();
+    expect(inputs.watchPr("a", ref(1))).toBe(true);
+    expect(inputs.watchPr("a", ref(1))).toBe(false);
+    inputs.watchPr("b", ref(1));
+    inputs.watchPr("b", ref(2));
+    expect([...inputs.watchedPrs().values()]).toEqual([ref(1), ref(2)]);
+    expect(inputs.unwatchPr("a", ref(1))).toBe(true);
+    expect(inputs.unwatchPr("a", ref(1))).toBe(false);
+    expect([...inputs.watchedPrs().values()]).toEqual([ref(1), ref(2)]);
+  });
+
+  test("dropClient forgets the client's watched pull requests", () => {
+    const inputs = new ClientInputs();
+    inputs.watchPr("a", ref(1));
+    expect(inputs.dropClient("a")).toEqual({ prsChanged: true });
+    expect(inputs.dropClient("a")).toEqual({ prsChanged: false });
+    expect(inputs.watchedPrs().size).toBe(0);
+  });
+
+  test("caps the pull requests one client can watch", () => {
+    const inputs = new ClientInputs();
+    for (let number = 1; number <= MAX_WATCHED_PRS_PER_CLIENT; number += 1) inputs.watchPr("a", ref(number));
+    expect(() => inputs.watchPr("a", ref(MAX_WATCHED_PRS_PER_CLIENT + 1))).toThrow("at most");
+    expect(inputs.watchPr("b", ref(MAX_WATCHED_PRS_PER_CLIENT + 1))).toBe(true);
   });
 });

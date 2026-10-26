@@ -4,11 +4,13 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it } from "bun:test";
 import { ToolCard } from "./ToolCard.js";
 import { useAppStore, type ChatMessage } from "../stores/appStore.js";
+import { installFakeTopics, type FakeTopics } from "../../../../tests/fakeTopics.js";
 
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+installFakeTopics();
 
 function toolMsg(partial: Partial<ChatMessage> & { id: string }): ChatMessage {
-  return { role: "tool", text: "", turnId: "t1", ...partial };
+  return { role: "tool", text: "", turnId: "t1", seq: 0, ...partial };
 }
 
 describe("ToolCard path display", () => {
@@ -73,7 +75,6 @@ describe("ToolCard row", () => {
     root = null;
     host?.remove();
     host = null;
-    useAppStore.setState({ pendingApprovals: {} });
   });
 
   async function render(message: ChatMessage, sessionId?: string): Promise<HTMLDivElement> {
@@ -120,24 +121,22 @@ describe("ToolCard row", () => {
 
   it("keeps a running tool as running when the pending approval names no tool", async () => {
     const running = toolMsg({ id: "b4", toolName: "Bash", toolInput: { command: "rm -rf build" } });
-    useAppStore.setState({
-      pendingApprovals: { s1: [{ requestId: "r1", kind: "command", title: "bash", decisions: ["accept", "decline"] }] }
-    });
+    installFakeTopics({ "session/s1": { approvals: [{ requestId: "r1", kind: "command", title: "bash", decisions: ["accept", "decline"] }] } });
     const el = await render(running, "s1");
     expect(statusOf(el)).toBe("Running");
   });
 
   it("marks a running tool as waiting while an approval for that tool is pending", async () => {
     const running = toolMsg({ id: "b3", toolName: "Bash", toolInput: { command: "rm -rf build" } });
-    useAppStore.setState({
-      pendingApprovals: { s1: [{ requestId: "r1", kind: "command", title: "bash", toolName: "bash", decisions: ["accept", "decline"] }] }
+    const topics: FakeTopics = installFakeTopics({
+      "session/s1": { approvals: [{ requestId: "r1", kind: "command", title: "bash", toolName: "bash", decisions: ["accept", "decline"] }] }
     });
     const el = await render(running, "s1");
     expect(statusOf(el)).toBe("Waiting for approval");
     expect(el.textContent).toContain("needs approval");
 
     await act(async () => {
-      useAppStore.setState({ pendingApprovals: { s1: [] } });
+      topics.set("session/s1", { approvals: [] });
     });
     expect(statusOf(el)).toBe("Running");
   });

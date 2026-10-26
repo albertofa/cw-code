@@ -26,6 +26,7 @@ import { isFullAccessMode } from "../permissions.js";
 import { assertInside } from "../../fs/FileService.js";
 import { parseExtraArgs } from "../../settings/settingsUtils.js";
 import { previewText, traceHarnessCall, truncateError } from "../../debug/harnessTrace.js";
+import { ActivityNotifier } from "../ActivityNotifier.js";
 import { CodexAppServer, type CodexAppServerLike } from "./codexAppServer.js";
 import { mapCodexAccountGate, mapCodexUsage } from "./codexAccountUsage.js";
 import {
@@ -130,6 +131,7 @@ export class CodexCliDriver implements CliDriver {
   private client: CodexAppServerLike;
   private ownsClient: boolean;
   private turns = new Map<string, ActiveTurn>();
+  private readonly activityNotifier = new ActivityNotifier();
   private turnByCodexId = new Map<string, string>();
   private threadLastTotal = new Map<string, number>();
   private approvals = new Map<string, PendingApproval>();
@@ -495,6 +497,7 @@ export class CodexCliDriver implements CliDriver {
     } catch (err) {
       this.turns.delete(turnId);
       this.reasoningKinds.delete(turnId);
+      this.activityNotifier.notify();
       traceHarnessCall({
         harness: "codex",
         operation: "codex.startTurn",
@@ -657,6 +660,7 @@ export class CodexCliDriver implements CliDriver {
         this.pendingQuestions.delete(requestId);
         this.emit({ type: "question.resolved", turnId: turn.turnId, requestId, answers: null });
       }
+      this.activityNotifier.notify();
     }
   }
 
@@ -845,6 +849,7 @@ export class CodexCliDriver implements CliDriver {
     const driverTurnId = active.turnId;
     this.turns.delete(driverTurnId);
     this.reasoningKinds.delete(driverTurnId);
+    this.activityNotifier.notify();
     for (const codexId of [...this.turnByCodexId].filter(([, id]) => id === driverTurnId).map(([codexId]) => codexId)) {
       this.turnByCodexId.delete(codexId);
     }
@@ -1163,6 +1168,10 @@ export class CodexCliDriver implements CliDriver {
       return { timedOut: false };
     }
     return this.client.shutdown(timeoutMs);
+  }
+
+  onActivityChanged(listener: () => void): () => void {
+    return this.activityNotifier.subscribe(listener);
   }
 
   dispose(): void {

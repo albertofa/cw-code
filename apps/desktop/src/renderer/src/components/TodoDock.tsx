@@ -1,12 +1,12 @@
 import { useEffect, useState } from "react";
 import { Check, ChevronDown, ChevronRight, ListChecks, X } from "lucide-react";
 import type { TodoItem } from "../cw.js";
-import { useAppStore } from "../stores/appStore.js";
+import { useThreadEntry } from "./useThread.js";
 
 const EMPTY_TODOS: TodoItem[] = [];
 
 export function TodoDock({ sessionId }: { sessionId: string }) {
-  const todos = useAppStore((s) => s.todosBySession[sessionId] ?? EMPTY_TODOS);
+  const todos = useThreadEntry(sessionId, "todos") ?? EMPTY_TODOS;
   const [override, setOverride] = useState<boolean | null>(null);
 
   useEffect(() => {

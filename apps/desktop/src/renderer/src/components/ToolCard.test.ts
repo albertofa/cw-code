@@ -9,7 +9,6 @@ import {
   extractPatchFiles,
   formatDuration,
   formatToolDuration,
-  mergeToolPairs,
   orderToolsForDisplay,
   pendingToolsForTurn,
   recoverToolInput,
@@ -20,10 +19,9 @@ import {
   toolSpanMs
 } from "./toolSummaries.js";
 import type { ChatMessage } from "../stores/appStore.js";
-import type { TaskSnapshot } from "../cw.js";
 
 function msg(partial: Partial<ChatMessage> & { id: string }): ChatMessage {
-  return { role: "tool", text: "", turnId: "t1", ...partial };
+  return { role: "tool", text: "", turnId: "t1", seq: 0, ...partial };
 }
 
 describe("describeToolCall", () => {
@@ -178,90 +176,6 @@ describe("extractFileDiff", () => {
       { type: "add", text: "c" }
     ]);
     expect(extractFileDiffFromText("Bash", 'Bash {"command":"ls"}')).toBeNull();
-  });
-});
-
-describe("mergeToolPairs", () => {
-  it("folds -r result messages into their call", () => {
-    const merged = mergeToolPairs([
-      msg({ id: "c1", toolName: "Read", text: "call" }),
-      msg({ id: "c1-r", toolName: "Read", text: "file contents" }),
-      msg({ id: "c2", toolName: "Bash", text: "call" })
-    ]);
-    expect(merged).toHaveLength(2);
-    expect(merged[0].toolOutput).toBe("file contents");
-    expect(merged[0].toolDone).toBe(true);
-    expect(merged[1].toolOutput).toBeUndefined();
-  });
-
-  it("propagates history timestamps into tool start and completion times", () => {
-    const merged = mergeToolPairs([
-      msg({ id: "c1", toolName: "Task", text: "call", timestamp: 1000 }),
-      msg({ id: "c1-r", toolName: "Task", text: "done", timestamp: 46000 })
-    ]);
-    expect(merged).toHaveLength(1);
-    expect(merged[0].toolStartedAt).toBe(1000);
-    expect(merged[0].toolCompletedAt).toBe(46000);
-    expect(merged[0].toolDone).toBe(true);
-  });
-
-  it("keeps live-stamped times over history timestamps", () => {
-    const merged = mergeToolPairs([
-      msg({ id: "c1", toolName: "Task", text: "call", toolStartedAt: 5000, timestamp: 1000 }),
-      msg({ id: "c1-r", toolName: "Task", text: "done", timestamp: 46000 })
-    ]);
-    expect(merged[0].toolStartedAt).toBe(5000);
-    expect(merged[0].toolCompletedAt).toBe(46000);
-  });
-
-  it("keeps the task snapshot on the merged call", () => {
-    const task: TaskSnapshot = { id: "c1", kind: "agent", background: true, state: "completed", runCount: 1 };
-    const merged = mergeToolPairs([
-      msg({ id: "c1", toolName: "Agent", text: "call", task }),
-      msg({ id: "c1-r", toolName: "Agent", text: "done" })
-    ]);
-    expect(merged).toHaveLength(1);
-    expect(merged[0].task).toEqual(task);
-    expect(merged[0].toolOutput).toBe("done");
-  });
-
-  it("keeps orphan results", () => {
-    const merged = mergeToolPairs([msg({ id: "zzz-r", toolName: "result", text: "out" })]);
-    expect(merged).toHaveLength(1);
-  });
-
-  it("pairs results to their calls even with interleaved calls", () => {
-    const merged = mergeToolPairs([
-      msg({ id: "tu1", toolName: "Bash", text: 'Bash {"command":"a"}' }),
-      msg({ id: "tu2", toolName: "Task", text: 'Task {"description":"b"}' }),
-      msg({ id: "tu1-r", toolName: "result", text: "out-a" }),
-      msg({ id: "tu2-r", toolName: "result", text: "out-b" })
-    ]);
-    expect(merged).toHaveLength(2);
-    expect(merged[0].toolOutput).toBe("out-a");
-    expect(merged[1].toolOutput).toBe("out-b");
-  });
-
-  it("folds history-shaped results into the preceding pending call", () => {
-    const merged = mergeToolPairs([
-      msg({ id: "toolu_1", toolName: "Bash", text: 'Bash {"command":"ls"}' }),
-      msg({ id: "uuid-t0", toolName: "result", text: "out" }),
-      msg({ id: "toolu_2", toolName: "Bash", text: 'Bash {"command":"pwd"}' }),
-      msg({ id: "uuid-t1", toolName: "result", text: "out2" })
-    ]);
-    expect(merged).toHaveLength(2);
-    expect(merged[0].toolOutput).toBe("out");
-    expect(merged[0].toolDone).toBe(true);
-    expect(merged[1].toolOutput).toBe("out2");
-  });
-
-  it("does not attach history results to live calls with structured input", () => {
-    const merged = mergeToolPairs([
-      msg({ id: "live", toolName: "Bash", text: "call", toolInput: { command: "ls" } }),
-      msg({ id: "uuid-t0", toolName: "result", text: "out" })
-    ]);
-    expect(merged).toHaveLength(2);
-    expect(merged[0].toolOutput).toBeUndefined();
   });
 });
 

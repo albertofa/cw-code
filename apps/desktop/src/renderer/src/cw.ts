@@ -1,10 +1,15 @@
+import type { TopicCache } from "@cw-code/client";
 import type {
+  AccountUsageEntry,
   AccountUsageOk,
   AccountUsageSnapshot,
   AccountUsageState,
   AccountUsageUnavailableReason,
-  AttentionState,
+  BranchMismatch,
   CliBinary,
+  HarnessAvailability,
+  LegacyPreferences,
+  SidebarReorderRequest,
   CliDiscoveredCandidate,
   CliDiscoverResult,
   CommandInvocation,
@@ -16,7 +21,6 @@ import type {
   FileReadResult,
   FileStatInfo,
   FsChangeEvent,
-  GitDecorations,
   GitBranchInfo,
   GitDiffMode,
   GitDiffResult,
@@ -24,7 +28,6 @@ import type {
   GitHubAccountSelectionSource,
   GitPullRequest,
   GitStatus,
-  GitStatusUpdate,
   PrLinkSnapshot,
   SourceControlHealth,
   TurnChanges,
@@ -46,7 +49,6 @@ import type {
   CustomTheme,
   ThemeBase,
   PrFinishedSessionStatus,
-  PrInboxResult,
   ProjectGitHubRepo,
   PrLinkOrigin,
   PrMergeable,
@@ -61,7 +63,7 @@ import type {
   SessionPrLink,
   GitHubAccountRef,
   GitHubKind,
-  GitHubSearchResult,
+  GitHubViewDef,
   GitHubViewGroup,
   IssueComment,
   IssueDetail,
@@ -72,9 +74,7 @@ import type {
   RunConclusion,
   RunJob,
   RunRef,
-  RunSources,
   RunStatus,
-  RunsResult,
   SavedGitHubView,
   SessionIssueLink,
   SessionRunLink,
@@ -110,10 +110,21 @@ import type {
   UpdateProgress,
   UpdateState,
   UsageBalance,
-  UsageLedgerQuery,
-  UsageLedgerRow,
+  UsageMetric,
+  UsageReport,
+  UsageReportQuery,
   UsageSeverity,
-  UsageWindow
+  UsageTopicData,
+  UsageTotals,
+  UsageWindow,
+  WorkflowHarnessRequest,
+  WorkflowHarnessResult,
+  WorkflowPreview,
+  WorkflowPreviewRequest,
+  WorkflowRunRequest,
+  WorkflowRunResult,
+  WorkflowTemplatePreview,
+  WorkflowTemplatePreviewRequest
 } from "@cw-code/contracts";
 
 export type {
@@ -124,7 +135,6 @@ export type {
   GitHubAccountSelectionSource,
   GitPullRequest,
   GitStatus,
-  GitStatusUpdate,
   PrLinkSnapshot,
   SourceControlHealth,
   TurnChanges,
@@ -147,6 +157,7 @@ export type {
   ShutdownPrepareResult,
   ShutdownReason,
   ShutdownTerminal,
+  AccountUsageEntry,
   AccountUsageOk,
   AccountUsageSnapshot,
   AccountUsageState,
@@ -158,7 +169,6 @@ export type {
   PrCiState,
   PrCommit,
   PrDetail,
-  PrInboxResult,
   ProjectGitHubRepo,
   PrLinkOrigin,
   PrMergeable,
@@ -173,7 +183,7 @@ export type {
   SessionPrLink,
   GitHubAccountRef,
   GitHubKind,
-  GitHubSearchResult,
+  GitHubViewDef,
   GitHubViewGroup,
   IssueComment,
   IssueDetail,
@@ -184,9 +194,7 @@ export type {
   RunConclusion,
   RunJob,
   RunRef,
-  RunSources,
   RunStatus,
-  RunsResult,
   SavedGitHubView,
   SessionIssueLink,
   SessionRunLink,
@@ -206,9 +214,12 @@ export type {
   UpdateProgress,
   UpdateState,
   UsageBalance,
-  UsageLedgerQuery,
-  UsageLedgerRow,
+  UsageMetric,
+  UsageReport,
+  UsageReportQuery,
   UsageSeverity,
+  UsageTopicData,
+  UsageTotals,
   UsageWindow
 };
 
@@ -231,13 +242,13 @@ export interface Project {
   settings?: ProjectSettings;
 }
 
-import type { ResolvedCheckout, SessionStatusReason } from "@cw-code/contracts";
+import type { ResolvedCheckout, SessionOpenReason, SessionStatusReason } from "@cw-code/contracts";
 
 export type DriverName = "claude" | "opencode" | "codex";
 
 export type SessionStatus = "idle" | "working" | "input-required" | "done" | "holding" | "babysit" | "resolved" | "archived";
 
-export type { SessionStatusReason };
+export type { SessionOpenReason, SessionStatusReason };
 
 export interface Session {
   id: string;
@@ -354,16 +365,12 @@ export interface SubagentToolsResult {
   tokens?: number;
 }
 
-export interface RetryConnectionResult {
-  status: "running" | "done";
-  turnId?: string;
-  history: HistoryMessage[];
+export interface StopTurnResult {
+  stopped: boolean;
 }
 
-export interface ActiveTurn {
-  sessionId: string;
-  turnId: string;
-  startedAt: number;
+export interface RetryConnectionResult {
+  status: "running" | "done";
 }
 
 export type ApprovalDecision = "accept" | "acceptForSession" | "acceptGlobal" | "decline" | "cancel";
@@ -402,75 +409,6 @@ export interface QuestionRequest {
   turnId: string;
   questions: QuestionInfo[];
 }
-
-export type TurnEvent =
-  | { type: "turn.started"; turnId: string; sessionId: string; startedAt: number; prompt: string }
-  | { type: "turn.interrupted"; turnId: string; sessionId: string; reason?: "shutdown" }
-  | { type: "assistant.delta"; turnId: string; text: string }
-  | { type: "reasoning.delta"; turnId: string; text: string }
-  | {
-      type: "tool.call";
-      turnId: string;
-      toolCallId: string;
-      name: string;
-      input: unknown;
-      parentToolCallId?: string;
-      model?: string;
-      task?: TaskSnapshot;
-    }
-  | { type: "task.updated"; turnId: string; sessionId: string; task: TaskSnapshot }
-  | {
-      type: "tool.result";
-      turnId: string;
-      toolCallId: string;
-      output: string;
-      isError: boolean;
-      usage?: ToolUsage;
-      agentId?: string;
-      model?: string;
-      outputEmpty?: boolean;
-    }
-  | { type: "approval.request"; turnId: string; request: ApprovalRequest }
-  | { type: "approval.resolved"; turnId: string; requestId: string }
-  | { type: "permission.mode.reported"; turnId: string; mode: string | null }
-  | { type: "question.request"; turnId: string; request: QuestionRequest }
-  | {
-      type: "question.resolved";
-      turnId: string;
-      requestId: string;
-      answers: Record<string, string> | null;
-    }
-  | { type: "todo.updated"; turnId: string; todos: TodoItem[] }
-  | {
-      type: "context.compacted";
-      turnId: string;
-      compaction: ContextCompactionInfo;
-      context?: ContextUsage;
-    }
-  | {
-      type: "turn.done";
-      turnId: string;
-      sessionId: string;
-      resumeCursor: string;
-      resultText: string;
-      usage: TurnModelUsage[];
-      context?: ContextUsage;
-      numTurns: number;
-      isError: boolean;
-      backgroundTasks: number;
-    }
-  | { type: "turn.error"; turnId: string; message: string; resumeCursor?: string; retryable?: boolean }
-  | {
-      type: "turn.retry";
-      turnId: string;
-      attempt: number;
-      message: string;
-      detail?: string;
-      retryAt: number;
-      link?: string;
-    }
-  | { type: "session.branch.updated"; turnId: string; sessionId: string; branch: string }
-  | { type: "session.notice"; turnId: string; sessionId: string; noticeId: string; text: string; severity: "info" | "warning" | "error" };
 
 export type PermissionMode = "auto" | "acceptEdits" | "bypassPermissions" | "manual";
 
@@ -575,7 +513,21 @@ export interface AppSettings {
 
 export type SettingsPatch = Partial<AppSettings>;
 
+export interface SaveGitHubViewInput {
+  kind: GitHubKind;
+  name: string;
+  query: string;
+  group: GitHubViewGroup;
+}
+
+export interface PtyAttachment {
+  ptyId: string;
+  token: string;
+  replay: string;
+}
+
 export interface CwApi {
+  topics: TopicCache;
   getStartupState(): Promise<StartupState>;
   recovery: {
     openDataDir(): Promise<void>;
@@ -600,26 +552,17 @@ export interface CwApi {
     onRequested(cb: (event: ShutdownRequestedEvent) => void): () => void;
     onExpired(cb: (event: ShutdownExpiredEvent) => void): () => void;
   };
-  checkVersions(): Promise<Array<{
-    binary: DriverName;
-    binaryPath: string;
-    minimum: string;
-    actual: string | null;
-    configured: boolean;
-    found: boolean;
-    available: boolean;
-    error: string | null;
-    ok: boolean;
-  }>>;
+  recheckClis(): Promise<HarnessAvailability>;
+  importLegacyPrefs(legacy: LegacyPreferences): Promise<void>;
+  reorderSidebar(request: SidebarReorderRequest): Promise<void>;
+  pushRecentModel(driver: DriverName, model: string): Promise<void>;
+  setComposerDraft(key: string, text: string, attachments: readonly string[]): Promise<void>;
   discoverBinaries(binaries?: CliBinary[]): Promise<CliDiscoverResult>;
   verifyBinaryPath(binary: CliBinary, path: string): Promise<CliDiscoveredCandidate>;
   isDev: boolean;
   openHarnessTrace(): Promise<{ ok: boolean; path?: string; error?: string }>;
-  listProjects(): Promise<Project[]>;
   addProject(rootPath: string): Promise<Project>;
   updateProjectSettings(projectId: string, settings: ProjectSettings): Promise<Project>;
-  getHomeDir(): Promise<string>;
-  listSessions(projectId: string): Promise<Session[]>;
   createSession(projectId: string, driver: DriverName, options?: CreateSessionOptions): Promise<Session>;
   listImportableSessions(driver: DriverName): Promise<ImportableSession[]>;
   importSession(request: ImportSessionRequest): Promise<{ project: Project; session: Session }>;
@@ -628,15 +571,17 @@ export interface CwApi {
   setSessionStatus(sessionId: string, status: SessionStatus, reason?: SessionStatusReason): Promise<Session>;
   markSessionWorking(sessionId: string): Promise<Session>;
   restoreSession(sessionId: string): Promise<Session>;
-  expireHolding(sessionIds: string[]): Promise<Session[]>;
+  markTurnSeen(sessionId: string): Promise<void>;
+  openSession(sessionId: string, reason: SessionOpenReason): Promise<void>;
+  pauseAutoFollowUp(sessionId: string): Promise<void>;
+  resumeAutoFollowUp(sessionId: string): Promise<void>;
   resolveSession(sessionId: string, status: SessionStatus, removeWorktree?: boolean, forceBranch?: boolean): Promise<SessionCleanupResult>;
   pruneStaleWorktrees(): Promise<WorktreePruneSummary>;
-  getHistory(sessionId: string): Promise<HistoryMessage[]>;
   getSubagentTools(sessionId: string, agentId: string): Promise<SubagentToolsResult>;
-  activeTurns(): Promise<ActiveTurn[]>;
   retryConnection(sessionId: string): Promise<RetryConnectionResult>;
-  startTurn(sessionId: string, prompt: string, opts?: { prefs?: ComposerPrefs; attachments?: string[]; command?: CommandInvocation; skills?: string[]; prRefs?: PrRef[]; finalReview?: { ref: PrRef; sha: string }; acceptFolderHead?: string }): Promise<string>;
-  interrupt(turnId: string): Promise<void>;
+  startTurn(sessionId: string, prompt: string, opts?: { prefs?: ComposerPrefs; attachments?: string[]; command?: CommandInvocation; skills?: string[]; prRefs?: PrRef[]; acceptFolderHead?: string }): Promise<string>;
+  stopTurn(sessionId: string): Promise<StopTurnResult>;
+  reloadHistory(sessionId: string): Promise<void>;
   respondApproval(requestId: string, decision: ApprovalDecision): Promise<void>;
   respondQuestion(requestId: string, answers: Record<string, string>): Promise<void>;
   listCommands(sessionId: string): Promise<CommandOption[]>;
@@ -649,7 +594,6 @@ export interface CwApi {
   listPermissionsForHarness(driver: DriverName): Promise<PermissionOption[]>;
   getComposer(sessionId: string): Promise<ComposerPrefs>;
   setComposer(sessionId: string, prefs: ComposerPrefs): Promise<ComposerPrefs>;
-  getSettings(): Promise<AppSettings>;
   setSettings(patch: SettingsPatch): Promise<AppSettings>;
   getDefaultPrWorkflows(): Promise<PrWorkflow[]>;
   skills: {
@@ -660,8 +604,9 @@ export interface CwApi {
     setEnabled(name: string, harness: HarnessId, on: boolean): Promise<SkillMeta>;
     importAll(): Promise<SkillsListResult>;
   };
-  getGitStatus(sessionId: string): Promise<GitStatus>;
-  onGitStatus(cb: (update: GitStatusUpdate) => void): () => void;
+  refreshGit(sessionId: string): Promise<void>;
+  checkBranchMismatch(sessionId: string): Promise<BranchMismatch | null>;
+  keepFolderHead(sessionId: string): Promise<string | null>;
   listGitBranches(sessionId: string): Promise<GitBranchInfo[]>;
   listProjectBranches(projectId: string): Promise<GitBranchInfo[]>;
   switchGitBranch(sessionId: string, branch: string): Promise<GitStatus>;
@@ -671,40 +616,28 @@ export interface CwApi {
   getSourceControlHealth(projectId?: string): Promise<SourceControlHealth>;
   setProjectGitHubAccount(projectId: string, account: { host: string; login: string } | null): Promise<Project>;
   setRepositoryGitIdentity(projectId: string, name: string, email: string): Promise<void>;
-  getUsageLedger(query: UsageLedgerQuery): Promise<UsageLedgerRow[]>;
-  getAccountUsage(drivers: DriverName[], force?: boolean): Promise<AccountUsageSnapshot[]>;
-  getPrInbox(force?: boolean): Promise<PrInboxResult>;
-  getTrackedPrs(): Promise<PrSummary[]>;
-  onTrackedPrs(cb: (items: PrSummary[]) => void): () => void;
+  usageReport(query: UsageReportQuery): Promise<UsageReport>;
+  refreshAccountUsage(force: boolean, drivers?: DriverName[]): Promise<void>;
+  refreshPrInbox(force?: boolean): Promise<void>;
   getPrDetail(ref: PrRef): Promise<PrDetail>;
+  watchPrDetail(ref: PrRef): Promise<void>;
+  unwatchPrDetail(ref: PrRef): Promise<void>;
   getPrDiff(ref: PrRef): Promise<string>;
   getPrCheckLog(ref: PrRef, runId: number): Promise<string>;
-  searchGitHub(kind: "pr", query: string, countBase: string, force?: boolean): Promise<GitHubSearchResult<PrSummary>>;
-  searchGitHub(kind: "issue", query: string, countBase: string, force?: boolean): Promise<GitHubSearchResult<IssueSummary>>;
-  countGitHub(kind: "pr" | "issue", queries: string[]): Promise<Array<number | null>>;
-  getIssueDetail(ref: IssueRef): Promise<IssueDetail>;
-  getGitHubRuns(sources: RunSources, force?: boolean): Promise<RunsResult>;
-  getRunLog(ref: RunRef): Promise<string>;
-  watchGitHubRuns(refs: RunRef[]): Promise<void>;
-  onGitHubRunsChanged(cb: (runs: WorkflowRunSummary[]) => void): () => void;
-  onGitHubCiActivity(cb: () => void): () => void;
-  subscribeTopics(topics: readonly string[]): () => void;
-  cloneGitHubRepo(repo: RepoRef): Promise<Project>;
-  getProjectGitHubRepos(): Promise<ProjectGitHubRepo[]>;
+  refreshGitHubView(topic: string, force?: boolean): Promise<void>;
+  githubViewCounts(kind: GitHubKind): Promise<Record<string, number | null>>;
+  saveGitHubView(input: SaveGitHubViewInput): Promise<SavedGitHubView>;
+  renameGitHubView(id: string, name: string): Promise<void>;
+  deleteGitHubView(id: string): Promise<void>;
+  workflowPreview(req: WorkflowPreviewRequest): Promise<WorkflowPreview>;
+  workflowHarness(req: WorkflowHarnessRequest): Promise<WorkflowHarnessResult>;
+  workflowTemplatePreview(req: WorkflowTemplatePreviewRequest): Promise<WorkflowTemplatePreview>;
+  runWorkflow(req: WorkflowRunRequest): Promise<WorkflowRunResult>;
   linkSessionPr(sessionId: string, link: SessionPrLink): Promise<Session>;
   unlinkSessionPr(sessionId: string, ref: PrRef): Promise<Session>;
-  markSessionPrSeen(sessionId: string, ref: PrRef, headSha: string | null, seenAt: number | null): Promise<Session>;
-  linkSessionIssue(sessionId: string, link: SessionIssueLink): Promise<Session>;
-  unlinkSessionIssue(sessionId: string, ref: IssueRef): Promise<Session>;
-  markSessionIssueSeen(sessionId: string, ref: IssueRef, seenAt: number): Promise<Session>;
-  linkSessionRun(sessionId: string, link: SessionRunLink): Promise<Session>;
-  unlinkSessionRun(sessionId: string, ref: RunRef): Promise<Session>;
-  markSessionRunSeen(sessionId: string, ref: RunRef, seenAt: number): Promise<Session>;
-  onTurnEvent(cb: (msg: { sessionId: string; event: TurnEvent }) => void): () => void;
-  onSessionTitle(cb: (msg: { sessionId: string; title: string }) => void): () => void;
-  onSessionUpdated(cb: (session: Session) => void): () => void;
+  sendPrUpdates(sessionId: string, keys: string[]): Promise<string>;
+  dismissPrUpdates(sessionId: string, keys: string[]): Promise<void>;
   onProjectChanged(cb: (project: Project) => void): () => void;
-  onSettingsChanged(cb: (settings: AppSettings) => void): () => void;
   onSkillsChanged(cb: (result: SkillsListResult) => void): () => void;
   onComposerChanged(cb: (event: ComposerChangedEvent) => void): () => void;
   readFile(sessionId: string, path: string): Promise<string>;
@@ -721,18 +654,17 @@ export interface CwApi {
   revealPath(sessionId: string, path: string): Promise<void>;
   workspaceRoot(sessionId: string): Promise<string>;
   listWorkspaceFiles(sessionId: string): Promise<string[]>;
-  gitDecorations(sessionId: string): Promise<GitDecorations>;
   gitBaseline(sessionId: string, path: string): Promise<GitBaseline>;
   searchText(sessionId: string, query: TextSearchQuery): Promise<TextSearchResult>;
   setWatchedPaths(sessionId: string, paths: string[]): Promise<void>;
   onFsChanged(cb: (e: FsChangeEvent) => void): () => void;
   savePasteImage(projectId: string, mime: string, data: Uint8Array): Promise<string>;
   readImage(args: { sessionId?: string; projectId?: string; path: string }): Promise<{ mime: string; base64: string }>;
-  openPty(sessionId: string, kind: DriverName | "shell"): Promise<{ ptyId: string; token: string; replay: string }>;
+  openPty(sessionId: string, kind: DriverName | "shell"): Promise<PtyAttachment>;
+  reattachPty(sessionId: string, kind: DriverName | "shell", token: string): Promise<PtyAttachment | null>;
   writePty(ptyId: string, data: string): void;
   resizePty(ptyId: string, cols: number, rows: number): void;
   detachPty(ptyId: string): void;
-  killPty(ptyId: string): void;
   onPtyData(cb: (msg: { ptyId: string; data: string }) => void): () => void;
   onPtyExit(cb: (msg: { ptyId: string; token: string; exitCode: number }) => void): () => void;
   minimizeWindow(): void;
@@ -743,7 +675,6 @@ export interface CwApi {
   zoomIn(): void;
   zoomOut(): void;
   zoomReset(): void;
-  setAttention(state: AttentionState): void;
   pickProjectDir(): Promise<string | null>;
   openPath(path: string): Promise<void>;
   openExternal(url: string): Promise<void>;

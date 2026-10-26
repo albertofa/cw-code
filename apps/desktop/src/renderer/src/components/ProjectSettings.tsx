@@ -517,10 +517,6 @@ function ProjectDetail({ project }: { project: Project }) {
 export function ProjectsSettings({ projectId }: { projectId?: string }) {
   const project = useAppStore((s) => (projectId ? s.projects.find((p) => p.id === projectId) : undefined));
 
-  useEffect(() => {
-    void useAppStore.getState().ensureHomeDir().catch(() => undefined);
-  }, []);
-
   if (project) return <ProjectDetail key={project.id} project={project} />;
   return <ProjectList />;
 }

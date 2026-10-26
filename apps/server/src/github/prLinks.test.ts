@@ -35,7 +35,8 @@ import {
   runKey,
   upsertIssueLink,
   upsertLink,
-  upsertRunLink
+  upsertRunLink,
+  withNewerSeen
 } from "./prLinks.js";
 import { changedWorktreeBranch } from "../sessions/worktreeCleanup.js";
 import { prKey } from "./prParsers.js";
@@ -368,6 +369,26 @@ describe("markSeen", () => {
 
   it("never moves lastSeenAt backwards when syncs overlap", () => {
     expect(markSeen({ ...link, lastSeenAt: 500 }, "sha-new", 200)).toMatchObject({ lastSeenSha: "sha-new", lastSeenAt: 500 });
+  });
+});
+
+describe("withNewerSeen", () => {
+  const ref = { host: "github.com", owner: "acme", repo: "widgets", number: 42 };
+  const existing: SessionPrLink = { ref, origin: "opened", lastSeenSha: "sha-seen", lastSeenAt: 500 };
+
+  it("keeps the incoming link when there is nothing to compare", () => {
+    const incoming: SessionPrLink = { ...existing, lastSeenSha: "sha-new", lastSeenAt: 100 };
+    expect(withNewerSeen(incoming, undefined)).toBe(incoming);
+  });
+
+  it("keeps the incoming seen state when it is not older", () => {
+    const incoming: SessionPrLink = { ...existing, lastSeenSha: "sha-new", lastSeenAt: 500 };
+    expect(withNewerSeen(incoming, existing)).toBe(incoming);
+  });
+
+  it("keeps the existing seen sha and time for an incoming link with a newer sha but an older lastSeenAt", () => {
+    const incoming: SessionPrLink = { ...existing, origin: "linked", lastSeenSha: "sha-newer", lastSeenAt: 100 };
+    expect(withNewerSeen(incoming, existing)).toEqual({ ...incoming, lastSeenSha: "sha-seen", lastSeenAt: 500 });
   });
 });
 

@@ -7,7 +7,7 @@ import { sessionLinks } from "./sessionPrLinks.js";
 import { focusSiblingTab } from "./tabStripKeys.js";
 import { toolAvailability } from "./toolTabs.js";
 import { useDockDrop } from "./useDockDrop.js";
-import { findSession } from "./useLinkedPr.js";
+import { findSession } from "../server/sidebarData.js";
 import { usePanelAnimationMs, usePresence } from "./usePresence.js";
 import { BOTTOM_HEIGHT_DEFAULT, resolveBottomActive, tabsInPanel } from "../stores/panelLayout.js";
 import { useAppStore } from "../stores/appStore.js";

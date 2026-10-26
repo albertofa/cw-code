@@ -13,7 +13,7 @@ describe("eventAudience", () => {
     expect(receivers(channel)).toEqual(["desktop-ui", "desktop-shell", "web"]);
   });
 
-  test.each([["pty.data"], ["turn.event"], ["sessions.changed"]])("keeps %s away from the desktop shell", (channel) => {
+  test.each([["pty.data"], ["shutdown.expired"], ["fs.changed"]])("keeps %s away from the desktop shell", (channel) => {
     expect(receivers(channel)).toEqual(["desktop-ui", "web"]);
   });
 });

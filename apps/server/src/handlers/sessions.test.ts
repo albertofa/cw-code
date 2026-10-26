@@ -1,0 +1,121 @@
+import { beforeEach, describe, expect, test } from "bun:test";
+import type { SidebarReorderRequest } from "@cw-code/contracts";
+import type { ServerApp } from "../app/ServerApp.js";
+import type { SidebarStatusAction } from "../sidebar/SidebarService.js";
+import { Router, type CallContext } from "../transport/Router.js";
+import { registerSessionHandlers } from "./sessions.js";
+
+const ctx: CallContext = { clientId: "a", client: "web", auth: { kind: "owner" } };
+const REQUEST: SidebarReorderRequest = { sessionId: "s1", from: "main", to: "resolved", targetId: null, before: false };
+
+let calls: unknown[][];
+let action: SidebarStatusAction | null;
+let failResolve: boolean;
+let router: Router;
+
+beforeEach(() => {
+  calls = [];
+  action = null;
+  failResolve = false;
+  const services = {
+    sidebar: {
+      reorder: async (request: SidebarReorderRequest, apply: (action: SidebarStatusAction) => Promise<unknown>) => {
+        calls.push(["reorder", request]);
+        if (action) await apply(action);
+      }
+    },
+    sessions: {
+      resolveSession: async (sessionId: string, status: string, options: unknown) => {
+        calls.push(["resolveSession", sessionId, status, options]);
+        if (failResolve) throw new Error("session busy (turn active)");
+        return { sessionId, status, worktreeOrphaned: false, worktreeRemoved: true, branchDeleted: true };
+      },
+      restoreSession: async (sessionId: string) => {
+        calls.push(["restoreSession", sessionId]);
+      },
+      openSession: (sessionId: string, reason: string) => {
+        calls.push(["openSession", sessionId, reason]);
+        return null;
+      },
+      hasSession: (sessionId: string) => sessionId === "s1"
+    },
+    threads: { reloadHistory: async (sessionId: string) => calls.push(["reloadHistory", sessionId]) },
+    fileWatcher: { unwatch: async (sessionId: string) => calls.push(["unwatch", sessionId]) },
+    ptys: { killSession: (sessionId: string) => calls.push(["killSession", sessionId]) }
+  };
+  router = new Router();
+  registerSessionHandlers(router, { requireServices: () => services } as unknown as ServerApp);
+});
+
+const dispatch = (params: unknown) => router.dispatch("sidebar.reorder", params, ctx);
+
+describe("sidebar.reorder", () => {
+  test("resolves through the same path as sessions.resolve", async () => {
+    action = "resolve";
+    await dispatch(REQUEST);
+    expect(calls).toEqual([
+      ["reorder", REQUEST],
+      ["unwatch", "s1"],
+      ["resolveSession", "s1", "resolved", { removeWorktree: true, forceBranch: false }],
+      ["killSession", "s1"]
+    ]);
+  });
+
+  test("restores through the session restore path", async () => {
+    action = "restore";
+    const request: SidebarReorderRequest = { ...REQUEST, from: "resolved", to: "main", targetId: "s2", before: true };
+    await dispatch(request);
+    expect(calls).toEqual([
+      ["reorder", request],
+      ["restoreSession", "s1"]
+    ]);
+  });
+
+  test("surfaces a failed resolve to the caller", async () => {
+    action = "resolve";
+    failResolve = true;
+    const [result] = await Promise.allSettled([dispatch(REQUEST)]);
+    expect(result?.status).toBe("rejected");
+  });
+
+  test("changes no status when the reorder asks for none", async () => {
+    await dispatch(REQUEST);
+    expect(calls).toEqual([["reorder", REQUEST]]);
+  });
+
+  test("rejects malformed requests", async () => {
+    const results = await Promise.allSettled([
+      dispatch(null),
+      dispatch({ ...REQUEST, to: "archived" }),
+      dispatch({ ...REQUEST, targetId: 3 }),
+      dispatch({ ...REQUEST, before: "yes" })
+    ]);
+    expect(results.map((result) => result.status)).toEqual(["rejected", "rejected", "rejected", "rejected"]);
+    expect(calls).toEqual([]);
+  });
+});
+
+describe("sessions.open", () => {
+  test("rejects unknown open reasons", async () => {
+    const results = await Promise.allSettled([
+      router.dispatch("sessions.open", { sessionId: "s1", reason: "resume" }, ctx),
+      router.dispatch("sessions.open", { sessionId: "s1" }, ctx),
+      router.dispatch("sessions.open", { sessionId: 1, reason: "select" }, ctx)
+    ]);
+    expect(results.map((result) => result.status)).toEqual(["rejected", "rejected", "rejected"]);
+    expect(calls).toEqual([]);
+  });
+
+  test("passes a valid reason through", async () => {
+    await router.dispatch("sessions.open", { sessionId: "s1", reason: "restore" }, ctx);
+    expect(calls).toEqual([["openSession", "s1", "restore"]]);
+  });
+});
+
+describe("threads.reloadHistory", () => {
+  test("rejects unknown sessions", async () => {
+    const [result] = await Promise.allSettled([router.dispatch("threads.reloadHistory", { sessionId: "missing" }, ctx)]);
+    expect(result?.status).toBe("rejected");
+    expect(calls).toEqual([]);
+  });
+});

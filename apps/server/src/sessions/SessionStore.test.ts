@@ -499,3 +499,29 @@ describe("SessionStore project settings", () => {
     expect(() => makeStore().updateProjectSettings("proj_missing", {})).toThrow("unknown project proj_missing");
   });
 });
+
+describe("SessionStore auto follow-up", () => {
+  it("persists counters without touching updatedAt and drops the entry once cleared", () => {
+    const { dir, store } = seedStore([{}]);
+    const dbPath = join(dir, "test.db");
+    expect(store.updateAutoFollowUp("sess_0", () => ({ turns: 2, paused: "interrupted" }))).toBe(true);
+    expect(store.updateAutoFollowUp("sess_0", () => ({ turns: 2, paused: "interrupted" }))).toBe(false);
+    expect(store.getSession("sess_0")?.updatedAt).toBe(2);
+    expect(new SessionStore(dbPath).getSession("sess_0")?.autoFollowUp).toEqual({ turns: 2, paused: "interrupted" });
+
+    expect(store.updateAutoFollowUp("sess_0", () => ({ turns: 0 }))).toBe(true);
+    expect(readJson(join(dir, "test.db.json")).sessions[0]).not.toHaveProperty("autoFollowUp");
+    expect(store.updateAutoFollowUp("sess_missing", () => ({ turns: 1 }))).toBe(false);
+  });
+
+  it("drops malformed auto follow-up state on load", () => {
+    const { store } = seedStore([
+      { autoFollowUp: { turns: 3, paused: "user" } },
+      { autoFollowUp: { turns: -1 } },
+      { autoFollowUp: { turns: 1, paused: "sleepy" } } as unknown as Partial<SessionMeta>
+    ]);
+    expect(store.getSession("sess_0")?.autoFollowUp).toEqual({ turns: 3, paused: "user" });
+    expect(store.getSession("sess_1")).not.toHaveProperty("autoFollowUp");
+    expect(store.getSession("sess_2")).not.toHaveProperty("autoFollowUp");
+  });
+});

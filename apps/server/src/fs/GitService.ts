@@ -74,6 +74,10 @@ export function defaultBinary(name: "git" | "gh"): string {
   return process.platform === "win32" ? `${name}.exe` : name;
 }
 
+export function configuredGitBinary(settings: Pick<AppSettings, "gitBinaryPath">): string {
+  return settings.gitBinaryPath?.trim() || defaultBinary("git");
+}
+
 export function cleanAuthEnvironment(): NodeJS.ProcessEnv {
   const env = sanitizedChildEnv(process.env, process.platform);
   delete env["GH_TOKEN"];
@@ -849,7 +853,7 @@ export class GitService {
   private settings(): SourceControlSettings {
     const settings = this.getSettings();
     return {
-      gitBinaryPath: settings.gitBinaryPath?.trim() || defaultBinary("git"),
+      gitBinaryPath: configuredGitBinary(settings),
       githubCliBinaryPath: settings.githubCliBinaryPath?.trim() || defaultBinary("gh")
     };
   }

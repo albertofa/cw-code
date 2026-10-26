@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import type { PrSummary } from "@cw-code/contracts";
-import { needsAttentionCount, prBucket, prKey } from "./prInbox.js";
+import { prBucket, prKey } from "./prInbox.js";
 
 function summary(overrides: Partial<PrSummary> = {}): PrSummary {
   return {
@@ -65,18 +65,5 @@ describe("prBucket", () => {
   it("puts everything else in waiting", () => {
     expect(prBucket(summary())).toBe("waiting");
     expect(prBucket(summary({ viewerIsAuthor: false, ci: "failing" }))).toBe("waiting");
-  });
-});
-
-describe("needsAttentionCount", () => {
-  it("counts review and action buckets only", () => {
-    const items = [
-      summary({ viewerIsAuthor: false, reviewRequestedFromViewer: true }),
-      summary({ ci: "failing" }),
-      summary({ review: "approved", ci: "passing" }),
-      summary({ state: "MERGED" }),
-      summary()
-    ];
-    expect(needsAttentionCount(items)).toBe(2);
   });
 });

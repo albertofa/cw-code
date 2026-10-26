@@ -1,16 +1,21 @@
 import { useEffect, useState } from "react";
-import { useAppStore } from "../stores/appStore.js";
 import { TriangleAlert } from "lucide-react";
-import { useBranchStore } from "../stores/branchStore.js";
+import { useAppStore } from "../stores/appStore.js";
 import { ipcErrorMessage } from "./ipcError.js";
 import { keepLabel, mismatchSentence, sendHereLabel, type BranchMismatch } from "./sessionBranch.js";
-import { useBranchMismatch } from "./useBranchMismatch.js";
+import { useBranchMismatch } from "./useGit.js";
+import { findSession } from "../server/sidebarData.js";
+import { useThreadBusy } from "./useThread.js";
 
 export function BranchMismatchDock({ sessionId }: { sessionId: string }) {
-  const { mismatch, projectName } = useBranchMismatch(sessionId);
+  const mismatch = useBranchMismatch(sessionId);
+  const projectName = useAppStore((s) => {
+    const projectId = findSession(s.sessionsByProject, sessionId)?.projectId;
+    return s.projects.find((project) => project.id === projectId)?.name ?? "The project";
+  });
   const [switching, setSwitching] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const turnBusy = useAppStore((s) => s.busyTurns[sessionId] !== undefined);
+  const turnBusy = useThreadBusy(sessionId);
   const hasMismatch = mismatch !== null;
 
   useEffect(() => {
@@ -23,9 +28,22 @@ export function BranchMismatchDock({ sessionId }: { sessionId: string }) {
     setSwitching(true);
     setError(null);
     try {
-      await useBranchStore.getState().switchToSessionBranch(sessionId, mismatch.sessionBranch);
+      await window.cw.switchGitBranch(sessionId, mismatch.sessionBranch);
     } catch (err) {
-      setError(ipcErrorMessage(err));
+      setError(`Could not switch to ${mismatch.sessionBranch}: ${ipcErrorMessage(err)}`);
+    } finally {
+      setSwitching(false);
+    }
+  };
+
+  const keepFolderHead = async () => {
+    setSwitching(true);
+    setError(null);
+    try {
+      const kept = await window.cw.keepFolderHead(sessionId);
+      if (kept === null) setError("Could not read the project's current git state.");
+    } catch (err) {
+      setError(`Could not keep ${mismatch.folderBranch}: ${ipcErrorMessage(err)}`);
     } finally {
       setSwitching(false);
     }
@@ -49,7 +67,7 @@ export function BranchMismatchDock({ sessionId }: { sessionId: string }) {
         </button>
         <button
           className="pr-detail-btn ghost sm"
-          onClick={() => useBranchStore.getState().keepFolderHead(sessionId, mismatch.folderHead)}
+          onClick={() => void keepFolderHead()}
           disabled={switching}
         >
           {keepLabel(mismatch)}
@@ -57,7 +75,7 @@ export function BranchMismatchDock({ sessionId }: { sessionId: string }) {
       </div>
       {error && (
         <div className="pr-dock-error" role="alert">
-          Could not switch to {mismatch.sessionBranch}: {error}
+          {error}
         </div>
       )}
     </section>

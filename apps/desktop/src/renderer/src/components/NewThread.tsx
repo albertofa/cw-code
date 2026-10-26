@@ -1,18 +1,18 @@
 import { useEffect, useState } from "react";
 import { Download, Folder, GitBranch, GitFork, History } from "lucide-react";
 import { useAppStore } from "../stores/appStore.js";
-import type { CreateSessionOptions, CreateWorkspaceMode, DriverName, GitBranchInfo, Session } from "../cw.js";
-import { worktreeCandidates } from "./worktreeCandidates.js";
+import type { CreateSessionOptions, CreateWorkspaceMode, DriverName, GitBranchInfo } from "../cw.js";
+import { useWorktreeCandidates } from "./useSessions.js";
 import { shortenHome } from "./pathDisplay.js";
 import { DriverIcon } from "./DriverIcon.js";
 import { pickableHarnesses } from "./harnessAvailability.js";
 import { ComposerView, type ComposerBackend } from "./ComposerView.js";
+import { useAppSettings } from "./useAppSettings.js";
 import { MenuSelect } from "./MenuSelect.js";
 import { NewSessionProjectPicker } from "./NewSessionProjectPicker.js";
 import { ImportSessionsModal } from "./ImportSessionsModal.js";
 
 const NO_PROJECT_HINT = "Choose a project to start a session";
-const NO_SESSIONS: Session[] = [];
 const DEFAULT_BASE_ID = "";
 const DEFAULT_BASE_LABEL = "Default branch (latest from origin)";
 
@@ -32,10 +32,10 @@ export function NewThread({
   onDriverChange: (d: DriverName) => void;
 }) {
   const prefs = useAppStore((s) => s.pendingPrefs);
-  const modelsRefreshKey = useAppStore((s) => s.settingsVersion);
+  const settings = useAppSettings();
   const workspace = useAppStore((s) => s.pendingWorkspace);
   const newSessionError = useAppStore((s) => s.newSessionError);
-  const installed = useAppStore((s) => s.installedHarnesses);
+  const installed = useAppStore((s) => s.availableHarnesses);
   const homeDir = useAppStore((s) => s.homeDir);
   const project = useAppStore((s) => (projectId ? s.projects.find((p) => p.id === projectId) : undefined));
   const [branches, setBranches] = useState<GitBranchInfo[]>([]);
@@ -43,9 +43,8 @@ export function NewThread({
   const [importOpen, setImportOpen] = useState(false);
 
   const projectKey = project?.id ?? null;
-  const sessions = useAppStore((s) => (projectKey ? (s.sessionsByProject[projectKey] ?? NO_SESSIONS) : NO_SESSIONS));
   const store = useAppStore.getState();
-  const candidates = worktreeCandidates(sessions);
+  const candidates = useWorktreeCandidates(projectKey);
 
   useEffect(() => {
     let active = true;
@@ -118,6 +117,7 @@ export function NewThread({
   const backend: ComposerBackend = {
     imageTarget: projectKey ? { projectId: projectKey } : {},
     prefs,
+    prefsLoaded: true,
     busy: false,
     loadModels: () => (projectKey ? window.cw.listModelsFor(projectKey, driver) : window.cw.listModelsForHarness(driver)),
     loadPermissions: () =>
@@ -244,7 +244,7 @@ export function NewThread({
           resetKey={`pending:${projectKey ?? ""}`}
           blockedReason={project ? undefined : NO_PROJECT_HINT}
           resetStaleModel
-          modelsRefreshKey={modelsRefreshKey}
+          settings={settings}
           recipePrefix={
             harnessOptions.length > 1 && (
               <>

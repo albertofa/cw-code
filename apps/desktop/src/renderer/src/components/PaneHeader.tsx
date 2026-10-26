@@ -1,12 +1,12 @@
 import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent, type WheelEvent as ReactWheelEvent } from "react";
 import { PanelsTopLeft } from "lucide-react";
 import type { DockableTabId } from "@cw-code/contracts";
-import { useAppStore } from "../stores/appStore.js";
 import { usePanelStore } from "../stores/panelStore.js";
 import { DockTab } from "./DockTab.js";
 import { toolTabTitle } from "./toolTabs.js";
 import { paneDiffSummary } from "./railTools.js";
 import { focusSiblingTab } from "./tabStripKeys.js";
+import { useGitStatus } from "./useGit.js";
 import "./toolRail.css";
 
 interface ScrollEdges {
@@ -15,7 +15,7 @@ interface ScrollEdges {
 }
 
 function usePaneSummary(tab: DockableTabId, sessionId: string | undefined): string | undefined {
-  const gitStatus = useAppStore((s) => (sessionId && tab === "diff" ? s.gitStatusBySession[sessionId] : undefined));
+  const gitStatus = useGitStatus(tab === "diff" ? sessionId : null) ?? undefined;
   const turnDiffSummary = usePanelStore((s) => (sessionId && tab === "diff" ? s.turnDiffSummaryBySession[sessionId] : undefined));
   return tab === "diff" ? paneDiffSummary(gitStatus, turnDiffSummary) : undefined;
 }

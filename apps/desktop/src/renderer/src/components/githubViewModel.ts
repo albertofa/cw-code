@@ -1,35 +1,8 @@
-import type {
-  GitHubKind,
-  GitHubViewGroup,
-  IssueSummary,
-  PrSummary,
-  ProjectGitHubRepo,
-  RepoRef,
-  RunRef,
-  WorkflowRunSummary
-} from "../cw.js";
+import type { GitHubRow, GitHubSubject } from "@cw-code/contracts";
+import type { GitHubKind, GitHubViewGroup, IssueSummary, PrSummary, ProjectGitHubRepo, RepoRef, WorkflowRunSummary } from "../cw.js";
 import type { GitHubView } from "../stores/githubStore.js";
-import {
-  normalizeQuery,
-  prKeyOf,
-  runMatches,
-  sortKeysFor,
-  tokenize,
-  type LocalContext,
-  type RunContext,
-  type SuggestionSource
-} from "./githubQuery.js";
-import {
-  isRunFailed,
-  sameLogin,
-  sessionHasUnseenIssue,
-  sessionHasUnseenPr,
-  sessionsForIssue,
-  sessionsForPr,
-  sessionsForRun,
-  type LinkedSession
-} from "./githubRowModel.js";
-import { needsAttentionCount } from "./prInbox.js";
+import { normalizeQuery, sortKeysFor, tokenize } from "@cw-code/shared/githubQueryDsl";
+import type { SuggestionSource } from "./githubAutocomplete.js";
 
 export type BucketTone = "info" | "warn" | "ok" | "neutral" | "bad" | "merged";
 
@@ -41,14 +14,14 @@ export interface BucketDef {
   hint: string;
 }
 
-export interface ResultGroup<T> {
+export interface ResultGroup {
   id: string;
   title: string;
   icon: string;
   tone: BucketTone;
   hint: string;
   flat: boolean;
-  items: T[];
+  items: GitHubRow[];
 }
 
 export interface TabBadge {
@@ -95,22 +68,28 @@ export function repoNameOf(ref: { owner: string; repo: string }): string {
   return `${ref.owner}/${ref.repo}`;
 }
 
-export function groupItems<T>(
-  items: T[],
+export function subjectRepoOf(subject: GitHubSubject): RepoRef {
+  if (subject.kind === "pr") return subject.pr.ref;
+  if (subject.kind === "issue") return subject.issue.ref;
+  return subject.run.ref;
+}
+
+export function groupItems(
+  rows: GitHubRow[],
   mode: GitHubViewGroup,
-  options: { buckets: BucketDef[]; bucketOf(item: T): string; repoOf(item: T): RepoRef; isCloned(repo: RepoRef): boolean }
-): ResultGroup<T>[] {
+  options: { buckets: BucketDef[]; isCloned(repo: RepoRef): boolean }
+): ResultGroup[] {
   if (mode === "none") {
-    return [{ id: "all", title: "", icon: "", tone: "neutral", hint: "", flat: true, items }];
+    return [{ id: "all", title: "", icon: "", tone: "neutral", hint: "", flat: true, items: rows }];
   }
   if (mode === "repo") {
-    const byRepo = new Map<string, { repo: RepoRef; items: T[] }>();
-    for (const item of items) {
-      const repo = options.repoOf(item);
+    const byRepo = new Map<string, { repo: RepoRef; items: GitHubRow[] }>();
+    for (const row of rows) {
+      const repo = subjectRepoOf(row.subject);
       const name = repoNameOf(repo);
       const entry = byRepo.get(name);
-      if (entry) entry.items.push(item);
-      else byRepo.set(name, { repo, items: [item] });
+      if (entry) entry.items.push(row);
+      else byRepo.set(name, { repo, items: [row] });
     }
     return [...byRepo.entries()].map(([name, entry]) => ({
       id: `repo:${name}`,
@@ -123,18 +102,11 @@ export function groupItems<T>(
     }));
   }
   return options.buckets
-    .map((bucket) => ({ ...bucket, flat: false, items: items.filter((item) => options.bucketOf(item) === bucket.id) }))
+    .map((bucket) => ({ ...bucket, flat: false, items: rows.filter((row) => row.bucket === bucket.id) }))
     .filter((group) => group.items.length > 0);
 }
 
-const MENTION_KEYS: ReadonlySet<string> = new Set(["mentions", "involves"]);
 const KIND_VALUES: ReadonlySet<string> = new Set<GitHubKind>(["pr", "issue", "run"]);
-
-export function mentionsMode(query: string): boolean {
-  return tokenize(query).some(
-    (token) => token.kind === "qual" && !token.neg && MENTION_KEYS.has(token.key ?? "") && (token.value ?? "").toLowerCase() === "@me"
-  );
-}
 
 export function retargetQuery(query: string, kind: GitHubKind): string {
   const kept = tokenize(query).filter((token) => {
@@ -163,76 +135,18 @@ export function isViewEdited(view: GitHubView | null, query: string): boolean {
   return view === null || normalizeQuery(view.query) !== normalizeQuery(query);
 }
 
-export function isPr(item: PrSummary | IssueSummary): item is PrSummary {
-  return "headRefName" in item;
-}
-
-export function buildLocalContext(sessions: LinkedSession[], isCloned: (repo: RepoRef) => boolean): LocalContext {
-  return {
-    hasSession: (item) => (isPr(item) ? sessionsForPr(item, sessions) : sessionsForIssue(item, sessions)).length > 0,
-    isCloned,
-    isUnread: (item) =>
-      isPr(item) ? sessions.some((session) => sessionHasUnseenPr(item, session)) : sessions.some((session) => sessionHasUnseenIssue(item, session))
-  };
-}
-
-export function involvesViewer(pr: PrSummary, viewer: string | null): boolean {
-  return (
-    pr.viewerIsAuthor ||
-    pr.reviewRequestedFromViewer ||
-    pr.assignees.some((login) => sameLogin(login, viewer)) ||
-    pr.reviewers.some((reviewer) => sameLogin(reviewer.login, viewer))
-  );
-}
-
-export function involvedPrKeysOf(inboxItems: PrSummary[], cachedPrs: PrSummary[], viewer: string | null): Set<string> {
-  const keys = new Set<string>();
-  for (const pr of inboxItems) keys.add(prKeyOf(pr.ref, pr.ref.number));
-  for (const pr of cachedPrs) {
-    if (involvesViewer(pr, viewer)) keys.add(prKeyOf(pr.ref, pr.ref.number));
-  }
-  return keys;
-}
-
-export function buildRunContext(viewer: string | null, involvedPrKeys: ReadonlySet<string>, sessions: LinkedSession[]): RunContext {
-  return {
-    viewer: viewer ?? "",
-    involvedPrKeys,
-    isDefaultBranchRun: (run) => run.onDefaultBranch,
-    hasSession: (run) => sessionsForRun(run, sessions).length > 0
-  };
-}
-
-export function isLiveRun(run: WorkflowRunSummary): boolean {
-  return run.status === "queued" || run.status === "in_progress";
-}
-
-export function liveRunRefs(runs: WorkflowRunSummary[]): RunRef[] {
-  return runs.filter(isLiveRun).map((run) => run.ref);
-}
-
-export function runRefsSignature(refs: RunRef[]): string {
-  return refs.map((ref) => `${ref.host}/${ref.owner}/${ref.repo}#${ref.runId}`).join("|");
-}
-
-export function assignedOpenIssueCount(issues: IssueSummary[], viewer: string | null): number {
-  return issues.filter((issue) => issue.state === "OPEN" && issue.assignees.some((login) => sameLogin(login, viewer))).length;
-}
-
-export function failingInvolvedRunCount(runs: WorkflowRunSummary[], context: RunContext): number {
-  return runs.filter((run) => isRunFailed(run) && runMatches(run, "involves:@me", context)).length;
-}
-
-export function prBadge(inboxItems: PrSummary[]): TabBadge {
-  return { count: needsAttentionCount(inboxItems), tone: "default" };
-}
-
 export interface SuggestionInputs {
   viewer: string | null;
   prs: PrSummary[];
   issues: IssueSummary[];
   runs: WorkflowRunSummary[];
   repos: ProjectGitHubRepo[];
+}
+
+const GITHUB_HOST = "github.com";
+
+export function githubProjectRepos(repos: ProjectGitHubRepo[]): ProjectGitHubRepo[] {
+  return repos.filter((repo) => repo.host.toLowerCase() === GITHUB_HOST);
 }
 
 export function buildSuggestionSource({ viewer, prs, issues, runs, repos }: SuggestionInputs): SuggestionSource {

@@ -1,13 +1,13 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
-import { ChevronRight, FileDiff, RefreshCw, RotateCcw, TriangleAlert } from "lucide-react";
+import { ChevronRight, FileDiff, RotateCcw, TriangleAlert } from "lucide-react";
 import type { TurnChanges, TurnFileChange, TurnSnapshot } from "../cw.js";
 import { useConfirm } from "./ConfirmDialog.js";
 import { useNotifs } from "./Notifications.js";
 import { FileIcon } from "./fileIcons.js";
 import { ipcErrorMessage, isFileNotFound } from "./ipcError.js";
-import { sameRootSessionIds, snapshotKey, splitRepoPath, turnTotals } from "./turnChanges.js";
-import { useAppStore } from "../stores/appStore.js";
+import { splitRepoPath, turnTotals } from "./turnChanges.js";
+import { isThreadBusy, useThreadEntry } from "./useThread.js";
 import { buffersForPaths, isDirtyBuffer, useEditorBuffers, type EditorBuffer } from "../stores/editorBuffers.js";
 import { usePanelStore } from "../stores/panelStore.js";
 import "./turnChanges.css";
@@ -18,40 +18,11 @@ const CHANGE_BADGE: Record<TurnFileChange["change"], string> = {
   modified: "M"
 };
 
-const CACHE_TTL_MS = 30_000;
 const TURN_RUNNING = "A turn is running";
-
-const changesCache = new Map<string, { at: number; changes: TurnChanges | null }>();
-
-type LoadState =
-  | { status: "loading" }
-  | { status: "ready"; changes: TurnChanges | null }
-  | { status: "error"; message: string };
+const TURN_UNAVAILABLE = "This turn’s changes are no longer available";
+const MISSING_END_SNAPSHOT = "The end-of-turn snapshot is missing";
 
 type UndoPhase = "idle" | "checking" | "undoing";
-
-function cacheId(sessionId: string, key: string): string {
-  return `${sessionId}\n${key}`;
-}
-
-function cachedChanges(sessionId: string, key: string): TurnChanges | null | undefined {
-  const entry = changesCache.get(cacheId(sessionId, key));
-  if (!entry || Date.now() - entry.at > CACHE_TTL_MS) return undefined;
-  return entry.changes;
-}
-
-function cacheChanges(sessionId: string, key: string, changes: TurnChanges | null): void {
-  const now = Date.now();
-  for (const [id, entry] of changesCache) {
-    if (now - entry.at > CACHE_TTL_MS) changesCache.delete(id);
-  }
-  changesCache.set(cacheId(sessionId, key), { at: now, changes });
-}
-
-function initialState(sessionId: string, key: string): LoadState {
-  const cached = cachedChanges(sessionId, key);
-  return cached === undefined ? { status: "loading" } : { status: "ready", changes: cached };
-}
 
 function dirtyPaths(buffers: Record<string, EditorBuffer>, sessionIds: readonly string[], files: readonly TurnFileChange[]): string[] {
   const matched = buffersForPaths(buffers, sessionIds, files.map((file) => file.path));
@@ -62,7 +33,7 @@ function undoBlockers(changes: TurnChanges, running: boolean, dirty: readonly st
   const blockers: string[] = [];
   if (running) blockers.push(TURN_RUNNING);
   if (!changes.undoable) blockers.push(changes.reason ?? "This turn can’t be undone");
-  else if (!changes.endSha) blockers.push("The end-of-turn snapshot is missing");
+  else if (!changes.endSha) blockers.push(MISSING_END_SNAPSHOT);
   if (dirty.length > 0) blockers.push(`Save or discard unsaved edits first: ${dirty.join(", ")}`);
   return blockers;
 }
@@ -96,14 +67,14 @@ function plural(count: number, word: string): string {
   return `${count} ${word}${count === 1 ? "" : "s"}`;
 }
 
-function Warning({ children, onRetry }: { children: ReactNode; onRetry?: () => void }) {
+function Warning({ children, onRefresh, refreshing }: { children: ReactNode; onRefresh?: () => void; refreshing?: boolean }) {
   return (
     <div className="turn-changes-warn" role="status">
       <TriangleAlert size={13} aria-hidden="true" />
       <span className="turn-changes-warn-text">{children}</span>
-      {onRetry && (
-        <button type="button" className="turn-changes-icon" onClick={onRetry} title="Retry" aria-label="Retry loading changes">
-          <RefreshCw size={12} aria-hidden="true" />
+      {onRefresh && (
+        <button type="button" className="btn turn-changes-btn" onClick={onRefresh} disabled={refreshing}>
+          {refreshing ? "Refreshing…" : "Refresh"}
         </button>
       )}
     </div>
@@ -131,44 +102,16 @@ function UndoMessage({ files }: { files: TurnFileChange[] }) {
 }
 
 export function TurnChangesCard({ sessionId, snapshot }: { sessionId: string; snapshot: TurnSnapshot }) {
-  const key = snapshotKey(snapshot);
-  const hasStart = Boolean(snapshot.sha);
-  const [state, setState] = useState<LoadState>(() => initialState(sessionId, key));
-  const [refresh, setRefresh] = useState(0);
   const [phase, setPhase] = useState<UndoPhase>("idle");
   const [undoneLocally, setUndoneLocally] = useState(false);
   const [expanded, setExpanded] = useState(false);
-  const turnRunning = useAppStore((s) => s.busyTurns[sessionId] !== undefined);
-  const rootIdsKey = useAppStore((s) => sameRootSessionIds(s.sessionsByProject, s.projects, sessionId).join("\n"));
-  const rootIds = rootIdsKey.split("\n");
+  const [refreshing, setRefreshing] = useState(false);
+  const turnRunning = useThreadEntry(sessionId, "turn") != null;
+  const entry = useThreadEntry(sessionId, "turnChanges") ?? null;
+  const rootIds = entry?.rootSessionIds ?? [sessionId];
   const { confirm, dialog } = useConfirm();
 
-  useEffect(() => {
-    if (!hasStart) return;
-    if (refresh === 0) {
-      const cached = cachedChanges(sessionId, key);
-      if (cached !== undefined) {
-        setState({ status: "ready", changes: cached });
-        return;
-      }
-    }
-    let active = true;
-    window.cw
-      .getTurnChanges(sessionId)
-      .then((changes) => {
-        cacheChanges(sessionId, key, changes);
-        if (active) setState({ status: "ready", changes });
-      })
-      .catch((err: unknown) => {
-        if (active) setState({ status: "error", message: ipcErrorMessage(err) });
-      });
-    return () => {
-      active = false;
-    };
-  }, [sessionId, key, hasStart, refresh]);
-
-  const refetch = () => setRefresh((value) => value + 1);
-  const changes = state.status === "ready" && state.changes?.turnId === snapshot.turnId ? state.changes : null;
+  const changes = entry?.changes?.turnId === snapshot.turnId ? entry.changes : null;
   const undone = snapshot.undoneAt !== undefined || undoneLocally;
   const dirtyKey = useEditorBuffers((s) => (changes ? dirtyPaths(s.buffers, rootIds, changes.files).join("\n") : ""));
   const dirty = dirtyKey ? dirtyKey.split("\n") : [];
@@ -176,9 +119,21 @@ export function TurnChangesCard({ sessionId, snapshot }: { sessionId: string; sn
   const currentBlockers = (reviewed: TurnChanges) =>
     undoBlockers(
       reviewed,
-      useAppStore.getState().busyTurns[sessionId] !== undefined,
+      isThreadBusy(sessionId),
       dirtyPaths(useEditorBuffers.getState().buffers, rootIds, reviewed.files)
     );
+
+  const refresh = async () => {
+    if (refreshing) return;
+    setRefreshing(true);
+    try {
+      await window.cw.getTurnChanges(sessionId);
+    } catch (err) {
+      useNotifs.getState().push({ kind: "error", title: "Could not refresh this turn’s changes", message: ipcErrorMessage(err) });
+    } finally {
+      setRefreshing(false);
+    }
+  };
 
   const undo = async () => {
     if (phase !== "idle") return;
@@ -187,16 +142,15 @@ export function TurnChangesCard({ sessionId, snapshot }: { sessionId: string; sn
     try {
       fresh = await window.cw.getTurnChanges(sessionId);
     } catch (err) {
-      const message = ipcErrorMessage(err);
-      setState({ status: "error", message });
-      useNotifs.getState().push({ kind: "error", title: "Could not undo this turn", message });
+      useNotifs.getState().push({ kind: "error", title: "Could not undo this turn", message: ipcErrorMessage(err) });
       setPhase("idle");
       return;
     }
-    cacheChanges(sessionId, key, fresh);
-    setState({ status: "ready", changes: fresh });
     const endSha = fresh?.endSha;
-    if (!fresh || !endSha || fresh.turnId !== snapshot.turnId || currentBlockers(fresh).length > 0) {
+    const blockedBy = !fresh || fresh.turnId !== snapshot.turnId ? [TURN_UNAVAILABLE] : currentBlockers(fresh);
+    if (!fresh || !endSha || blockedBy.length > 0) {
+      const reasons = blockedBy.length > 0 ? blockedBy : [MISSING_END_SNAPSHOT];
+      useNotifs.getState().push({ kind: "error", title: "Could not undo this turn", message: reasons.join(". ") });
       setPhase("idle");
       return;
     }
@@ -232,8 +186,6 @@ export function TurnChangesCard({ sessionId, snapshot }: { sessionId: string; sn
       useNotifs.getState().push({ kind: "error", title: "Could not undo this turn", message: ipcErrorMessage(err) });
     } finally {
       setPhase("idle");
-      refetch();
-      void useAppStore.getState().refreshGitStatus(sessionId);
     }
   };
 
@@ -242,8 +194,12 @@ export function TurnChangesCard({ sessionId, snapshot }: { sessionId: string; sn
   let body: ReactNode = null;
   if (snapshot.error) {
     body = <Warning>No change summary for this turn: the snapshot failed ({snapshot.error})</Warning>;
-  } else if (state.status === "error") {
-    body = <Warning onRetry={refetch}>Could not load this turn’s changes: {state.message}</Warning>;
+  } else if (entry?.error && entry.turnId === snapshot.turnId) {
+    body = (
+      <Warning onRefresh={() => void refresh()} refreshing={refreshing}>
+        Could not load this turn’s changes: {entry.error}
+      </Warning>
+    );
   } else if (changes && changes.files.length === 0 && snapshot.endError) {
     body = <Warning>End-of-turn snapshot failed: {snapshot.endError}</Warning>;
   } else if (changes && changes.files.length > 0) {
@@ -298,7 +254,9 @@ export function TurnChangesCard({ sessionId, snapshot }: { sessionId: string; sn
           <Warning>End-of-turn snapshot failed, showing changes up to now: {snapshot.endError}</Warning>
         )}
         {!undone && changes.conflicts.length > 0 && (
-          <Warning>Changed since the turn ended: {changes.conflicts.join(", ")}</Warning>
+          <Warning onRefresh={() => void refresh()} refreshing={refreshing}>
+            Changed since the turn ended: {changes.conflicts.join(", ")}
+          </Warning>
         )}
         {expanded && <div className="turn-changes-files">
           {changes.files.map((file) => {

@@ -16,9 +16,9 @@ import {
   Zap
 } from "lucide-react";
 import type { CommandOption } from "@cw-code/contracts";
-import type { ComposerPrefs, DriverName, ModelOption, PermissionMode, PermissionOption } from "../cw.js";
-import { clearComposerDraft, loadComposerDraft, saveComposerDraft } from "./composerDrafts.js";
-import { getRecentModels, pushRecentModel } from "./lastModel.js";
+import type { AppSettings, ComposerPrefs, DriverName, ModelOption, PermissionMode, PermissionOption } from "../cw.js";
+import { clearComposerDraft, flushComposerDraft, loadComposerDraft, saveComposerDraft } from "./composerDrafts.js";
+import { getRecentModels, pushRecentModel, useRecentModels } from "./lastModel.js";
 import { EffortMenu } from "./EffortMenu.js";
 import { MenuSelect } from "./MenuSelect.js";
 import { ModelPicker } from "./ModelPicker.js";
@@ -74,6 +74,7 @@ export interface ComposerBackend {
   imageTarget: ImageTarget;
   branchGuard?: BranchGuard;
   prefs: ComposerPrefs;
+  prefsLoaded: boolean;
   busy: boolean;
   effectivePermissionMode?: string;
   loadModels(): Promise<ModelOption[]>;
@@ -118,7 +119,7 @@ export function ComposerView({
   backend,
   driver,
   resetKey,
-  modelsRefreshKey = 0,
+  settings = null,
   resetStaleModel = false,
   recipePrefix,
   usageSlot,
@@ -128,20 +129,24 @@ export function ComposerView({
   backend: ComposerBackend;
   driver: DriverName;
   resetKey: string;
-  modelsRefreshKey?: number;
+  settings?: AppSettings | null;
   resetStaleModel?: boolean;
   recipePrefix?: ReactNode;
   usageSlot?: ReactNode;
   top?: ReactNode;
   blockedReason?: string;
 }) {
-  const { prefs, busy } = backend;
+  const { prefs, prefsLoaded, busy } = backend;
+  const settingsKey = useMemo(() => JSON.stringify(settings), [settings]);
   const backendRef = useRef(backend);
   backendRef.current = backend;
   const imageTarget = backend.imageTarget;
-  const [draft, setDraft] = useState(() => loadComposerDraft(resetKey)?.text ?? "");
-  const [caret, setCaret] = useState<number | null>(() => loadComposerDraft(resetKey)?.text.length ?? 0);
-  const [attachments, setAttachments] = useState<string[]>(() => loadComposerDraft(resetKey)?.attachments ?? []);
+  const [initialDraft] = useState(() => loadComposerDraft(resetKey));
+  const [draft, setDraft] = useState(initialDraft?.text ?? "");
+  const [caret, setCaret] = useState<number | null>(initialDraft?.text.length ?? 0);
+  const [attachments, setAttachments] = useState<string[]>(initialDraft?.attachments ?? []);
+  const resetKeyRef = useRef(resetKey);
+  resetKeyRef.current = resetKey;
   const draftRef = useRef(draft);
   draftRef.current = draft;
   const attachmentsRef = useRef(attachments);
@@ -251,9 +256,15 @@ export function ComposerView({
     setAddOpen(false);
     setPickerOpen(false);
     invalidateBranchChoice();
-    // Leaving this composer (another session, or the view unmounting) keeps what was written for when you come back.
-    return () => saveComposerDraft(resetKey, draftRef.current, attachmentsRef.current);
+    return () => {
+      saveComposerDraft(resetKey, draftRef.current, attachmentsRef.current);
+      flushComposerDraft(resetKey);
+    };
   }, [resetKey]);
+
+  useEffect(() => {
+    saveComposerDraft(resetKeyRef.current, draft, attachments);
+  }, [draft, attachments]);
 
   useEffect(() => {
     setShowCustom(false);
@@ -319,6 +330,7 @@ export function ComposerView({
       .then((list) => {
         if (cancelled) return;
         setModels(list);
+        if (!backendRef.current.prefsLoaded) return;
         const initialModel = () =>
           pickInitialModel(list, useAppStore.getState().defaultModelByDriver[driver], getRecentModels(driver));
         if (!prefs.model) {
@@ -344,7 +356,7 @@ export function ComposerView({
     return () => {
       cancelled = true;
     };
-  }, [resetKey, driver, prefs.model, modelsRefreshKey]);
+  }, [resetKey, driver, prefs.model, settingsKey, prefsLoaded]);
 
   useEffect(() => {
     let cancelled = false;
@@ -363,7 +375,7 @@ export function ComposerView({
     return () => {
       cancelled = true;
     };
-  }, [resetKey, driver, modelsRefreshKey]);
+  }, [resetKey, driver, settingsKey]);
 
   useEffect(() => {
     if (!pickerOpen) return;
@@ -408,7 +420,7 @@ export function ComposerView({
     setPickerOpen(true);
   };
 
-  const recentModels = useMemo(() => getRecentModels(driver), [driver, models, prefs.model]);
+  const recentModels = useRecentModels(driver);
   const modelDisplay = showCustom
     ? customModel.trim() || "Custom"
     : (models.find((m) => m.id === baseModelId)?.label ?? "Select model");
@@ -419,11 +431,11 @@ export function ComposerView({
   const effectiveEffort = prefs.effort ?? "medium";
 
   useEffect(() => {
-    if (driver !== "opencode" || showCustom) return;
+    if (!prefsLoaded || driver !== "opencode" || showCustom) return;
     if (effortOptions.some((o) => o.id === effectiveEffort)) return;
     const next = fallbackEffort(effectiveEffort, effortOptions);
     if (next !== effectiveEffort) backendRef.current.savePrefs({ effort: next });
-  }, [driver, showCustom, models, prefs.model, effectiveEffort, effortOptions]);
+  }, [prefsLoaded, driver, showCustom, models, prefs.model, effectiveEffort, effortOptions]);
   const permissions = permissionOptions ?? FALLBACK_PERMISSIONS;
   const effectivePermission = prefs.permissionMode ?? "auto";
   const permissionDisplay = permissions.find((o) => o.id === effectivePermission)?.label ?? "Auto";
@@ -435,10 +447,10 @@ export function ComposerView({
   );
 
   useEffect(() => {
-    if (!permissionOptions || permissionOptions.length === 0) return;
+    if (!prefsLoaded || !permissionOptions || permissionOptions.length === 0) return;
     if (permissionOptions.some((o) => o.id === effectivePermission)) return;
     backendRef.current.savePrefs({ permissionMode: permissionOptions[0].id });
-  }, [permissionOptions, effectivePermission]);
+  }, [prefsLoaded, permissionOptions, effectivePermission]);
 
   const commandList = useMemo(
     () => mergeCommands(driver, driverCommands ?? [], commandAvailability),
@@ -456,10 +468,9 @@ export function ComposerView({
   }, [highlightMentions]);
 
   const clearComposer = () => {
-    // The refs feed the unmount save; a command that swaps this composer out (/new, /clear)
-    // never renders the cleared state, so drop them here instead of waiting for a commit.
     draftRef.current = "";
     attachmentsRef.current = [];
+    clearComposerDraft(resetKeyRef.current);
     setDraft("");
     setCaret(0);
     setAttachments([]);

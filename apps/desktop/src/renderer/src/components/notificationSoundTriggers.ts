@@ -1,8 +1,4 @@
-import type { NotificationSoundEvent, PrDetail, Session, SessionStatus } from "../cw.js";
-import { prKey } from "./prInbox.js";
-import { detailIsCurrent } from "./needsYou.js";
-import { hasUnseen, updatesSince } from "./prUpdates.js";
-import { sessionLinks, type PrSummaryLookup } from "./sessionPrLinks.js";
+import type { NotificationSoundEvent, SessionStatus } from "../cw.js";
 
 export interface SessionSoundState {
   status: SessionStatus;
@@ -24,18 +20,6 @@ export interface SoundTracker {
 }
 
 const EVENT_ORDER: NotificationSoundEvent[] = ["question", "done", "prUpdate"];
-
-export function latestUnseenPrUpdateAt(session: Session, summaryByKey: PrSummaryLookup, detailByKey: Record<string, PrDetail>): number | null {
-  let latest: number | null = null;
-  for (const link of sessionLinks(session)) {
-    const key = prKey(link.ref);
-    const summary = summaryByKey.get(key);
-    const detail = detailByKey[key];
-    if (!summary || !hasUnseen(summary, link) || !detailIsCurrent(detail, summary)) continue;
-    for (const update of updatesSince(detail, link)) latest = Math.max(latest ?? update.at, update.at);
-  }
-  return latest;
-}
 
 function sessionEvents(prev: TrackedSession, next: SessionSoundState): NotificationSoundEvent[] {
   const events: NotificationSoundEvent[] = [];

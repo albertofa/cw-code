@@ -1,47 +1,50 @@
 import { memo, useMemo, type ReactNode } from "react";
 import { ChevronRight, GitBranch, MessageSquare, Timer } from "lucide-react";
-import type { IssueSummary, PrSummary, WorkflowRunSummary } from "../cw.js";
+import type { GitHubRow as GitHubRowData } from "@cw-code/contracts";
+import type { PrWorkflow, RepoRef, Session } from "../cw.js";
 import { useAppStore } from "../stores/appStore.js";
 import { usePrStore } from "../stores/prStore.js";
-import { prKey } from "./prInbox.js";
 import { GitHubAvatar } from "./GitHubAvatar.js";
 import { HoverCard, PeopleCard, StatusCard, type HoverSubject } from "./GitHubHoverCard.js";
 import { GitHubRowAction } from "./GitHubRowAction.js";
 import { DiffBar, VerdictGlyph } from "./GitHubVerdictIcon.js";
 import { openExternalLink } from "./externalLink.js";
 import {
-  formatDuration,
+  avatarUrlOf,
+  deltaLabel,
   externalLinkOf,
+  formatDuration,
   issueVerdict,
   jobPip,
   peopleStack,
   prGates,
   prVerdict,
-  rowDelta,
-  unseenSessionIds,
   runDurationMs,
   runVerdict,
-  sessionsForIssue,
-  sessionsForPr,
-  sessionsForRun,
   stateGlyph,
-  avatarUrlOf,
   type RowSubject
 } from "./githubRowModel.js";
+import { subjectRepoOf } from "./githubViewModel.js";
 import { formatRelativeAge } from "./prInboxModel.js";
 import { useNow } from "./usageFormat.js";
-import { usePrWorkflows } from "./usePrWorkflows.js";
+import { useAppSettings, useAppSettingsError } from "./useAppSettings.js";
 
 const LIVE_TICK_MS = 1000;
+const NO_WORKFLOWS: PrWorkflow[] = [];
 
-export type GitHubRowProps = (
-  | { kind: "pr"; item: PrSummary }
-  | { kind: "issue"; item: IssueSummary }
-  | { kind: "run"; item: WorkflowRunSummary }
-) & {
+export interface GitHubRowProps {
+  row: GitHubRowData;
   viewer: string | null;
+  isCloned: (repo: RepoRef) => boolean;
   onAddQualifier: (key: string, value: string) => void;
-};
+}
+
+function linkedSessions(sessionsByProject: Record<string, Session[]>, ids: string[]): Session[] {
+  if (ids.length === 0) return [];
+  const byId = new Map<string, Session>();
+  for (const sessions of Object.values(sessionsByProject)) for (const session of sessions) byId.set(session.id, session);
+  return ids.flatMap((id) => byId.get(id) ?? []);
+}
 
 function Sep() {
   return <span className="pr-inbox-meta-sep">·</span>;
@@ -291,38 +294,20 @@ function GateCell({ subject, viewer, now }: { subject: RowSubject; viewer: strin
   );
 }
 
-function toSubject(props: GitHubRowProps): RowSubject {
-  if (props.kind === "pr") return { kind: "pr", pr: props.item };
-  if (props.kind === "issue") return { kind: "issue", issue: props.item };
-  return { kind: "run", run: props.item };
-}
-
-export const GitHubRow = memo(function GitHubRow(props: GitHubRowProps) {
-  const { viewer, onAddQualifier } = props;
-  const subject = useMemo(() => toSubject(props), [props.kind, props.item]);
+export const GitHubRow = memo(function GitHubRow({ row, viewer, isCloned, onAddQualifier }: GitHubRowProps) {
+  const { subject, relations } = row;
   const sessionsByProject = useAppStore((s) => s.sessionsByProject);
   const openPr = usePrStore((s) => s.openPr);
-  const { host, owner, repo } = props.item.ref;
-  const cloned = usePrStore((s) => s.projectIdForRef({ host, owner, repo }) !== null);
-  const inboxItems = usePrStore((s) => s.inbox?.items);
-  const { workflows, error: workflowsError, reload: reloadWorkflows } = usePrWorkflows();
-  const live = props.kind === "run" && props.item.status === "in_progress";
+  const cloned = useMemo(() => isCloned(subjectRepoOf(subject)), [isCloned, subject]);
+  const workflows = useAppSettings()?.prWorkflows ?? NO_WORKFLOWS;
+  const workflowsError = useAppSettingsError();
+  const live = subject.kind === "run" && subject.run.status === "in_progress";
   const now = useNow(live ? LIVE_TICK_MS : undefined);
 
-  const allSessions = useMemo(() => Object.values(sessionsByProject).flat(), [sessionsByProject]);
-  const sessions = useMemo(() => {
-    if (subject.kind === "pr") return sessionsForPr(subject.pr, allSessions);
-    if (subject.kind === "issue") return sessionsForIssue(subject.issue, allSessions);
-    return sessionsForRun(subject.run, allSessions);
-  }, [subject, allSessions]);
-
-  const lookupPr = useMemo(() => {
-    const byKey = new Map((inboxItems ?? []).map((pr) => [prKey(pr.ref), pr]));
-    return (ref: PrSummary["ref"]) => byKey.get(prKey(ref));
-  }, [inboxItems]);
-  const unseenIds = useMemo(() => unseenSessionIds(subject, sessions, lookupPr), [subject, sessions, lookupPr]);
+  const sessions = useMemo(() => linkedSessions(sessionsByProject, relations.linkedSessionIds), [sessionsByProject, relations.linkedSessionIds]);
+  const unseenIds = useMemo(() => new Set(relations.unseenSessionIds), [relations.unseenSessionIds]);
   const unseen = unseenIds.size > 0;
-  const delta = rowDelta(subject, sessions, now);
+  const delta = deltaLabel(relations.delta, now);
   const state = stateGlyph(subject);
   const labels = subject.kind === "pr" ? subject.pr.labels : subject.kind === "issue" ? subject.issue.labels : [];
   const title = subject.kind === "pr" ? subject.pr.title : subject.kind === "issue" ? subject.issue.title : subject.run.title;
@@ -364,11 +349,11 @@ export const GitHubRow = memo(function GitHubRow(props: GitHubRowProps) {
       <GateCell subject={subject} viewer={viewer} now={now} />
       <GitHubRowAction
         subject={subject}
+        relations={relations}
         viewer={viewer}
         sessions={sessions}
         workflows={workflows}
         workflowsError={workflowsError}
-        onReloadWorkflows={reloadWorkflows}
         unseen={unseenIds}
         now={now}
       />

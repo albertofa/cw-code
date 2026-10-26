@@ -48,6 +48,7 @@ import {
   type OpencodeRequestInit,
   type OpencodeToolUpdate
 } from "./opencodeProtocol.js";
+import { ActivityNotifier } from "../ActivityNotifier.js";
 import { opencodeV1Protocol } from "./v1/opencodeV1Protocol.js";
 import { opencodeV2Protocol } from "./v2/opencodeV2Protocol.js";
 import { opencodeV2PluginEnv } from "./v2/opencodeV2Plugin.js";
@@ -114,6 +115,7 @@ export class OpencodeDriver implements CliDriver {
   private childToolSeen = new Map<string, Map<string, Map<string, LiveSeen>>>();
   private childPollDone = new Map<string, Set<string>>();
   private childModels = new Map<string, Map<string, string>>();
+  private readonly activityNotifier = new ActivityNotifier();
   private turnMeta = new Map<
     string,
     {
@@ -1413,6 +1415,7 @@ export class OpencodeDriver implements CliDriver {
     }
     this.sessionIds.delete(turnId);
     this.turnMeta.delete(turnId);
+    this.activityNotifier.notify();
     this.watchInfo.delete(turnId);
     this.decoders.delete(turnId);
     const seen = this.toolSeen.get(turnId) ?? new Map<string, LiveSeen>();
@@ -2076,6 +2079,10 @@ export class OpencodeDriver implements CliDriver {
     this.pool.invalidate(cwd);
   }
 
+  onActivityChanged(listener: () => void): () => void {
+    return this.activityNotifier.subscribe(listener);
+  }
+
   dispose(): void {
     this.disposed = true;
     for (const watch of this.watches.values()) watch.abort();
@@ -2111,6 +2118,7 @@ export class OpencodeDriver implements CliDriver {
     this.childModels.clear();
     this.bridgeNeed.clear();
     this.pool.dispose();
+    this.activityNotifier.notify();
   }
 }
 

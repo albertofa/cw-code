@@ -8,8 +8,8 @@ import { ToolCard, ToolRow, type ToolStatus } from "./ToolCard.js";
 import { formatDuration, formatToolDuration } from "./toolSummaries.js";
 import { useElapsed } from "./useElapsed.js";
 import { useAppStore, type ChatMessage } from "../stores/appStore.js";
+import { useThreadEntry, useThreadItems } from "./useThread.js";
 
-const EMPTY_MESSAGES: ChatMessage[] = [];
 const FLASH_MS = 1600;
 const EXCERPT_MAX = 600;
 
@@ -28,6 +28,7 @@ export function subagentToolMessage(t: SubagentToolActivity, turnId: string): Ch
     role: "tool",
     text: `${t.name} ${JSON.stringify(t.input ?? null)?.slice(0, 300) ?? ""}`,
     turnId,
+    seq: 0,
     toolName: t.name,
     toolInput: t.input,
     ...(done ? { toolOutput: t.output, toolDone: true } : {}),
@@ -105,10 +106,8 @@ function SubagentRow({ groupId, item }: { groupId: string; item: SubagentInfo })
   const [open, setOpen] = useState(false);
   const panelId = useId();
   const sessionId = useAppStore((s) => s.activeSessionId ?? undefined);
-  const live = useAppStore((s) => (sessionId ? s.busyTurns[sessionId] !== undefined : false));
-  const messages = useAppStore((s) =>
-    open && sessionId ? (s.messagesBySession[sessionId] ?? EMPTY_MESSAGES) : EMPTY_MESSAGES
-  );
+  const live = useThreadEntry(sessionId, "turn") != null;
+  const messages = useThreadItems(open ? sessionId : undefined);
   const fetched = useAppStore((s) =>
     sessionId && item.agentId ? s.subagentToolsByKey[`${sessionId}:${item.agentId}`] : undefined
   );

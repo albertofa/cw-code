@@ -1,11 +1,9 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
-import { useShallow } from "zustand/react/shallow";
-import type { DriverName } from "./cw.js";
+import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
 import { applyAppearance } from "./appearanceFonts.js";
 import { ThemeSync } from "./components/ThemeSync.js";
+import { HarnessNotices } from "./components/HarnessNotices.js";
 import { collectSubagents } from "./components/subagents.js";
-import { installedHarnesses, isHarnessSkipped } from "./components/harnessAvailability.js";
-import { isWorkingSetStatus } from "./components/workingSet.js";
+import { useHoldRecentThreads, useThreadItemsSelect } from "./components/useThread.js";
 import { Sidebar } from "./components/Sidebar.js";
 import { WindowControls } from "./components/WindowControls.js";
 import { SkillsModal } from "./components/SkillsModal.js";
@@ -27,97 +25,43 @@ import { useTabMenu } from "./components/TabMenu.js";
 import { useDockDrop } from "./components/useDockDrop.js";
 import { useResizableWidth } from "./components/useResizableWidth.js";
 import { usePanelAnimationMs, usePresence } from "./components/usePresence.js";
-import { Notifications, useNotifs } from "./components/Notifications.js";
-import { useAttentionBadge } from "./components/useAttentionBadge.js";
-import { useNeedsYouDetailLoader } from "./components/useNeedsYou.js";
-import { useAutoFollowUp } from "./components/useAutoFollowUp.js";
+import { Notifications } from "./components/Notifications.js";
 import { useNotificationSounds } from "./components/useNotificationSounds.js";
 import { visibleLayerOpen } from "./components/openLayer.js";
-import { ipcErrorMessage } from "./components/ipcError.js";
-import { useAppStore } from "./stores/appStore.js";
+import { useAppStore, type ChatMessage } from "./stores/appStore.js";
 import { rightOpenTabs } from "./stores/panelLayout.js";
 import { selectSessionPanel, usePanelStore } from "./stores/panelStore.js";
-import { useGitHubStore } from "./stores/githubStore.js";
 import { usePrStore } from "./stores/prStore.js";
 import { useSkillsStore } from "./stores/skillsStore.js";
 import { projectDirty, useSettingsDraftStore } from "./stores/settingsDraftStore.js";
 import { prKey } from "./components/prInbox.js";
-import type { TurnEvent } from "./cw.js";
-import { APP_TOPIC, PRS_TOPIC, SIDEBAR_TOPIC, gitTopic, sessionTopic } from "@cw-code/shared/topics";
-import { useDocumentVisible, useTopics } from "./server/useTopics.js";
-
-const VERSION_NOTIF_ID = "cli-versions";
-const BINARY_NOTIF_ID = "cli-binaries";
-const LOAD_NOTIF_ID = "workspace-load";
+import { startAppBridge } from "./server/appBridge.js";
+import { startSidebarBridge } from "./server/sidebarBridge.js";
+import { useConnectionEpoch } from "./server/topics.js";
+import { useHoldGit } from "./components/useGit.js";
 
 const RIGHT_WIDTH_DEFAULT = 520;
 const SIDE_WIDTH_DEFAULT = 320;
 
-const pendingDeltas = new Map<string, string>();
-let deltaRaf = 0;
-
-function flushPendingDeltas(): void {
-  if (pendingDeltas.size === 0) return;
-  const state = useAppStore.getState();
-  for (const [key, text] of pendingDeltas) {
-    const sep = key.indexOf("\n");
-    const sessionId = key.slice(0, sep);
-    const turnId = key.slice(sep + 1);
-    state.applyEvent(sessionId, { type: "assistant.delta", turnId, text });
-  }
-  pendingDeltas.clear();
-  if (deltaRaf !== 0) {
-    cancelAnimationFrame(deltaRaf);
-    deltaRaf = 0;
-  }
+interface SubagentStats {
+  total: number;
+  running: number;
 }
 
-function flushPendingDeltasForSession(sessionId: string): void {
-  const prefix = `${sessionId}\n`;
-  const state = useAppStore.getState();
-  let changed = false;
-  for (const [key, text] of [...pendingDeltas]) {
-    if (!key.startsWith(prefix)) continue;
-    pendingDeltas.delete(key);
-    state.applyEvent(sessionId, { type: "assistant.delta", turnId: key.slice(prefix.length), text });
-    changed = true;
-  }
-  if (changed && pendingDeltas.size === 0 && deltaRaf !== 0) {
-    cancelAnimationFrame(deltaRaf);
-    deltaRaf = 0;
-  }
+function subagentStatsOf(items: ChatMessage[]): SubagentStats {
+  const subagents = collectSubagents(items);
+  return { total: subagents.length, running: subagents.filter((item) => item.status === "running").length };
 }
 
-function handleTurnEvent(msg: { sessionId: string; event: TurnEvent }): void {
-  if (msg.event.type === "assistant.delta") {
-    const key = `${msg.sessionId}\n${msg.event.turnId}`;
-    pendingDeltas.set(key, (pendingDeltas.get(key) ?? "") + msg.event.text);
-    if (deltaRaf === 0) {
-      deltaRaf = requestAnimationFrame(() => {
-        deltaRaf = 0;
-        flushPendingDeltas();
-      });
-    }
-    return;
-  }
-  flushPendingDeltasForSession(msg.sessionId);
-  useAppStore.getState().applyEvent(msg.sessionId, msg.event);
+function sameSubagentStats(a: SubagentStats, b: SubagentStats): boolean {
+  return a.total === b.total && a.running === b.running;
 }
 
 export function App() {
-  useAttentionBadge();
-  useNeedsYouDetailLoader();
-  useAutoFollowUp();
   useNotificationSounds();
   const activeSessionId = useAppStore((s) => s.activeSessionId);
-  const sessionsByProject = useAppStore((s) => s.sessionsByProject);
-  const prRefreshIntervalSeconds = useAppStore((s) => s.prRefreshIntervalSeconds);
   const mainView = usePrStore((s) => s.mainView);
   const runModal = usePrStore((s) => s.runModal);
-  const holdingHours = useAppStore((s) => s.holdingHours);
-  const holdingAutoExpireEnabled = useAppStore((s) => s.holdingAutoExpireEnabled);
-  const settingsVersion = useAppStore((s) => s.settingsVersion);
-  const loadProjects = useAppStore((s) => s.loadProjects);
   const appearance = useAppStore((s) => s.appearance);
   const sessionPanel = usePanelStore((s) => selectSessionPanel(s, activeSessionId ?? undefined));
   const { dockByTab, rightVisible } = sessionPanel;
@@ -139,8 +83,6 @@ export function App() {
   const [skillsOpen, setSkillsOpen] = useState(false);
   const { confirm, dialog: confirmDialog } = useConfirm();
   const settingsActive = mainView.kind === "settings";
-
-  const openSettings = (harness?: DriverName) => usePrStore.getState().openSettings(undefined, harness);
 
   const leaveSettings = useCallback(
     async (go: () => void) => {
@@ -172,34 +114,11 @@ export function App() {
       setPreloadError("window.cw is missing — preload did not load. Restart the Electron app (plain browsers can't reach the backend).");
       return;
     }
-    const loadWorkspace = (): void => {
-      loadProjects().then(
-        () => useNotifs.getState().dismiss(LOAD_NOTIF_ID),
-        (err: unknown) =>
-          useNotifs.getState().upsert({
-            id: LOAD_NOTIF_ID,
-            kind: "error",
-            title: useAppStore.getState().settingsLoaded ? "Could not load projects" : "Could not load projects and settings",
-            message: ipcErrorMessage(err),
-            sticky: true,
-            actions: [{ label: "Retry", primary: true, onClick: loadWorkspace }]
-          })
-      );
-    };
-    loadWorkspace();
-    const off = window.cw.onTurnEvent(handleTurnEvent);
-    const offTitle = window.cw.onSessionTitle(({ sessionId, title }) => useAppStore.getState().applySessionTitle(sessionId, title));
-    const offSession = window.cw.onSessionUpdated((session) => useAppStore.getState().applySession(session));
     const offProject = window.cw.onProjectChanged((project) => useAppStore.getState().applyProject(project));
-    const offSettings = window.cw.onSettingsChanged((settings) => {
-      useAppStore.getState().applySettings(settings);
-      useGitHubStore.getState().applySavedViews(settings.githubSavedViews ?? []);
-    });
+    const offApp = startAppBridge();
+    const offSidebar = startSidebarBridge();
     const offSkills = window.cw.onSkillsChanged((result) => useSkillsStore.getState().applyList(result));
     const offComposer = window.cw.onComposerChanged(({ sessionId, prefs }) => useAppStore.getState().applyComposer(sessionId, prefs));
-    const offGitStatus = window.cw.onGitStatus(({ sessionId, status }) => useAppStore.getState().applyGitStatus(sessionId, status));
-    const offTrackedPrs = window.cw.onTrackedPrs((items) => usePrStore.getState().applyTracked(items));
-    void usePrStore.getState().loadTracked();
     const offUpdates = useAppStore.getState().subscribeUpdates();
     const offShutdown = window.cw.shutdown.onRequested(() => void handleQuitRequest());
     const offShutdownExpired = window.cw.shutdown.onExpired(() => handleShutdownExpired());
@@ -231,190 +150,30 @@ export function App() {
     };
     window.addEventListener("keydown", onKey);
     return () => {
-      off();
-      offTitle();
-      offSession();
       offProject();
-      offSettings();
+      offApp();
+      offSidebar();
       offSkills();
       offComposer();
-      offGitStatus();
-      offTrackedPrs();
       offUpdates();
       offShutdown();
       offShutdownExpired();
-      flushPendingDeltas();
       window.removeEventListener("keydown", onKey);
     };
   }, []);
 
-  const workingSetKey = useMemo(
-    () =>
-      Object.values(sessionsByProject)
-        .flat()
-        .filter((session) => isWorkingSetStatus(session.status))
-        .map((session) => session.id)
-        .sort()
-        .join("|"),
-    [sessionsByProject]
-  );
 
-  const subscribedTopics = useMemo(() => {
-    const topics = [APP_TOPIC, SIDEBAR_TOPIC, PRS_TOPIC];
-    for (const session of Object.values(sessionsByProject).flat()) {
-      if (session.status === "resolved" || session.status === "archived") continue;
-      topics.push(sessionTopic(session.id));
-    }
-    if (activeSessionId) topics.push(sessionTopic(activeSessionId));
-    return topics;
-  }, [sessionsByProject, activeSessionId]);
-  useTopics(subscribedTopics);
+  useHoldGit(activeSessionId);
+  useHoldRecentThreads(activeSessionId);
 
-  const watchedGitKey = useMemo(() => {
-    const ids = new Set(workingSetKey ? workingSetKey.split("|") : []);
-    if (activeSessionId) ids.add(activeSessionId);
-    return [...ids].sort().join("|");
-  }, [workingSetKey, activeSessionId]);
-
-  const documentVisible = useDocumentVisible();
-  const gitTopics = useMemo(
-    () => (documentVisible && watchedGitKey ? watchedGitKey.split("|").map(gitTopic) : []),
-    [documentVisible, watchedGitKey]
-  );
-  useTopics(gitTopics);
-
+  const connectionEpoch = useConnectionEpoch();
+  const resyncedEpoch = useRef(connectionEpoch);
   useEffect(() => {
-    const onFocus = () => {
-      const { activeSessionId: sessionId, refreshGitStatus } = useAppStore.getState();
-      if (sessionId) void refreshGitStatus(sessionId);
-    };
-    window.addEventListener("focus", onFocus);
-    return () => window.removeEventListener("focus", onFocus);
-  }, []);
-
-  useEffect(() => {
-    if (!window.cw) return;
-    const refresh = () => {
-      if (!document.hidden) void usePrStore.getState().refreshInbox();
-    };
-    const onVisibility = () => {
-      if (!document.hidden) refresh();
-    };
-    refresh();
-    const timer = window.setInterval(refresh, Math.max(30, prRefreshIntervalSeconds || 120) * 1000);
-    document.addEventListener("visibilitychange", onVisibility);
-    return () => {
-      window.clearInterval(timer);
-      document.removeEventListener("visibilitychange", onVisibility);
-    };
-  }, [prRefreshIntervalSeconds]);
-
-  useEffect(() => {
-    if (!window.cw || !holdingAutoExpireEnabled) return;
-    const expire = () => void useAppStore.getState().expireHoldingSessions();
-    expire();
-    const timer = window.setInterval(expire, 60_000);
-    return () => window.clearInterval(timer);
-  }, [holdingAutoExpireEnabled, holdingHours]);
-
-  useEffect(() => {
-    if (!window.cw) return;
-    let active = true;
-    let latestRun = 0;
-    const recheckVersions = () => {
-      const run = ++latestRun;
-      const isLatest = () => active && run === latestRun;
-      window.cw
-        .checkVersions()
-        .then((checks) => {
-          if (!isLatest()) return;
-          const installed = installedHarnesses(checks);
-          useAppStore.getState().setInstalledHarnesses(installed);
-          const missing = checks.filter((c) => !c.available && !isHarnessSkipped(c));
-          const failed = checks.filter((c) => c.available && c.actual === null);
-          const outdated = checks.filter((c) => c.actual !== null && !c.ok);
-          const notifs = useNotifs.getState();
-
-          if (installed.length === 0) {
-            notifs.upsert({
-              id: BINARY_NOTIF_ID,
-              kind: "error",
-              title: "No harness installed",
-              message: "Install Claude Code, OpenCode or Codex, or point cw-code at its executable in Settings.",
-              sticky: true,
-              actions: [
-                { label: "Configure Claude", primary: true, onClick: () => openSettings("claude") },
-                { label: "Recheck", onClick: recheckVersions }
-              ]
-            });
-          } else if (missing.length === 0) {
-            notifs.dismiss(BINARY_NOTIF_ID);
-          } else {
-            notifs.upsert({
-              id: BINARY_NOTIF_ID,
-              kind: "error",
-              title: "CLI binary unavailable",
-              message: missing
-                .map((c) => `${c.binary}: could not run '${c.binaryPath}'. Change its executable in Settings.`)
-                .join("\n"),
-              sticky: true,
-              actions: [
-                ...missing.map((c, index) => ({
-                  label: `Configure ${c.binary === "claude" ? "Claude" : c.binary === "codex" ? "Codex" : "OpenCode"}`,
-                  primary: index === 0,
-                  onClick: () => openSettings(c.binary)
-                })),
-                { label: "Recheck", onClick: recheckVersions }
-              ]
-            });
-          }
-
-          if (failed.length === 0 && outdated.length === 0) {
-            notifs.dismiss(VERSION_NOTIF_ID);
-          } else {
-            notifs.upsert({
-              id: VERSION_NOTIF_ID,
-              kind: "warning",
-              title: failed.length > 0 ? "CLI version check failed" : "CLI out of date",
-              message: [
-                ...failed.map((c) => `${c.binary}: could not read the version from '${c.binaryPath}'`),
-                ...outdated.map((c) => `${c.binary}: needs >= ${c.minimum}, found ${c.actual}`)
-              ].join("\n"),
-              sticky: true,
-              actions: [
-                { label: "Recheck", primary: true, onClick: recheckVersions },
-                { label: "Dismiss", onClick: () => notifs.dismiss(VERSION_NOTIF_ID) }
-              ]
-            });
-          }
-
-          if (installed.length > 0 && missing.length === 0 && failed.length === 0 && outdated.length === 0 && settingsVersion > 0) {
-            notifs.push({ kind: "success", title: "CLI settings verified" });
-          }
-        })
-        .catch((err) => {
-          if (!isLatest()) return;
-          const notifs = useNotifs.getState();
-          notifs.upsert({
-            id: BINARY_NOTIF_ID,
-            kind: "error",
-            title: "CLI binary check failed",
-            message: err instanceof Error ? err.message : "Could not validate the configured CLI executables.",
-            sticky: true,
-            actions: [
-              { label: "Configure Claude", primary: true, onClick: () => openSettings("claude") },
-              { label: "Configure OpenCode", onClick: () => openSettings("opencode") },
-              { label: "Configure Codex", onClick: () => openSettings("codex") },
-              { label: "Recheck", onClick: recheckVersions }
-            ]
-          });
-        });
-    };
-    recheckVersions();
-    return () => {
-      active = false;
-    };
-  }, [settingsVersion]);
+    if (resyncedEpoch.current === connectionEpoch) return;
+    resyncedEpoch.current = connectionEpoch;
+    void useAppStore.getState().reloadComposers();
+    if (useSkillsStore.getState().status !== "idle") void useSkillsStore.getState().load();
+  }, [connectionEpoch]);
 
   useEffect(() => {
     if (!activeSessionId) return;
@@ -426,12 +185,7 @@ export function App() {
     return () => window.removeEventListener("cw:open-agents", onOpenAgents);
   }, [activeSessionId, activateOrOpen, setRightVisible]);
 
-  const subagentStats = useAppStore(
-    useShallow((s) => {
-      const items = collectSubagents((activeSessionId ? s.messagesBySession[activeSessionId] : undefined) ?? []);
-      return { total: items.length, running: items.filter((item) => item.status === "running").length };
-    })
-  );
+  const subagentStats = useThreadItemsSelect(activeSessionId, subagentStatsOf, sameSubagentStats);
 
   const { driver, hasPr, hasPreview, isToolAvailable, rightTop: topTool } = useToolAvailability(activeSessionId ?? undefined);
 
@@ -450,6 +204,7 @@ export function App() {
       style={shellStyle}
     >
       <ThemeSync />
+      <HarnessNotices />
       {preloadError && <div className="preload-error">{preloadError}</div>}
       {!preloadError && (
         <>

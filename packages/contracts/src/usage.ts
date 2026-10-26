@@ -80,20 +80,64 @@ export interface AccountUsageSnapshot {
   lastGood?: { fetchedAt: number; state: AccountUsageOk };
 }
 
-export interface UsageLedgerRow extends TokenCounts {
-  /** Local calendar day, YYYY-MM-DD. */
-  day: string;
-  sessionId: string;
-  projectId: string;
-  driver: DriverKind;
-  model: string;
-  turns: number;
-  /** Sum over priced turns; null when no turn in the row was priced. */
+export interface UsageTotals {
+  totalTokens: number;
+  inputTokens: number;
+  cacheReadTokens: number;
+  outputTokens: number;
   costUsd: number | null;
+  turns: number;
+  sessions: number;
   unpricedTurns: number;
 }
 
-export interface UsageLedgerQuery {
-  sinceDay?: string;
-  sessionId?: string;
+export type UsageMetric = "all" | "fresh";
+
+export interface DailyDriverPoint {
+  day: string;
+  byDriver: Record<DriverKind, number>;
+  turns: number;
+}
+
+export interface ModelUsageRow {
+  id: string;
+  driver: DriverKind | null;
+  value: number;
+  freshTokens: number;
+  cacheReadTokens: number;
+  turns: number;
+  costUsd: number | null;
+}
+
+export interface SessionUsageRow {
+  sessionId: string;
+  projectId: string;
+  driver: DriverKind;
+  turns: number;
+  tokens: number;
+  costUsd: number | null;
+}
+
+export interface AccountUsageEntry {
+  snapshot: AccountUsageSnapshot | null;
+  loading: boolean;
+  error: string | null;
+}
+
+export type UsageTopicData = { account: Record<DriverKind, AccountUsageEntry>; accountFetchedAt: number | null; ledgerRev: number };
+
+export interface UsageReportQuery {
+  days: number;
+  metric: UsageMetric;
+  driver: DriverKind | "all";
+  projectId: string;
+}
+
+export interface UsageReport {
+  sinceDay: string;
+  daily: DailyDriverPoint[];
+  models: ModelUsageRow[];
+  sessions: SessionUsageRow[];
+  totals: UsageTotals;
+  ledgerRev: number;
 }

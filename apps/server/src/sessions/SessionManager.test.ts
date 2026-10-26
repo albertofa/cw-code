@@ -407,6 +407,8 @@ describe("SessionManager", () => {
     const { manager } = makeManager();
     const project = manager.addProject("C:\\proj-usage-known");
     const session = await manager.createSession(project.id, "claude");
+    const recorded: string[] = [];
+    manager.onUsageRecorded((sessionId) => recorded.push(sessionId));
     (manager as unknown as { routeEvent(e: ThreadEvent): void }).routeEvent({
       type: "turn.done",
       turnId: "turn-usage-1",
@@ -423,6 +425,7 @@ describe("SessionManager", () => {
     const rows = manager.queryUsageLedger({ sessionId: session.id });
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({ sessionId: session.id, projectId: project.id, driver: "claude", inputTokens: 10, costUsd: 0.02 });
+    expect(recorded).toEqual([session.id]);
     manager.dispose();
   });
 
@@ -510,6 +513,8 @@ describe("SessionManager", () => {
     const { manager } = makeManager();
     const project = manager.addProject("C:\\proj-usage-empty");
     const session = await manager.createSession(project.id, "claude");
+    const recorded: string[] = [];
+    manager.onUsageRecorded((sessionId) => recorded.push(sessionId));
     (manager as unknown as { routeEvent(e: ThreadEvent): void }).routeEvent({
       type: "turn.done",
       turnId: "turn-empty",
@@ -522,6 +527,7 @@ describe("SessionManager", () => {
       backgroundTasks: 0
     });
     expect(manager.queryUsageLedger({ sessionId: session.id })).toEqual([]);
+    expect(recorded).toEqual([]);
     manager.dispose();
   });
 
@@ -1548,6 +1554,27 @@ describe("SessionManager", () => {
     manager.dispose();
   });
 
+  it("announces snapshot changes after the end snapshot is written and after an undo", async () => {
+    const { manager, fake, project } = makeGitSandboxManager("cw-turn-snapshot-listener-");
+    const session = await manager.createSession(project.id, "claude", { baseBranch: "main" });
+    const worktreePath = session.worktreePath;
+    if (!worktreePath) throw new Error("expected a worktree-backed session");
+    const changed: string[] = [];
+    manager.onSnapshotChanged((sessionId) => changed.push(sessionId));
+
+    const turnId = await manager.startTurn(session.id, "edit");
+    writeFileSync(join(worktreePath, "created.txt"), "created", "utf8");
+    expect(changed).toEqual([]);
+    fake.completeAll();
+    const endSha = (await manager.turnChanges(session.id))?.endSha;
+    if (!endSha) throw new Error("expected an end snapshot");
+    expect(changed).toEqual([session.id]);
+
+    await manager.undoTurn(session.id, turnId, endSha);
+    expect(changed).toEqual([session.id, session.id]);
+    manager.dispose();
+  });
+
   it("treats nested project roots as shared by the undo guard, but not sibling folders with a common prefix", async () => {
     const { manager, fake, project, repository } = makeGitSandboxManager("cw-turn-nested-root-");
     const nestedRoot = join(repository, "sub");
@@ -2507,6 +2534,23 @@ describe("SessionManager", () => {
 
     const meta = manager.markPrSeen(session.id, widgets, "a2", 12_345);
     expect(meta.prs?.[0]).toMatchObject({ lastSeenSha: "a2", lastSeenAt: 12_345 });
+    manager.dispose();
+  });
+
+  it("never moves a pull request's seen state backwards when it is linked again", async () => {
+    const { manager } = makeManager();
+    const project = manager.addProject("C:\\proj-relink-seen");
+    const session = await manager.createSession(project.id, "claude");
+    const widgets = { host: "github.com", owner: "acme", repo: "widgets", number: 42 };
+    const stale = { ref: widgets, origin: "linked" as const, lastSeenSha: "a", lastSeenAt: 100 };
+    manager.linkPr(session.id, stale);
+    manager.markPrSeen(session.id, widgets, "a2", 500);
+
+    let meta = manager.linkPr(session.id, { ...stale, workflowId: "babysit" });
+    expect(meta.prs?.[0]).toMatchObject({ workflowId: "babysit", lastSeenSha: "a2", lastSeenAt: 500 });
+
+    meta = manager.linkPr(session.id, { ...stale, lastSeenSha: "a3", lastSeenAt: 900 });
+    expect(meta.prs?.[0]).toMatchObject({ lastSeenSha: "a3", lastSeenAt: 900 });
     manager.dispose();
   });
 
@@ -4635,5 +4679,321 @@ describe("SessionManager pending requests", () => {
     expect(pendingIds(failed.manager, failed.session.id)).toEqual([]);
     expect(failed.received.some(({ event }) => event.type === "question.resolved" && event.answers === null)).toBe(true);
     failed.manager.dispose();
+  });
+});
+
+describe("SessionManager status machine", () => {
+  function storeOf(manager: SessionManager): SessionStore {
+    return (manager as unknown as { store: SessionStore }).store;
+  }
+
+  function recordSessions(manager: SessionManager): SessionMeta[] {
+    const emitted: SessionMeta[] = [];
+    manager.setSessionEmitter((session) => emitted.push({ ...session }));
+    return emitted;
+  }
+
+  it("emits working before the driver starts the turn", async () => {
+    const { manager, fake } = makeManager();
+    const project = manager.addProject("C:\\proj-status-working");
+    const session = await manager.createSession(project.id, "claude");
+    const order: string[] = [];
+    manager.setSessionEmitter((updated) => order.push(`emit:${updated.status}`));
+    const startTurn = fake.startTurn.bind(fake);
+    fake.startTurn = (request) => {
+      order.push(`driver:${storeOf(manager).getSession(session.id)?.status}`);
+      return startTurn(request);
+    };
+
+    await manager.startTurn(session.id, "hello");
+
+    expect(order.slice(0, 2)).toEqual(["emit:working", "driver:working"]);
+    manager.dispose();
+  });
+
+  it("restores the previous status and emits it when the turn fails to start", async () => {
+    const { dir, manager, project } = makePrManager({});
+    const tracePath = join(dir, "session-status.jsonl");
+    initSessionStatusTrace({ filePath: tracePath });
+    try {
+      const session = await manager.createSession(project.id, "claude");
+      manager.setSessionStatus(session.id, "holding");
+      const emitted = recordSessions(manager);
+      (manager as unknown as { ensureWorktree(sessionId: string): Promise<string> }).ensureWorktree = () => Promise.reject(new Error("worktree boom"));
+
+      await expect(manager.startTurn(session.id, "hello")).rejects.toThrow("worktree boom");
+
+      expect(emitted.map((item) => item.status)).toEqual(["working", "holding"]);
+      expect(storeOf(manager).getSession(session.id)?.status).toBe("holding");
+      const reasons = readStatusTransitions(tracePath).filter((entry) => entry.sessionId === session.id).map((entry) => entry.reason);
+      expect(reasons.slice(-2)).toEqual(["turn-start", "turn-start-failed"]);
+      expect(manager.listActiveTurns()).toEqual([]);
+    } finally {
+      resetSessionStatusTraceForTests();
+      manager.dispose();
+    }
+  });
+
+  it("restores the previous idleSince and updatedAt when the turn fails to start", async () => {
+    const { manager } = makeManager();
+    const project = manager.addProject("C:\\proj-status-revert-idle");
+    const session = await manager.createSession(project.id, "claude");
+    const before = { ...storeOf(manager).getSession(session.id) };
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    (manager as unknown as { ensureWorktree(sessionId: string): Promise<string> }).ensureWorktree = () => Promise.reject(new Error("worktree boom"));
+
+    const [result] = await Promise.allSettled([manager.startTurn(session.id, "hello")]);
+
+    expect(result.status).toBe("rejected");
+    const after = storeOf(manager).getSession(session.id);
+    expect(after?.status).toBe("idle");
+    expect(after?.idleSince).toBe(before.idleSince);
+    expect(after?.updatedAt).toBe(before.updatedAt);
+    manager.dispose();
+  });
+
+  it("late turn.done while a start is pending keeps working", async () => {
+    const { manager, fake } = makeManager();
+    const project = manager.addProject("C:\\proj-status-late-done");
+    const session = await manager.createSession(project.id, "claude");
+    const interrupted = await manager.startTurn(session.id, "first");
+    manager.interrupt(interrupted);
+    expect(storeOf(manager).getSession(session.id)?.status).toBe("holding");
+    const startTurn = fake.startTurn.bind(fake);
+    fake.startTurn = (request) => {
+      fake.complete(interrupted);
+      expect(storeOf(manager).getSession(session.id)?.status).toBe("working");
+      return startTurn(request);
+    };
+
+    const turnId = await manager.startTurn(session.id, "second");
+
+    expect(storeOf(manager).getSession(session.id)?.status).toBe("working");
+    expect(storeOf(manager).getSession(session.id)?.resumeCursor).toBe(`cursor-${interrupted}`);
+    expect(manager.listActiveTurns().map((turn) => turn.turnId)).toEqual([turnId]);
+    manager.dispose();
+  });
+
+  it("restores working when a late turn.error lands while a start is pending", async () => {
+    const { manager, fake } = makeManager();
+    const project = manager.addProject("C:\\proj-status-late-error");
+    const session = await manager.createSession(project.id, "claude");
+    const interrupted = await manager.startTurn(session.id, "first");
+    manager.interrupt(interrupted);
+    const routeEvent = (manager as unknown as { routeEvent(e: ThreadEvent): void }).routeEvent.bind(manager);
+    const startTurn = fake.startTurn.bind(fake);
+    fake.startTurn = (request) => {
+      routeEvent({ type: "turn.error", turnId: interrupted, message: "late" });
+      return startTurn(request);
+    };
+
+    await manager.startTurn(session.id, "second");
+
+    expect(storeOf(manager).getSession(session.id)?.status).toBe("working");
+    manager.dispose();
+  });
+
+  it("does not touch the status when a second start is rejected as busy", async () => {
+    const { manager, fake } = makeManager();
+    const project = manager.addProject("C:\\proj-status-busy");
+    const session = await manager.createSession(project.id, "claude");
+    await manager.startTurn(session.id, "first");
+    const emitted = recordSessions(manager);
+
+    await expect(manager.startTurn(session.id, "second")).rejects.toThrow(/busy/);
+
+    expect(emitted).toEqual([]);
+    expect(storeOf(manager).getSession(session.id)?.status).toBe("working");
+    fake.completeAll();
+    manager.dispose();
+  });
+
+  it("emits the session when a turn completes or errors", async () => {
+    const { manager, fake, received } = makeManager();
+    const project = manager.addProject("C:\\proj-status-end");
+    const session = await manager.createSession(project.id, "claude");
+    const turnId = await manager.startTurn(session.id, "hello");
+    const emitted = recordSessions(manager);
+
+    fake.complete(turnId);
+    expect(emitted.at(-1)?.status).toBe("done");
+
+    const second = await manager.startTurn(session.id, "again");
+    (manager as unknown as { routeEvent(e: ThreadEvent): void }).routeEvent({ type: "turn.error", turnId: second, message: "failed" });
+    expect(received.some(({ event }) => event.type === "turn.error")).toBe(true);
+    expect(emitted.at(-1)?.status).toBe("holding");
+    manager.dispose();
+  });
+
+  it("marks a turn as seen only for done sessions", async () => {
+    const { manager } = makeManager();
+    const project = manager.addProject("C:\\proj-status-seen");
+    const session = await manager.createSession(project.id, "claude");
+    const store = storeOf(manager);
+    const emitted = recordSessions(manager);
+
+    expect(manager.markTurnSeen(session.id)).toBeNull();
+    expect(manager.markTurnSeen("missing")).toBeNull();
+    store.updateSession(session.id, { status: "working" });
+    expect(manager.markTurnSeen(session.id)).toBeNull();
+    expect(emitted).toEqual([]);
+
+    store.updateSession(session.id, { status: "done" });
+    expect(manager.markTurnSeen(session.id)?.status).toBe("holding");
+    expect(emitted.map((item) => item.status)).toEqual(["holding"]);
+    expect(manager.markTurnSeen(session.id)).toBeNull();
+    manager.dispose();
+  });
+
+  it("reopens sessions according to the open reason", async () => {
+    const { manager } = makeManager();
+    const project = manager.addProject("C:\\proj-status-open");
+    const store = storeOf(manager);
+    const resolved = await manager.createSession(project.id, "claude");
+    await manager.resolveSession(resolved.id, "resolved");
+    const done = await manager.createSession(project.id, "claude");
+    store.updateSession(done.id, { status: "done" });
+    const archived = await manager.createSession(project.id, "claude");
+    await manager.resolveSession(archived.id, "archived");
+    const emitted = recordSessions(manager);
+
+    expect(manager.openSession(done.id, "select")).toBeNull();
+    expect(store.getSession(done.id)?.status).toBe("done");
+    expect(manager.openSession(archived.id, "restore")).toBeNull();
+    expect(manager.openSession("missing", "restore")).toBeNull();
+    expect(manager.openSession(resolved.id, "select")).toBeNull();
+    expect(manager.openSession(resolved.id, "restore")).toBeNull();
+    expect(store.getSession(resolved.id)?.status).toBe("resolved");
+    expect(emitted).toEqual([]);
+
+    expect(manager.openSession(done.id, "restore")?.status).toBe("holding");
+    expect(emitted.map((item) => item.status)).toEqual(["holding"]);
+    manager.dispose();
+  });
+
+  it("expires holding sessions only past the configured threshold and only when enabled", async () => {
+    const { manager } = makeManager();
+    const project = manager.addProject("C:\\proj-status-expire");
+    const store = storeOf(manager);
+    const session = await manager.createSession(project.id, "claude");
+    store.updateSession(session.id, { status: "holding" });
+    const holdingSince = store.getSession(session.id)?.updatedAt ?? 0;
+    const hour = 3_600_000;
+    const emitted = recordSessions(manager);
+
+    expect(manager.expireDueHoldingSessions(holdingSince + 3 * hour)).toEqual([]);
+    manager.setSettings({ holdingAutoExpireEnabled: true, holdingHours: 3 });
+    expect(manager.expireDueHoldingSessions(holdingSince + 3 * hour - 1)).toEqual([]);
+    expect(store.getSession(session.id)?.status).toBe("holding");
+
+    const expired = manager.expireDueHoldingSessions(holdingSince + 3 * hour);
+
+    expect(expired.map((item) => item.id)).toEqual([session.id]);
+    expect(store.getSession(session.id)?.status).toBe("idle");
+    expect(emitted.at(-1)?.status).toBe("idle");
+    manager.dispose();
+  });
+
+  it("emits a thread notice when resolving keeps a dirty worktree", async () => {
+    const { manager, project, received } = makeGitSandboxManager("cw-resolve-notice-");
+    const session = await manager.createSession(project.id, "claude", { baseBranch: "main" });
+    writeFileSync(join(session.worktreePath!, "README.md"), "changed\n", "utf8");
+
+    const result = await manager.resolveSession(session.id, "resolved", { removeWorktree: true });
+
+    expect(result.dirtyBlocked).toBe(true);
+    const notices = received.flatMap(({ sessionId, event }) => (sessionId === session.id && event.type === "session.notice" ? [event] : []));
+    expect(notices).toHaveLength(1);
+    expect(notices[0]).toMatchObject({ severity: "error" });
+    expect(notices[0].text).toContain("Worktree kept");
+    manager.dispose();
+  });
+
+  it("emits the destroy-script failure as a thread notice and skips notices for automatic resolves", async () => {
+    const { manager, project, received } = makeGitSandboxManager("cw-resolve-notice-script-");
+    manager.updateProjectSettings(project.id, { destroyScript: "exit 4" });
+    const manual = await manager.createSession(project.id, "claude", { baseBranch: "main" });
+    await manager.resolveSession(manual.id, "resolved", { removeWorktree: true });
+    const automatic = await manager.createSession(project.id, "claude", { baseBranch: "main" });
+    await manager.resolveSession(automatic.id, "resolved", { removeWorktree: true, auto: true });
+
+    const noticesFor = (sessionId: string) =>
+      received.flatMap(({ sessionId: id, event }) => (id === sessionId && event.type === "session.notice" ? [event.text] : []));
+    expect(noticesFor(manual.id).some((text) => text.includes("Destroy script failed"))).toBe(true);
+    expect(noticesFor(automatic.id)).toEqual([]);
+    manager.dispose();
+  });
+});
+
+class ActivityDriver implements CliDriver {
+  readonly kind = "claude" as const;
+  private readonly listeners = new Set<() => void>();
+  async listSessions(): Promise<[]> {
+    return [];
+  }
+  async getHistory(): Promise<HistoryMessage[]> {
+    return [];
+  }
+  startTurn(): TurnHandle {
+    return { turnId: randomUUID(), events: (async function* () {})() };
+  }
+  interrupt(): void {}
+  async renameSession(): Promise<void> {}
+  async *events(): AsyncIterable<never> {}
+  onActivityChanged(listener: () => void): () => void {
+    this.listeners.add(listener);
+    return () => this.listeners.delete(listener);
+  }
+  changeActivity(): void {
+    for (const listener of [...this.listeners]) listener();
+  }
+  dispose(): void {}
+}
+
+describe("SessionManager driver activity", () => {
+  function setupActivity() {
+    const dir = mkdtempSync(join(tmpdir(), "cw-driver-activity-"));
+    const generations: ActivityDriver[] = [];
+    const manager = new SessionManager({
+      dbPath: join(dir, "test.db"),
+      settingsPath: join(dir, "settings.json"),
+      driverFactory: () => {
+        const driver = new ActivityDriver();
+        generations.push(driver);
+        return { claude: driver, opencode: driver, codex: driver };
+      }
+    });
+    return { manager, generations };
+  }
+
+  it("forwards a driver activity change once per change, including after the drivers are rebuilt", () => {
+    const { manager, generations } = setupActivity();
+    const changes: number[] = [];
+    manager.onDriverActivityChanged(() => changes.push(changes.length));
+
+    generations[0]?.changeActivity();
+    expect(changes).toHaveLength(1);
+
+    manager.reinitializeDrivers();
+    expect(generations).toHaveLength(2);
+    generations[0]?.changeActivity();
+    generations[1]?.changeActivity();
+    expect(changes).toHaveLength(2);
+    manager.dispose();
+  });
+
+  it("stops forwarding to a listener that unsubscribed and survives one that throws", () => {
+    const { manager, generations } = setupActivity();
+    const seen: string[] = [];
+    manager.onDriverActivityChanged(() => {
+      throw new Error("listener failed");
+    });
+    const stop = manager.onDriverActivityChanged(() => seen.push("removed"));
+    manager.onDriverActivityChanged(() => seen.push("kept"));
+    stop();
+
+    generations[0]?.changeActivity();
+    expect(seen).toEqual(["kept"]);
+    manager.dispose();
   });
 });

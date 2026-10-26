@@ -1,4 +1,3 @@
-import type { AttentionState } from "./attention.js";
 import type { ServerEndpoint } from "./protocol.js";
 import type { ShutdownRequestedEvent } from "./shutdown.js";
 import type { UpdateActionResult, UpdateChannel, UpdateInstallRequest, UpdateState } from "./updates.js";
@@ -14,7 +13,6 @@ export interface DesktopApi {
   zoomIn(): void;
   zoomOut(): void;
   zoomReset(): void;
-  setAttention(state: AttentionState): void;
   pickDirectory(): Promise<string | null>;
   openPath(path: string): Promise<void>;
   openExternal(url: string): Promise<void>;

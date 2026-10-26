@@ -1,17 +1,19 @@
 import { Fragment, type MouseEvent as ReactMouseEvent } from "react";
-import type { DockableTabId } from "@cw-code/contracts";
+import type { DockableTabId, SessionPrItem } from "@cw-code/contracts";
 import type { DriverName } from "../cw.js";
-import { useAppStore } from "../stores/appStore.js";
 import { resolveBottomActive, rightOpenTabs } from "../stores/panelLayout.js";
 import { selectSessionPanel, usePanelStore } from "../stores/panelStore.js";
 import { DriverIcon } from "./DriverIcon.js";
 import { PanelToggles } from "./PanelToggles.js";
 import { endTabDrag, startTabDrag, useDockDrop } from "./useDockDrop.js";
-import { branchMismatch } from "./sessionBranch.js";
-import { useLinkedPrs } from "./useLinkedPr.js";
+import { useBranchMismatched, useGitStatus } from "./useGit.js";
+import { usePrDetails, usePrSummaries } from "./usePrs.js";
+import { useThreadEntry } from "./useThread.js";
 import { TOOL_TABS, isHarnessTabId } from "./toolTabs.js";
 import { checkCountsTone, checksTone, railGroups, type RailDotTone } from "./railTools.js";
 import "./toolRail.css";
+
+const EMPTY_PR_ITEMS: SessionPrItem[] = [];
 
 export interface SubagentStats {
   total: number;
@@ -19,17 +21,20 @@ export interface SubagentStats {
 }
 
 function PrDot({ sessionId }: { sessionId: string }) {
-  const { items, session } = useLinkedPrs(sessionId);
-  const gitStatus = useAppStore((s) => s.gitStatusBySession[sessionId]);
-  const fallback = branchMismatch(session, gitStatus) ? undefined : gitStatus?.pullRequest?.checks;
-  const linked = checksTone(items.flatMap((item) => (item.summary ?? item.detail)?.ci ?? []));
+  const items = useThreadEntry(sessionId, "prItems") ?? EMPTY_PR_ITEMS;
+  const summaries = usePrSummaries();
+  const details = usePrDetails();
+  const gitStatus = useGitStatus(sessionId);
+  const branchMismatched = useBranchMismatched(sessionId);
+  const fallback = branchMismatched ? undefined : gitStatus?.pullRequest?.checks;
+  const linked = checksTone(items.flatMap((item) => (item.link ? ((summaries.get(item.key) ?? details[item.key])?.ci ?? []) : [])));
   const tone: RailDotTone | null = linked ?? checkCountsTone(fallback);
   if (tone === null) return null;
   return <span className={`rail-dot ${tone}`} aria-hidden="true" />;
 }
 
 function DiffBadge({ sessionId }: { sessionId: string }) {
-  const dirtyCount = useAppStore((s) => s.gitStatusBySession[sessionId]?.dirtyCount ?? 0);
+  const dirtyCount = useGitStatus(sessionId)?.dirtyCount ?? 0;
   if (dirtyCount === 0) return null;
   return <span className="rail-badge" aria-hidden="true">{dirtyCount > 99 ? "99+" : dirtyCount}</span>;
 }

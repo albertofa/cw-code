@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
 import { AlertTriangle, Check, RefreshCw } from "lucide-react";
-import type { DriverName, Project, Session } from "../cw.js";
+import type { DailyDriverPoint, ModelUsageRow, SessionUsageRow, UsageMetric } from "@cw-code/contracts";
+import type { DriverName, Project, Session, UsageReport } from "../cw.js";
 import { useAppStore } from "../stores/appStore.js";
 import { usePrStore } from "../stores/prStore.js";
-import { useUsageStore } from "../stores/usageStore.js";
 import { DriverIcon } from "./DriverIcon.js";
 import { UsagePlanCard } from "./UsagePlanCard.js";
 import { MenuSelect } from "./MenuSelect.js";
@@ -12,34 +12,18 @@ import { formatRelativeAge } from "./prInboxModel.js";
 import { useRefreshFeedback } from "./refreshFeedback.js";
 import { formatTokensShort } from "./subagents.js";
 import { harnessLabel } from "./toolTabs.js";
-import {
-  byModel,
-  dailyByDriver,
-  localDayString,
-  topSessions,
-  totals,
-  type DailyDriverPoint,
-  type ModelUsageRow,
-  type SessionUsageRow,
-  type UsageMetric
-} from "./usageModel.js";
+import { ipcErrorMessage } from "./ipcError.js";
+import { accountRefreshFailed, useAccountFetchedAt, useLedgerRev, useUsageTopicFailed } from "./useUsage.js";
+import { useConnectionEpoch } from "../server/topics.js";
 
 const DRIVERS: DriverName[] = ["claude", "codex", "opencode"];
 const STACK_ORDER: DriverName[] = ["codex", "claude", "opencode"];
 const RANGE_OPTIONS = [7, 30, 90];
-const POLL_MS = 5 * 60 * 1000;
-const LEDGER_DEBOUNCE_MS = 2000;
 
 function niceMax(v: number): number {
   if (v <= 0) return 1;
   const e = Math.pow(10, Math.floor(Math.log10(v)));
   return Math.ceil(v / e / 2) * 2 * e;
-}
-
-function sinceDayFor(days: number, today: Date): string {
-  const since = new Date(today);
-  since.setDate(since.getDate() - (days - 1));
-  return localDayString(since);
 }
 
 function DailyChart({ points, visibleDrivers, days }: { points: DailyDriverPoint[]; visibleDrivers: DriverName[]; days: number }) {
@@ -280,14 +264,10 @@ function SessionsTable({
 export function UsageView() {
   const projects = useAppStore((s) => s.projects);
   const sessionsByProject = useAppStore((s) => s.sessionsByProject);
-  const accountByDriver = useUsageStore((s) => s.accountByDriver);
-  const accountLoading = useUsageStore((s) => s.accountLoading);
-  const accountError = useUsageStore((s) => s.accountError);
-  const accountFetchedAt = useUsageStore((s) => s.accountFetchedAt);
-  const ledgerRows = useUsageStore((s) => s.ledgerRows);
-  const ledgerError = useUsageStore((s) => s.ledgerError);
-  const refreshAccount = useUsageStore((s) => s.refreshAccount);
-  const loadLedger = useUsageStore((s) => s.loadLedger);
+  const accountFetchedAt = useAccountFetchedAt();
+  const ledgerRev = useLedgerRev();
+  const usageTopicFailed = useUsageTopicFailed();
+  const connectionEpoch = useConnectionEpoch();
   const openSettings = usePrStore((s) => s.openSettings);
   const now = useNow();
 
@@ -295,35 +275,29 @@ export function UsageView() {
   const [metric, setMetric] = useState<UsageMetric>("all");
   const [driverFilter, setDriverFilter] = useState<DriverName | "all">("all");
   const [projectFilter, setProjectFilter] = useState<string>("all");
+  const [report, setReport] = useState<UsageReport | null>(null);
+  const [reportError, setReportError] = useState<string | null>(null);
 
-  const daysRef = useRef(days);
-  daysRef.current = days;
-  const debounceRef = useRef<number | null>(null);
+  const query = useMemo(() => ({ days, metric, driver: driverFilter, projectId: projectFilter }), [days, metric, driverFilter, projectFilter]);
+  const requestSeq = useRef(0);
+
+  const loadReport = useCallback(async () => {
+    const requestId = ++requestSeq.current;
+    try {
+      const next = await window.cw.usageReport(query);
+      if (requestId !== requestSeq.current) return;
+      setReport(next);
+      setReportError(null);
+    } catch (err) {
+      if (requestId !== requestSeq.current) return;
+      setReportError(ipcErrorMessage(err));
+    }
+  }, [query]);
 
   useEffect(() => {
-    void refreshAccount(DRIVERS, false);
-    const interval = window.setInterval(() => void refreshAccount(DRIVERS, false), POLL_MS);
-    return () => window.clearInterval(interval);
-  }, [refreshAccount]);
-
-  useEffect(() => {
-    void loadLedger({ sinceDay: sinceDayFor(days, new Date()) });
-  }, [days, loadLedger]);
-
-  useEffect(() => {
-    const off = window.cw.onTurnEvent((msg) => {
-      if (msg.event.type !== "turn.done") return;
-      if (debounceRef.current !== null) window.clearTimeout(debounceRef.current);
-      debounceRef.current = window.setTimeout(() => {
-        debounceRef.current = null;
-        void loadLedger({ sinceDay: sinceDayFor(daysRef.current, new Date()) });
-      }, LEDGER_DEBOUNCE_MS);
-    });
-    return () => {
-      off();
-      if (debounceRef.current !== null) window.clearTimeout(debounceRef.current);
-    };
-  }, [loadLedger]);
+    if (ledgerRev === null && !usageTopicFailed) return;
+    void loadReport();
+  }, [loadReport, ledgerRev, usageTopicFailed, connectionEpoch]);
 
   const sessionById = useMemo(() => {
     const map = new Map<string, Session>();
@@ -332,26 +306,12 @@ export function UsageView() {
   }, [sessionsByProject]);
   const projectById = useMemo(() => new Map(projects.map((p) => [p.id, p])), [projects]);
 
-  const filteredRows = useMemo(
-    () =>
-      ledgerRows.filter(
-        (r) => (driverFilter === "all" || r.driver === driverFilter) && (projectFilter === "all" || r.projectId === projectFilter)
-      ),
-    [ledgerRows, driverFilter, projectFilter]
-  );
-
   const visibleDrivers = driverFilter === "all" ? DRIVERS : [driverFilter];
-  const dailyPoints = useMemo(() => dailyByDriver(filteredRows, days, metric, new Date()), [filteredRows, days, metric]);
-  const modelRows = useMemo(() => byModel(filteredRows, metric, 6), [filteredRows, metric]);
-  const sessionRows = useMemo(() => topSessions(filteredRows, 5), [filteredRows]);
-  const totalsRow = useMemo(() => totals(filteredRows), [filteredRows]);
 
   const refreshAll = useCallback(async () => {
-    await Promise.all([refreshAccount(DRIVERS, true), loadLedger({ sinceDay: sinceDayFor(daysRef.current, new Date()) })]);
-    const state = useUsageStore.getState();
-    const failed = DRIVERS.some((d) => state.accountError[d] || state.accountByDriver[d]?.state.status === "error");
-    if (failed) throw new Error("Some plan limits could not be refreshed");
-  }, [refreshAccount, loadLedger]);
+    await Promise.all([window.cw.refreshAccountUsage(true), loadReport()]);
+    if (DRIVERS.some(accountRefreshFailed)) throw new Error("Some plan limits could not be refreshed");
+  }, [loadReport]);
   const refresh = useRefreshFeedback(refreshAll);
 
   const refreshStatus = refresh.busy
@@ -364,6 +324,9 @@ export function UsageView() {
           ? "Updated just now"
           : `Updated ${formatRelativeAge(accountFetchedAt, now)} ago`;
 
+  const dailyPoints = report?.daily ?? [];
+  const modelRows = report?.models ?? [];
+  const sessionRows = report?.sessions ?? [];
   const chartTotal = dailyPoints.reduce((sum, p) => sum + visibleDrivers.reduce((s, d) => s + p.byDriver[d], 0), 0);
   const modelsTotal = modelRows.reduce((sum, r) => sum + r.value, 0);
 
@@ -401,14 +364,7 @@ export function UsageView() {
           </div>
           <div className="usage-cards">
             {DRIVERS.map((d) => (
-              <UsagePlanCard
-                key={d}
-                driver={d}
-                snapshot={accountByDriver[d]}
-                loading={!!accountLoading[d]}
-                error={accountError[d]}
-                onOpenSettings={(driver) => openSettings("harness", driver)}
-              />
+              <UsagePlanCard key={d} driver={d} onOpenSettings={(driver) => openSettings("harness", driver)} />
             ))}
           </div>
         </div>
@@ -454,7 +410,7 @@ export function UsageView() {
             </div>
           </div>
 
-          {ledgerError ? (
+          {reportError ? (
             <div className="usage-empty-block">
               <div className="usage-empty">
                 <span className="usage-empty-ic" aria-hidden="true">
@@ -462,44 +418,46 @@ export function UsageView() {
                 </span>
                 <div>
                   <b>Couldn&apos;t load token usage</b>
-                  {ledgerError}
+                  {reportError}
                 </div>
               </div>
-              <button className="usage-btn" onClick={() => void loadLedger({ sinceDay: sinceDayFor(days, new Date()) })}>
+              <button className="usage-btn" onClick={() => void loadReport()}>
                 Retry
               </button>
             </div>
+          ) : !report ? (
+            <div className="usage-empty-line">Loading token usage…</div>
           ) : (
             <>
               <div className="usage-tiles">
                 <div className="usage-tile">
                   <div className="usage-tile-k">Total tokens</div>
-                  <div className="usage-tile-n">{formatTokensShort(totalsRow.totalTokens)}</div>
+                  <div className="usage-tile-n">{formatTokensShort(report.totals.totalTokens)}</div>
                   <div className="usage-tile-s">
-                    {totalsRow.turns} turns · {totalsRow.sessions} sessions
+                    {report.totals.turns} turns · {report.totals.sessions} sessions
                   </div>
                 </div>
                 <div className="usage-tile">
                   <div className="usage-tile-k">Input</div>
-                  <div className="usage-tile-n">{formatTokensShort(totalsRow.inputTokens)}</div>
+                  <div className="usage-tile-n">{formatTokensShort(report.totals.inputTokens)}</div>
                   <div className="usage-tile-s">new, uncached</div>
                 </div>
                 <div className="usage-tile">
                   <div className="usage-tile-k">Cache read</div>
-                  <div className="usage-tile-n">{formatTokensShort(totalsRow.cacheReadTokens)}</div>
+                  <div className="usage-tile-n">{formatTokensShort(report.totals.cacheReadTokens)}</div>
                   <div className="usage-tile-s">reused context</div>
                 </div>
                 <div className="usage-tile">
                   <div className="usage-tile-k">Output</div>
-                  <div className="usage-tile-n">{formatTokensShort(totalsRow.outputTokens)}</div>
+                  <div className="usage-tile-n">{formatTokensShort(report.totals.outputTokens)}</div>
                   <div className="usage-tile-s">incl. reasoning</div>
                 </div>
                 <div className="usage-tile">
                   <div className="usage-tile-k">API-equivalent cost</div>
-                  <div className="usage-tile-n">{formatCostUsd(totalsRow.costUsd)}</div>
+                  <div className="usage-tile-n">{formatCostUsd(report.totals.costUsd)}</div>
                   <div className="usage-tile-s">
-                    {totalsRow.unpricedTurns > 0
-                      ? `excludes ${totalsRow.unpricedTurns} unpriced turn${totalsRow.unpricedTurns === 1 ? "" : "s"}`
+                    {report.totals.unpricedTurns > 0
+                      ? `excludes ${report.totals.unpricedTurns} unpriced turn${report.totals.unpricedTurns === 1 ? "" : "s"}`
                       : "list prices · not billed on a plan"}
                   </div>
                 </div>

@@ -1,7 +1,7 @@
-import type { ServerClient } from "@cw-code/client";
+import type { ServerClient, TopicCache } from "@cw-code/client";
 import type {
-  AccountUsageSnapshot,
   AppSettings,
+  BranchMismatch,
   CliBinary,
   CliDiscoveredCandidate,
   CliDiscoverResult,
@@ -11,19 +11,15 @@ import type {
   FileStatInfo,
   GitBaseline,
   GitBranchInfo,
-  GitDecorations,
   GitDiffResult,
-  GitHubSearchResult,
   GitStatus,
+  HarnessAvailability,
   ImportableSession,
-  IssueDetail,
-  IssueSummary,
+  LegacyPreferences,
+  SidebarReorderRequest,
   PrDetail,
-  PrInboxResult,
-  PrSummary,
   PrWorkflow,
-  ProjectGitHubRepo,
-  RunsResult,
+  SavedGitHubView,
   ShutdownAssessment,
   ShutdownCommitResult,
   ShutdownPrepareResult,
@@ -36,20 +32,23 @@ import type {
   SubagentToolsResult,
   TextSearchResult,
   TurnChanges,
-  UsageLedgerRow,
+  UsageReport,
+  WorkflowHarnessResult,
+  WorkflowPreview,
+  WorkflowRunResult,
+  WorkflowTemplatePreview,
   WorktreePruneSummary
 } from "@cw-code/contracts";
 import { assertPasteImageSize } from "@cw-code/shared/protocol";
 import type {
-  ActiveTurn,
   ComposerChangedEvent,
   ComposerPrefs,
   CwApi,
-  HistoryMessage,
   ModelOption,
   PermissionOption,
   Project,
   RetryConnectionResult,
+  StopTurnResult,
   Session,
   SessionCleanupResult
 } from "../cw.js";
@@ -68,19 +67,14 @@ function toBase64(data: Uint8Array): string {
 
 export type ShutdownHandlers = Set<(event: ShutdownRequestedEvent) => void>;
 
-export function createCwApi(client: ServerClient, desktop: DesktopApi, shutdownHandlers: ShutdownHandlers): CwApi {
+export function createCwApi(client: ServerClient, topics: TopicCache, desktop: DesktopApi, shutdownHandlers: ShutdownHandlers): CwApi {
   const call = <T>(method: string, params?: unknown): Promise<T> => client.call<T>(method, params);
   const callVoid = (method: string, params?: unknown): Promise<void> => client.call(method, params).then(() => undefined);
   const subscribe = <T>(channel: string, cb: (payload: T) => void): (() => void) => client.on(channel, (payload) => cb(payload as T));
   const ptyAttachments = createPtyAttachments((ptyId) => client.send("pty.detach", { ptyId }));
 
-  function searchGitHub(kind: "pr", query: string, countBase: string, force?: boolean): Promise<GitHubSearchResult<PrSummary>>;
-  function searchGitHub(kind: "issue", query: string, countBase: string, force?: boolean): Promise<GitHubSearchResult<IssueSummary>>;
-  function searchGitHub(kind: "pr" | "issue", query: string, countBase: string, force?: boolean): Promise<unknown> {
-    return call("github.search", { kind, query, countBase, force });
-  }
-
   return {
+    topics,
     getStartupState: () => call<StartupState>("startup.state"),
     recovery: {
       openDataDir: async () => {
@@ -124,7 +118,11 @@ export function createCwApi(client: ServerClient, desktop: DesktopApi, shutdownH
       },
       onExpired: (cb) => subscribe("shutdown.expired", cb)
     },
-    checkVersions: () => call("cli.checkVersions"),
+    recheckClis: () => call<HarnessAvailability>("cli.recheck", {}),
+    importLegacyPrefs: (legacy: LegacyPreferences) => callVoid("prefs.importLegacy", legacy),
+    reorderSidebar: (request: SidebarReorderRequest) => callVoid("sidebar.reorder", request),
+    pushRecentModel: (driver, model) => callVoid("prefs.pushRecentModel", { driver, model }),
+    setComposerDraft: (key, text, attachments) => callVoid("prefs.setDraft", { key, text, attachments }),
     discoverBinaries: (binaries?: CliBinary[]) => call<CliDiscoverResult>("cli.discover", { binaries }),
     verifyBinaryPath: (binary, path) => call<CliDiscoveredCandidate>("cli.verifyPath", { binary, path }),
     isDev: desktop.isDev,
@@ -138,11 +136,8 @@ export function createCwApi(client: ServerClient, desktop: DesktopApi, shutdownH
         return { ok: false, path: result.path, error: ipcErrorMessage(err) };
       }
     },
-    listProjects: () => call<Project[]>("projects.list"),
     addProject: (rootPath) => call<Project>("projects.add", rootPath),
     updateProjectSettings: (projectId, settings) => call<Project>("projects.updateSettings", { projectId, settings }),
-    getHomeDir: () => call<string>("os.homeDir"),
-    listSessions: (projectId) => call<Session[]>("sessions.list", projectId),
     createSession: (projectId, driver, options) => call<Session>("sessions.create", { projectId, driver, options }),
     listImportableSessions: (driver) => call<ImportableSession[]>("sessions.importable", driver),
     importSession: (request) => call<{ project: Project; session: Session }>("sessions.import", request),
@@ -151,13 +146,14 @@ export function createCwApi(client: ServerClient, desktop: DesktopApi, shutdownH
     setSessionStatus: (sessionId, status, reason) => call<Session>("sessions.setStatus", { sessionId, status, reason }),
     markSessionWorking: (sessionId) => call<Session>("sessions.markWorking", { sessionId }),
     restoreSession: (sessionId) => call<Session>("sessions.restore", { sessionId }),
-    expireHolding: (sessionIds) => call<Session[]>("sessions.expireHolding", sessionIds),
+    markTurnSeen: (sessionId) => callVoid("sessions.markTurnSeen", { sessionId }),
+    openSession: (sessionId, reason) => callVoid("sessions.open", { sessionId, reason }),
+    pauseAutoFollowUp: (sessionId) => callVoid("sessions.pauseAutoFollowUp", { sessionId }),
+    resumeAutoFollowUp: (sessionId) => callVoid("sessions.resumeAutoFollowUp", { sessionId }),
     resolveSession: (sessionId, status, removeWorktree, forceBranch) =>
       call<SessionCleanupResult>("sessions.resolve", { sessionId, status, removeWorktree, forceBranch }),
     pruneStaleWorktrees: () => call<WorktreePruneSummary>("worktrees.prune"),
-    getHistory: (sessionId) => call<HistoryMessage[]>("sessions.history", { sessionId }),
     getSubagentTools: (sessionId, agentId) => call<SubagentToolsResult>("sessions.subagentTools", { sessionId, agentId }),
-    activeTurns: () => call<ActiveTurn[]>("sessions.activeTurns"),
     retryConnection: (sessionId) => call<RetryConnectionResult>("sessions.retryConnection", { sessionId }),
     startTurn: (sessionId, prompt, opts) =>
       call<string>("turns.start", {
@@ -168,10 +164,10 @@ export function createCwApi(client: ServerClient, desktop: DesktopApi, shutdownH
         command: opts?.command,
         skills: opts?.skills,
         prRefs: opts?.prRefs,
-        finalReview: opts?.finalReview,
         acceptFolderHead: opts?.acceptFolderHead
       }),
-    interrupt: (turnId) => callVoid("turns.interrupt", { turnId }),
+    stopTurn: (sessionId) => call<StopTurnResult>("turns.stop", { sessionId }),
+    reloadHistory: (sessionId) => callVoid("threads.reloadHistory", { sessionId }),
     respondApproval: (requestId, decision) => callVoid("approvals.respond", { requestId, decision }),
     respondQuestion: (requestId, answers) => callVoid("questions.respond", { requestId, answers }),
     listCommands: (sessionId) => call("commands.list", { sessionId }),
@@ -184,7 +180,6 @@ export function createCwApi(client: ServerClient, desktop: DesktopApi, shutdownH
     listPermissionsForHarness: (driver) => call<PermissionOption[]>("permissions.listForHarness", { driver }),
     getComposer: (sessionId) => call<ComposerPrefs>("composer.get", { sessionId }),
     setComposer: (sessionId, prefs) => call<ComposerPrefs>("composer.set", { sessionId, prefs }),
-    getSettings: () => call<AppSettings>("settings.get"),
     setSettings: (patch) => call<AppSettings>("settings.set", patch),
     getDefaultPrWorkflows: () => call<PrWorkflow[]>("settings.prWorkflowDefaults"),
     skills: {
@@ -195,8 +190,9 @@ export function createCwApi(client: ServerClient, desktop: DesktopApi, shutdownH
       setEnabled: (name, harness, on) => call<SkillMeta>("skills.setEnabled", { name, harness, on }),
       importAll: () => call<SkillsListResult>("skills.importAll")
     },
-    getGitStatus: (sessionId) => call<GitStatus>("git.status", { sessionId }),
-    onGitStatus: (cb) => subscribe("git.statusChanged", cb),
+    refreshGit: (sessionId) => callVoid("git.refresh", { sessionId }),
+    checkBranchMismatch: (sessionId) => call<BranchMismatch | null>("git.checkMismatch", { sessionId }),
+    keepFolderHead: (sessionId) => call<string | null>("git.keepFolderHead", { sessionId }),
     listGitBranches: (sessionId) => call<GitBranchInfo[]>("git.branches", { sessionId }),
     listProjectBranches: (projectId) => call<GitBranchInfo[]>("git.projectBranches", { projectId }),
     switchGitBranch: (sessionId, branch) => call<GitStatus>("git.switchBranch", { sessionId, branch }),
@@ -206,39 +202,28 @@ export function createCwApi(client: ServerClient, desktop: DesktopApi, shutdownH
     getSourceControlHealth: (projectId) => call<SourceControlHealth>("git.health", { projectId }),
     setProjectGitHubAccount: (projectId, account) => call<Project>("git.setProjectAccount", { projectId, account }),
     setRepositoryGitIdentity: (projectId, name, email) => callVoid("git.setIdentity", { projectId, name, email }),
-    getUsageLedger: (query) => call<UsageLedgerRow[]>("usage.ledger", query),
-    getAccountUsage: (drivers, force) => call<AccountUsageSnapshot[]>("usage.account", { drivers, force }),
-    getPrInbox: (force) => call<PrInboxResult>("prs.inbox", { force }),
-    getTrackedPrs: () => call<PrSummary[]>("prs.tracked"),
-    onTrackedPrs: (cb) => subscribe("prs.tracked", cb),
+    usageReport: (query) => call<UsageReport>("usage.report", query),
+    refreshAccountUsage: (force, drivers) => callVoid("usage.refreshAccount", { force, ...(drivers ? { drivers } : {}) }),
+    refreshPrInbox: (force) => callVoid("prs.refresh", { force }),
     getPrDetail: (ref) => call<PrDetail>("prs.detail", { ref }),
+    watchPrDetail: (ref) => callVoid("prs.watchDetail", { ref }),
+    unwatchPrDetail: (ref) => callVoid("prs.unwatchDetail", { ref }),
     getPrDiff: (ref) => call<string>("prs.diff", { ref }),
     getPrCheckLog: (ref, runId) => call<string>("prs.checkLog", { ref, runId }),
-    searchGitHub,
-    countGitHub: (kind, queries) => call<Array<number | null>>("github.counts", { kind, queries }),
-    getIssueDetail: (ref) => call<IssueDetail>("github.issueDetail", { ref }),
-    getGitHubRuns: (sources, force) => call<RunsResult>("github.runs", { sources, force }),
-    getRunLog: (ref) => call<string>("github.runLog", { ref }),
-    watchGitHubRuns: (refs) => callVoid("github.watchRuns", { refs }),
-    onGitHubRunsChanged: (cb) => subscribe("github.runsChanged", cb),
-    onGitHubCiActivity: (cb) => client.on("github.ciActivity", () => cb()),
-    subscribeTopics: (topics) => client.subscribe(topics),
-    cloneGitHubRepo: (repo) => call<Project>("github.clone", { repo }),
-    getProjectGitHubRepos: () => call<ProjectGitHubRepo[]>("prs.projectRepos"),
+    refreshGitHubView: (topic, force) => callVoid("github.refresh", { topic, force }),
+    githubViewCounts: (kind) => call<Record<string, number | null>>("github.viewCounts", { kind }),
+    saveGitHubView: (input) => call<SavedGitHubView>("github.saveView", input),
+    renameGitHubView: (id, name) => callVoid("github.renameView", { id, name }),
+    deleteGitHubView: (id) => callVoid("github.deleteView", { id }),
+    workflowPreview: (req) => call<WorkflowPreview>("workflows.preview", req),
+    workflowHarness: (req) => call<WorkflowHarnessResult>("workflows.resolveHarness", req),
+    workflowTemplatePreview: (req) => call<WorkflowTemplatePreview>("workflows.previewTemplate", req),
+    runWorkflow: (req) => call<WorkflowRunResult>("workflows.run", req),
     linkSessionPr: (sessionId, link) => call<Session>("sessions.linkPr", { sessionId, link }),
     unlinkSessionPr: (sessionId, ref) => call<Session>("sessions.unlinkPr", { sessionId, ref }),
-    markSessionPrSeen: (sessionId, ref, headSha, seenAt) => call<Session>("sessions.markPrSeen", { sessionId, ref, headSha, seenAt }),
-    linkSessionIssue: (sessionId, link) => call<Session>("sessions.linkIssue", { sessionId, link }),
-    unlinkSessionIssue: (sessionId, ref) => call<Session>("sessions.unlinkIssue", { sessionId, ref }),
-    markSessionIssueSeen: (sessionId, ref, seenAt) => call<Session>("sessions.markIssueSeen", { sessionId, ref, seenAt }),
-    linkSessionRun: (sessionId, link) => call<Session>("sessions.linkRun", { sessionId, link }),
-    unlinkSessionRun: (sessionId, ref) => call<Session>("sessions.unlinkRun", { sessionId, ref }),
-    markSessionRunSeen: (sessionId, ref, seenAt) => call<Session>("sessions.markRunSeen", { sessionId, ref, seenAt }),
-    onTurnEvent: (cb) => subscribe("turn.event", cb),
-    onSessionTitle: (cb) => subscribe("session.title", cb),
-    onSessionUpdated: (cb) => subscribe("session.updated", cb),
+    sendPrUpdates: (sessionId, keys) => call<string>("prs.sendUpdates", { sessionId, keys }),
+    dismissPrUpdates: (sessionId, keys) => callVoid("prs.dismissUpdates", { sessionId, keys }),
     onProjectChanged: (cb) => subscribe("projects.changed", cb),
-    onSettingsChanged: (cb) => subscribe("settings.changed", cb),
     onSkillsChanged: (cb) => subscribe("skills.changed", cb),
     onComposerChanged: (cb) => subscribe("composer.changed", cb),
     readFile: (sessionId, path) => call<string>("fs.readFile", { sessionId, path }),
@@ -259,7 +244,6 @@ export function createCwApi(client: ServerClient, desktop: DesktopApi, shutdownH
     },
     workspaceRoot: (sessionId) => call<string>("fs.workspaceRoot", { sessionId }),
     listWorkspaceFiles: (sessionId) => call<string[]>("fs.listWorkspaceFiles", { sessionId }),
-    gitDecorations: (sessionId) => call<GitDecorations>("fs.gitDecorations", { sessionId }),
     gitBaseline: (sessionId, path) => call<GitBaseline>("fs.gitBaseline", { sessionId, path }),
     searchText: (sessionId, query) => call<TextSearchResult>("fs.searchText", { sessionId, query }),
     setWatchedPaths: (sessionId, paths) => callVoid("fs.setWatchedPaths", { sessionId, paths }),
@@ -270,10 +254,11 @@ export function createCwApi(client: ServerClient, desktop: DesktopApi, shutdownH
     },
     readImage: (args) => call<{ mime: string; base64: string }>("fs.readImage", args),
     openPty: (sessionId, kind) => ptyAttachments.open(() => call<PtyOpenResult>("pty.open", { sessionId, kind })),
+    reattachPty: (sessionId, kind, token) =>
+      ptyAttachments.reattach(() => call<PtyOpenResult | null>("pty.reattach", { sessionId, kind, token })),
     writePty: (ptyId, data) => client.send("pty.write", { ptyId, data }),
     resizePty: (ptyId, cols, rows) => client.send("pty.resize", { ptyId, cols, rows }),
     detachPty: (ptyId) => ptyAttachments.detach(ptyId),
-    killPty: (ptyId) => client.send("pty.kill", { ptyId }),
     onPtyData: (cb) => subscribe("pty.data", cb),
     onPtyExit: (cb) => subscribe("pty.exit", cb),
     minimizeWindow: () => desktop.minimizeWindow(),
@@ -284,7 +269,6 @@ export function createCwApi(client: ServerClient, desktop: DesktopApi, shutdownH
     zoomIn: () => desktop.zoomIn(),
     zoomOut: () => desktop.zoomOut(),
     zoomReset: () => desktop.zoomReset(),
-    setAttention: (state) => desktop.setAttention(state),
     pickProjectDir: () => desktop.pickDirectory(),
     openPath: (path) => desktop.openPath(path),
     openExternal: (url) => desktop.openExternal(url),

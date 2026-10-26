@@ -1,7 +1,9 @@
 import type { AppSettings, ServerEndpoint, ShutdownStatus, StartupState } from "@cw-code/contracts";
-import { ServerClient } from "@cw-code/client";
+import { ServerClient, TopicCache } from "@cw-code/client";
+import { APP_TOPIC } from "@cw-code/shared/topics";
+import { attentionCountOf, type AttentionTopicState } from "./attention.js";
 
-export type ServerLinkChange = "settings" | "shutdown" | "startup";
+export type ServerLinkChange = "settings" | "shutdown" | "startup" | "attention";
 
 const IDLE_SHUTDOWN: ShutdownStatus = { idle: true, committed: false, reason: null };
 
@@ -11,6 +13,9 @@ function errorMessage(error: unknown): string {
 
 export class ServerLink {
   private readonly client: ServerClient;
+  private readonly topics: TopicCache;
+  private releaseApp: () => void;
+  private cachedAttention: number | null = null;
   private cachedSettings: AppSettings | null = null;
   private cachedShutdown: ShutdownStatus = IDLE_SHUTDOWN;
   private cachedStartup: StartupState | null = null;
@@ -25,6 +30,13 @@ export class ServerLink {
     this.client.onState((state) => {
       if (state === "open") this.refreshing = this.refresh();
     });
+    this.topics = new TopicCache(this.client);
+    this.topics.listen(APP_TOPIC, () => this.readAttention());
+    this.releaseApp = this.topics.acquire(APP_TOPIC);
+  }
+
+  get attentionCount(): number | null {
+    return this.cachedAttention;
   }
 
   get isOpen(): boolean {
@@ -64,7 +76,16 @@ export class ServerLink {
   }
 
   close(): void {
+    this.topics.dispose();
     this.client.close();
+  }
+
+  private readAttention(): void {
+    const state = this.topics.state<AttentionTopicState["data"]>(APP_TOPIC);
+    const count = state?.status === "error" ? null : attentionCountOf(state);
+    if ((count === null && state?.status !== "error") || count === this.cachedAttention) return;
+    this.cachedAttention = count;
+    this.notify("attention");
   }
 
   private async refresh(): Promise<void> {
@@ -81,6 +102,10 @@ export class ServerLink {
   }
 
   private async applyStartup(startup: StartupState): Promise<void> {
+    if (startup.mode === "ready" && this.topics.state(APP_TOPIC)?.status === "error") {
+      this.releaseApp();
+      this.releaseApp = this.topics.acquire(APP_TOPIC);
+    }
     if (startup.mode === "ready") {
       try {
         this.setSettings(await this.client.call<AppSettings>("settings.get"));

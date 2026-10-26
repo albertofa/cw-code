@@ -1,8 +1,9 @@
 import { create } from "zustand";
-import type { DriverName, GitHubKind, PrDetail, PrInboxResult, PrRef, PrSummary, ProjectGitHubRepo, RepoRef, WorkflowSubject } from "../cw.js";
+import type { DriverName, GitHubKind, PrRef, WorkflowSubject } from "../cw.js";
 import { prKey } from "../components/prInbox.js";
 import type { SettingsSection } from "../components/settingsSections.js";
 import { errorMessage } from "../components/errorMessage.js";
+import { requestPrDetail } from "../components/usePrs.js";
 import { useGitHubStore } from "./githubStore.js";
 
 export type PrDetailTab = "conversation" | "commits" | "checks" | "files";
@@ -22,24 +23,12 @@ export interface RunModalState {
 }
 
 interface PrState {
-  inbox: PrInboxResult | null;
-  inboxLoading: boolean;
-  inboxError: string | null;
-  detailByKey: Record<string, PrDetail>;
-  trackedByKey: Record<string, PrSummary>;
-  detailLoadingByKey: Record<string, boolean>;
-  detailErrorByKey: Record<string, string>;
   diffByKey: Record<string, string>;
   diffLoadingByKey: Record<string, boolean>;
   diffErrorByKey: Record<string, string>;
   mainView: MainView;
   selectedPrKeyBySession: Record<string, string>;
-  projectRepos: ProjectGitHubRepo[];
   runModal: RunModalState | null;
-  refreshInbox(force?: boolean): Promise<void>;
-  applyTracked(items: PrSummary[]): void;
-  loadTracked(): Promise<void>;
-  loadDetail(ref: PrRef): Promise<void>;
   loadDiff(ref: PrRef, force?: boolean): Promise<void>;
   openGitHub(kind?: GitHubKind): void;
   openPr(ref: PrRef, tab?: PrDetailTab): void;
@@ -50,8 +39,6 @@ interface PrState {
   openSettings(section?: SettingsSection, harness?: DriverName): void;
   openWorkflowSettings(workflowId: string): void;
   openProjectSettings(projectId?: string): void;
-  refreshProjectRepos(): Promise<void>;
-  projectIdForRef<T extends RepoRef>(ref: T): string | null;
   openRunModal(state: RunModalState): void;
   closeRunModal(): void;
 }
@@ -64,68 +51,12 @@ function without<T>(record: Record<string, T>, key: string): Record<string, T> {
 }
 
 export const usePrStore = create<PrState>((set, get) => ({
-  inbox: null,
-  inboxLoading: false,
-  inboxError: null,
-  detailByKey: {},
-  trackedByKey: {},
-  detailLoadingByKey: {},
-  detailErrorByKey: {},
   diffByKey: {},
   diffLoadingByKey: {},
   diffErrorByKey: {},
   mainView: { kind: "session" },
   selectedPrKeyBySession: {},
-  projectRepos: [],
   runModal: null,
-
-  async refreshInbox(force?: boolean) {
-    if (get().inboxLoading) return;
-    set({ inboxLoading: true });
-    void get().refreshProjectRepos();
-    try {
-      const inbox = await window.cw.getPrInbox(force);
-      set({ inbox, inboxLoading: false, inboxError: null });
-      useGitHubStore.getState().syncContext();
-    } catch (err) {
-      const message = errorMessage(err);
-      console.warn(`[pr] inbox refresh failed: ${message}`);
-      set({ inboxLoading: false, inboxError: message });
-    }
-  },
-
-  applyTracked(items: PrSummary[]) {
-    set({ trackedByKey: Object.fromEntries(items.map((item) => [prKey(item.ref), item])) });
-  },
-
-  async loadTracked() {
-    try {
-      get().applyTracked(await window.cw.getTrackedPrs());
-    } catch (err) {
-      console.warn(`[pr] tracked PR load failed: ${errorMessage(err)}`);
-    }
-  },
-
-  async loadDetail(ref: PrRef) {
-    const key = prKey(ref);
-    if (get().detailLoadingByKey[key]) return;
-    set({ detailLoadingByKey: { ...get().detailLoadingByKey, [key]: true } });
-    try {
-      const detail = await window.cw.getPrDetail(ref);
-      set({
-        detailByKey: { ...get().detailByKey, [key]: detail },
-        detailLoadingByKey: without(get().detailLoadingByKey, key),
-        detailErrorByKey: without(get().detailErrorByKey, key)
-      });
-    } catch (err) {
-      const message = errorMessage(err);
-      console.warn(`[pr] detail load failed for ${key}: ${message}`);
-      set({
-        detailLoadingByKey: without(get().detailLoadingByKey, key),
-        detailErrorByKey: { ...get().detailErrorByKey, [key]: message }
-      });
-    }
-  },
 
   async loadDiff(ref: PrRef, force?: boolean) {
     const key = prKey(ref);
@@ -152,12 +83,11 @@ export const usePrStore = create<PrState>((set, get) => ({
   openGitHub(kind?: GitHubKind) {
     if (kind) useGitHubStore.getState().setKind(kind);
     set({ mainView: { kind: "github" } });
-    if (!get().inbox && !get().inboxLoading) void get().refreshInbox();
   },
 
   openPr(ref: PrRef, tab: PrDetailTab = "conversation") {
     set({ mainView: { kind: "pr", ref, tab } });
-    void get().loadDetail(ref);
+    void requestPrDetail(ref);
   },
 
   selectSessionPr(sessionId: string, key: string | null) {
@@ -195,24 +125,6 @@ export const usePrStore = create<PrState>((set, get) => ({
 
   openProjectSettings(projectId?: string) {
     set({ mainView: { kind: "settings", section: "projects", projectId } });
-  },
-
-  async refreshProjectRepos() {
-    try {
-      set({ projectRepos: await window.cw.getProjectGitHubRepos() });
-      useGitHubStore.getState().syncContext();
-    } catch (err) {
-      console.warn(`[pr] project repo lookup failed: ${errorMessage(err)}`);
-    }
-  },
-
-  projectIdForRef<T extends RepoRef>(ref: T) {
-    const owner = ref.owner.toLowerCase();
-    const repo = ref.repo.toLowerCase();
-    const match = get().projectRepos.find(
-      (item) => item.host.toLowerCase() === ref.host.toLowerCase() && item.owner.toLowerCase() === owner && item.repo.toLowerCase() === repo
-    );
-    return match?.projectId ?? null;
   },
 
   openRunModal(state: RunModalState) {

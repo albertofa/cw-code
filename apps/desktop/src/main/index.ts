@@ -21,7 +21,8 @@ import type {
 import { appendCrashLog, initCrashLog } from "@cw-code/server/debug/crashLog";
 import { attachmentsDir, cwCodeHome, logsDir } from "@cw-code/server/paths/appPaths";
 import { windowBackgroundColor } from "@cw-code/shared/themes";
-import { attentionDescription, parseAttentionState, resetsAttention, shouldFlash } from "./attention.js";
+import { attentionDescription, shouldFlash } from "./attention.js";
+import { badgeLabel, renderBadge } from "./badgeImage.js";
 import { failedServerProbe, RendererProbeTracker, runPackageProbe } from "./debug/packageProbe.js";
 import { assertLocalAbsolutePath, resolveOpenTarget } from "./openPathPolicy.js";
 import { ServerLink, type ServerLinkChange } from "./serverLink.js";
@@ -52,6 +53,10 @@ if (process.platform === "win32") {
 
 if (!app.isPackaged && !app.commandLine.hasSwitch("user-data-dir")) {
   app.setPath("userData", join(app.getPath("appData"), "@cw-code", "desktop-dev"));
+}
+
+if (!app.isPackaged && !process.env["CW_CODE_HOME"]?.trim()) {
+  process.env["CW_CODE_HOME"] = join(homedir(), ".cw-code-dev");
 }
 
 let mainWindow: BrowserWindow | null = null;
@@ -163,6 +168,10 @@ function applyUpdatePreferences(): void {
 function handleLinkChange(change: ServerLinkChange): void {
   if (change === "shutdown" && !link.shutdown.committed) restartAfterFailedInstall = false;
   if (change === "settings") syncWindowBackground();
+  if (change === "attention") {
+    if (link.attentionCount === null) clearAttention();
+    else applyAttention(link.attentionCount);
+  }
   if (change === "settings" || change === "startup") {
     ensureUpdateService();
     applyUpdatePreferences();
@@ -283,11 +292,7 @@ function wireWindow(window: BrowserWindow): void {
   const webContents = window.webContents;
   webContents.on("render-process-gone", (_e, details) => {
     appendCrashLog(`render-process-gone: reason=${details.reason} exitCode=${details.exitCode}`);
-    resetAttention(window);
     void webContents.reload();
-  });
-  webContents.on("did-start-navigation", (navigation) => {
-    if (resetsAttention(navigation)) resetAttention(window);
   });
   webContents.on("console-message", (event) => {
     if (event.level === "error") {
@@ -330,6 +335,7 @@ async function createWindow(): Promise<void> {
     requestShutdown();
   });
   window.on("session-end", endOfSession);
+  if (link.attentionCount !== null) applyAttention(link.attentionCount);
 
   const probeOutPath = packageProbeOutPath();
   if (probeOutPath) {
@@ -426,29 +432,40 @@ function bumpZoom(sender: WebContents, delta: number): void {
   w.webContents.setZoomLevel(next);
 }
 
-function setAttentionIndicators(win: BrowserWindow, count: number, badgeDataUrl: string | null): void {
+const BADGE_SIZE = 32;
+
+function showAttentionIndicators(win: BrowserWindow, count: number): void {
   if (process.platform === "win32") {
-    const overlay = badgeDataUrl ? nativeImage.createFromDataURL(badgeDataUrl) : null;
-    win.setOverlayIcon(overlay && !overlay.isEmpty() ? overlay : null, attentionDescription(count));
+    const overlay =
+      count > 0 ? nativeImage.createFromBitmap(renderBadge(badgeLabel(count), BADGE_SIZE), { width: BADGE_SIZE, height: BADGE_SIZE }) : null;
+    win.setOverlayIcon(overlay, attentionDescription(count));
   } else {
     app.setBadgeCount(count);
   }
 }
 
-function resetAttention(win: BrowserWindow): void {
+function clearAttention(): void {
+  const win = liveMainWindow();
   attentionCount = null;
-  setAttentionIndicators(win, 0, null);
+  if (!win) {
+    if (process.platform !== "win32") app.setBadgeCount(0);
+    return;
+  }
+  showAttentionIndicators(win, 0);
   win.flashFrame(false);
 }
 
-function applyAttention(sender: WebContents, payload: unknown): void {
-  const state = parseAttentionState(payload);
-  const win = windowFromSender(sender);
-  if (!state || !win) return;
-  const flash = shouldFlash(attentionCount, state.count, win.isFocused());
-  attentionCount = state.count;
-  setAttentionIndicators(win, state.count, state.badgeDataUrl);
-  if (state.count === 0) win.flashFrame(false);
+function applyAttention(count: number): void {
+  const win = liveMainWindow();
+  if (!win) {
+    if (process.platform !== "win32") app.setBadgeCount(count);
+    attentionCount = count;
+    return;
+  }
+  const flash = shouldFlash(attentionCount, count, win.isFocused());
+  attentionCount = count;
+  showAttentionIndicators(win, count);
+  if (count === 0) win.flashFrame(false);
   else if (flash) win.flashFrame(true);
 }
 
@@ -466,7 +483,6 @@ function registerWindowIpc(): void {
   ipcMain.on("win.zoom-in", (e) => bumpZoom(e.sender, ZOOM_STEP));
   ipcMain.on("win.zoom-out", (e) => bumpZoom(e.sender, -ZOOM_STEP));
   ipcMain.on("win.zoom-reset", (e) => windowFromSender(e.sender)?.webContents.setZoomLevel(0));
-  ipcMain.on("app.attention", (e, payload: unknown) => applyAttention(e.sender, payload));
 }
 
 function registerShellIpc(): void {

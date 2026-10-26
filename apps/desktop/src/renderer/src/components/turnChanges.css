@@ -182,28 +182,9 @@
   flex: none;
 }
 
-.turn-changes-icon {
-  position: relative;
+.turn-changes-warn > .btn {
   flex: none;
-  display: inline-flex;
-  align-items: center;
-  border: 0;
-  border-radius: var(--r-sm);
-  background: transparent;
-  color: var(--muted);
-  padding: 3px;
-  cursor: pointer;
-}
-
-.turn-changes-icon::before {
-  content: "";
-  position: absolute;
-  inset: -3px;
-}
-
-.turn-changes-icon:hover {
-  background: var(--hover);
-  color: var(--text);
+  margin-left: auto;
 }
 
 .turn-undo-confirm p {

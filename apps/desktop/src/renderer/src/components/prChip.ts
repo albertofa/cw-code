@@ -1,16 +1,7 @@
+import type { PrChip, PrChipIcon, PrChipTone } from "@cw-code/contracts";
 import type { GitPullRequest, PrSummary } from "../cw.js";
 
-export type PrChipTone = "bad" | "ok" | "info" | "warn" | "neutral";
-
-export type PrChipIcon = "x" | "message" | "check" | "draft" | "eye" | "clock" | "merge" | "pr";
-
-export interface PrChip {
-  tone: PrChipTone;
-  icon: PrChipIcon;
-  label: string;
-  reason: string;
-  title: string;
-}
+export type { PrChip, PrChipIcon, PrChipTone };
 
 interface PrChipFacts {
   number: number;

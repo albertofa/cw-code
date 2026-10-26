@@ -1,15 +1,5 @@
-import type {
-  IssueDetail,
-  IssueRef,
-  PrLinkOrigin,
-  PrRef,
-  PrWorkflow,
-  RepoRef,
-  RunRef,
-  RunsResult,
-  WorkflowRunSummary,
-  WorkflowSubject
-} from "../cw.js";
+import type { WorkflowBase } from "@cw-code/contracts";
+import type { IssueRef, PrLinkOrigin, PrRef, RepoRef, RunRef, WorkflowSubject } from "../cw.js";
 import { prKey } from "./prInbox.js";
 
 interface SessionWithLinks {
@@ -63,110 +53,11 @@ export function subjectLink(
   }
 }
 
-export function isLinkedTo(session: SessionWithLinks, subject: WorkflowSubject): boolean {
-  return subjectLink(session, subject) !== undefined;
-}
-
-export function subjectLabel(subject: WorkflowSubject, runNumber: number | undefined): string {
-  switch (subject.kind) {
-    case "pr":
-    case "issue":
-      return `#${subject.ref.number}`;
-    case "run":
-      return runNumber === undefined ? `run ${subject.ref.runId}` : `run #${runNumber}`;
-  }
-}
-
-export const OTHER_SESSIONS_LIMIT = 8;
-
-interface CandidateSession extends SessionWithLinks {
-  id: string;
-  projectId: string;
-  status: string;
-  updatedAt: number;
-}
-
-export function otherSessionCandidates<S extends CandidateSession>(
-  sessions: S[],
-  subject: WorkflowSubject,
-  projectId: string | null,
-  pinnedId?: string,
-  limit = OTHER_SESSIONS_LIMIT
-): S[] {
-  const eligible = sessions.filter((s) => s.status !== "archived" && !isLinkedTo(s, subject));
-  const inProject =
-    projectId === null
-      ? []
-      : eligible
-          .filter((s) => s.projectId === projectId)
-          .sort((a, b) => b.updatedAt - a.updatedAt)
-          .slice(0, limit);
-  const pinned =
-    pinnedId === undefined || inProject.some((s) => s.id === pinnedId)
-      ? undefined
-      : sessions.find((s) => s.id === pinnedId && !isLinkedTo(s, subject));
-  return pinned ? [pinned, ...inProject] : inProject;
-}
-
-export function findCachedRun(
-  caches: Record<string, { data: RunsResult | null }>,
-  ref: RunRef
-): WorkflowRunSummary | undefined {
-  const key = runKey(ref);
-  for (const entry of Object.values(caches)) {
-    const found = entry.data?.items.find((run) => runKey(run.ref) === key);
-    if (found) return found;
-  }
-  return undefined;
-}
-
-export function prRefForRun(run: WorkflowRunSummary | undefined): PrRef | null {
-  if (!run || run.prNumber === null) return null;
-  return { host: run.ref.host, owner: run.ref.owner, repo: run.ref.repo, number: run.prNumber };
-}
-
-export function workflowsForSubject(
-  workflows: PrWorkflow[],
-  subject: WorkflowSubject,
-  run: WorkflowRunSummary | undefined
-): PrWorkflow[] {
-  const runPr = subject.kind === "run" ? prRefForRun(run) : null;
-  return workflows.filter((w) => w.target === subject.kind || (runPr !== null && w.target === "pr"));
-}
-
-export function effectiveSubject(
-  subject: WorkflowSubject,
-  workflow: PrWorkflow | undefined,
-  run: WorkflowRunSummary | undefined
-): WorkflowSubject {
-  if (subject.kind !== "run" || workflow?.target !== "pr") return subject;
-  const ref = prRefForRun(run);
-  return ref ? { kind: "pr", ref } : subject;
-}
-
-export interface WorkflowBase {
-  baseBranch: string | undefined;
-  source: string;
-}
-
-const RUN_BASE_FALLBACK = "falls back to the default branch if it no longer exists";
-const DEFAULT_BASE_SOURCE = "the default branch (fetched from origin)";
-
-export function resolveIssueBase(): WorkflowBase {
-  return { baseBranch: undefined, source: DEFAULT_BASE_SOURCE };
-}
-
-export function resolveRunBase(run: Pick<WorkflowRunSummary, "branch"> | undefined): WorkflowBase {
-  if (!run) return { baseBranch: undefined, source: `${DEFAULT_BASE_SOURCE} — the run's branch is unknown` };
-  if (!run.branch) return { baseBranch: undefined, source: `${DEFAULT_BASE_SOURCE} — the run has no branch` };
-  return { baseBranch: run.branch, source: `${run.branch} (fetched from origin; ${RUN_BASE_FALLBACK})` };
-}
-
 export type WorkflowWorkspaceMode = "worktree" | "checkout";
 
 export function baseWorkspaceHint(base: WorkflowBase, mode: WorkflowWorkspaceMode, projectName: string | null): string {
-  if (mode === "worktree") return `isolated, from ${base.source}`;
-  return `switches ${projectName ?? "the project"} to a new branch from ${base.source}`;
+  if (mode === "worktree") return `isolated, from ${base.label}`;
+  return `switches ${projectName ?? "the project"} to a new branch from ${base.label}`;
 }
 
 export function prWorkspaceHint(headRefName: string | null, mode: WorkflowWorkspaceMode, projectName: string | null): string {
@@ -174,8 +65,4 @@ export function prWorkspaceHint(headRefName: string | null, mode: WorkflowWorksp
     return `switches ${projectName ?? "the project"} to the PR branch (or a new branch from the PR head)`;
   }
   return `isolated, from ${headRefName ?? "the PR head"}`;
-}
-
-export function issueDataTime(issue: Pick<IssueDetail, "updatedAt" | "comments">): number {
-  return issue.comments.reduce((latest, comment) => Math.max(latest, comment.createdAt), issue.updatedAt);
 }

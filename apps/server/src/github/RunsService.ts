@@ -1,5 +1,5 @@
 import { homedir } from "node:os";
-import type { AppSettings, GitHubAccountRef, RepoRef, RunRef, RunSources, RunsResult, WorkflowRunSummary } from "@cw-code/contracts";
+import type { AppSettings, GitHubAccountRef, RepoRef, RunRef, WorkflowRunSummary } from "@cw-code/contracts";
 import { authenticatedEnvironment, execText, execWithStatus, type ExecStatusResult } from "../fs/GitService.js";
 import { assertSearchQuery, withTypeQualifier } from "./GitHubSearchService.js";
 import { githubCliBinary, resolveGitHubAccount } from "./githubAccount.js";
@@ -7,6 +7,7 @@ import { assertOwnerLogin, assertRepoRef, assertRunRef } from "./githubRefs.js";
 import { MAX_RUN_ORGS, MAX_RUN_REPOS, RUNS_PR_QUERY, runsSourcesQuery } from "./runQueries.js";
 import { graphqlOutcome, graphqlPartialFailure } from "./prParsers.js";
 import { parseRunSuites } from "./runParsers.js";
+import type { RunSources, RunsResult } from "./results.js";
 
 const RUNS_CACHE_TTL_MS = 30_000;
 const REQUEST_TIMEOUT_MS = 20_000;

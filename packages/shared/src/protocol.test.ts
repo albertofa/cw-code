@@ -25,7 +25,7 @@ describe("assertPasteImageSize", () => {
 });
 
 describe("PROTOCOL_VERSION", () => {
-  test("is 2 since events are routed by topic", () => {
-    expect(PROTOCOL_VERSION).toBe(2);
+  test("is 3 since state topics are pushed as snapshots and patches", () => {
+    expect(PROTOCOL_VERSION).toBe(3);
   });
 });

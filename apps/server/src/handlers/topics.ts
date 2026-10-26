@@ -1,4 +1,4 @@
-import type { TopicsParams, TopicSubscribeResult } from "@cw-code/contracts";
+import type { TopicsParams, TopicsSubscribeResult } from "@cw-code/contracts";
 import { isValidTopic, MAX_TOPICS_PER_CALL, MAX_TOPICS_PER_CLIENT } from "@cw-code/shared/topics";
 import type { ServerApp } from "../app/ServerApp.js";
 import type { Router } from "../transport/Router.js";
@@ -21,17 +21,16 @@ function parseTopics(params: unknown, method: string): string[] {
   return topics as string[];
 }
 
-export function registerTopicHandlers(router: Router, app: ServerApp): void {
-  handle<TopicsParams>(router, "topics.subscribe", (params, ctx): TopicSubscribeResult => {
+export function registerTopicHandlers(router: Router, app: Pick<ServerApp, "topics">): void {
+  handle<TopicsParams>(router, "topics.subscribe", (params, ctx): TopicsSubscribeResult => {
     const topics = parseTopics(params, "topics.subscribe");
     const added = new Set(topics.filter((topic) => !app.topics.isSubscribed(ctx.clientId, topic)));
     if (app.topics.countFor(ctx.clientId) + added.size > MAX_TOPICS_PER_CLIENT) {
       throw rpcError("too-many-topics", `a client may subscribe to at most ${MAX_TOPICS_PER_CLIENT} topics`);
     }
-    app.topics.subscribe(ctx.clientId, topics);
-    return {};
+    return app.topics.subscribe(ctx, topics);
   });
   handle<TopicsParams>(router, "topics.unsubscribe", (params, ctx) => {
-    app.topics.unsubscribe(ctx.clientId, parseTopics(params, "topics.unsubscribe"));
+    app.topics.unsubscribe(ctx, parseTopics(params, "topics.unsubscribe"));
   });
 }

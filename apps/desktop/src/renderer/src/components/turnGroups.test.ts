@@ -3,7 +3,7 @@ import { buildThreadNodes, countActivityTools, groupTurns, splitTurn } from "./t
 import type { ChatMessage } from "../stores/appStore.js";
 
 function msg(partial: Partial<ChatMessage> & Pick<ChatMessage, "id" | "role" | "turnId">): ChatMessage {
-  return { text: "", ...partial };
+  return { text: "", seq: 0, ...partial };
 }
 
 describe("groupTurns", () => {

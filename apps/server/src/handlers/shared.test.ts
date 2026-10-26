@@ -1,9 +1,15 @@
 import { describe, expect, test } from "bun:test";
-import { TopicRegistry } from "../transport/TopicRegistry.js";
+import { TopicHub } from "../topics/TopicHub.js";
 import { subscribeIfConnected } from "./shared.js";
 
 function appWith(connected: Set<string>) {
-  return { topics: new TopicRegistry(), isConnected: (clientId: string) => connected.has(clientId) };
+  const topics = new TopicHub(() => {});
+  topics.register({
+    owns: (topic) => topic.startsWith("pty/"),
+    acquire: (topic, hub) => hub.createStore<Record<string, unknown>>(topic, {}),
+    release: () => {}
+  });
+  return { topics, isConnected: (clientId: string) => connected.has(clientId) };
 }
 
 describe("subscribeIfConnected", () => {
