@@ -87,6 +87,8 @@ Core behaviors:
 - Session metadata persists as atomic JSON under `~/.cw-code/userdata`.
   Logs live in `~/.cw-code/logs`, paste/preview attachments in
   `~/.cw-code/userdata/attachments`, worktrees in `~/.cw-code/worktrees`.
+  The home is `CW_CODE_HOME` when set. Unpackaged runs (`bun run dev`) default to
+  `~/.cw-code-dev`, so they never share a home with an installed instance.
 - Tests run on `bun test`; use `bun run test` (packages run sequentially; each sets its own flags and preload, helpers in `apps/*/tests`); builds via electron-vite, the server compile script, and electron-builder (Windows NSIS; Linux AppImage and deb).
 
 ## Guidelines

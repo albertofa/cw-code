@@ -55,6 +55,10 @@ if (!app.isPackaged && !app.commandLine.hasSwitch("user-data-dir")) {
   app.setPath("userData", join(app.getPath("appData"), "@cw-code", "desktop-dev"));
 }
 
+if (!app.isPackaged && !process.env["CW_CODE_HOME"]?.trim()) {
+  process.env["CW_CODE_HOME"] = join(homedir(), ".cw-code-dev");
+}
+
 let mainWindow: BrowserWindow | null = null;
 let attentionCount: number | null = null;
 let quitApproved = false;
