@@ -1,6 +1,6 @@
 import { basename, sep } from "node:path";
 import type { DriverKind, ImportableSession, NativeSession, Project, SessionMeta } from "@cw-code/contracts";
-import { parseGitHubRemote } from "../fs/GitService.js";
+import { parseGitHubRemote, type WorktreeProject } from "../fs/GitService.js";
 import { comparableRoot } from "./worktreeCleanup.js";
 
 export function nativeSessionKey(driver: DriverKind, resumeCursor: string): string {
@@ -36,7 +36,6 @@ const PENDING_CLAIM_SLACK_MS = 60_000;
 export interface ImportContext {
   claimed: Set<string>;
   pending: PendingClaim[];
-  projects: Project[];
   /** Folders cw-code owns (worktrees, internal title turns); sessions there were started by cw-code. */
   appRoots: string[];
 }
@@ -48,24 +47,38 @@ function pendingClaimOf(session: NativeSession, pending: PendingClaim[]): boolea
   );
 }
 
-export function importableSessions(native: NativeSession[], ctx: ImportContext): ImportableSession[] {
+/** Native sessions the importer may offer: not managed by cw-code and not started by it, newest first. */
+export function importableSessions(native: NativeSession[], ctx: ImportContext): NativeSession[] {
   const seen = new Set<string>();
-  const out: ImportableSession[] = [];
+  const out: NativeSession[] = [];
   for (const session of native) {
     const key = nativeSessionKey(session.driver, session.resumeCursor);
     if (seen.has(key) || ctx.claimed.has(key) || session.createdByCwCode || !session.cwd) continue;
     if (insideAny(session.cwd, ctx.appRoots) || pendingClaimOf(session, ctx.pending)) continue;
     seen.add(key);
-    const project = projectForCwd(ctx.projects, session.cwd);
-    const repository = session.gitRemote ? parseGitHubRemote(session.gitRemote)?.slug : undefined;
-    out.push({
-      ...session,
-      projectName: project?.name ?? (basename(session.cwd) || session.cwd),
-      ...(project ? { projectId: project.id } : {}),
-      ...(repository ? { repository } : {})
-    });
+    out.push(session);
   }
   return out.sort((a, b) => b.updatedAt - a.updatedAt);
+}
+
+/** Annotate sessions with the project they would join, using the main checkout behind a linked worktree. */
+export function withProjects(
+  sessions: NativeSession[],
+  projects: Project[],
+  worktrees: Map<string, WorktreeProject>
+): ImportableSession[] {
+  return sessions.map((session) => {
+    const projectRoot = worktrees.get(comparableRoot(session.cwd))?.projectRoot ?? session.cwd;
+    const project = projectForCwd(projects, projectRoot);
+    const repository = session.gitRemote ? parseGitHubRemote(session.gitRemote)?.slug : undefined;
+    return {
+      ...session,
+      projectRoot,
+      projectName: project?.name ?? (basename(projectRoot) || projectRoot),
+      ...(project ? { projectId: project.id } : {}),
+      ...(repository ? { repository } : {})
+    };
+  });
 }
 
 export function withRepositories(sessions: ImportableSession[], remotes: Map<string, string | null>): ImportableSession[] {

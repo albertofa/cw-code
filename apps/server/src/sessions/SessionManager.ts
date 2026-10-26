@@ -89,8 +89,8 @@ import { TracingCliDriver } from "../debug/tracingDriver.js";
 import { CLAUDE_CURATED_MODELS, ClaudeCliDriver } from "../providers/claude/ClaudeCliDriver.js";
 import { OpencodeDriver } from "../providers/opencode/OpencodeDriver.js";
 import { CodexCliDriver } from "../providers/codex/CodexCliDriver.js";
-import { claimedSessionKeys, importableSessions, nativeSessionKey, projectForCwd, withRepositories, type ImportContext, type PendingClaim } from "./sessionImport.js";
-import { defaultBinary, execText, GitService, mapLimit, safeSegment, sessionBranchName, type CreatedWorktree, type RemoveWorktreeResult, type ResolveBaseOptions } from "../fs/GitService.js";
+import { claimedSessionKeys, importableSessions, nativeSessionKey, projectForCwd, withProjects, withRepositories, type ImportContext, type PendingClaim } from "./sessionImport.js";
+import { defaultBinary, execText, GitService, mapLimit, safeSegment, sessionBranchName, type CreatedWorktree, type RemoveWorktreeResult, type ResolveBaseOptions, type WorktreeProject } from "../fs/GitService.js";
 import { resolveAttachments } from "./attachments.js";
 import { AUTO_TITLE_TIMEOUT_MS, buildTitlePrompt, parseGeneratedMetadata } from "./autoTitle.js";
 import { branchNameForTitle, ownsSessionBranch, shouldRenameSessionBranch, TEMP_BRANCH_PATTERN } from "./branchName.js";
@@ -808,7 +808,6 @@ export class SessionManager {
     return {
       claimed: claimedSessionKeys(this.store.listAllSessions()),
       pending: this.pendingImportClaims(),
-      projects: this.store.listProjects(),
       appRoots: [cwCodeHome(), this.worktreesRoot, this.titleGenPath, ...this.legacyAppRoots]
     };
   }
@@ -819,9 +818,30 @@ export class SessionManager {
     if (!target.listNativeSessions) throw new Error(`${driver} does not expose its session list`);
     const native = await target.listNativeSessions();
     for (const session of native) this.nativeSessions.set(nativeSessionKey(session.driver, session.resumeCursor), session);
-    const visible = importableSessions(native, this.importContext());
+    const candidates = importableSessions(native, this.importContext());
+    const worktrees = await this.resolveWorktrees(candidates.map((session) => session.cwd));
+    const visible = withProjects(candidates, this.store.listProjects(), worktrees);
     await this.lookupRemotes(visible.filter((session) => !session.repository).map((session) => session.cwd));
     return withRepositories(visible, this.remoteSlugs);
+  }
+
+  /** Linked worktrees among `cwds`, keyed by comparable folder, so imports can find their main checkout. */
+  private async resolveWorktrees(cwds: string[]): Promise<Map<string, WorktreeProject>> {
+    const byKey = new Map<string, string>();
+    for (const cwd of cwds) {
+      const key = comparableRoot(cwd);
+      if (!byKey.has(key)) byKey.set(key, cwd);
+    }
+    const worktrees = new Map<string, WorktreeProject>();
+    await mapLimit([...byKey], 8, async ([key, cwd]) => {
+      try {
+        const worktree = await this.git.worktreeProject(cwd);
+        if (worktree) worktrees.set(key, worktree);
+      } catch (err) {
+        console.warn(`git worktree lookup failed for ${cwd}: ${(err as Error).message}`);
+      }
+    });
+    return worktrees;
   }
 
   private async lookupRemotes(cwds: string[]): Promise<void> {
@@ -851,8 +871,13 @@ export class SessionManager {
     const [importable] = importableSessions([native], this.importContext());
     if (!importable) throw new Error(`The ${request.driver} session ${request.resumeCursor} is already managed by cw-code`);
     if (!existsSync(native.cwd)) throw new Error(`The folder of this session no longer exists: ${native.cwd}`);
-    const project = projectForCwd(this.store.listProjects(), native.cwd) ?? this.addProject(native.cwd);
-    const session = this.store.createSession(project.id, native.driver, native.title, { resumeCursor: native.resumeCursor });
+    const worktree = await this.git.worktreeProject(native.cwd);
+    const projectRoot = worktree?.projectRoot ?? native.cwd;
+    const project = projectForCwd(this.store.listProjects(), projectRoot) ?? this.addProject(projectRoot);
+    const session = this.store.createSession(project.id, native.driver, native.title, {
+      resumeCursor: native.resumeCursor,
+      ...(worktree ? { worktreePath: worktree.worktreePath } : {})
+    });
     this.emitSession(session.id);
     return { project, session };
   }
@@ -1534,7 +1559,7 @@ export class SessionManager {
       return { sessionId, status, worktreeOrphaned: false, worktreeRemoved: false, branchDeleted: false };
     }
     const worktreeOrphaned = isWorktreeOrphaned(this.store.listAllSessions(), worktreePath, sessionId);
-    if (!worktreeOrphaned || !opts.removeWorktree) {
+    if (!worktreeOrphaned || !opts.removeWorktree || !this.ownsWorktree(worktreePath)) {
       if (!worktreeOrphaned && (status === "resolved" || status === "archived")) {
         this.store.updateSession(sessionId, { worktreePath: undefined });
       }
@@ -2688,6 +2713,10 @@ export class SessionManager {
     if (session.branch && branchExists) {
       try {
         const attached = await this.git.attachWorktree(project.rootPath, expectedPath, session.branch);
+        if (!session.worktreePath || !sameWorktreePath(session.worktreePath, attached.path)) {
+          this.store.updateSession(sessionId, { worktreePath: attached.path });
+          this.emitSession(sessionId);
+        }
         this.startWorktreeSetup(session, project, attached.path);
         return attached.path;
       } catch (err) {
@@ -2711,6 +2740,10 @@ export class SessionManager {
       );
     }
     if (worktree.branch !== session.branch) this.updateSessionBranch(sessionId, worktree.branch);
+    if (!session.worktreePath || !sameWorktreePath(session.worktreePath, worktree.path)) {
+      this.store.updateSession(sessionId, { worktreePath: worktree.path });
+      this.emitSession(sessionId);
+    }
     this.startWorktreeSetup(session, project, worktree.path);
     return worktree.path;
   }
@@ -2850,6 +2883,19 @@ export class SessionManager {
     const project = this.store.getProject(projectId);
     if (!project) throw new Error(`unknown project ${projectId}`);
     return project.rootPath;
+  }
+
+  /**
+   * Worktrees under this install's roots belong to cw-code. An imported session may instead
+   * point at a worktree another tool owns, and that folder is never cw-code's to remove.
+   */
+  private ownsWorktree(path: string): boolean {
+    const roots = [resolve(this.worktreesRoot), ...this.legacyAppRoots.map((root) => resolve(root, "worktrees"))];
+    const target = resolve(path);
+    return roots.some((root) => {
+      const rel = relative(root, target);
+      return rel !== "" && !rel.startsWith("..") && !isAbsolute(rel);
+    });
   }
 
   private assertNotReserved(): void {

@@ -11,6 +11,7 @@ function session(overrides: Partial<ImportableSession>): ImportableSession {
     createdAt: 1,
     updatedAt: 2,
     projectName: "web-app",
+    projectRoot: "C:\\Projects\\web-app",
     ...overrides
   };
 }

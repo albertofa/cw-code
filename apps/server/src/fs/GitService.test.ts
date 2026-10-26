@@ -979,6 +979,28 @@ describe("GitService worktrees", () => {
   });
 });
 
+describe("GitService worktreeProject", () => {
+  it("maps a linked worktree to the main checkout", async () => {
+    const { sandbox, repository, service } = initSandbox();
+    const worktree = join(sandbox, "wt", "session");
+    execFileSync("git", ["-C", repository, "worktree", "add", "-b", "feature", worktree]);
+
+    await expect(service.worktreeProject(worktree)).resolves.toEqual({ projectRoot: repository, worktreePath: worktree });
+
+    mkdirSync(join(worktree, "pkg"));
+    await expect(service.worktreeProject(join(worktree, "pkg"))).resolves.toEqual({ projectRoot: repository, worktreePath: worktree });
+  });
+
+  it("returns null for the main checkout and for folders outside Git", async () => {
+    const { sandbox, repository, service } = initSandbox();
+    const plain = join(sandbox, "plain");
+    mkdirSync(plain);
+
+    await expect(service.worktreeProject(repository)).resolves.toBeNull();
+    await expect(service.worktreeProject(plain)).resolves.toBeNull();
+  });
+});
+
 function git(repository: string, ...args: string[]): string {
   return execFileSync("git", ["-C", repository, ...args], { encoding: "utf8" });
 }
