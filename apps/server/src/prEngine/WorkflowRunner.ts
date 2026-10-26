@@ -35,6 +35,8 @@ export interface WorkflowRunnerDeps {
   resolveHarness(req: WorkflowHarnessRequest): Promise<WorkflowHarnessResult>;
   workflows(): PrWorkflow[];
   sessions(): SessionMeta[];
+  /** True when cw-code owns the worktree path, so it may be reused as the linked workspace. */
+  ownsWorktree(path: string): boolean;
   clone(repo: RepoRef): Promise<Project>;
   refreshProjectRepos(): Promise<unknown>;
   createSession(projectId: string, driver: DriverKind, options: CreateSessionOptions): Promise<SessionMeta>;
@@ -259,7 +261,7 @@ export class WorkflowRunner {
         const pr = loadedPr(preview);
         const prHead = { number: subject.ref.number, headRefName: pr.headRefName, headRefOid: pr.headRefOid, viewerIsAuthor: pr.viewerIsAuthor };
         const linked = preview.linkedWorktreeSessionId ? this.deps.sessions().find((s) => s.id === preview.linkedWorktreeSessionId) : undefined;
-        if (preview.workspace === "linked" && linked?.worktreePath && linked.projectId === projectId) {
+        if (preview.workspace === "linked" && linked?.worktreePath && linked.projectId === projectId && this.deps.ownsWorktree(linked.worktreePath)) {
           return { mode: "previous", reuseWorktreePath: linked.worktreePath, prHead };
         }
         return { mode, prHead };

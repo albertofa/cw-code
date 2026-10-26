@@ -2887,9 +2887,9 @@ export class SessionManager {
 
   /**
    * Worktrees under this install's roots belong to cw-code. An imported session may instead
-   * point at a worktree another tool owns, and that folder is never cw-code's to remove.
+   * point at a worktree another tool owns, and that folder is never cw-code's to reuse or remove.
    */
-  private ownsWorktree(path: string): boolean {
+  ownsWorktree(path: string): boolean {
     const roots = [resolve(this.worktreesRoot), ...this.legacyAppRoots.map((root) => resolve(root, "worktrees"))];
     const target = resolve(path);
     return roots.some((root) => {

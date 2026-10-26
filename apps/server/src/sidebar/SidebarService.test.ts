@@ -92,7 +92,7 @@ async function settle(): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, 1));
 }
 
-function setup(initial: SessionMeta[], options: { failFirstCompute?: boolean } = {}) {
+function setup(initial: SessionMeta[], options: { failFirstCompute?: boolean; ownsWorktree?: (path: string) => boolean } = {}) {
   const state = {
     sessions: initial,
     approvals: new Map<string, ApprovalRequest[]>(),
@@ -116,6 +116,7 @@ function setup(initial: SessionMeta[], options: { failFirstCompute?: boolean } =
       return state.sessions;
     },
     projects: () => [PROJECT],
+    ownsWorktree: options.ownsWorktree ?? (() => true),
     runtime: (id) => ({ busy: state.busy.has(id), approvals: state.approvals.get(id) ?? [], questions: [] }),
     gitStatus: (id) => state.git.get(id) ?? null,
     summaryLookup: () => state.lookup,
@@ -347,6 +348,17 @@ describe("SidebarService", () => {
     expect(snapshot.defaults).toEqual({ restoreSessionId: "c", restoreProjectId: "p", projectsByRecency: ["p"] });
     expect(snapshot["project/p"]).toEqual(PROJECT);
     expect(snapshot["worktrees/p"]).toEqual([]);
+  });
+
+  test("offers only cw-code-owned worktrees for reuse", () => {
+    const { data } = setup(
+      [
+        session("owned", "idle", { worktreePath: "C:/own/wt", updatedAt: 3 }),
+        session("foreign", "idle", { worktreePath: "C:/foreign/wt", updatedAt: 5 })
+      ],
+      { ownsWorktree: (path) => path.startsWith("C:/own/") }
+    );
+    expect(data()["worktrees/p"]).toEqual([{ sessionId: "owned", title: "owned", worktreePath: "C:/own/wt" }]);
   });
 
   test("the store survives release and keeps its revision", async () => {

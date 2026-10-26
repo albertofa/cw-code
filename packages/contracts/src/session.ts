@@ -77,7 +77,7 @@ export interface SessionMeta {
   permissionMode?: PermissionMode;
   /** Permission mode the harness CLI reports running in, which can differ from the requested mode. */
   effectivePermissionMode?: string;
-  /** The isolated checkout used by this session. Older/imported sessions omit it. */
+  /** The isolated checkout used by this session. Imported sessions keep the worktree the CLI ran in; older imports omit it. */
   worktreePath?: string;
   /** When the session last entered the idle status. */
   idleSince?: number;
