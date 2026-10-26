@@ -31,6 +31,8 @@ import { worktreeCandidates } from "./worktreeCandidates.js";
 export interface SidebarServiceDeps {
   sessions(): SessionMeta[];
   projects(): Project[];
+  /** True when cw-code owns the worktree path, so it may be offered for reuse. */
+  ownsWorktree(path: string): boolean;
   runtime(sessionId: string): Pick<SessionRuntime, "busy" | "approvals" | "questions">;
   gitStatus(sessionId: string): GitStatus | null;
   summaryLookup(): PrSummaryLookup;
@@ -251,7 +253,7 @@ export class SidebarService implements TopicProvider {
     const entries: Record<string, unknown> = { layout, defaults };
     for (const project of projects) {
       entries[`project/${project.id}`] = project;
-      entries[`worktrees/${project.id}`] = worktreeCandidates(byProject[project.id] ?? []);
+      entries[`worktrees/${project.id}`] = worktreeCandidates(byProject[project.id] ?? [], (path) => this.deps.ownsWorktree(path));
     }
     for (const [sessionId, row] of rows) entries[`row/${sessionId}`] = row;
     const data = this.stabilize(entries);

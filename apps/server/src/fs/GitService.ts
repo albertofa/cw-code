@@ -49,6 +49,14 @@ interface WorktreeEntry {
   branch: string | null;
 }
 
+/** A linked Git worktree and the main checkout that owns its project. */
+export interface WorktreeProject {
+  /** The repository's main checkout, where the project belongs. */
+  projectRoot: string;
+  /** The linked worktree that holds the session folder. */
+  worktreePath: string;
+}
+
 export interface ParsedGitHubRemote {
   host: string;
   owner: string;
@@ -984,6 +992,32 @@ export class GitService {
     const value = (await this.git(root).revparse(["--show-toplevel"])).trim();
     if (!value) throw new Error(`${root} is not a Git repository`);
     return resolve(value);
+  }
+
+  /**
+   * The main checkout and linked worktree that own `root`, or null when `root` is not inside a
+   * linked Git worktree (a main checkout, a plain folder, or a folder Git cannot inspect).
+   * A worktree's history belongs to the main checkout, so imports put their project there; a
+   * session started in a subdirectory of a worktree resumes at that worktree's root.
+   */
+  async worktreeProject(root: string): Promise<WorktreeProject | null> {
+    const layout = await this.repoLayout(root);
+    if (!layout?.isWorktree) return null;
+    const worktreePath = layout.repositoryRoot;
+    let projectRoot: string | null = null;
+    try {
+      const [main] = parseWorktreeList(await this.git(layout.repositoryRoot).raw(["worktree", "list", "--porcelain"]));
+      if (main) {
+        const candidate = resolve(main.path);
+        // A bare repository and a separate git dir list the metadata directory as the first
+        // entry. Only a real main working tree may become the project root.
+        const mainLayout = await this.repoLayout(candidate);
+        if (mainLayout && !mainLayout.isWorktree && sameWorktreePath(mainLayout.repositoryRoot, candidate)) projectRoot = candidate;
+      }
+    } catch {
+      // Fall back to the worktree itself; the import still keeps the session's folder.
+    }
+    return { projectRoot: projectRoot ?? worktreePath, worktreePath };
   }
 
   private async uniqueBranchName(git: ReturnType<GitService["git"]>, base: string): Promise<string> {

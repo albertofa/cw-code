@@ -58,6 +58,8 @@ export interface WorkflowPreviewDeps {
   settings(): AppSettings;
   sessions(): SessionMeta[];
   projects(): Array<{ id: string; name: string }>;
+  /** True when cw-code owns the worktree path, so it may become a linked workspace. */
+  ownsWorktree(path: string): boolean;
   projectRepos(): Promise<ProjectGitHubRepo[]>;
   installedHarnesses(): DriverKind[];
   recentModels(driver: DriverKind): string[];
@@ -302,7 +304,8 @@ export class WorkflowPreviewService {
         : this.resolveHarness({ config: harnessConfig, composerDriver: req.composerDriver, pendingPrefs: req.pendingPrefs, projectId });
     const effectiveDriver = continueSession?.driver ?? driver;
     const harnessName = harnessLabel(effectiveDriver);
-    const linkedWorktree = subject.kind === "pr" ? linkedSessions.find((s) => s.worktreePath && s.projectId === projectId) : undefined;
+    const linkedWorktree =
+      subject.kind === "pr" ? linkedSessions.find((s) => s.worktreePath && s.projectId === projectId && this.deps.ownsWorktree(s.worktreePath)) : undefined;
     const requestedWorkspace = req.workspace ?? workflow?.workspace ?? "worktree";
     const workspace = requestedWorkspace === "linked" && !linkedWorktree ? "worktree" : requestedWorkspace;
     const template = workflow ? (updateMode ? workflow.updatePrompt : workflow.startPrompt) : "";

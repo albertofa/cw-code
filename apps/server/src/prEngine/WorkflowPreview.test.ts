@@ -115,6 +115,7 @@ function session(overrides: Partial<SessionMeta> = {}): SessionMeta {
 interface HarnessOptions {
   workflows?: PrWorkflow[];
   sessions?: SessionMeta[];
+  ownsWorktree?: (path: string) => boolean;
   permissions?: PermissionOption[];
   withDetail?: boolean;
   issueFails?: boolean;
@@ -132,6 +133,7 @@ function harness(options: HarnessOptions = {}) {
     settings: () => settings,
     sessions: () => options.sessions ?? [],
     projects: () => [{ id: "p1", name: "widgets" }],
+    ownsWorktree: options.ownsWorktree ?? (() => true),
     projectRepos: async () => [{ projectId: "p1", host: "github.com", owner: "acme", repo: "widgets" }],
     installedHarnesses: () => ["claude"],
     recentModels: () => [],
@@ -213,6 +215,18 @@ describe("WorkflowPreviewService.preview", () => {
     expect(preview).toMatchObject({ updateMode: false, logsNeeded: false, loaded: true, prompt: "start 42", projectId: "p1", needsClone: false });
     expect(preview.harness?.resolved).toMatchObject({ driver: "claude", model: "opus" });
     expect(preview.pr?.headRefOid).toBe("new");
+  });
+
+  it("only offers a linked worktree workspace when cw-code owns it", async () => {
+    const linked = session({ prs: [link()], worktreePath: "/foreign/wt" });
+
+    const foreign = harness({ sessions: [linked], ownsWorktree: () => false });
+    const fallback = await foreign.service.preview(request({ workspace: "linked" }));
+    expect(fallback).toMatchObject({ workspace: "worktree", linkedWorktreeSessionId: null });
+
+    const owned = harness({ sessions: [linked], ownsWorktree: (path) => path === "/foreign/wt" });
+    const preview = await owned.service.preview(request({ workspace: "linked" }));
+    expect(preview).toMatchObject({ workspace: "linked", linkedWorktreeSessionId: "s1" });
   });
 
   it("gives an issue subject the default branch as its base", async () => {

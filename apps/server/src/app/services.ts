@@ -328,6 +328,7 @@ export function createServices(stores: { sessionStore: SessionStore; settingsSto
   const sidebar = new SidebarService(hooks.topics, {
     sessions: () => sessions.listAllSessions(),
     projects: () => sessions.listProjects(),
+    ownsWorktree: (path) => sessions.ownsWorktree(path),
     runtime: (sessionId) => threads.runtime(sessionId),
     gitStatus: (sessionId) => sourceControl.status(sessionId),
     summaryLookup: () => prStore.summaryLookup(),
@@ -376,6 +377,7 @@ export function createServices(stores: { sessionStore: SessionStore; settingsSto
     settings: () => sessions.getSettings(),
     sessions: () => sessions.listAllSessions(),
     projects: () => sessions.listProjects(),
+    ownsWorktree: (path) => sessions.ownsWorktree(path),
     projectRepos: () => prStore.projectRepos(),
     installedHarnesses: () => appTopic.harnesses.installed,
     recentModels: (driver) => preferences.recentModels()[driver] ?? [],
@@ -396,6 +398,7 @@ export function createServices(stores: { sessionStore: SessionStore; settingsSto
     resolveHarness: (req) => workflowPreview.resolveHarness(req),
     workflows: () => sessions.getSettings().prWorkflows,
     sessions: () => sessions.listAllSessions(),
+    ownsWorktree: (path) => sessions.ownsWorktree(path),
     clone: (repo) => pullRequests.clone(repo),
     refreshProjectRepos: () => prStore.refreshProjectRepos(),
     createSession: (projectId, driver, options) => sessions.createSession(projectId, driver, options),

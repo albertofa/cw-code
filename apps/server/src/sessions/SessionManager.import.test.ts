@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
-import { mkdirSync, mkdtempSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
@@ -51,6 +52,27 @@ function setup() {
     return path;
   };
   return { manager, driver, worktreesRoot, legacyRoot, folder };
+}
+
+function git(repository: string, ...args: string[]): string {
+  return execFileSync("git", ["-C", repository, ...args], { encoding: "utf8" }).trim();
+}
+
+function gitRepository(dir: string): string {
+  const repository = join(dir, "repo");
+  mkdirSync(repository, { recursive: true });
+  execFileSync("git", ["init", "-b", "main", repository]);
+  writeFileSync(join(repository, "README.md"), "base\n", "utf8");
+  git(repository, "add", "README.md");
+  git(repository, "-c", "user.name=cw-code", "-c", "user.email=test@cw-code.local", "commit", "-m", "initial");
+  return repository;
+}
+
+function linkedWorktree(repository: string, parent: string): string {
+  mkdirSync(parent, { recursive: true });
+  const worktree = join(parent, "wt");
+  git(repository, "worktree", "add", "-b", "feature", worktree);
+  return worktree;
 }
 
 describe("session import", () => {
@@ -153,5 +175,53 @@ describe("session import", () => {
     ];
 
     expect((await manager.listImportableSessions("claude")).map((s) => s.resumeCursor).sort()).toEqual(["older", "other-harness"]);
+  });
+
+  it("imports a worktree session into the project at its main checkout and keeps the worktree", async () => {
+    const { manager, driver, folder } = setup();
+    const repository = gitRepository(folder("repo"));
+    const worktree = linkedWorktree(repository, folder("external"));
+    driver.native = [native({ resumeCursor: "wt", cwd: worktree, title: "Worktree work" })];
+
+    const listed = await manager.listImportableSessions("claude");
+
+    expect(listed).toHaveLength(1);
+    expect(listed[0]).toMatchObject({ cwd: worktree, projectName: "repo", projectRoot: repository });
+    expect(listed[0].projectId).toBeUndefined();
+
+    const { project, session } = await manager.importSession({ driver: "claude", resumeCursor: "wt" });
+
+    expect(project.rootPath).toBe(repository);
+    expect(session.worktreePath).toBe(worktree);
+    expect(manager.rootFor(session.id)).toBe(worktree);
+    expect(await manager.listImportableSessions("claude")).toEqual([]);
+  });
+
+  it("reuses the project already rooted at the main checkout", async () => {
+    const { manager, driver, folder } = setup();
+    const repository = gitRepository(folder("repo"));
+    const worktree = linkedWorktree(repository, folder("external"));
+    const project = manager.addProject(repository);
+    driver.native = [native({ resumeCursor: "wt", cwd: worktree })];
+
+    const result = await manager.importSession({ driver: "claude", resumeCursor: "wt" });
+
+    expect(result.project.id).toBe(project.id);
+    expect(manager.listProjects()).toHaveLength(1);
+    expect(result.session.worktreePath).toBe(worktree);
+  });
+
+  it("never removes a worktree another tool owns when resolving an imported session", async () => {
+    const { manager, driver, folder } = setup();
+    const repository = gitRepository(folder("repo"));
+    const worktree = linkedWorktree(repository, folder("external"));
+    driver.native = [native({ resumeCursor: "wt", cwd: worktree })];
+    const { session } = await manager.importSession({ driver: "claude", resumeCursor: "wt" });
+
+    const result = await manager.resolveSession(session.id, "resolved", { removeWorktree: true });
+
+    expect(result.worktreeRemoved).toBe(false);
+    expect(existsSync(worktree)).toBe(true);
+    expect(manager.rootFor(session.id)).toBe(worktree);
   });
 });

@@ -100,7 +100,14 @@ function request(overrides: Partial<WorkflowRunRequest> = {}): WorkflowRunReques
 }
 
 function harness(
-  options: { preview?: WorkflowPreview; sessions?: SessionMeta[]; failTurn?: boolean; failClone?: boolean; failComposer?: boolean } = {}
+  options: {
+    preview?: WorkflowPreview;
+    sessions?: SessionMeta[];
+    ownsWorktree?: (path: string) => boolean;
+    failTurn?: boolean;
+    failClone?: boolean;
+    failComposer?: boolean;
+  } = {}
 ) {
   const calls: string[] = [];
   const links: Array<{ sessionId: string; link: SessionPrLink }> = [];
@@ -116,6 +123,7 @@ function harness(
     }),
     workflows: () => [workflow],
     sessions: () => sessions,
+    ownsWorktree: options.ownsWorktree ?? (() => true),
     clone: async () => {
       calls.push("clone");
       if (options.failClone) throw new Error("clone failed");
@@ -201,6 +209,19 @@ describe("WorkflowRunner", () => {
     expect(turns[0]?.prompt).toBe(
       "do it\n\nYou are on branch cw/new, not the PR head. To update PR #42, push with: git push origin HEAD:fix"
     );
+  });
+
+  it("reuses a linked worktree only when cw-code owns it", async () => {
+    const linked = session("sess_a", { worktreePath: "/foreign/wt" });
+    const linkedPreview = preview({ workspace: "linked", linkedWorktreeSessionId: "sess_a" });
+
+    const foreign = harness({ preview: linkedPreview, sessions: [linked], ownsWorktree: () => false });
+    await foreign.runner.run(request());
+    expect(foreign.calls).toContain("create:proj_1:codex:new");
+
+    const owned = harness({ preview: linkedPreview, sessions: [linked], ownsWorktree: (path) => path === "/foreign/wt" });
+    await owned.runner.run(request());
+    expect(owned.calls).toContain("create:proj_1:codex:previous");
   });
 
   it("resumes after a failed send without creating or linking again", async () => {

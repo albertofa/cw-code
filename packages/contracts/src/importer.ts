@@ -15,9 +15,11 @@ export interface NativeSession {
 }
 
 export interface ImportableSession extends NativeSession {
-  /** Existing project rooted at `cwd`; importing without one adds a project for that folder. */
+  /** Existing project that receives the session, at `projectRoot`. */
   projectId?: string;
   projectName: string;
+  /** Folder whose project receives the session; the main checkout when `cwd` is a linked worktree. */
+  projectRoot: string;
   /** `owner/name` of the folder's Git remote, when known. */
   repository?: string;
 }

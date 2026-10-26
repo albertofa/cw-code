@@ -87,7 +87,7 @@ function ImportRow({
           )}
           <span className="import-meta">{formatRelativeAge(session.updatedAt, now)} ago</span>
           {!session.projectId && (
-            <span className="import-new-project" title={`Adds ${shortenHome(session.cwd, homeDir)} as a project`}>
+            <span className="import-new-project" title={`Adds ${shortenHome(session.projectRoot, homeDir)} as a project`}>
               <FolderPlus size={11} aria-hidden="true" />
               new project
             </span>

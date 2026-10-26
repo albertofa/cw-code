@@ -979,6 +979,52 @@ describe("GitService worktrees", () => {
   });
 });
 
+describe("GitService worktreeProject", () => {
+  it("maps a linked worktree to the main checkout", async () => {
+    const { sandbox, repository, service } = initSandbox();
+    const worktree = join(sandbox, "wt", "session");
+    execFileSync("git", ["-C", repository, "worktree", "add", "-b", "feature", worktree]);
+
+    await expect(service.worktreeProject(worktree)).resolves.toEqual({ projectRoot: repository, worktreePath: worktree });
+
+    mkdirSync(join(worktree, "pkg"));
+    await expect(service.worktreeProject(join(worktree, "pkg"))).resolves.toEqual({ projectRoot: repository, worktreePath: worktree });
+  });
+
+  it("returns null for the main checkout and for folders outside Git", async () => {
+    const { sandbox, repository, service } = initSandbox();
+    const plain = join(sandbox, "plain");
+    mkdirSync(plain);
+
+    await expect(service.worktreeProject(repository)).resolves.toBeNull();
+    await expect(service.worktreeProject(plain)).resolves.toBeNull();
+  });
+
+  it("falls back to the worktree when a bare repository lists its metadata as the main tree", async () => {
+    const { sandbox, repository, service } = initSandbox();
+    const bare = join(sandbox, "bare.git");
+    execFileSync("git", ["clone", "--bare", repository, bare]);
+    const worktree = join(sandbox, "bare-wt");
+    execFileSync("git", ["-C", bare, "worktree", "add", "-b", "feature", worktree]);
+
+    await expect(service.worktreeProject(worktree)).resolves.toEqual({ projectRoot: worktree, worktreePath: worktree });
+  });
+
+  it("falls back to the worktree when a separate git dir lists its metadata as the main tree", async () => {
+    const sandbox = mkdtempSync(join(tmpdir(), "cw-git-sep-"));
+    const metadata = join(sandbox, "meta.git");
+    const mainCheckout = join(sandbox, "main");
+    execFileSync("git", ["init", "--separate-git-dir", metadata, "-b", "main", mainCheckout]);
+    writeFileSync(join(mainCheckout, "README.md"), "base\n", "utf8");
+    execFileSync("git", ["-C", mainCheckout, "add", "README.md"]);
+    execFileSync("git", ["-C", mainCheckout, "-c", "user.name=cw-code", "-c", "user.email=test@cw-code.local", "commit", "-m", "initial"]);
+    const worktree = join(sandbox, "wt");
+    execFileSync("git", ["-C", mainCheckout, "worktree", "add", "-b", "feature", worktree]);
+
+    await expect(new GitService().worktreeProject(worktree)).resolves.toEqual({ projectRoot: worktree, worktreePath: worktree });
+  });
+});
+
 function git(repository: string, ...args: string[]): string {
   return execFileSync("git", ["-C", repository, ...args], { encoding: "utf8" });
 }
