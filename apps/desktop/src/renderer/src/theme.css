@@ -3090,71 +3090,67 @@ body.session-dragging * {
   flex-direction: column;
 }
 
-/* Prompt rail — one marker per prompt, on the right edge of the thread. */
+/* Prompt rail — one compact marker per prompt, on the left edge of the thread. */
 .prompt-rail {
   position: absolute;
   top: 10px;
-  right: 10px;
+  left: 0;
   bottom: calc(var(--composer-overlay-h, 0px) + 10px);
-  width: 14px;
+  width: 36px;
   z-index: 12;
   pointer-events: none;
 }
 
-.prompt-rail-view {
+.prompt-rail-list {
   position: absolute;
-  right: 4px;
-  width: 6px;
-  min-height: 10px;
-  border-radius: 3px;
-  background: color-mix(in srgb, var(--text) 7%, transparent);
+  top: 50%;
+  left: 6px;
+  width: 28px;
+  transform: translateY(-50%);
 }
 
 .prompt-rail-mark {
   position: absolute;
-  right: 0;
-  width: 14px;
-  height: 12px;
-  margin-top: -6px;
+  left: 0;
+  width: 28px;
+  height: 10px;
+  margin-top: -5px;
   padding: 0;
   border: 0;
   background: none;
   display: flex;
   align-items: center;
-  justify-content: flex-end;
+  justify-content: flex-start;
   cursor: pointer;
   pointer-events: auto;
 }
 
 .prompt-rail-bar {
-  width: 10px;
-  height: 3px;
-  border-radius: 2px;
-  background: color-mix(in srgb, var(--text) 32%, transparent);
+  width: 14px;
+  height: 2px;
+  border-radius: 1px;
+  background: color-mix(in srgb, var(--text) 24%, transparent);
   transition:
     background var(--dur-fast) var(--ease-out),
     width var(--dur-fast) var(--ease-out);
 }
 
-.prompt-rail-mark:hover .prompt-rail-bar,
-.prompt-rail-mark:focus-visible .prompt-rail-bar {
-  width: 14px;
+.prompt-rail-mark.is-visible .prompt-rail-bar {
+  background: color-mix(in srgb, var(--text) 52%, transparent);
+}
+
+.prompt-rail-mark.has-match .prompt-rail-bar {
+  background: color-mix(in srgb, var(--warning) 72%, transparent);
+}
+
+.prompt-rail-mark.is-active-match .prompt-rail-bar {
+  width: 20px;
   background: var(--accent);
 }
 
-.prompt-rail-match {
-  position: absolute;
-  right: 1px;
-  width: 5px;
-  height: 2px;
-  margin-top: -1px;
-  border-radius: 1px;
-  background: var(--warning);
-}
-
-.prompt-rail-match.is-active {
-  width: 8px;
-  height: 3px;
+.prompt-rail-mark:hover .prompt-rail-bar,
+.prompt-rail-mark:focus-visible .prompt-rail-bar {
+  width: 20px;
   background: var(--accent);
 }
 
@@ -3162,7 +3158,7 @@ body.session-dragging * {
   position: fixed;
   z-index: 160;
   transform: translateY(-50%);
-  max-width: 320px;
+  max-width: min(320px, calc(100vw - 48px));
   display: flex;
   flex-direction: column;
   gap: 3px;
