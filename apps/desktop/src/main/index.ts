@@ -253,6 +253,7 @@ function exitApp(code: number): void {
 }
 
 function stopServerAndQuit(): void {
+  if (remoteMode) return;
   focusMainWindow();
   requestShutdown("server");
 }
