@@ -21,6 +21,7 @@ import type {
 import { appendCrashLog, initCrashLog } from "@cw-code/server/debug/crashLog";
 import { attachmentsDir, cwCodeHome, logsDir } from "@cw-code/server/paths/appPaths";
 import { windowBackgroundColor } from "@cw-code/shared/themes";
+import { channelOfVersion } from "@cw-code/shared/updateChannel";
 import { attentionDescription, shouldFlash } from "./attention.js";
 import { badgeLabel, renderBadge } from "./badgeImage.js";
 import { failedServerProbe, RendererProbeTracker, runPackageProbe } from "./debug/packageProbe.js";
@@ -31,7 +32,7 @@ import { ElectronUpdaterAdapter } from "./updates/ElectronUpdaterAdapter.js";
 import { UpdateService } from "./updates/UpdateService.js";
 import { createUpdateLogFile } from "./updates/updateLog.js";
 import { firstRunChannelPatch, updatePreferences, type UpdatePreferences } from "./updates/updatePreferences.js";
-import { channelOfVersion, initialUpdateState, isUpdateChannel } from "./updates/updateState.js";
+import { initialUpdateState, isUpdateChannel } from "./updates/updateState.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 

@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import { RefreshCw } from "lucide-react";
+import { channelOfVersion } from "@cw-code/shared/updateChannel";
 import type { AppSettings, UpdateChannel } from "../cw.js";
 import { useAppStore } from "../stores/appStore.js";
 import { restartToUpdate, runUpdateAction } from "../stores/updateFlow.js";
@@ -7,7 +8,6 @@ import { ipcErrorMessage } from "./ipcError.js";
 import { Md } from "./Markdown.js";
 import { useNotifs } from "./Notifications.js";
 import { releaseNotesMarkdown } from "./releaseNotes.js";
-import { channelOfVersion } from "./updateChannel.js";
 import { CHANNEL_LABELS, formatCheckedAt, installTarget, updateStatusText } from "./updateModel.js";
 import { SettingsGroup, SettingsRow, SettingsSwitch } from "./SettingsLayout.js";
 

@@ -1,5 +1,5 @@
 import type { AppSettings, UpdateChannel } from "@cw-code/contracts";
-import { channelOfVersion } from "./updateState.js";
+import { channelOfVersion } from "@cw-code/shared/updateChannel";
 
 export interface UpdatePreferences {
   channel: UpdateChannel;

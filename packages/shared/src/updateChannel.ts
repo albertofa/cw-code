@@ -1,4 +1,4 @@
-import type { UpdateChannel } from "../cw.js";
+import type { UpdateChannel } from "@cw-code/contracts";
 
 const ALPHA_VERSION_RE = /^\d+\.\d+\.\d+-alpha/;
 
