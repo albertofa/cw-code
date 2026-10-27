@@ -1,4 +1,5 @@
-import type { PrDetail, PrRef, PrWorkflow, SessionMeta } from "@cw-code/contracts";
+import type { PrDetail, PrLinkSnapshot, PrRef, PrSummary, PrWorkflow, SessionMeta, SessionPrLink } from "@cw-code/contracts";
+import { autoFollowUpWorkflow } from "@cw-code/shared/autoFollowUp";
 import { prKey } from "@cw-code/shared/prRef";
 import { autoFollowUpRefs } from "./babysit.js";
 import { unseenPrsNeedingDetail } from "./needsYou.js";
@@ -32,9 +33,21 @@ function isLive(session: SessionMeta): boolean {
   return session.status !== "resolved" && session.status !== "archived";
 }
 
+const FINISHED_STATES: ReadonlySet<PrLinkSnapshot["state"]> = new Set(["MERGED", "CLOSED"]);
+
+/**
+ * The link already records that the PR is finished and no summary contradicts it. The snapshot is
+ * often the only state the app keeps for a merged PR (the tracker stops polling those), so a
+ * missing summary must not turn it back into a link worth fetching.
+ */
+function finishedWithoutSummary(link: SessionPrLink, summary: PrSummary | undefined): boolean {
+  return summary === undefined && link.snapshot !== undefined && FINISHED_STATES.has(link.snapshot.state);
+}
+
 export function detailPolicy({ sessions, lookup, details, workflows, watched, isSessionOpen }: DetailPolicyInput): DetailPolicyResult {
   const wanted = new Map<string, WantedDetail>();
   const retained = new Set<string>();
+  const finished = new Set<string>();
   const want = (ref: PrRef): void => {
     const key = prKey(ref);
     if (!wanted.has(key)) wanted.set(key, { ref, version: detailRefreshKey(key, lookup.get(key)) });
@@ -44,14 +57,20 @@ export function detailPolicy({ sessions, lookup, details, workflows, watched, is
   for (const session of sessions) {
     if (!isLive(session)) continue;
     for (const link of sessionLinks(session)) {
-      const summary = lookup.get(prKey(link.ref));
-      if (summary && hasUnseen(summary, link)) retained.add(prKey(link.ref));
+      const key = prKey(link.ref);
+      const summary = lookup.get(key);
+      if (summary && hasUnseen(summary, link)) retained.add(key);
+      if (finishedWithoutSummary(link, summary)) finished.add(key);
+      // A followed PR stays referenced while its session lives. Without this a detail that revealed
+      // a merged PR would be evicted as unused, and the next change would reload it from scratch.
+      if (autoFollowUpWorkflow(link, workflows)) retained.add(key);
     }
   }
 
   for (const ref of autoFollowUpRefs(sessions, lookup, workflows)) {
     const key = prKey(ref);
     retained.add(key);
+    if (finished.has(key)) continue;
     const detail = details.get(key);
     if (!detail || detailNeedsRefresh(detail, lookup.get(key))) want(ref);
   }
