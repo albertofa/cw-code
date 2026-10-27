@@ -27,14 +27,27 @@ Core behaviors:
   CLI drivers, sessions, git, GitHub, files, terminals, settings, shutdown. It serves one
   WebSocket (`/ws`) and is the only place business logic lives. Packaged as a
   `bun build --compile` binary with `node-pty` as a sidecar (`CW_NODE_PTY`).
-- `apps/desktop`: Electron shell only — spawns and supervises its own server (never attaches
-  to another instance's), owns the window, zoom, attention badge, native dialogs, OS
-  open/reveal and auto-updates, and exposes them to the renderer as `window.cwDesktop` (`DesktopApi`).
+  The same listener has a small HTTP surface (`transport/httpRoutes.ts`): `GET /api/info`
+  (`{ app, version, protocol }`, unauthenticated), `POST /api/stop` (owner token as `Bearer`;
+  rejects a cross-origin `Origin`) and, for every other path, the built UI as static files
+  (read-only, no SPA fallback; unknown paths are 404). The UI directory is `--ui-dir`, else
+  `ui/` next to the compiled binary, else `apps/ui/dist` when run from source; none found
+  means no web UI (`ServerHost.webUi` is false). HTML responses carry a CSP built from the
+  request `Host` (`script-src 'self'`, `connect-src` `'self'` plus that host's `ws:`/`wss:`).
+- `apps/desktop`: Electron shell only — owns the window, zoom, attention badge, tray, native
+  dialogs, OS open/reveal, connection profiles and auto-updates, and exposes them to the UI as
+  `window.cwDesktop` (`DesktopApi`). On the local profile it spawns and supervises a server
+  (see Keep-running); on a remote profile it only connects (see Connection profiles).
 - `apps/ui` (`@cw-code/ui`): the UI, a standalone Vite + React app (`base: "./"`). Talks to
   the server only through `@cw-code/client` (`window.cw` is built from it in
   `src/server/createCwApi.ts`) and to the shell only through `window.cwDesktop`. It never
   spawns processes, touches the filesystem, or imports Electron, server code or `node:`
-  built-ins (`src/boundaries.test.ts` enforces it). The build (`apps/ui/dist`) ships once, at
+  built-ins (`src/boundaries.test.ts` enforces it). `window.cw.local` (open/reveal a path,
+  data dir, native folder picker, harness trace) exists only when the UI runs in the shell on
+  the local profile, and `window.cw.shell` (window controls, zoom, updates, connection
+  profiles, stop-server-and-quit) only inside the shell; both are `null` otherwise, so
+  local-only actions live in `cw.local`, shell-only ones in `cw.shell`, and the same UI also
+  runs in a plain browser. The build (`apps/ui/dist`) ships once, at
   `resources/server/ui/`: `apps/server/scripts/compile.ts` copies it into the server dist and
   the packaged shell loads it from there over `file://`. In dev, electron-vite serves it with
   HMR as the shell's renderer.
@@ -84,6 +97,28 @@ Core behaviors:
   owner-only, but that is not a security boundary: a device token still grants full remote
   control (terminals, sessions, files, all other settings). Treat it like a shell login.
   Per-method scopes are future work.
+- Browser entry: a browser opens the server's own address (`/`) and pairs with a device
+  token. The owner creates one in Settings (`devices.create`) and gets a link
+  `<serverPublicUrl>/#token=<token>`; the UI reads the hash, removes it from the address bar and
+  keeps the token in `localStorage` (`cw-code:deviceToken`). A rejected token returns to the
+  login screen; `devices.revoke` closes that device's open sockets.
+- Keep-running: with `keepServerRunning` (owner-only setting) closing the window hides it to
+  a tray icon (Open cw-code, Stop server and quit) and the server outlives the shell. The shell
+  passes `--launcher-id <installId>` (`install-id` in the Electron user data). On start it
+  reads `userdata/server.json`, confirms the server is live, then decides: no server, spawn;
+  same launcher id, version and protocol, attach (and `server.setParent` moves the server's
+  parent watch to the new shell); same launcher id, other version or protocol, replace (ask the
+  user, `POST /api/stop`, wait 15 s, then kill by pid); other or missing launcher id, foreign
+  (refuse after ~6 s; the user connects to it as a remote server). Without the setting the
+  server exits when its parent is gone. Quit is scoped: `server` stops the server (the shell
+  kills it after 3 s if it does not exit), `window` (remote profile) closes only the window.
+- Connection profiles: `connections.json` in the Electron user data holds the active id
+  and the remote profiles (name, URL, device token sealed with `safeStorage`; a base64 `plain`
+  fallback when the OS has none). `local` always exists. The running profile is fixed at
+  startup: switching runs the quit flow with the current profile's scope, then relaunches the
+  app on the new one (leaving the local profile stops the local server). In remote mode the
+  shell never spawns or stops a server, shows no tray, ignores stop-server-and-quit and
+  installs updates without the server.
 
 ## Stack
 
