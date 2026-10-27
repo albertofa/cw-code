@@ -118,6 +118,12 @@ describe("/api/stop", () => {
     expect(stops).toBe(2);
   });
 
+  test("matches the Bearer scheme case-insensitively", async () => {
+    stops = 0;
+    expect((await call("/api/stop", { method: "POST", headers: { Authorization: `bearer ${TOKEN}` } })).status).toBe(202);
+    expect(stops).toBe(1);
+  });
+
   test("rejects GET with 405", async () => {
     expect((await call("/api/stop")).status).toBe(405);
   });

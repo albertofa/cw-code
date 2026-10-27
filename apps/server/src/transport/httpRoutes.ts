@@ -11,7 +11,7 @@ export interface HttpRoutesOptions {
   stop(): void;
 }
 
-const BEARER_PREFIX = "Bearer ";
+const BEARER_PATTERN = /^bearer\s+(\S+)\s*$/i;
 const HOST_PATTERN = /^[a-z0-9.\-:[\]]+$/i;
 const UI_NOT_BUNDLED = "web UI is not bundled with this server (build it with bun --filter @cw-code/ui build)";
 const IMMUTABLE_CACHE = "public, max-age=31536000, immutable";
@@ -52,8 +52,7 @@ function isReadMethod(method: string): boolean {
 }
 
 function bearerToken(req: Request): string | null {
-  const header = req.headers.get("authorization");
-  return header?.startsWith(BEARER_PREFIX) ? header.slice(BEARER_PREFIX.length).trim() : null;
+  return BEARER_PATTERN.exec(req.headers.get("authorization") ?? "")?.[1] ?? null;
 }
 
 function handleInfo(req: Request, opts: HttpRoutesOptions): Response {
@@ -72,10 +71,10 @@ function handleStop(req: Request, opts: HttpRoutesOptions): Response {
   return reply(null, 202);
 }
 
-function handleStatic(req: Request, pathname: string, opts: HttpRoutesOptions): Response {
+async function handleStatic(req: Request, pathname: string, opts: HttpRoutesOptions): Promise<Response> {
   if (!isReadMethod(req.method)) return methodNotAllowed("GET, HEAD");
   if (opts.uiDir === null) return reply(pathname === "/" ? UI_NOT_BUNDLED : "not found", 404, { "Content-Type": "text/plain; charset=utf-8" });
-  const resolved = resolveStaticPath(opts.uiDir, pathname);
+  const resolved = await resolveStaticPath(opts.uiDir, pathname);
   if (resolved.kind === "bad-request") return reply("bad request", 400);
   if (resolved.kind === "not-found") return reply("not found", 404);
   const contentType = contentTypeFor(resolved.path);

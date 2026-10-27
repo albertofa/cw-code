@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, parse } from "node:path";
-import { browseDirectories } from "./directoryBrowser.js";
+import { browseDirectories, DriveRootsCache } from "./directoryBrowser.js";
 
 let root: string;
 
@@ -48,8 +48,13 @@ describe("browseDirectories", () => {
     expect(listing.parent).toBeNull();
   });
 
+  test("treats an empty path like home", async () => {
+    const listing = await browseDirectories("", { home: root });
+    expect(listing.path).toBe(root);
+  });
+
   test("rejects relative paths", async () => {
-    await expect(browseDirectories("relative/dir", { home: root })).rejects.toThrow("folder not found on the server: relative/dir");
+    await expect(browseDirectories("relative/dir", { home: root })).rejects.toThrow("path must be absolute: relative/dir");
   });
 
   test("maps filesystem errors to readable messages", async () => {
@@ -67,7 +72,7 @@ describe("browseDirectories", () => {
       platform: "win32",
       home: "C:\\Users\\me",
       readdir: async () => [],
-      exists: (path) => path === "C:\\" || path === "D:\\"
+      exists: async (path) => path === "C:\\" || path === "D:\\"
     });
     expect(windows.roots).toEqual([
       { label: "Home", path: "C:\\Users\\me" },
@@ -75,7 +80,7 @@ describe("browseDirectories", () => {
       { label: "D:", path: "D:\\" }
     ]);
     expect(windows.parent).toBe("C:\\");
-    const drive = await browseDirectories("C:\\", { platform: "win32", home: "C:\\Users\\me", readdir: async () => [], exists: () => false });
+    const drive = await browseDirectories("C:\\", { platform: "win32", home: "C:\\Users\\me", readdir: async () => [], exists: async () => false });
     expect(drive.parent).toBeNull();
     const posix = await browseDirectories("/srv", { platform: "linux", home: "/home/me", readdir: async () => [] });
     expect(posix.roots).toEqual([
@@ -99,8 +104,55 @@ describe("browseDirectories", () => {
         if (path === "/srv/broken") throw new Error("ENOENT");
         return { isDirectory: () => path === "/srv/link" };
       },
-      exists: () => false
+      exists: async () => false
     });
     expect(listing.entries.map((entry) => entry.name)).toEqual(["link"]);
+  });
+
+  test("probes drives in parallel, omits a hung drive and caches the roots", async () => {
+    let probes = 0;
+    let now = 0;
+    const driveCache = new DriveRootsCache(10_000, () => now);
+    const options = {
+      platform: "win32" as const,
+      home: "C:\Users\me",
+      readdir: async () => [],
+      driveProbeTimeoutMs: 20,
+      driveCache,
+      exists: (path: string) => {
+        probes += 1;
+        if (path === "Z:\\") return new Promise<boolean>(() => {});
+        return Promise.resolve(path === "C:\\");
+      }
+    };
+    const first = await browseDirectories("C:\\", options);
+    expect(first.roots.map((entry) => entry.label)).toEqual(["Home", "C:"]);
+    const probesAfterFirst = probes;
+    await browseDirectories("C:\\", options);
+    expect(probes).toBe(probesAfterFirst);
+    now = 10_001;
+    await browseDirectories("C:\\", options);
+    expect(probes).toBeGreaterThan(probesAfterFirst);
+  });
+
+  test("checks git markers with bounded concurrency", async () => {
+    const entries = Array.from({ length: 100 }, (_, index) => ({ name: `d${index}`, isDirectory: () => true, isSymbolicLink: () => false }));
+    let active = 0;
+    let peak = 0;
+    const listing = await browseDirectories("/srv", {
+      platform: "linux",
+      home: "/home/me",
+      readdir: async () => entries,
+      exists: async (path) => {
+        active += 1;
+        peak = Math.max(peak, active);
+        await Bun.sleep(1);
+        active -= 1;
+        return path.endsWith("d7/.git");
+      }
+    });
+    expect(listing.entries.filter((entry) => entry.isGitRepo).map((entry) => entry.name)).toEqual(["d7"]);
+    expect(peak).toBeGreaterThan(1);
+    expect(peak).toBeLessThanOrEqual(32);
   });
 });

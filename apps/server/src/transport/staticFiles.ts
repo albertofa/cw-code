@@ -1,4 +1,4 @@
-import { statSync } from "node:fs";
+import { realpath, stat } from "node:fs/promises";
 import { extname, isAbsolute, join, relative, resolve, sep } from "node:path";
 
 export type StaticResolution = { kind: "file"; path: string; immutable: boolean } | { kind: "bad-request" } | { kind: "not-found" };
@@ -38,22 +38,29 @@ function hasUnsafeSegment(decoded: string): boolean {
   return decoded.split("/").some((segment) => segment === ".." || segment.includes(":"));
 }
 
-function isRegularFile(path: string): boolean {
+function isInside(base: string, target: string): boolean {
+  const inside = relative(base, target);
+  return inside !== "" && inside !== ".." && !inside.startsWith(`..${sep}`) && !isAbsolute(inside);
+}
+
+async function realFileInside(base: string, target: string): Promise<string | null> {
   try {
-    return statSync(path).isFile();
+    const [realBase, realTarget] = await Promise.all([realpath(base), realpath(target)]);
+    if (!isInside(realBase, realTarget)) return null;
+    return (await stat(realTarget)).isFile() ? target : null;
   } catch {
-    return false;
+    return null;
   }
 }
 
-export function resolveStaticPath(uiDir: string, pathname: string): StaticResolution {
+export async function resolveStaticPath(uiDir: string, pathname: string): Promise<StaticResolution> {
   const decoded = decodePathname(pathname);
   if (decoded === null || !decoded.startsWith("/") || hasUnsafeSegment(decoded)) return { kind: "bad-request" };
   const base = resolve(uiDir);
   const relativePath = decoded === "/" ? INDEX_FILE : decoded.slice(1);
   const target = resolve(join(base, relativePath));
-  const inside = relative(base, target);
-  if (inside === "" || inside === ".." || inside.startsWith(`..${sep}`) || isAbsolute(inside)) return { kind: "bad-request" };
-  if (!isRegularFile(target)) return { kind: "not-found" };
-  return { kind: "file", path: target, immutable: decoded.startsWith(IMMUTABLE_PREFIX) };
+  if (!isInside(base, target)) return { kind: "bad-request" };
+  const file = await realFileInside(base, target);
+  if (file === null) return { kind: "not-found" };
+  return { kind: "file", path: file, immutable: decoded.startsWith(IMMUTABLE_PREFIX) };
 }
