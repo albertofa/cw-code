@@ -38,6 +38,13 @@ export interface ServerInfo {
   protocol: number;
 }
 
+export interface ServerHost {
+  platform: "win32" | "linux" | "darwin";
+  hostname: string;
+  homeDir: string;
+  webUi: boolean;
+}
+
 export interface TopicsParams {
   topics: string[];
 }

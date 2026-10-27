@@ -4,6 +4,25 @@ export interface DirEntry {
   isDir: boolean;
 }
 
+export interface DirectoryEntry {
+  name: string;
+  path: string;
+  isGitRepo: boolean;
+}
+
+export interface DirectoryRoot {
+  label: string;
+  path: string;
+}
+
+export interface DirectoryListing {
+  path: string;
+  parent: string | null;
+  entries: DirectoryEntry[];
+  truncated: boolean;
+  roots: DirectoryRoot[];
+}
+
 export interface FileStatInfo {
   mtimeMs: number;
   size: number;

@@ -170,6 +170,9 @@ export type {
 export type { AppNotice } from "./notices.js";
 export type {
   DirEntry,
+  DirectoryEntry,
+  DirectoryRoot,
+  DirectoryListing,
   FileStatInfo,
   FileReadResult,
   GitFileState,
@@ -183,7 +186,7 @@ export type {
   FilesTopicData
 } from "./files.js";
 export type { NativeSession, ImportableSession, ImportSessionRequest, ImportSessionResult } from "./importer.js";
-export type { ClientKind, RpcError, ClientMessage, ServerMessage, ServerEndpoint, ServerReady, ServerInfo, TopicsParams, DeviceInfo, DeviceCreateResult } from "./protocol.js";
+export type { ClientKind, RpcError, ClientMessage, ServerMessage, ServerEndpoint, ServerReady, ServerInfo, ServerHost, TopicsParams, DeviceInfo, DeviceCreateResult } from "./protocol.js";
 export type { DesktopApi } from "./desktop.js";
 export type { TopicOp, TopicSnapshot, TopicsSubscribeResult, TopicPatch } from "./topics.js";
 export type {
