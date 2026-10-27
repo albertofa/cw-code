@@ -10,6 +10,7 @@ import {
 } from "@cw-code/shared/protocol";
 import { randomUUID } from "node:crypto";
 import { connectHost } from "./bindPolicy.js";
+import { handleHttp, type HttpRoutesOptions } from "./httpRoutes.js";
 import { toRpcError, type CallContext, type ClientAuth, type Router } from "./Router.js";
 
 export interface WsServerOptions {
@@ -20,6 +21,7 @@ export interface WsServerOptions {
   onOriginRejected?(origin: string | null): void;
   version: string;
   router: Router;
+  http?: HttpRoutesOptions;
   helloTimeoutMs?: number;
 }
 
@@ -101,7 +103,13 @@ export class WsServer {
       hostname: this.options.host,
       port: this.options.port,
       fetch: (req, srv) => {
-        if (new URL(req.url).pathname !== WS_PATH) return new Response("not found", { status: 404 });
+        const http = this.options.http;
+        if (!http) {
+          if (new URL(req.url).pathname !== WS_PATH) return new Response("not found", { status: 404 });
+        } else {
+          const response = handleHttp(req, http);
+          if (response) return response;
+        }
         const origin = req.headers.get("origin");
         if (this.options.isOriginAllowed && !this.options.isOriginAllowed(origin, req.headers.get("host"))) {
           this.options.onOriginRejected?.(origin);

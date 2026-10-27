@@ -2,7 +2,7 @@ const FILE_ORIGIN = "file://";
 const NULL_ORIGIN = "null";
 const MAX_LOGGED_REJECTED_ORIGINS = 20;
 
-function sameOrigin(origin: string, hostHeader: string | null): boolean {
+export function sameOrigin(origin: string, hostHeader: string | null): boolean {
   if (!hostHeader) return false;
   let url: URL;
   try {

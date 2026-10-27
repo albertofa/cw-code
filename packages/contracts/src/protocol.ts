@@ -32,6 +32,12 @@ export interface ServerReady {
   launcherId?: string | null;
 }
 
+export interface ServerInfo {
+  app: "cw-code";
+  version: string;
+  protocol: number;
+}
+
 export interface TopicsParams {
   topics: string[];
 }

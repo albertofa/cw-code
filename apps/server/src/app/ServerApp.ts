@@ -15,6 +15,8 @@ import type { ServerArgs } from "../transport/args.js";
 import { decideBindHost } from "../transport/bindPolicy.js";
 import { removeEndpoint, writeEndpoint } from "../transport/endpointFile.js";
 import { DeviceTokens } from "../transport/deviceTokens.js";
+import type { HttpRoutesOptions } from "../transport/httpRoutes.js";
+import { resolveUiDir } from "../transport/uiDir.js";
 import { createOriginPolicy, createRejectedOriginLogger } from "../transport/originPolicy.js";
 import { loadOrCreateOwnerToken, tokensEqual } from "../transport/ownerToken.js";
 import { Router, type ClientAuth } from "../transport/Router.js";
@@ -60,11 +62,14 @@ export class ServerApp {
   private readonly shutdownPublisher = new ShutdownPublisher(() => this.publishShutdown());
   private unwireShutdownPublishing: () => void = () => {};
   private pendingShellNotices: AppNotice[] = [];
+  readonly uiDir: string | null;
 
   constructor(
     private readonly args: ServerArgs,
     private readonly version: string
-  ) {}
+  ) {
+    this.uiDir = resolveUiDir(args.uiDir);
+  }
 
   get startupState(): StartupState {
     return this.state;
@@ -180,7 +185,13 @@ export class ServerApp {
       console.warn(entry);
       appendCrashLog(entry);
     });
-    const ws = new WsServer({ host, port: this.args.port, authorize, isOriginAllowed, onOriginRejected, version: this.version, router: this.router });
+    const http = {
+      uiDir: this.uiDir,
+      info: { app: "cw-code", version: this.version, protocol: PROTOCOL_VERSION },
+      ownerToken,
+      stop: () => this.scheduleStop(0)
+    } satisfies HttpRoutesOptions;
+    const ws = new WsServer({ host, port: this.args.port, authorize, isOriginAllowed, onOriginRejected, version: this.version, router: this.router, http });
     const { url, port } = this.bind(ws, host);
     this.ws = ws;
     this.applyStores(stores);

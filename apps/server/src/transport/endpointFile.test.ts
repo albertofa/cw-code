@@ -127,6 +127,19 @@ describe("confirmLiveEndpoint", () => {
     }
   });
 
+  test("confirms a real server that also serves the HTTP surface", async () => {
+    const http = { uiDir: null, info: { app: "cw-code" as const, version: "1.0.0", protocol: PROTOCOL_VERSION }, ownerToken: "t".repeat(64), stop: () => {} };
+    const server = new WsServer({ host: "127.0.0.1", port: 0, authorize: () => null, version: "1.0.0", router: new Router(), http });
+    try {
+      const { url, port } = server.start();
+      expect(await confirmLiveEndpoint({ ...ready(OTHER_PID), url, port })).toBe(true);
+      const info = await fetch(url.replace(/^ws/, "http").replace(/\/ws$/, "/api/info"));
+      expect(await info.json()).toEqual(http.info);
+    } finally {
+      await server.stop();
+    }
+  });
+
   test("rejects a closed port", async () => {
     const server = new WsServer({ host: "127.0.0.1", port: 0, authorize: () => null, version: "1.0.0", router: new Router() });
     const { url, port } = server.start();
