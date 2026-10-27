@@ -69,6 +69,7 @@ function installBridge(remote = false): FakeBridge {
       }
     },
     shutdown: {
+      acknowledge: () => undefined,
       assess: async () => bridge.assessments.shift() ?? EMPTY,
       prepare: async (request: ShutdownPrepareRequest): Promise<ShutdownPrepareResult> => {
         bridge.prepares += 1;
