@@ -260,6 +260,36 @@ describe("PrStore", () => {
       expect(h.fetchedDetails).toEqual([]);
     });
 
+    it("keeps a followed PR's detail instead of reloading it once it turns out merged", async () => {
+      const h = createHarness([session({ prs: [link({ workflowId: "babysit" })] })], [babysitWorkflow()]);
+      h.detailResults.set(KEY, detailOf(summary({ state: "MERGED" })));
+      h.prStore.onSessionsChanged();
+      await settle();
+      expect(h.fetchedDetails).toEqual([KEY]);
+
+      h.prStore.onSessionsChanged();
+      await settle();
+      expect(h.prStore.detail(KEY)?.state).toBe("MERGED");
+      expect(h.fetchedDetails).toEqual([KEY]);
+    });
+
+    it("does not load a followed PR whose link snapshot is already merged", async () => {
+      const merged = { state: "MERGED", headRefOid: "sha-1", updatedAt: 2000, syncedAt: 1000 } as const;
+      const h = createHarness([session({ prs: [link({ workflowId: "babysit", snapshot: merged })] })], [babysitWorkflow()]);
+      h.prStore.onSessionsChanged();
+      await settle();
+      expect(h.fetchedDetails).toEqual([]);
+    });
+
+    it("still loads a followed PR whose link snapshot is open", async () => {
+      const open = { state: "OPEN", headRefOid: "sha-1", updatedAt: 2000, syncedAt: 1000 } as const;
+      const h = createHarness([session({ prs: [link({ workflowId: "babysit", snapshot: open })] })], [babysitWorkflow()]);
+      h.detailResults.set(KEY, detailOf(summary()));
+      h.prStore.onSessionsChanged();
+      await settle();
+      expect(h.fetchedDetails).toEqual([KEY]);
+    });
+
     it("loads links of a session only while its topic is open", async () => {
       const h = createHarness([session()]);
       h.detailResults.set(KEY, detailOf(summary()));
