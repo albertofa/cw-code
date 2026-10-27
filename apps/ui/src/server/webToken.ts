@@ -1,6 +1,8 @@
 import { tokenFromHash } from "@cw-code/shared/serverAddress";
 
-const DEVICE_TOKEN_KEY = "cw-code:deviceToken";
+export const DEVICE_TOKEN_KEY = "cw-code:deviceToken";
+
+let pairingCandidate: string | null = null;
 
 export function readDeviceToken(): string | null {
   try {
@@ -19,17 +21,26 @@ export function storeDeviceToken(token: string): boolean {
   }
 }
 
-export function clearDeviceToken(): void {
+export function clearDeviceToken(expected?: string): void {
+  if (expected !== undefined && readDeviceToken() !== expected) return;
   try {
     localStorage.removeItem(DEVICE_TOKEN_KEY);
   } catch {
-    return;
+    console.warn("[cw-code] could not remove the saved device token");
   }
+}
+
+export function pendingPairingToken(): string | null {
+  return pairingCandidate;
+}
+
+export function settlePairingToken(): void {
+  pairingCandidate = null;
 }
 
 export function captureHashToken(): void {
   if (window.cwDesktop || !/(^#|&)token=/.test(window.location.hash)) return;
   const token = tokenFromHash(window.location.hash);
   window.history.replaceState(window.history.state, "", `${window.location.pathname}${window.location.search}`);
-  if (token && !storeDeviceToken(token)) console.warn("[cw-code] could not save the device token from the pairing link; paste it on the sign-in screen");
+  pairingCandidate = token;
 }

@@ -1,24 +1,5 @@
 import { useState, type FormEvent } from "react";
-import { parseServerAddress } from "@cw-code/shared/serverAddress";
-
-export type LoginInput = { kind: "token"; token: string } | { kind: "link"; href: string } | { kind: "error"; message: string };
-
-function pageBase(): string {
-  return new URL(".", window.location.href).toString().replace(/\/+$/, "");
-}
-
-export function readLoginInput(raw: string): LoginInput {
-  const value = raw.trim();
-  if (!value) return { kind: "error", message: "Paste a device token or a pairing link." };
-  if (!value.includes("://")) {
-    return /\s/.test(value) ? { kind: "error", message: "A device token has no spaces." } : { kind: "token", token: value };
-  }
-  const parsed = parseServerAddress(value);
-  if ("error" in parsed) return { kind: "error", message: `That pairing link is not valid: ${parsed.error}.` };
-  if (!parsed.token) return { kind: "error", message: "That link has no #token=…; paste the full pairing link or the token alone." };
-  if (parsed.httpUrl !== pageBase()) return { kind: "link", href: value };
-  return { kind: "token", token: parsed.token };
-}
+import { readLoginInput } from "../server/loginInput.js";
 
 export function WebLogin({ notice, onToken }: { notice: string | null; onToken: (token: string) => void }) {
   const [value, setValue] = useState("");
@@ -26,12 +7,12 @@ export function WebLogin({ notice, onToken }: { notice: string | null; onToken: 
 
   const submit = (e: FormEvent<HTMLFormElement>): void => {
     e.preventDefault();
-    const input = readLoginInput(value);
+    const input = readLoginInput(value, window.location.href);
     if (input.kind === "error") {
       setError(input.message);
       return;
     }
-    if (input.kind === "link") {
+    if (input.kind === "navigate") {
       window.location.assign(input.href);
       return;
     }

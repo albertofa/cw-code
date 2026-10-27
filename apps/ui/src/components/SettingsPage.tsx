@@ -259,7 +259,7 @@ function GeneralSettings() {
 
       {!window.cw.capabilities.desktop && (
         <SettingsGroup title="This browser">
-          <SettingsRow label="Sign out of this browser" hint="Forgets this browser's device token and returns to the sign-in screen.">
+          <SettingsRow label="Sign out of this browser" hint="Forgets this browser's device token and returns to the sign-in screen. The device stays paired until it is revoked under Remote access.">
             <button type="button" className="btn" onClick={signOutOfBrowser}>
               Sign out
             </button>

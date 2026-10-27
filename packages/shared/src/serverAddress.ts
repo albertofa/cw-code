@@ -5,6 +5,7 @@ export type ParsedServerAddress = { httpUrl: string; wsUrl: string; token: strin
 const HTTP_SCHEMES: Record<string, string> = { "http:": "http:", "https:": "https:", "ws:": "http:", "wss:": "https:" };
 const WS_SCHEMES: Record<string, string> = { "http:": "ws:", "https:": "wss:" };
 const IPV4_LOOPBACK = /^127(?:\.(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3}$/;
+const FILE_SEGMENT = /\/[^/]*\.[^/]*$/;
 
 export function tokenFromHash(hash: string): string | null {
   const token = new URLSearchParams(hash.replace(/^#/, "")).get("token")?.trim();
@@ -26,7 +27,7 @@ export function parseServerAddress(input: string): ParsedServerAddress {
   if (!httpScheme) return { error: `unsupported scheme "${url.protocol}"; use http(s):// or ws(s)://` };
   if (url.username || url.password) return { error: "the address must not contain a user name or password" };
   if (!url.hostname) return { error: "the address has no host" };
-  let base = trimTrailingSlashes(url.pathname);
+  let base = trimTrailingSlashes(FILE_SEGMENT.test(url.pathname) ? new URL(".", url).pathname : url.pathname);
   if (httpScheme !== url.protocol && base.endsWith(WS_PATH)) base = base.slice(0, -WS_PATH.length);
   const httpUrl = `${httpScheme}//${url.host}${base}`;
   return { httpUrl, wsUrl: `${WS_SCHEMES[httpScheme]}//${url.host}${base}${WS_PATH}`, token: tokenFromHash(url.hash) };

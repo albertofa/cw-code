@@ -14,6 +14,12 @@ describe("parseServerAddress", () => {
 
   test("keeps a base path", () => {
     expect(parseServerAddress("https://box.example/cw/")).toEqual({ httpUrl: "https://box.example/cw", wsUrl: "wss://box.example/cw/ws", token: null });
+    expect(parseServerAddress("https://box.example/cw")).toEqual({ httpUrl: "https://box.example/cw", wsUrl: "wss://box.example/cw/ws", token: null });
+  });
+
+  test("resolves a page file to its folder", () => {
+    expect(parseServerAddress("https://box.example/index.html#token=abc")).toEqual({ httpUrl: "https://box.example", wsUrl: "wss://box.example/ws", token: "abc" });
+    expect(parseServerAddress("https://box.example/cw/index.html")).toEqual({ httpUrl: "https://box.example/cw", wsUrl: "wss://box.example/cw/ws", token: null });
   });
 
   test("reads the token from the hash and ignores the query", () => {

@@ -169,6 +169,10 @@ export function ServerConnectionView({
   );
 }
 
+export function DesktopMissing() {
+  return <div className="preload-error">cw-code must run inside the desktop app for now.</div>;
+}
+
 export function DesktopGate({ desktop, children }: { desktop: DesktopApi; children: ReactNode }) {
   const profile = useRef<ConnectionProfile | null>(null);
   const [client] = useState(

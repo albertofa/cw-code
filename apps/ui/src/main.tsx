@@ -6,7 +6,7 @@ import "./theme.css";
 import { App } from "./App.js";
 import { RootErrorBoundary } from "./components/RootErrorBoundary.js";
 import { StartupGate } from "./components/StartupGate.js";
-import { DesktopGate } from "./server/connect.js";
+import { DesktopGate, DesktopMissing } from "./server/connect.js";
 import { WebGate } from "./server/webGate.js";
 import "./cw.js";
 
@@ -20,5 +20,12 @@ if (root) {
       </StartupGate>
     </RootErrorBoundary>
   );
-  createRoot(root).render(<React.StrictMode>{desktop ? <DesktopGate desktop={desktop}>{app}</DesktopGate> : <WebGate>{app}</WebGate>}</React.StrictMode>);
+  const gate = desktop ? (
+    <DesktopGate desktop={desktop}>{app}</DesktopGate>
+  ) : window.location.protocol === "file:" ? (
+    <DesktopMissing />
+  ) : (
+    <WebGate>{app}</WebGate>
+  );
+  createRoot(root).render(<React.StrictMode>{gate}</React.StrictMode>);
 }
