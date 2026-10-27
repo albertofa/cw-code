@@ -148,7 +148,10 @@ export function PromptRail({
 
   return (
     <nav className="prompt-rail" aria-label="Prompts in this conversation">
-      <div className="prompt-rail-list" style={{ height: `min(${stackHeight}px, 100%)` }}>
+      <div
+        className="prompt-rail-list"
+        style={{ height: `min(${stackHeight}px, calc(100% - var(--composer-overlay-h, 0px)))` }}
+      >
         {measured.prompts.map((mark, i) => (
           <button
             key={mark.id}
