@@ -1,16 +1,15 @@
 import { randomUUID } from "node:crypto";
-import { join } from "node:path";
-import type { ConnectionList, ConnectionProfile, ConnectionTestResult, RemoteProfileInput, ServerEndpoint, ServerInfo, TokenStorage } from "@cw-code/contracts";
-import { ServerCallError, ServerClient } from "@cw-code/client";
-import { INFO_PATH, isServerInfo, PROTOCOL_VERSION } from "@cw-code/shared/protocol";
+import { basename, join } from "node:path";
+import type { ConnectionList, ConnectionProfile, RemoteProfileInput, ServerEndpoint, TokenStorage } from "@cw-code/contracts";
 import { parseServerAddress } from "@cw-code/shared/serverAddress";
 
 export const CONNECTIONS_FILE = "connections.json";
 export const LOCAL_PROFILE_ID = "local";
 export const LOCAL_PROFILE: ConnectionProfile = { id: LOCAL_PROFILE_ID, kind: "local", name: "This computer" };
-export const CONNECTION_TEST_TIMEOUT_MS = 5_000;
-
-const NAME_MAX_LENGTH = 80;
+export const NAME_MAX_LENGTH = 80;
+export const URL_MAX_LENGTH = 2048;
+export const TOKEN_MAX_LENGTH = 256;
+const ID_MAX_LENGTH = 64;
 
 export interface TokenCipher {
   storage(): TokenStorage;
@@ -21,6 +20,7 @@ export interface TokenCipher {
 export interface ConnectionsFs {
   read(path: string): string | null;
   write(path: string, data: string): void;
+  rename(from: string, to: string): void;
 }
 
 export interface ConnectionStoreOptions {
@@ -29,6 +29,7 @@ export interface ConnectionStoreOptions {
   fs: ConnectionsFs;
   warn?: (message: string) => void;
   createId?: () => string;
+  now?: () => number;
 }
 
 type TokenScheme = "safeStorage" | "plain";
@@ -52,6 +53,8 @@ interface ConnectionsDocument {
 }
 
 type RemoteProfile = Extract<ConnectionProfile, { kind: "remote" }>;
+
+class UnreadableConnectionsError extends Error {}
 
 function emptyDocument(): ConnectionsDocument {
   return { version: 1, activeId: LOCAL_PROFILE_ID, remotes: [] };
@@ -83,8 +86,14 @@ function isStoredRemote(value: unknown): value is StoredRemote {
 }
 
 function parseDocument(text: string): ConnectionsDocument {
-  const parsed: unknown = JSON.parse(text);
-  if (!isRecord(parsed) || parsed.version !== 1 || !Array.isArray(parsed.remotes)) throw new Error("unsupported file shape");
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    throw new UnreadableConnectionsError("it is not valid JSON");
+  }
+  if (!isRecord(parsed) || !Array.isArray(parsed.remotes)) throw new UnreadableConnectionsError("it has an unexpected shape");
+  if (parsed.version !== 1) throw new UnreadableConnectionsError("it was written by a different cw-code version");
   const remotes = parsed.remotes.filter(isStoredRemote);
   const activeId = typeof parsed.activeId === "string" && remotes.some((remote) => remote.id === parsed.activeId) ? parsed.activeId : LOCAL_PROFILE_ID;
   return { version: 1, activeId, remotes };
@@ -94,34 +103,49 @@ function toProfile(remote: StoredRemote): RemoteProfile {
   return { id: remote.id, kind: "remote", name: remote.name, url: remote.url };
 }
 
-function trimmedString(value: unknown): string {
-  return typeof value === "string" ? value.trim() : "";
+function boundedString(value: unknown, label: string, max: number): string {
+  const text = typeof value === "string" ? value.trim() : "";
+  if (text.length > max) throw new Error(`the ${label} must be at most ${max} characters`);
+  return text;
 }
 
 export function parseRemoteProfileInput(value: unknown): RemoteProfileInput {
   if (!isRecord(value)) throw new Error("a connection needs a name and a URL");
-  const id = trimmedString(value.id);
-  const token = trimmedString(value.token);
-  return { ...(id ? { id } : {}), name: trimmedString(value.name), url: trimmedString(value.url), ...(token ? { token } : {}) };
+  const id = boundedString(value.id, "connection id", ID_MAX_LENGTH);
+  const token = boundedString(value.token, "device token", TOKEN_MAX_LENGTH);
+  return {
+    ...(id ? { id } : {}),
+    name: boundedString(value.name, "name", NAME_MAX_LENGTH),
+    url: boundedString(value.url, "server address", URL_MAX_LENGTH),
+    ...(token ? { token } : {})
+  };
 }
 
 export function parseConnectionTestInput(value: unknown): { url: string; token?: string; id?: string } {
   if (!isRecord(value)) return { url: "" };
-  const token = trimmedString(value.token);
-  const id = trimmedString(value.id);
-  return { url: trimmedString(value.url), ...(token ? { token } : {}), ...(id ? { id } : {}) };
+  const token = boundedString(value.token, "device token", TOKEN_MAX_LENGTH);
+  const id = boundedString(value.id, "connection id", ID_MAX_LENGTH);
+  return { url: boundedString(value.url, "server address", URL_MAX_LENGTH), ...(token ? { token } : {}), ...(id ? { id } : {}) };
+}
+
+function originOf(url: string): string | null {
+  const address = parseServerAddress(url);
+  return "error" in address ? null : new URL(address.httpUrl).origin;
 }
 
 export class ConnectionStore {
   private readonly path: string;
   private readonly warn: (message: string) => void;
   private readonly createId: () => string;
+  private readonly now: () => number;
   private document: ConnectionsDocument;
+  private loadWarning: string | null = null;
 
   constructor(private readonly options: ConnectionStoreOptions) {
     this.path = join(options.userDataDir, CONNECTIONS_FILE);
     this.warn = options.warn ?? ((message) => console.warn(message));
     this.createId = options.createId ?? randomUUID;
+    this.now = options.now ?? Date.now;
     this.document = this.load();
   }
 
@@ -133,7 +157,8 @@ export class ConnectionStore {
     return {
       activeId: this.document.activeId,
       profiles: [LOCAL_PROFILE, ...this.document.remotes.map(toProfile)],
-      tokenStorage: this.options.cipher.storage()
+      tokenStorage: this.options.cipher.storage(),
+      ...(this.loadWarning ? { warning: this.loadWarning } : {})
     };
   }
 
@@ -153,6 +178,7 @@ export class ConnectionStore {
     const existing = input.id ? this.remote(input.id) : null;
     if (input.id && !existing) throw new Error("this connection no longer exists");
     const plainToken = input.token?.trim() || address.token;
+    if (plainToken && plainToken.length > TOKEN_MAX_LENGTH) throw new Error(`the device token must be at most ${TOKEN_MAX_LENGTH} characters`);
     const token = plainToken ? this.sealToken(plainToken) : existing?.token;
     if (!token) throw new Error("enter a device token for this server");
     const remote: StoredRemote = { id: existing?.id ?? this.createId(), name, url: address.httpUrl, token };
@@ -178,6 +204,13 @@ export class ConnectionStore {
     const remote = this.remote(id);
     if (!remote) throw new Error("this connection no longer exists");
     return this.openToken(remote);
+  }
+
+  testToken(id: string, url: string): string | null {
+    const remote = this.remote(id);
+    if (!remote) return null;
+    const target = originOf(url);
+    return target !== null && target === originOf(remote.url) ? this.openToken(remote) : null;
   }
 
   endpoint(id: string): ServerEndpoint {
@@ -212,87 +245,36 @@ export class ConnectionStore {
     try {
       text = this.options.fs.read(this.path);
     } catch (error) {
-      this.warn(`[connections] could not read ${this.path}: ${errorMessage(error)}; using This computer only`);
+      this.report(`Saved connections could not be read (${errorMessage(error)}). Only This computer is available.`);
       return emptyDocument();
     }
     if (text === null) return emptyDocument();
     try {
       return parseDocument(text);
     } catch (error) {
-      this.warn(`[connections] ignoring unreadable ${this.path}: ${errorMessage(error)}; using This computer only`);
+      const reason = error instanceof UnreadableConnectionsError ? error.message : "it could not be parsed";
+      this.report(`${CONNECTIONS_FILE} was ignored because ${reason}. ${this.moveAside()}Only This computer is available.`);
       return emptyDocument();
     }
+  }
+
+  private moveAside(): string {
+    const target = `${this.path}.bad-${this.now()}`;
+    try {
+      this.options.fs.rename(this.path, target);
+      return `It was moved to ${basename(target)}. `;
+    } catch (error) {
+      return `It could not be moved aside (${errorMessage(error)}). `;
+    }
+  }
+
+  private report(message: string): void {
+    this.loadWarning = message;
+    this.warn(`[connections] ${message}`);
   }
 
   private persist(next: ConnectionsDocument): void {
     this.options.fs.write(this.path, `${JSON.stringify(next, null, 2)}\n`);
     this.document = next;
   }
-}
-
-export interface ConnectionProbe {
-  fetchInfo(url: string, timeoutMs: number): Promise<unknown>;
-  hello(endpoint: ServerEndpoint, timeoutMs: number): Promise<void>;
-}
-
-export function infoUrl(httpUrl: string): string {
-  return new URL(INFO_PATH.slice(1), httpUrl.endsWith("/") ? httpUrl : `${httpUrl}/`).href;
-}
-
-async function fetchInfo(url: string, timeoutMs: number): Promise<unknown> {
-  const response = await fetch(url, { cache: "no-store", signal: AbortSignal.timeout(timeoutMs) });
-  if (!response.ok) throw new Error(`${url} answered HTTP ${response.status}`);
-  return response.json();
-}
-
-async function hello(endpoint: ServerEndpoint, timeoutMs: number): Promise<void> {
-  const client = new ServerClient({ endpoint, client: "desktop-shell", reconnect: false });
-  let timer: NodeJS.Timeout | undefined;
-  const timeout = new Promise<never>((_resolve, reject) => {
-    timer = setTimeout(() => reject(new ServerCallError(`the server did not answer within ${timeoutMs / 1000}s`, "connect-failed")), timeoutMs);
-  });
-  try {
-    await Promise.race([client.connect(), timeout]);
-  } finally {
-    clearTimeout(timer);
-    client.close();
-  }
-}
-
-export const NETWORK_PROBE: ConnectionProbe = { fetchInfo, hello };
-
-function unreachable(message: string, info?: ServerInfo): ConnectionTestResult {
-  return { ok: false, code: "unreachable", message, ...(info ? { info } : {}) };
-}
-
-export async function testConnection(
-  url: string,
-  token: string | null,
-  probe: ConnectionProbe = NETWORK_PROBE,
-  timeoutMs = CONNECTION_TEST_TIMEOUT_MS
-): Promise<ConnectionTestResult> {
-  const address = parseServerAddress(url);
-  if ("error" in address) return { ok: false, code: "invalid-url", message: address.error };
-  let body: unknown;
-  try {
-    body = await probe.fetchInfo(infoUrl(address.httpUrl), timeoutMs);
-  } catch (error) {
-    return unreachable(`could not reach ${address.httpUrl}: ${errorMessage(error)}`);
-  }
-  if (!isServerInfo(body)) return unreachable(`${address.httpUrl} does not look like a cw-code server`);
-  const info = body;
-  if (info.protocol !== PROTOCOL_VERSION) {
-    return { ok: false, code: "protocol-mismatch", message: `the server runs cw-code v${info.version} (protocol ${info.protocol})`, info };
-  }
-  const secret = token ?? address.token;
-  if (!secret) return { ok: false, code: "unauthorized", message: "enter a device token for this server", info };
-  try {
-    await probe.hello({ url: address.wsUrl, token: secret }, timeoutMs);
-  } catch (error) {
-    const code = error instanceof ServerCallError ? error.code : undefined;
-    if (code === "unauthorized") return { ok: false, code: "unauthorized", message: "the server rejected this device token (revoked or mistyped)", info };
-    if (code === "protocol-mismatch") return { ok: false, code: "protocol-mismatch", message: `the server runs cw-code v${info.version} (protocol ${info.protocol})`, info };
-    return unreachable(`could not open a session on ${address.wsUrl}: ${errorMessage(error)}`, info);
-  }
-  return { ok: true, info };
 }

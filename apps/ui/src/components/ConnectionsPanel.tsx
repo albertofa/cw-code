@@ -179,6 +179,11 @@ export function ConnectionsPanel({ connections }: { connections: DesktopConnecti
           {warning}
         </div>
       )}
+      {list?.warning && (
+        <div className="connections-warning" role="alert">
+          {list.warning}
+        </div>
+      )}
       {error && (
         <div className="connections-error" role="alert">
           {error}
@@ -200,7 +205,13 @@ export function ConnectionsPanel({ connections }: { connections: DesktopConnecti
                 <div className="connections-row-actions">
                   {profile.kind === "remote" && (
                     <>
-                      <button type="button" className="btn" disabled={editing !== null} onClick={() => setEditing(draftOf(profile))}>
+                      <button
+                        type="button"
+                        className="btn"
+                        disabled={editing !== null || active}
+                        title={active ? "Switch to another connection before editing this one" : undefined}
+                        onClick={() => setEditing(draftOf(profile))}
+                      >
                         Edit
                       </button>
                       <button

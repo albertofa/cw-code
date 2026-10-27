@@ -558,6 +558,7 @@ export interface CwApi {
     quit(token: string): Promise<ShutdownCommitResult>;
     quitWindow(): void;
     acknowledge(): void;
+    dismissed(): void;
     onRequested(cb: (event: ShutdownRequestedEvent) => void): () => void;
     onExpired(cb: (event: ShutdownExpiredEvent) => void): () => void;
   };

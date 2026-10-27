@@ -26,6 +26,7 @@ export interface ConnectionList {
   activeId: string;
   profiles: ConnectionProfile[];
   tokenStorage: TokenStorage;
+  warning?: string;
 }
 
 export interface DesktopConnections {
@@ -41,6 +42,7 @@ export interface DesktopUpdates {
   check(): Promise<UpdateActionResult>;
   download(): Promise<UpdateActionResult>;
   setChannel(channel: UpdateChannel): Promise<UpdateActionResult>;
+  setAutoDownload(enabled: boolean): Promise<UpdateActionResult>;
   install(request: UpdateInstallRequest): Promise<UpdateActionResult>;
   onChanged(cb: (state: UpdateState) => void): () => void;
 }
@@ -68,5 +70,6 @@ export interface DesktopApi {
     acknowledge(): void;
     quit(): void;
     stopServerAndQuit(): void;
+    dismissed(): void;
   };
 }

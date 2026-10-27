@@ -2,7 +2,7 @@ import { useMemo, useState } from "react";
 import { RefreshCw } from "lucide-react";
 import { channelOfVersion } from "@cw-code/shared/updateChannel";
 import type { AppSettings, UpdateChannel } from "../cw.js";
-import { useAppStore } from "../stores/appStore.js";
+import { shellUpdates, useAppStore } from "../stores/appStore.js";
 import { restartToUpdate, runUpdateAction } from "../stores/updateFlow.js";
 import { ipcErrorMessage } from "./ipcError.js";
 import { Md } from "./Markdown.js";
@@ -27,7 +27,9 @@ export function UpdatesSettings({
   const notes = useMemo(() => releaseNotesMarkdown(state?.releaseNotes ?? null), [state?.releaseNotes]);
 
   const runningVersion = state?.runningVersion ?? fallbackVersion;
-  const channel: UpdateChannel = draft.updateChannel ?? state?.channel ?? channelOfVersion(runningVersion);
+  const serverPrefs = window.cw.capabilities.localServer;
+  const channel: UpdateChannel = (serverPrefs ? draft.updateChannel : null) ?? state?.channel ?? channelOfVersion(runningVersion);
+  const backgroundDownload = serverPrefs ? draft.updateBackgroundDownload : (state?.autoDownload ?? true);
   const disabled = !state || state.phase === "disabled";
   const busy = state?.phase === "checking" || state?.phase === "downloading" || state?.phase === "installing" || restartPending;
   const waitsForStable = channel === "stable" && channelOfVersion(runningVersion) === "alpha";
@@ -48,7 +50,7 @@ export function UpdatesSettings({
     try {
       const result = await useAppStore.getState().setUpdateChannel(next);
       if (result.ok) {
-        onApplied({ updateChannel: result.state.channel });
+        if (serverPrefs) onApplied({ updateChannel: result.state.channel });
       } else if (result.code !== "disabled") {
         useNotifs.getState().push({ kind: "error", title: "Could not change the update channel", message: result.message });
       }
@@ -62,8 +64,14 @@ export function UpdatesSettings({
   const changeBackground = async (enabled: boolean) => {
     setSavingPreference(true);
     try {
-      const stored = await useAppStore.getState().setUpdateBackgroundDownload(enabled);
-      onApplied({ updateBackgroundDownload: stored.updateBackgroundDownload });
+      if (serverPrefs) {
+        const stored = await useAppStore.getState().setUpdateBackgroundDownload(enabled);
+        onApplied({ updateBackgroundDownload: stored.updateBackgroundDownload });
+      } else {
+        const result = await shellUpdates().setAutoDownload(enabled);
+        useAppStore.getState().applyUpdateState(result.state);
+        if (!result.ok) useNotifs.getState().push({ kind: "error", title: "Could not save the download setting", message: result.message });
+      }
     } catch (err) {
       useNotifs.getState().push({ kind: "error", title: "Could not save the download setting", message: ipcErrorMessage(err) });
     } finally {
@@ -160,7 +168,7 @@ export function UpdatesSettings({
         >
           <SettingsSwitch
             id="sp-update-background"
-            checked={draft.updateBackgroundDownload}
+            checked={backgroundDownload}
             disabled={savingPreference}
             onChange={(next) => void changeBackground(next)}
             label="Download updates in the background"

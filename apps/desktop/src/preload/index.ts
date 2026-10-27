@@ -37,6 +37,7 @@ const api: DesktopApi = {
     check: () => ipcRenderer.invoke("updates.check"),
     download: () => ipcRenderer.invoke("updates.download"),
     setChannel: (channel: UpdateChannel) => ipcRenderer.invoke("updates.setChannel", { channel }),
+    setAutoDownload: (enabled: boolean) => ipcRenderer.invoke("updates.setAutoDownload", { enabled }),
     install: (request: UpdateInstallRequest) => ipcRenderer.invoke("updates.install", request),
     onChanged: (cb) => subscribe<UpdateState>("updates.changed", cb)
   },
@@ -44,7 +45,8 @@ const api: DesktopApi = {
     onRequested: (cb) => subscribe<ShutdownRequestedEvent>("shutdown.requested", cb),
     acknowledge: () => ipcRenderer.send("shutdown.ack"),
     quit: () => ipcRenderer.send("app.quit"),
-    stopServerAndQuit: () => ipcRenderer.send("app.stop-server-and-quit")
+    stopServerAndQuit: () => ipcRenderer.send("app.stop-server-and-quit"),
+    dismissed: () => ipcRenderer.send("shutdown.dismissed")
   }
 };
 

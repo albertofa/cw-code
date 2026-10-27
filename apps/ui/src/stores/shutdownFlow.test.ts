@@ -38,6 +38,7 @@ interface FakeShutdownApi {
   quitCalls: string[];
   quitWindowCalls: number;
   acknowledgeCalls: number;
+  dismissedCalls: number;
 }
 
 function installCw(): FakeShutdownApi {
@@ -53,7 +54,8 @@ function installCw(): FakeShutdownApi {
     assessCalls: 0,
     quitCalls: [],
     quitWindowCalls: 0,
-    acknowledgeCalls: 0
+    acknowledgeCalls: 0,
+    dismissedCalls: 0
   };
   const cw = {
     shutdown: {
@@ -79,6 +81,9 @@ function installCw(): FakeShutdownApi {
       },
       quitWindow: () => {
         api.quitWindowCalls += 1;
+      },
+      dismissed: () => {
+        api.dismissedCalls += 1;
       },
       acknowledge: () => {
         api.acknowledgeCalls += 1;
@@ -351,6 +356,17 @@ describe("handleQuitRequest", () => {
     await pending;
     expect(api.prepareCalls).toHaveLength(0);
     expect(api.quitWindowCalls).toBe(1);
+    expect(api.dismissedCalls).toBe(0);
     expect(useAppStore.getState().shutdown).toBeNull();
+  });
+
+  it("tells the shell when a quit request is cancelled", async () => {
+    dirtyFile("sess_a", "a.ts", "A");
+    const pending = handleQuitRequest("window");
+    await settle();
+    await shutdownCancel();
+    await pending;
+    expect(api.quitWindowCalls).toBe(0);
+    expect(api.dismissedCalls).toBe(1);
   });
 });

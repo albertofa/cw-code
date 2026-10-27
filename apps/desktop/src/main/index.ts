@@ -1,5 +1,5 @@
 import { app, BrowserWindow, dialog, ipcMain, nativeImage, nativeTheme, powerMonitor, safeStorage, shell, type MessageBoxOptions, type WebContents } from "electron";
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
@@ -24,12 +24,14 @@ import type {
   UpdateActionResult,
   UpdateState
 } from "@cw-code/contracts";
+import { testConnection } from "@cw-code/client";
 import { appendCrashLog, initCrashLog } from "@cw-code/server/debug/crashLog";
 import { attachmentsDir, cwCodeHome, logsDir } from "@cw-code/server/paths/appPaths";
 import { readBytesIfExists, writeFileAtomic } from "@cw-code/server/storage/atomicFile";
 import { PROTOCOL_VERSION } from "@cw-code/shared/protocol";
 import { windowBackgroundColor } from "@cw-code/shared/themes";
 import { channelOfVersion } from "@cw-code/shared/updateChannel";
+import { resolveAppImageRelaunch } from "./appImage.js";
 import { attentionDescription, shouldFlash } from "./attention.js";
 import { badgeLabel, renderBadge } from "./badgeImage.js";
 import {
@@ -37,7 +39,6 @@ import {
   LOCAL_PROFILE,
   parseConnectionTestInput,
   parseRemoteProfileInput,
-  testConnection,
   type ConnectionsFs,
   type TokenCipher
 } from "./connections.js";
@@ -50,6 +51,7 @@ import { ServerProcess, ServerStartDeclinedError } from "./serverProcess.js";
 import { ServerTray } from "./tray.js";
 import { ElectronUpdaterAdapter } from "./updates/ElectronUpdaterAdapter.js";
 import { UpdateService } from "./updates/UpdateService.js";
+import { LocalUpdatePreferences, type StoredUpdatePreferences } from "./updates/localUpdatePreferences.js";
 import { createUpdateLogFile } from "./updates/updateLog.js";
 import { firstRunChannelPatch, updatePreferences, type UpdatePreferences } from "./updates/updatePreferences.js";
 import { initialUpdateState, isUpdateChannel } from "./updates/updateState.js";
@@ -102,17 +104,21 @@ const electronCipher: TokenCipher = {
   decrypt: (data) => safeStorage.decryptString(Buffer.from(data))
 };
 
+const PRIVATE_FILE_MODE = 0o600;
+
 const connectionsFs: ConnectionsFs = {
   read: (path) => readBytesIfExists(path)?.toString("utf8") ?? null,
   write: (path, data) => {
     mkdirSync(dirname(path), { recursive: true });
-    writeFileAtomic(path, data);
-  }
+    writeFileAtomic(path, data, { mode: PRIVATE_FILE_MODE });
+  },
+  rename: renameSync
 };
 
 const connections = new ConnectionStore({ userDataDir: app.getPath("userData"), cipher: electronCipher, fs: connectionsFs });
 const runningProfile: ConnectionProfile = packageProbeOutPath() ? LOCAL_PROFILE : (connections.profile(connections.activeId) ?? LOCAL_PROFILE);
 const remoteMode = runningProfile.kind === "remote";
+const localUpdatePreferences = new LocalUpdatePreferences(app.getPath("userData"), connectionsFs);
 
 const serverProcess: ServerProcess = new ServerProcess({
   launch: {
@@ -129,7 +135,7 @@ const serverProcess: ServerProcess = new ServerProcess({
   onFatal: (message) => reportFatalError("cw-code server stopped", new Error(message))
 });
 
-const link: ServerLink = new ServerLink(serverEndpoint);
+const link: ServerLink = new ServerLink(serverEndpoint, remoteMode ? "web" : "desktop-shell");
 
 async function serverEndpoint(): Promise<ServerEndpoint> {
   return remoteMode ? connections.endpoint(runningProfile.id) : serverProcess.endpoint();
@@ -162,7 +168,7 @@ function readTextOrNull(path: string): string | null {
   }
 }
 
-function createUpdateService(settings: AppSettings): UpdateService {
+function createUpdateService(settings: StoredUpdatePreferences): UpdateService {
   const logger = createUpdateLogFile({
     filePath: join(logsDir(), "updater.log"),
     console: { info: (message) => console.warn(message), warn: (message) => console.warn(message) }
@@ -184,13 +190,36 @@ function createUpdateService(settings: AppSettings): UpdateService {
     createAdapter: (kind) => new ElectronUpdaterAdapter({ kind, homeDir: homedir(), sink: logger }),
     logger,
     homeDir: homedir(),
-    canRunScheduledCheck: () => link.shutdown.idle
+    canRunScheduledCheck: () => remoteMode || link.shutdown.idle
+  });
+}
+
+function updateSettingsSource(): StoredUpdatePreferences | null {
+  if (remoteMode) return localUpdatePreferences.get();
+  return link.startup?.mode === "ready" ? link.settings : null;
+}
+
+function saveLocalUpdatePreferences(patch: Partial<StoredUpdatePreferences>): void {
+  try {
+    localUpdatePreferences.set(patch);
+  } catch (error) {
+    console.warn(`[updates] could not save the update preferences on this computer: ${errorMessage(error)}`);
+  }
+}
+
+function saveFirstRunChannel(patch: Pick<AppSettings, "updateChannel">): void {
+  if (remoteMode) {
+    saveLocalUpdatePreferences(patch);
+    return;
+  }
+  link.call("settings.set", patch).catch((error: unknown) => {
+    console.warn(`could not save the default update channel: ${errorMessage(error)}`);
   });
 }
 
 function ensureUpdateService(): void {
-  const settings = link.settings;
-  if (updates || link.startup?.mode !== "ready" || !settings) return;
+  const settings = updateSettingsSource();
+  if (updates || !settings) return;
   const service = createUpdateService(settings);
   updates = service;
   appliedPreferences = updatePreferences(settings, app.getVersion());
@@ -198,16 +227,12 @@ function ensureUpdateService(): void {
   sendToMainWindow("updates.changed", service.getState());
   service.start();
   const firstRunChannel = firstRunChannelPatch(settings, app.getVersion(), service.getState().phase !== "disabled");
-  if (firstRunChannel && !remoteMode) {
-    link.call("settings.set", firstRunChannel).catch((error: unknown) => {
-      console.warn(`could not save the default update channel: ${errorMessage(error)}`);
-    });
-  }
+  if (firstRunChannel) saveFirstRunChannel(firstRunChannel);
 }
 
 function applyUpdatePreferences(): void {
   const settings = link.settings;
-  if (!updates || !settings) return;
+  if (remoteMode || !updates || !settings) return;
   const next = updatePreferences(settings, app.getVersion());
   if (appliedPreferences?.channel === next.channel && appliedPreferences.autoDownload === next.autoDownload) return;
   appliedPreferences = next;
@@ -287,7 +312,7 @@ function showNotice(notice: AppNotice): void {
 }
 
 function isQuitApproved(): boolean {
-  return quitApproved || link.shutdown.committed;
+  return quitApproved || (!remoteMode && link.shutdown.committed);
 }
 
 function clearShutdownAck(): void {
@@ -322,7 +347,8 @@ function closeScope(): ShutdownScope {
 function requestShutdown(scope: ShutdownScope = closeScope(), activation: string | null = null): void {
   if (!isQuitApproved()) pendingActivation = activation;
   const window = liveMainWindow();
-  if (!link.isOpen || link.startup?.mode !== "ready" || !window || window.webContents.isCrashed()) {
+  const serverReady = scope === "window" || (link.isOpen && link.startup?.mode === "ready");
+  if (!serverReady || !window || window.webContents.isCrashed()) {
     quitWithoutDialog();
     return;
   }
@@ -598,7 +624,11 @@ function registerShellIpc(): void {
     return { profile, endpoint };
   });
   ipcMain.handle("desktop.connections.list", (): ConnectionList => connections.list());
-  ipcMain.handle("desktop.connections.save", (_e, args: unknown): ConnectionProfile => connections.save(parseRemoteProfileInput(args)));
+  ipcMain.handle("desktop.connections.save", (_e, args: unknown): ConnectionProfile => {
+    const input = parseRemoteProfileInput(args);
+    if (remoteMode && input.id === runningProfile.id) throw new Error("switch to another connection before editing the one in use");
+    return connections.save(input);
+  });
   ipcMain.handle("desktop.connections.remove", (_e, args: { id?: unknown } | undefined): void => {
     if (typeof args?.id !== "string") throw new Error("desktop.connections.remove requires { id }");
     connections.remove(args.id);
@@ -651,10 +681,11 @@ function applyPendingActivation(): void {
   if (!id) return;
   try {
     connections.setActive(id);
-    app.relaunch();
   } catch (error) {
-    console.warn(`[connections] could not switch connections: ${errorMessage(error)}`);
+    dialog.showErrorBox("cw-code could not switch connections", `${errorMessage(error)}\n\ncw-code will open with the current connection next time.`);
+    return;
   }
+  app.relaunch(resolveAppImageRelaunch(process.env, process.execPath, process.argv) ?? undefined);
 }
 
 function activateConnection(args: { id?: unknown } | undefined): void {
@@ -672,9 +703,9 @@ function connectRemoteLink(): void {
   link.connect().catch((error: unknown) => console.warn(`[server] could not connect to ${runningProfile.name}: ${errorMessage(error)}`));
 }
 
-function storedTestToken(input: { token?: string; id?: string }): string | null {
+function storedTestToken(input: { url: string; token?: string; id?: string }): string | null {
   if (input.token) return input.token;
-  return input.id && connections.profile(input.id)?.kind === "remote" ? connections.token(input.id) : null;
+  return input.id ? connections.testToken(input.id, input.url) : null;
 }
 
 async function testConnectionInput(args: unknown): Promise<ConnectionTestResult> {
@@ -788,13 +819,26 @@ function registerUpdateIpc(): void {
     if (!updates) return pendingUpdateResult();
     const channel = args && typeof args === "object" ? (args as { channel?: unknown }).channel : undefined;
     const result = await updates.setChannel(channel);
-    if (result.ok && isUpdateChannel(channel)) await link.call("settings.set", { updateChannel: channel });
+    if (!result.ok || !isUpdateChannel(channel)) return result;
+    if (remoteMode) saveLocalUpdatePreferences({ updateChannel: channel });
+    else await link.call("settings.set", { updateChannel: channel });
     return result;
+  });
+  ipcMain.handle("updates.setAutoDownload", async (_e, args: unknown): Promise<UpdateActionResult> => {
+    if (!updates) return pendingUpdateResult();
+    const enabled = args && typeof args === "object" ? (args as { enabled?: unknown }).enabled : undefined;
+    if (typeof enabled !== "boolean") throw new Error("updates.setAutoDownload requires { enabled: boolean }");
+    if (remoteMode) saveLocalUpdatePreferences({ updateBackgroundDownload: enabled });
+    else await link.call("settings.set", { updateBackgroundDownload: enabled });
+    return updates.setAutoDownload(enabled);
   });
 }
 
 function registerShutdownIpc(): void {
   ipcMain.on("shutdown.ack", () => clearShutdownAck());
+  ipcMain.on("shutdown.dismissed", () => {
+    pendingActivation = null;
+  });
   ipcMain.on("app.stop-server-and-quit", () => stopServerAndQuit());
   ipcMain.on("app.quit", () => {
     clearShutdownAck();

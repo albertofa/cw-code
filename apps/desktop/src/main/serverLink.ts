@@ -1,4 +1,4 @@
-import type { AppSettings, ServerEndpoint, ShutdownStatus, StartupState } from "@cw-code/contracts";
+import type { AppSettings, ClientKind, ServerEndpoint, ShutdownStatus, StartupState } from "@cw-code/contracts";
 import { ServerClient, TopicCache } from "@cw-code/client";
 import { APP_TOPIC } from "@cw-code/shared/topics";
 import { attentionCountOf, type AttentionTopicState } from "./attention.js";
@@ -22,8 +22,8 @@ export class ServerLink {
   private refreshing: Promise<void> = Promise.resolve();
   private readonly listeners = new Set<(change: ServerLinkChange) => void>();
 
-  constructor(endpoint: () => Promise<ServerEndpoint>) {
-    this.client = new ServerClient({ endpoint, client: "desktop-shell", reconnect: true });
+  constructor(endpoint: () => Promise<ServerEndpoint>, client: ClientKind = "desktop-shell") {
+    this.client = new ServerClient({ endpoint, client, reconnect: true });
     this.client.on("settings.changed", (payload) => this.setSettings(payload as AppSettings));
     this.client.on("shutdown.changed", (payload) => this.setShutdown(payload as ShutdownStatus));
     this.client.on("startup.changed", (payload) => void this.applyStartup(payload as StartupState));

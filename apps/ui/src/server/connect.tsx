@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { ServerCallError, ServerClient, TopicCache } from "@cw-code/client";
-import type { ConnectionList, ConnectionProfile, DesktopApi, ServerInfo } from "@cw-code/contracts";
+import type { ClientKind, ConnectionList, ConnectionProfile, DesktopApi, ServerInfo } from "@cw-code/contracts";
 import { APP_TOPIC } from "@cw-code/shared/topics";
 import { flushAllComposerDrafts } from "../components/composerDrafts.js";
 import { ConnectionsPanel } from "../components/ConnectionsPanel.js";
@@ -248,8 +248,26 @@ function DesktopFailure({ desktop, error, retry }: { desktop: DesktopApi; error:
   );
 }
 
-export function DesktopGate({ desktop, children }: { desktop: DesktopApi; children: ReactNode }) {
-  const profile = useRef<ConnectionProfile | null>(null);
+type DesktopBoot = { kind: "loading" } | { kind: "ready"; profile: ConnectionProfile } | { kind: "failed"; error: ServerCallError };
+
+function clientKindFor(profile: ConnectionProfile): ClientKind {
+  return profile.kind === "remote" ? "web" : "desktop-ui";
+}
+
+function DesktopSession({
+  desktop,
+  initialProfile,
+  shutdownHandlers,
+  clientRef,
+  children
+}: {
+  desktop: DesktopApi;
+  initialProfile: ConnectionProfile;
+  shutdownHandlers: ShutdownHandlers;
+  clientRef: { current: ServerClient | null };
+  children: ReactNode;
+}) {
+  const profile = useRef<ConnectionProfile | null>(initialProfile);
   const [client] = useState(
     () =>
       new ServerClient({
@@ -258,24 +276,18 @@ export function DesktopGate({ desktop, children }: { desktop: DesktopApi; childr
           profile.current = connection.profile;
           return connection.endpoint;
         },
-        client: "desktop-ui",
+        client: clientKindFor(initialProfile),
         reconnect: true
       })
   );
-  const [shutdownHandlers] = useState<ShutdownHandlers>(() => new Set());
   const connection = useServerConnection(client, desktop, profile, shutdownHandlers);
 
-  useEffect(
-    () =>
-      desktop.shutdown.onRequested((event) => {
-        if (shutdownHandlers.size === 0 || client.state === "closed") {
-          desktop.shutdown.quit();
-          return;
-        }
-        for (const handler of [...shutdownHandlers]) handler(event);
-      }),
-    [client, desktop, shutdownHandlers]
-  );
+  useEffect(() => {
+    clientRef.current = client;
+    return () => {
+      if (clientRef.current === client) clientRef.current = null;
+    };
+  }, [client, clientRef]);
 
   return (
     <ServerConnectionView
@@ -286,5 +298,42 @@ export function DesktopGate({ desktop, children }: { desktop: DesktopApi; childr
     >
       {children}
     </ServerConnectionView>
+  );
+}
+
+export function DesktopGate({ desktop, children }: { desktop: DesktopApi; children: ReactNode }) {
+  const [boot, setBoot] = useState<DesktopBoot>({ kind: "loading" });
+  const [shutdownHandlers] = useState<ShutdownHandlers>(() => new Set());
+  const clientRef = useRef<ServerClient | null>(null);
+
+  const load = useCallback(() => {
+    setBoot({ kind: "loading" });
+    desktop.connection().then(
+      (connection) => setBoot({ kind: "ready", profile: connection.profile }),
+      (err: unknown) => setBoot({ kind: "failed", error: asServerCallError(err) })
+    );
+  }, [desktop]);
+
+  useEffect(load, [load]);
+
+  useEffect(
+    () =>
+      desktop.shutdown.onRequested((event) => {
+        const client = clientRef.current;
+        if (shutdownHandlers.size === 0 || !client || client.state === "closed") {
+          desktop.shutdown.quit();
+          return;
+        }
+        for (const handler of [...shutdownHandlers]) handler(event);
+      }),
+    [desktop, shutdownHandlers]
+  );
+
+  if (boot.kind === "loading") return <div className="server-gate">Connecting to the cw-code server…</div>;
+  if (boot.kind === "failed") return <DesktopFailure desktop={desktop} error={boot.error} retry={load} />;
+  return (
+    <DesktopSession desktop={desktop} initialProfile={boot.profile} shutdownHandlers={shutdownHandlers} clientRef={clientRef}>
+      {children}
+    </DesktopSession>
   );
 }

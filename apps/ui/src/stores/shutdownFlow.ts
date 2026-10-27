@@ -305,7 +305,10 @@ export async function handleQuitRequest(scope: ShutdownScope = "server"): Promis
     return;
   }
   const outcome = await startFlow("quit", scope).promise;
-  if (!outcome) return;
+  if (!outcome) {
+    window.cw.shutdown.dismissed();
+    return;
+  }
   if (outcome.scope === "window") {
     window.cw.shutdown.quitWindow();
     return;

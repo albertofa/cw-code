@@ -1,22 +1,20 @@
 import { describe, expect, it } from "bun:test";
 import { join } from "node:path";
-import type { ServerEndpoint, ServerInfo, TokenStorage } from "@cw-code/contracts";
-import { ServerCallError } from "@cw-code/client";
-import { PROTOCOL_VERSION } from "@cw-code/shared/protocol";
+import type { ServerEndpoint, TokenStorage } from "@cw-code/contracts";
 import {
   CONNECTIONS_FILE,
   ConnectionStore,
-  infoUrl,
   LOCAL_PROFILE,
-  testConnection,
-  type ConnectionProbe,
+  parseConnectionTestInput,
+  parseRemoteProfileInput,
+  TOKEN_MAX_LENGTH,
   type ConnectionsFs,
   type TokenCipher
 } from "./connections.js";
 
 const USER_DATA = join("/tmp", "cw-user-data");
 const FILE = join(USER_DATA, CONNECTIONS_FILE);
-const INFO: ServerInfo = { app: "cw-code", version: "1.2.3", protocol: PROTOCOL_VERSION };
+const NOW = 1_700_000_000_000;
 
 class MemoryFs implements ConnectionsFs {
   readonly files = new Map<string, string>();
@@ -27,6 +25,13 @@ class MemoryFs implements ConnectionsFs {
 
   write(path: string, data: string): void {
     this.files.set(path, data);
+  }
+
+  rename(from: string, to: string): void {
+    const data = this.files.get(from);
+    if (data === undefined) throw new Error("ENOENT");
+    this.files.delete(from);
+    this.files.set(to, data);
   }
 }
 
@@ -44,7 +49,14 @@ function reversingCipher(storage: TokenStorage = "os"): TokenCipher {
 
 function store(fs: MemoryFs, cipher: TokenCipher = reversingCipher(), warnings: string[] = []): ConnectionStore {
   let next = 0;
-  return new ConnectionStore({ userDataDir: USER_DATA, cipher, fs, warn: (message) => warnings.push(message), createId: () => `remote-${++next}` });
+  return new ConnectionStore({
+    userDataDir: USER_DATA,
+    cipher,
+    fs,
+    warn: (message) => warnings.push(message),
+    createId: () => `remote-${++next}`,
+    now: () => NOW
+  });
 }
 
 function storedDocument(fs: MemoryFs): { activeId: string; remotes: Array<{ id: string; url: string; token: { scheme: string; data: string } }> } {
@@ -60,8 +72,7 @@ describe("ConnectionStore", () => {
     const fs = new MemoryFs();
     const profile = store(fs).save({ name: " Studio ", url: "http://studio.lan:4317/", token: "secret-token" });
     expect(profile).toEqual({ id: "remote-1", kind: "remote", name: "Studio", url: "http://studio.lan:4317" });
-    const raw = fs.files.get(FILE) ?? "";
-    expect(raw).not.toContain("secret-token");
+    expect(fs.files.get(FILE) ?? "").not.toContain("secret-token");
     expect(storedDocument(fs).remotes[0].token.scheme).toBe("safeStorage");
 
     const reloaded = store(fs);
@@ -95,6 +106,7 @@ describe("ConnectionStore", () => {
     expect(() => connections.save({ name: "", url: "http://a.lan", token: "x" })).toThrow("name");
     expect(() => connections.save({ id: "local", name: "Me", url: "http://a.lan", token: "x" })).toThrow("This computer");
     expect(() => connections.save({ id: "missing", name: "Gone", url: "http://a.lan", token: "x" })).toThrow("no longer exists");
+    expect(() => connections.save({ name: "Long", url: `http://a.lan/#token=${"t".repeat(TOKEN_MAX_LENGTH + 1)}` })).toThrow("at most");
   });
 
   it("falls back to This computer when the active profile is removed", () => {
@@ -132,18 +144,34 @@ describe("ConnectionStore", () => {
   it("explains a token that can no longer be decrypted", () => {
     const fs = new MemoryFs();
     const profile = store(fs).save({ name: "Studio", url: "http://studio.lan", token: "secret" });
-    const broken: TokenCipher = { ...reversingCipher(), decrypt: () => { throw new Error("keyring locked"); } };
+    const broken: TokenCipher = {
+      ...reversingCipher(),
+      decrypt: () => {
+        throw new Error("keyring locked");
+      }
+    };
     expect(() => store(fs, broken).endpoint(profile.id)).toThrow("could not be decrypted");
   });
 
-  it("uses the defaults and warns when the file is corrupt", () => {
-    for (const content of ["{not json", JSON.stringify({ version: 2, remotes: [] }), JSON.stringify([])]) {
+  it("moves a corrupt or future file aside, uses the defaults and reports why", () => {
+    const cases: Array<[string, string]> = [
+      ['{"remotes": [{"token": "quoted-secret"', "not valid JSON"],
+      [JSON.stringify({ version: 2, activeId: "local", remotes: [] }), "different cw-code version"],
+      [JSON.stringify([]), "unexpected shape"]
+    ];
+    for (const [content, reason] of cases) {
       const fs = new MemoryFs();
       fs.files.set(FILE, content);
       const warnings: string[] = [];
-      expect(store(fs, reversingCipher(), warnings).list()).toEqual({ activeId: "local", profiles: [LOCAL_PROFILE], tokenStorage: "os" });
+      const list = store(fs, reversingCipher(), warnings).list();
+      expect(list.profiles).toEqual([LOCAL_PROFILE]);
+      expect(list.activeId).toBe("local");
+      expect(list.warning).toContain(reason);
+      expect(list.warning).toContain(`${CONNECTIONS_FILE}.bad-${NOW}`);
       expect(warnings).toHaveLength(1);
-      expect(warnings[0]).toContain(CONNECTIONS_FILE);
+      expect(warnings[0]).not.toContain("quoted-secret");
+      expect(fs.files.has(FILE)).toBe(false);
+      expect(fs.files.get(`${FILE}.bad-${NOW}`)).toBe(content);
     }
   });
 
@@ -154,57 +182,32 @@ describe("ConnectionStore", () => {
     const list = store(fs).list();
     expect(list.activeId).toBe("local");
     expect(list.profiles.map((profile) => profile.id)).toEqual(["local", "a"]);
+    expect(list.warning).toBeUndefined();
   });
 
   it("reports basic token storage from the cipher", () => {
     expect(store(new MemoryFs(), reversingCipher("basic")).list().tokenStorage).toBe("basic");
   });
+
+  it("hands a saved token to a test only for the profile's own origin", () => {
+    const connections = store(new MemoryFs());
+    const profile = connections.save({ name: "Studio", url: "https://studio.lan:4317/cw", token: "secret" });
+    expect(connections.testToken(profile.id, "https://studio.lan:4317/other")).toBe("secret");
+    expect(connections.testToken(profile.id, "wss://studio.lan:4317/cw/ws")).toBe("secret");
+    expect(connections.testToken(profile.id, "https://evil.example.com")).toBeNull();
+    expect(connections.testToken(profile.id, "http://studio.lan:4317/cw")).toBeNull();
+    expect(connections.testToken(profile.id, "not a url")).toBeNull();
+    expect(connections.testToken("missing", "https://studio.lan:4317")).toBeNull();
+  });
 });
 
-function probe(overrides: Partial<ConnectionProbe> & { seen?: string[] } = {}): ConnectionProbe {
-  return {
-    fetchInfo: overrides.fetchInfo ?? (async (url) => {
-      overrides.seen?.push(url);
-      return INFO;
-    }),
-    hello: overrides.hello ?? (async () => undefined)
-  };
-}
-
-describe("testConnection", () => {
-  it("joins the info path below a base path", () => {
-    expect(infoUrl("http://host:4317")).toBe("http://host:4317/api/info");
-    expect(infoUrl("https://host/cw")).toBe("https://host/cw/api/info");
-    expect(infoUrl("https://host/cw/")).toBe("https://host/cw/api/info");
-  });
-
-  it("succeeds after the info check and the hello", async () => {
-    const seen: string[] = [];
-    let endpoint: ServerEndpoint | null = null;
-    const result = await testConnection("http://host:4317", "tok", probe({ seen, hello: async (target) => void (endpoint = target) }));
-    expect(result).toEqual({ ok: true, info: INFO });
-    expect(seen).toEqual(["http://host:4317/api/info"]);
-    expect(endpoint).toEqual<ServerEndpoint | null>({ url: "ws://host:4317/ws", token: "tok" });
-  });
-
-  it("classifies failures", async () => {
-    expect((await testConnection("nope", "tok", probe())).ok).toBe(false);
-    expect(await testConnection("nope", "tok", probe())).toMatchObject({ code: "invalid-url" });
-    const down = await testConnection("http://host", "tok", probe({ fetchInfo: async () => { throw new Error("ECONNREFUSED"); } }));
-    expect(down).toMatchObject({ ok: false, code: "unreachable" });
-    const other = await testConnection("http://host", "tok", probe({ fetchInfo: async () => ({ hello: "world" }) }));
-    expect(other).toMatchObject({ ok: false, code: "unreachable" });
-    const old = await testConnection("http://host", "tok", probe({ fetchInfo: async () => ({ ...INFO, protocol: PROTOCOL_VERSION + 1 }) }));
-    expect(old).toMatchObject({ ok: false, code: "protocol-mismatch", info: { protocol: PROTOCOL_VERSION + 1 } });
-    const missing = await testConnection("http://host", null, probe());
-    expect(missing).toMatchObject({ ok: false, code: "unauthorized" });
-    const rejected = await testConnection("http://host", "bad", probe({ hello: async () => { throw new ServerCallError("x", "unauthorized"); } }));
-    expect(rejected).toMatchObject({ ok: false, code: "unauthorized", info: INFO });
-  });
-
-  it("never echoes the token in a failure message", async () => {
-    const result = await testConnection("http://host/#token=hash-secret", null, probe({ hello: async () => { throw new Error("closed"); } }));
-    expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.message).not.toContain("hash-secret");
+describe("IPC input parsing", () => {
+  it("trims fields and caps their lengths", () => {
+    expect(parseRemoteProfileInput({ name: " A ", url: " http://a.lan ", token: "  " })).toEqual({ name: "A", url: "http://a.lan" });
+    expect(() => parseRemoteProfileInput({ name: "A", url: "http://a.lan", token: "t".repeat(TOKEN_MAX_LENGTH + 1) })).toThrow("at most");
+    expect(() => parseRemoteProfileInput({ name: "A", url: `http://a.lan/${"p".repeat(3000)}` })).toThrow("at most");
+    expect(() => parseConnectionTestInput({ url: "http://a.lan", token: "t".repeat(TOKEN_MAX_LENGTH + 1) })).toThrow("at most");
+    expect(parseConnectionTestInput({ url: "http://a.lan", id: "x" })).toEqual({ url: "http://a.lan", id: "x" });
+    expect(parseConnectionTestInput(null)).toEqual({ url: "" });
   });
 });
