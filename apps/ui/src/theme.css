@@ -13266,6 +13266,7 @@ button.gitbar-checkout:hover {
   display: flex;
   align-items: center;
   gap: 6px;
+}
 
 .web-login {
   display: flex;
