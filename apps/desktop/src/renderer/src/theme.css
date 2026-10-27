@@ -3083,7 +3083,8 @@ body.session-dragging * {
 }
 
 .thread-stage {
-  --prompt-rail-w: 20px;
+  --prompt-rail-w: 28px;
+  --prompt-rail-inset: 10px;
   position: relative;
   isolation: isolate;
   flex: 1;
@@ -3092,12 +3093,13 @@ body.session-dragging * {
   flex-direction: column;
 }
 
-/* Prompt rail — one compact marker per prompt, on the left edge of the thread. */
+/* Prompt rail — one compact marker per prompt, with a small margin on the left of the thread.
+   The stack is centred in the stage (composer included), not in the visible scroll window above it. */
 .prompt-rail {
   position: absolute;
   top: 10px;
   left: 0;
-  bottom: calc(var(--composer-overlay-h, 0px) + 10px);
+  bottom: 10px;
   width: var(--prompt-rail-w);
   z-index: 12;
   pointer-events: none;
@@ -3106,15 +3108,15 @@ body.session-dragging * {
 .prompt-rail-list {
   position: absolute;
   top: 50%;
-  left: 1px;
-  width: calc(var(--prompt-rail-w) - 2px);
+  left: var(--prompt-rail-inset);
+  width: calc(var(--prompt-rail-w) - var(--prompt-rail-inset));
   transform: translateY(-50%);
 }
 
 .prompt-rail-mark {
   position: absolute;
   left: 0;
-  width: calc(var(--prompt-rail-w) - 2px);
+  width: calc(var(--prompt-rail-w) - var(--prompt-rail-inset));
   height: 10px;
   margin-top: -5px;
   padding: 0;
