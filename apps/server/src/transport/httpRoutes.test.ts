@@ -134,4 +134,11 @@ describe("cspFor", () => {
     expect(cspFor("a.test:1")).toContain("connect-src 'self' ws://a.test:1 wss://a.test:1;");
     expect(cspFor("a; script-src *")).toContain("connect-src 'self';");
   });
+
+  test("allows https stylesheets and fonts for previews but keeps scripts same-origin", () => {
+    const csp = cspFor("a.test:1");
+    expect(csp).toContain("style-src 'self' 'unsafe-inline' https:;");
+    expect(csp).toContain("font-src 'self' data: https:;");
+    expect(csp).toContain("script-src 'self';");
+  });
 });

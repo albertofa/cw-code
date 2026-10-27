@@ -26,9 +26,9 @@ export function cspFor(host: string): string {
   return [
     "default-src 'self'",
     "script-src 'self'",
-    "style-src 'self' 'unsafe-inline'",
+    "style-src 'self' 'unsafe-inline' https:",
     "img-src 'self' data: blob: https:",
-    "font-src 'self' data:",
+    "font-src 'self' data: https:",
     `connect-src 'self'${socketSources}`,
     "worker-src 'self' blob:",
     "frame-src 'self' blob:",

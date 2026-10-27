@@ -7,9 +7,9 @@ export const UI_ROOT = fileURLToPath(new URL(".", import.meta.url));
 const CONTENT_SECURITY_POLICY = [
   "default-src 'self'",
   "script-src 'self'",
-  "style-src 'self' 'unsafe-inline'",
+  "style-src 'self' 'unsafe-inline' https:",
   "img-src 'self' data: blob: https:",
-  "font-src 'self' data:",
+  "font-src 'self' data: https:",
   "connect-src 'self' ws: wss:",
   "worker-src 'self' blob:",
   "frame-src 'self' blob:",
