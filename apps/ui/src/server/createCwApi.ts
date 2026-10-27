@@ -122,8 +122,21 @@ function openInBrowserTab(url: string): void {
   window.open(url, "_blank", "noopener,noreferrer");
 }
 
-function openHtmlInBrowserTab(html: string): void {
-  const url = URL.createObjectURL(new Blob([html], { type: "text/html" }));
+function escapeAttribute(value: string): string {
+  return value.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+function sandboxedPreviewDocument(name: string, html: string): string {
+  return [
+    "<!doctype html><html><head><meta charset=\"utf-8\">",
+    `<title>${escapeAttribute(name)}</title>`,
+    "<style>html,body,iframe{margin:0;border:0;width:100%;height:100%;display:block}</style>",
+    `</head><body><iframe sandbox="allow-popups" srcdoc="${escapeAttribute(html)}"></iframe></body></html>`
+  ].join("");
+}
+
+function openHtmlInBrowserTab(name: string, html: string): void {
+  const url = URL.createObjectURL(new Blob([sandboxedPreviewDocument(name, html)], { type: "text/html" }));
   openInBrowserTab(url);
   window.setTimeout(() => URL.revokeObjectURL(url), BLOB_URL_LIFETIME_MS);
 }
@@ -183,8 +196,7 @@ export function createCwApi(
     setComposerDraft: (key, text, attachments) => callVoid("prefs.setDraft", { key, text, attachments }),
     discoverBinaries: (binaries?: CliBinary[]) => call<CliDiscoverResult>("cli.discover", { binaries }),
     verifyBinaryPath: (binary, path) => call<CliDiscoveredCandidate>("cli.verifyPath", { binary, path }),
-    isDev: desktop?.isDev ?? import.meta.env.DEV,
-
+    isDev: desktop?.isDev ?? import.meta.env.DEV === true,
     addProject: (rootPath) => call<Project>("projects.add", rootPath),
     updateProjectSettings: (projectId, settings) => call<Project>("projects.updateSettings", { projectId, settings }),
     createSession: (projectId, driver, options) => call<Session>("sessions.create", { projectId, driver, options }),
@@ -312,7 +324,7 @@ export function createCwApi(
     },
     openHtml: async (name, html) => {
       if (desktop) return desktop.openHtml(name, html);
-      openHtmlInBrowserTab(html);
+      openHtmlInBrowserTab(name, html);
     },
     browseDirectories: (path, showHidden) => call<DirectoryListing>("fs.browseDirectories", { path: path ?? null, showHidden }),
     getServerHost: () => call<ServerHost>("server.host")

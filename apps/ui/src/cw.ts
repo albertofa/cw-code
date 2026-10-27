@@ -547,7 +547,6 @@ export interface CwApi {
     retry(): Promise<void>;
   };
   shutdown: {
-
     assess(): Promise<ShutdownAssessment>;
     prepare(request: ShutdownPrepareRequest): Promise<ShutdownPrepareResult>;
     force(token: string): Promise<ShutdownPrepareResult>;
