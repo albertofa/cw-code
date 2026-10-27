@@ -39,8 +39,8 @@ function patchUi(patch: Partial<ShutdownUiState>): void {
   if (current) useAppStore.setState({ shutdown: { ...current, ...patch } });
 }
 
-function showUi(state: ShutdownUiState): void {
-  useAppStore.setState({ shutdown: state });
+function showUi(flow: ActiveFlow, state: Omit<ShutdownUiState, "scope">): void {
+  useAppStore.setState({ shutdown: { ...state, scope: flow.scope } });
 }
 
 function finish(result: FlowOutcome | null, error?: { title: string; message: string }): void {
@@ -73,6 +73,11 @@ export function runShutdownFlow(reason: ShutdownReason): Promise<{ token: string
   return startFlow(reason, "server").serverResult;
 }
 
+export async function runWindowShutdownFlow(reason: ShutdownReason): Promise<boolean> {
+  const outcome = await startFlow(reason, "window").promise;
+  return outcome?.scope === "window";
+}
+
 function beginWindow(flow: ActiveFlow): void {
   window.cw.shutdown.acknowledge();
   const dirty = useEditorBuffers.getState().dirty();
@@ -80,7 +85,7 @@ function beginWindow(flow: ActiveFlow): void {
     finish({ scope: "window" });
     return;
   }
-  showUi({ reason: flow.reason, assessment: NOTHING_TO_STOP, dirty, phase: "review", error: null, pending: [] });
+  showUi(flow, { reason: flow.reason, assessment: NOTHING_TO_STOP, dirty, phase: "review", error: null, pending: [] });
 }
 
 async function begin(flow: ActiveFlow): Promise<void> {
@@ -97,7 +102,7 @@ async function begin(flow: ActiveFlow): Promise<void> {
     await prepare(flow, assessment, false);
     return;
   }
-  showUi({ reason: flow.reason, assessment, dirty, phase: "review", error: null, pending: [] });
+  showUi(flow, { reason: flow.reason, assessment, dirty, phase: "review", error: null, pending: [] });
 }
 
 async function prepare(flow: ActiveFlow, assessment: ShutdownAssessment, stopActiveTurns: boolean): Promise<void> {
@@ -126,7 +131,7 @@ async function prepareOnce(flow: ActiveFlow, assessment: ShutdownAssessment, sto
     });
   } catch (err) {
     if (active !== flow) return;
-    showUi({
+    showUi(flow, {
       reason: flow.reason,
       assessment,
       dirty: useEditorBuffers.getState().dirty(),
@@ -145,7 +150,7 @@ async function prepareOnce(flow: ActiveFlow, assessment: ShutdownAssessment, sto
     return;
   }
   if (result.code === "blocked") {
-    showUi({
+    showUi(flow, {
       reason: flow.reason,
       assessment: result.assessment,
       dirty: useEditorBuffers.getState().dirty(),
@@ -157,7 +162,7 @@ async function prepareOnce(flow: ActiveFlow, assessment: ShutdownAssessment, sto
   }
   if (result.code === "timeout") {
     flow.token = result.token;
-    showUi({
+    showUi(flow, {
       reason: flow.reason,
       assessment: ui()?.assessment ?? assessment,
       dirty: [],

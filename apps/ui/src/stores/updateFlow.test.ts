@@ -45,7 +45,7 @@ interface FakeBridge {
   cancels: string[];
 }
 
-function installBridge(): FakeBridge {
+function installBridge(remote = false): FakeBridge {
   const bridge: FakeBridge = {
     states: [],
     assessments: [],
@@ -57,6 +57,7 @@ function installBridge(): FakeBridge {
     cancels: []
   };
   (window as unknown as { cw: unknown }).cw = {
+    capabilities: { desktop: true, localServer: !remote },
     shell: {
       updates: {
         getState: async () => bridge.states.shift() ?? ready(1),
@@ -107,6 +108,15 @@ describe("restartToUpdate", () => {
     expect(bridge.installs).toEqual([{ version: "1.1.0", channel: "stable", token: "token-1" }]);
     expect(bridge.cancels).toEqual([]);
     expect(useAppStore.getState().updateRestartPending).toBe(false);
+  });
+
+  it("leaves a remote server alone and installs without a server token", async () => {
+    bridge = installBridge(true);
+    bridge.installResult = { ok: true, state: ready(3, { phase: "installing" }) };
+    await restartToUpdate();
+    expect(bridge.prepares).toBe(0);
+    expect(bridge.installs).toEqual([{ version: "1.1.0", channel: "stable", token: "" }]);
+    expect(bridge.cancels).toEqual([]);
   });
 
   it("does not stop anything when the update already changed before preparing", async () => {

@@ -13305,3 +13305,107 @@ button.gitbar-checkout:hover {
 .web-login .btn {
   align-self: flex-end;
 }
+
+.server-gate-connections {
+  width: min(560px, calc(100vw - 32px));
+  max-height: 60vh;
+  overflow: auto;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  background: var(--card);
+}
+
+.connections-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  color: var(--text);
+  font-size: var(--t-sm);
+}
+
+.connections-list {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+}
+
+.connections-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 10px;
+}
+
+.connections-row + .connections-row {
+  border-top: 1px solid var(--border);
+}
+
+.connections-row-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.connections-row-name {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 500;
+}
+
+.connections-row-meta {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: var(--t-desc);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.connections-active {
+  padding: 0 6px;
+  border-radius: var(--r-sm);
+  background: var(--violet-line);
+  color: var(--text);
+  font-size: var(--t-xs);
+}
+
+.connections-row-actions,
+.connections-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.connections-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.connections-label {
+  font-size: var(--t-xs);
+}
+
+.connections-hint,
+.connections-result {
+  margin: 0;
+  color: var(--muted);
+  font-size: var(--t-desc);
+}
+
+.connections-warning {
+  color: var(--warning);
+  font-size: var(--t-desc);
+}
+
+.connections-error {
+  color: var(--danger);
+  font-size: var(--t-desc);
+}

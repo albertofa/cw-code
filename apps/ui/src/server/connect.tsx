@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { ServerCallError, ServerClient, TopicCache } from "@cw-code/client";
-import type { ConnectionProfile, DesktopApi } from "@cw-code/contracts";
+import type { ConnectionList, ConnectionProfile, DesktopApi, ServerInfo } from "@cw-code/contracts";
 import { APP_TOPIC } from "@cw-code/shared/topics";
 import { flushAllComposerDrafts } from "../components/composerDrafts.js";
+import { ConnectionsPanel } from "../components/ConnectionsPanel.js";
 import { ipcErrorMessage } from "../components/ipcError.js";
 import { describeConnectionError, type ConnectionSide } from "./connectionErrors.js";
 import { createCwApi, type ShutdownHandlers } from "./createCwApi.js";
@@ -121,11 +122,13 @@ export function ServerConnectionView({
   client,
   connection,
   side,
+  renderFailure,
   children
 }: {
   client: ServerClient;
   connection: ServerConnection;
   side: ConnectionSide;
+  renderFailure?: (error: ServerCallError, retry: () => void) => ReactNode;
   children: ReactNode;
 }) {
   const { phase, link, connect } = connection;
@@ -148,6 +151,7 @@ export function ServerConnectionView({
     );
   }
   if (phase.kind === "failed") {
+    if (renderFailure) return <>{renderFailure(phase.error, connect)}</>;
     const text = describeConnectionError(phase.error, null, side);
     return (
       <div className="server-gate">
@@ -171,6 +175,77 @@ export function ServerConnectionView({
 
 export function DesktopMissing() {
   return <div className="preload-error">cw-code must run inside the desktop app for now.</div>;
+}
+
+function activeRemote(list: ConnectionList | null): Extract<ConnectionProfile, { kind: "remote" }> | null {
+  const active = list?.profiles.find((profile) => profile.id === list.activeId);
+  return active?.kind === "remote" ? active : null;
+}
+
+function DesktopFailure({ desktop, error, retry }: { desktop: DesktopApi; error: ServerCallError; retry: () => void }) {
+  const [list, setList] = useState<ConnectionList | null>(null);
+  const [info, setInfo] = useState<ServerInfo | null>(null);
+  const [showConnections, setShowConnections] = useState(false);
+  const remote = activeRemote(list);
+
+  useEffect(() => {
+    let cancelled = false;
+    desktop.connections.list().then(
+      (next) => {
+        if (!cancelled) setList(next);
+      },
+      (err: unknown) => console.warn(`[cw-code] could not load the saved connections: ${ipcErrorMessage(err)}`)
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [desktop]);
+
+  useEffect(() => {
+    if (error.code !== "protocol-mismatch" || !remote) return;
+    let cancelled = false;
+    desktop.connections.test({ url: remote.url, id: remote.id }).then(
+      (result) => {
+        if (!cancelled && result.info) setInfo(result.info);
+      },
+      () => undefined
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [desktop, error, remote]);
+
+  const text = describeConnectionError(error, info, "desktop");
+  return (
+    <div className="server-gate" role="alert">
+      <div className="preload-error">
+        {text.title}: {text.message}
+      </div>
+      {remote && (
+        <div className="connections-hint">
+          Connection: {remote.name} ({remote.url})
+        </div>
+      )}
+      <div className="connections-actions">
+        <button type="button" className="btn" aria-expanded={showConnections} onClick={() => setShowConnections((shown) => !shown)}>
+          Connections…
+        </button>
+        <button type="button" className="btn btn-primary" onClick={retry}>
+          Retry
+        </button>
+        {remote && (
+          <button type="button" className="btn" onClick={() => desktop.connections.activate("local")}>
+            Use this computer
+          </button>
+        )}
+      </div>
+      {showConnections && (
+        <div className="server-gate-connections">
+          <ConnectionsPanel connections={desktop.connections} />
+        </div>
+      )}
+    </div>
+  );
 }
 
 export function DesktopGate({ desktop, children }: { desktop: DesktopApi; children: ReactNode }) {
@@ -203,7 +278,12 @@ export function DesktopGate({ desktop, children }: { desktop: DesktopApi; childr
   );
 
   return (
-    <ServerConnectionView client={client} connection={connection} side="desktop">
+    <ServerConnectionView
+      client={client}
+      connection={connection}
+      side="desktop"
+      renderFailure={(error, retry) => <DesktopFailure desktop={desktop} error={error} retry={retry} />}
+    >
       {children}
     </ServerConnectionView>
   );

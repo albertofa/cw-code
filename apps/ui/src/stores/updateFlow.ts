@@ -3,7 +3,7 @@ import { ipcErrorMessage } from "../components/ipcError.js";
 import { useNotifs } from "../components/Notifications.js";
 import { installTarget, matchesInstallTarget } from "../components/updateModel.js";
 import { shellUpdates, useAppStore } from "./appStore.js";
-import { isShutdownFlowActive, runShutdownFlow } from "./shutdownFlow.js";
+import { isShutdownFlowActive, runShutdownFlow, runWindowShutdownFlow } from "./shutdownFlow.js";
 
 const INSTALL_FAILURE_TITLE = "cw-code could not install the update";
 
@@ -11,7 +11,10 @@ function notifyInstallFailure(message: string): void {
   useNotifs.getState().push({ id: `update-install:${message}`, kind: "error", title: INSTALL_FAILURE_TITLE, message, sticky: true });
 }
 
+const WINDOW_ONLY_TOKEN = "";
+
 async function releaseRestart(token: string): Promise<void> {
+  if (token === WINDOW_ONLY_TOKEN) return;
   try {
     await window.cw.shutdown.cancel(token);
   } catch (err) {
@@ -31,6 +34,11 @@ function notifyUpdateChanged(): void {
     title: "The update changed",
     message: "The downloaded update changed while cw-code was getting ready, so nothing was installed. cw-code is back to normal use."
   });
+}
+
+async function prepareRestart(): Promise<{ token: string } | null> {
+  if (window.cw.capabilities.localServer) return runShutdownFlow("update");
+  return (await runWindowShutdownFlow("update")) ? { token: WINDOW_ONLY_TOKEN } : null;
 }
 
 export async function restartToUpdate(): Promise<void> {
@@ -53,7 +61,7 @@ export async function restartToUpdate(): Promise<void> {
       notifyInstallFailure(ipcErrorMessage(err));
       return;
     }
-    const flow = await runShutdownFlow("update");
+    const flow = await prepareRestart();
     if (!flow) return;
     let fresh: UpdateState;
     try {

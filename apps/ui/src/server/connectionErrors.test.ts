@@ -27,7 +27,10 @@ describe("describeConnectionError", () => {
       message: `The server runs cw-code v9.9.9 (protocol 99); this page is v${version} (protocol ${PROTOCOL_VERSION}). Reload the page.`
     });
     expect(describeConnectionError(error, info, "desktop").message).toBe(
-      `The server runs cw-code v9.9.9 (protocol 99); this app is v${version} (protocol ${PROTOCOL_VERSION}). Update cw-code on this computer or on the server.`
+      `Server v9.9.9 (protocol 99) and this app v${version} (protocol ${PROTOCOL_VERSION}) can't talk. Update the app or the server so both run the same version.`
+    );
+    expect(describeConnectionError(error, null, "desktop").message).toBe(
+      `The server and this app v${version} (protocol ${PROTOCOL_VERSION}) can't talk. Update the app or the server so both run the same version.`
     );
   });
 

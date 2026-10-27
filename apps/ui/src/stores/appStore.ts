@@ -17,6 +17,7 @@ import type {
   SettingsPatch,
   ShutdownAssessment,
   ShutdownReason,
+  ShutdownScope,
   SubagentToolsResult,
   UpdateActionResult,
   UpdateChannel,
@@ -186,6 +187,7 @@ export type ShutdownPhase = "review" | "waiting" | "saving" | "preparing" | "tim
 
 export interface ShutdownUiState {
   reason: ShutdownReason;
+  scope: ShutdownScope;
   assessment: ShutdownAssessment;
   dirty: DirtyBuffer[];
   phase: ShutdownPhase;

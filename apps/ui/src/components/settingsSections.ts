@@ -6,6 +6,7 @@ export type SettingsSection =
   | "notifications"
   | "updates"
   | "remoteAccess"
+  | "connections"
   | "projects"
   | "sourceControl"
   | "prWorkflows"
@@ -33,6 +34,7 @@ export const SETTINGS_NAV: SettingsNavItem[] = [
   { id: "notifications", label: "Notifications", group: "app" },
   { id: "updates", label: "Updates", group: "app" },
   { id: "remoteAccess", label: "Remote access", group: "app" },
+  { id: "connections", label: "Connections", group: "app" },
   { id: "projects", label: "Projects", group: "app" },
   { id: "sourceControl", label: "Source control", group: "app" },
   { id: "prWorkflows", label: "Workflows", group: "app" },
@@ -96,8 +98,10 @@ const SETTING_OWNER: Record<DraftSettingKey, SettingsNavId> = {
   serverBindHost: "remoteAccess"
 };
 
+const SHELL_ONLY_SECTIONS: ReadonlySet<SettingsNavId> = new Set<SettingsNavId>(["updates", "connections"]);
+
 export function settingsNavFor(hasShell: boolean): SettingsNavItem[] {
-  return hasShell ? SETTINGS_NAV : SETTINGS_NAV.filter((item) => item.id !== "updates");
+  return hasShell ? SETTINGS_NAV : SETTINGS_NAV.filter((item) => !SHELL_ONLY_SECTIONS.has(item.id));
 }
 
 export function navIdOf(section: SettingsSection, harness: DriverName | undefined): SettingsNavId {

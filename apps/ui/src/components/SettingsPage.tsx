@@ -8,6 +8,7 @@ import { usePrStore } from "../stores/prStore.js";
 import { projectDirty, useSettingsDraftStore } from "../stores/settingsDraftStore.js";
 import { AppearanceSettings } from "./AppearanceSettings.js";
 import { BinaryPicker } from "./BinaryPicker.js";
+import { ConnectionsPanel } from "./ConnectionsPanel.js";
 import { DriverIcon } from "./DriverIcon.js";
 import { HarnessSettings } from "./HarnessSettings.js";
 import { MenuSelect } from "./MenuSelect.js";
@@ -623,6 +624,14 @@ export function SettingsPage({
         );
       case "remoteAccess":
         return <RemoteAccessSettings />;
+      case "connections":
+        if (!window.cw.shell) return <SettingsPageHead title="Connections" description="Connections are managed by the cw-code desktop app." />;
+        return (
+          <>
+            <SettingsPageHead title="Connections" description="Servers this app can connect to. This computer runs its own server; remote servers need a device token." />
+            <ConnectionsPanel connections={window.cw.shell.connections} />
+          </>
+        );
       case "projects":
         return <ProjectsSettings projectId={projectId} />;
       case "sourceControl":

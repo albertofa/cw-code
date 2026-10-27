@@ -1,7 +1,7 @@
 import { useEffect, useId, useMemo } from "react";
 import type { AppTopicData } from "@cw-code/contracts";
 import { APP_TOPIC } from "@cw-code/shared/topics";
-import type { ShutdownAssessment, ShutdownReason } from "../cw.js";
+import type { ShutdownAssessment, ShutdownReason, ShutdownScope } from "../cw.js";
 import { useTopicSelect } from "../server/topics.js";
 import { useAppStore } from "../stores/appStore.js";
 import {
@@ -24,10 +24,9 @@ const TERMINAL_LABELS: Record<string, string> = {
   codex: "Codex terminal"
 };
 
-function verb(reason: ShutdownReason): { title: string; action: string } {
-  return reason === "update"
-    ? { title: "Restart to update cw-code", action: "Restart" }
-    : { title: "Quit cw-code", action: "Quit" };
+function verb(reason: ShutdownReason, scope: ShutdownScope): { title: string; action: string } {
+  if (reason === "update") return { title: "Restart to update cw-code", action: "Restart" };
+  return scope === "window" ? { title: "Close cw-code", action: "Close" } : { title: "Quit cw-code", action: "Quit" };
 }
 
 function plural(count: number, word: string): string {
@@ -76,7 +75,8 @@ export function ShutdownDialog() {
   }, [state, busy]);
 
   if (!state) return null;
-  const { title, action } = verb(state.reason);
+  const { title, action } = verb(state.reason, state.scope);
+  const windowOnly = state.scope === "window";
   const { activeTurns, terminals, backgroundTasks } = state.assessment;
   const review = state.phase === "review";
   const waiting = state.phase === "waiting";
@@ -98,7 +98,14 @@ export function ShutdownDialog() {
           </div>
         ) : (
           <>
-            {state.reason === "update" && (
+            {windowOnly && (
+              <div className="confirm-message">
+                {state.reason === "update"
+                  ? "cw-code will close, install the update and reopen on its own. The server it is connected to keeps running, so its sessions, turns and terminals are not affected."
+                  : "Only this window closes. The server it is connected to keeps running, so its sessions, turns and terminals are not affected."}
+              </div>
+            )}
+            {state.reason === "update" && !windowOnly && (
               <div className="confirm-message">
                 cw-code will close, install the update (it can take a minute, and your system may ask for permission) and reopen
                 on its own. Your projects, sessions and settings are kept, and sessions resume their CLI context afterwards. Live

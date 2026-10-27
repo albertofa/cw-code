@@ -9,9 +9,10 @@ import type {
   AppSettings,
   ConnectionList,
   ConnectionProfile,
+  ConnectionTestResult,
   DesktopConnection,
+  ServerEndpoint,
   ServerReady,
-  TokenStorage,
   ServerPackageProbe,
   ShutdownAssessment,
   ShutdownCommitResult,
@@ -25,11 +26,21 @@ import type {
 } from "@cw-code/contracts";
 import { appendCrashLog, initCrashLog } from "@cw-code/server/debug/crashLog";
 import { attachmentsDir, cwCodeHome, logsDir } from "@cw-code/server/paths/appPaths";
+import { readBytesIfExists, writeFileAtomic } from "@cw-code/server/storage/atomicFile";
 import { PROTOCOL_VERSION } from "@cw-code/shared/protocol";
 import { windowBackgroundColor } from "@cw-code/shared/themes";
 import { channelOfVersion } from "@cw-code/shared/updateChannel";
 import { attentionDescription, shouldFlash } from "./attention.js";
 import { badgeLabel, renderBadge } from "./badgeImage.js";
+import {
+  ConnectionStore,
+  LOCAL_PROFILE,
+  parseConnectionTestInput,
+  parseRemoteProfileInput,
+  testConnection,
+  type ConnectionsFs,
+  type TokenCipher
+} from "./connections.js";
 import { failedServerProbe, RendererProbeTracker, runPackageProbe } from "./debug/packageProbe.js";
 import { readOrCreateInstallId } from "./installId.js";
 import { assertLocalAbsolutePath, resolveOpenTarget } from "./openPathPolicy.js";
@@ -46,7 +57,6 @@ import { initialUpdateState, isUpdateChannel } from "./updates/updateState.js";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
 const RENDERER_SHUTDOWN_ACK_MS = 5_000;
-const LOCAL_PROFILE: ConnectionProfile = { id: "local", kind: "local", name: "This computer" };
 const INSTALL_EXIT_TIMEOUT_MS = 30_000;
 const UPDATES_PENDING_MESSAGE = "Updates are unavailable until the cw-code server is ready";
 
@@ -81,6 +91,28 @@ let restartAfterFailedInstall = false;
 let serverStop: Promise<void> | null = null;
 let serverStopped = false;
 let tray: ServerTray | null = null;
+let pendingActivation: string | null = null;
+
+const electronCipher: TokenCipher = {
+  storage: () => {
+    if (!safeStorage.isEncryptionAvailable()) return "plain";
+    return process.platform === "linux" && safeStorage.getSelectedStorageBackend() === "basic_text" ? "basic" : "os";
+  },
+  encrypt: (plain) => safeStorage.encryptString(plain),
+  decrypt: (data) => safeStorage.decryptString(Buffer.from(data))
+};
+
+const connectionsFs: ConnectionsFs = {
+  read: (path) => readBytesIfExists(path)?.toString("utf8") ?? null,
+  write: (path, data) => {
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileAtomic(path, data);
+  }
+};
+
+const connections = new ConnectionStore({ userDataDir: app.getPath("userData"), cipher: electronCipher, fs: connectionsFs });
+const runningProfile: ConnectionProfile = packageProbeOutPath() ? LOCAL_PROFILE : (connections.profile(connections.activeId) ?? LOCAL_PROFILE);
+const remoteMode = runningProfile.kind === "remote";
 
 const serverProcess: ServerProcess = new ServerProcess({
   launch: {
@@ -97,7 +129,11 @@ const serverProcess: ServerProcess = new ServerProcess({
   onFatal: (message) => reportFatalError("cw-code server stopped", new Error(message))
 });
 
-const link: ServerLink = new ServerLink(() => serverProcess.endpoint());
+const link: ServerLink = new ServerLink(serverEndpoint);
+
+async function serverEndpoint(): Promise<ServerEndpoint> {
+  return remoteMode ? connections.endpoint(runningProfile.id) : serverProcess.endpoint();
+}
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -162,7 +198,7 @@ function ensureUpdateService(): void {
   sendToMainWindow("updates.changed", service.getState());
   service.start();
   const firstRunChannel = firstRunChannelPatch(settings, app.getVersion(), service.getState().phase !== "disabled");
-  if (firstRunChannel) {
+  if (firstRunChannel && !remoteMode) {
     link.call("settings.set", firstRunChannel).catch((error: unknown) => {
       console.warn(`could not save the default update channel: ${errorMessage(error)}`);
     });
@@ -196,7 +232,7 @@ async function confirmServerReplace(running: ServerReady): Promise<boolean> {
 }
 
 function syncTray(): void {
-  const wanted = link.settings?.keepServerRunning === true && !isQuitApproved();
+  const wanted = !remoteMode && link.settings?.keepServerRunning === true && !isQuitApproved();
   if (wanted && !tray) {
     tray = new ServerTray({ iconPath: brandingIconPath(), open: focusMainWindow, stopAndQuit: stopServerAndQuit }, link.attentionCount);
     return;
@@ -261,8 +297,7 @@ function clearShutdownAck(): void {
 
 function stopServer(): Promise<void> {
   if (serverStop) return serverStop;
-  const stopping = serverProcess
-    .stop(link.isOpen ? link : undefined)
+  const stopping = (remoteMode ? Promise.resolve() : serverProcess.stop(link.isOpen ? link : undefined))
     .catch((error: unknown) => console.warn(`[server] stop failed: ${errorMessage(error)}`))
     .finally(() => {
       serverStopped = true;
@@ -279,7 +314,12 @@ function quitWithoutDialog(): void {
   void stopServer().then(() => app.quit());
 }
 
-function requestShutdown(scope: ShutdownScope = "server"): void {
+function closeScope(): ShutdownScope {
+  return remoteMode ? "window" : "server";
+}
+
+function requestShutdown(scope: ShutdownScope = closeScope(), activation: string | null = null): void {
+  if (!isQuitApproved()) pendingActivation = activation;
   const window = liveMainWindow();
   if (!link.isOpen || link.startup?.mode !== "ready" || !window || window.webContents.isCrashed()) {
     quitWithoutDialog();
@@ -297,6 +337,7 @@ function requestShutdown(scope: ShutdownScope = "server"): void {
 }
 
 function endOfSession(): void {
+  pendingActivation = null;
   clearShutdownAck();
   quitApproved = true;
   void stopServer();
@@ -549,20 +590,20 @@ function registerWindowIpc(): void {
 }
 
 function registerShellIpc(): void {
-  ipcMain.handle("desktop.connection", async (): Promise<DesktopConnection> => ({ profile: LOCAL_PROFILE, endpoint: await serverProcess.endpoint() }));
-  ipcMain.handle("desktop.connections.list", (): ConnectionList => ({
-    activeId: LOCAL_PROFILE.id,
-    profiles: [LOCAL_PROFILE],
-    tokenStorage: tokenStorage()
-  }));
-  for (const channel of ["desktop.connections.save", "desktop.connections.remove", "desktop.connections.test"]) {
-    ipcMain.handle(channel, (): never => {
-      throw new Error("connection profiles are not available yet");
-    });
-  }
-  ipcMain.on("desktop.connections.activate", (_e, args: { id?: unknown } | undefined) => {
-    if (args?.id !== LOCAL_PROFILE.id) console.warn("[connections] connection profiles are not available yet");
+  ipcMain.handle("desktop.connection", async (): Promise<DesktopConnection> => {
+    const profile = connections.profile(runningProfile.id) ?? runningProfile;
+    const endpoint = await serverEndpoint();
+    connectRemoteLink();
+    return { profile, endpoint };
   });
+  ipcMain.handle("desktop.connections.list", (): ConnectionList => connections.list());
+  ipcMain.handle("desktop.connections.save", (_e, args: unknown): ConnectionProfile => connections.save(parseRemoteProfileInput(args)));
+  ipcMain.handle("desktop.connections.remove", (_e, args: { id?: unknown } | undefined): void => {
+    if (typeof args?.id !== "string") throw new Error("desktop.connections.remove requires { id }");
+    connections.remove(args.id);
+  });
+  ipcMain.handle("desktop.connections.test", (_e, args: unknown): Promise<ConnectionTestResult> => testConnectionInput(args));
+  ipcMain.on("desktop.connections.activate", (_e, args: { id?: unknown } | undefined) => activateConnection(args));
 
   ipcMain.handle("projects.pick", async (e): Promise<string | null> => {
     const w = windowFromSender(e.sender);
@@ -603,9 +644,47 @@ function registerShellIpc(): void {
   });
 }
 
-function tokenStorage(): TokenStorage {
-  if (!safeStorage.isEncryptionAvailable()) return "plain";
-  return process.platform === "linux" && safeStorage.getSelectedStorageBackend() === "basic_text" ? "basic" : "os";
+function applyPendingActivation(): void {
+  const id = pendingActivation;
+  pendingActivation = null;
+  if (!id) return;
+  try {
+    connections.setActive(id);
+    app.relaunch();
+  } catch (error) {
+    console.warn(`[connections] could not switch connections: ${errorMessage(error)}`);
+  }
+}
+
+function activateConnection(args: { id?: unknown } | undefined): void {
+  const id = typeof args?.id === "string" ? args.id : "";
+  if (!connections.profile(id)) {
+    console.warn("[connections] cannot switch to a connection that does not exist");
+    return;
+  }
+  if (id === runningProfile.id) return;
+  requestShutdown(runningProfile.kind === "local" ? "server" : "window", id);
+}
+
+function connectRemoteLink(): void {
+  if (!remoteMode || link.isOpen || isQuitApproved()) return;
+  link.connect().catch((error: unknown) => console.warn(`[server] could not connect to ${runningProfile.name}: ${errorMessage(error)}`));
+}
+
+function storedTestToken(input: { token?: string; id?: string }): string | null {
+  if (input.token) return input.token;
+  return input.id && connections.profile(input.id)?.kind === "remote" ? connections.token(input.id) : null;
+}
+
+async function testConnectionInput(args: unknown): Promise<ConnectionTestResult> {
+  const input = parseConnectionTestInput(args);
+  let token: string | null;
+  try {
+    token = storedTestToken(input);
+  } catch (error) {
+    return { ok: false, code: "unauthorized", message: errorMessage(error) };
+  }
+  return testConnection(input.url, token);
 }
 
 function parseShutdownToken(args: unknown, channel: string): string {
@@ -645,7 +724,26 @@ async function commitInstall(token: string, action: () => void): Promise<Shutdow
   return { ok: false, message: `cw-code did not exit within ${Math.round(INSTALL_EXIT_TIMEOUT_MS / 1000)}s. Normal use has been restored.` };
 }
 
+async function commitWindowInstall(action: () => void): Promise<ShutdownCommitResult> {
+  clearShutdownAck();
+  quitApproved = true;
+  try {
+    action();
+  } catch (error) {
+    quitApproved = false;
+    throw error;
+  }
+  await delay(INSTALL_EXIT_TIMEOUT_MS);
+  appendCrashLog(`cw-code did not exit within ${INSTALL_EXIT_TIMEOUT_MS}ms after starting the installer`);
+  quitApproved = false;
+  return { ok: false, message: `cw-code did not exit within ${Math.round(INSTALL_EXIT_TIMEOUT_MS / 1000)}s. Normal use has been restored.` };
+}
+
 async function startAndConnectServer(): Promise<void> {
+  if (remoteMode) {
+    connectRemoteLink();
+    return;
+  }
   await serverProcess.start();
   await link.connect();
 }
@@ -663,6 +761,8 @@ async function restoreAfterFailedInstall(): Promise<void> {
 }
 
 async function installUpdate(service: UpdateService, args: unknown): Promise<UpdateActionResult> {
+  pendingActivation = null;
+  if (remoteMode) return service.install(args, { commit: commitWindowInstall, reason: () => "update", release: () => undefined });
   const token = parseShutdownToken(args, "updates.install");
   const status = await link.call<ShutdownStatus>("shutdown.status").catch(() => link.shutdown);
   return service.install(args, {
@@ -833,7 +933,10 @@ if (!app.requestSingleInstanceLock()) {
     clearShutdownAck();
     quitApproved = true;
     destroyTray();
-    if (serverStopped) return;
+    if (serverStopped) {
+      applyPendingActivation();
+      return;
+    }
     event.preventDefault();
     void stopServer().then(() => app.quit());
   });

@@ -10,12 +10,16 @@ export interface ConnectionErrorText {
   message: string;
 }
 
+function desktopMismatchText(info: ServerInfo | null): string {
+  const server = info ? `Server v${info.version} (protocol ${info.protocol})` : "The server";
+  return `${server} and this app v${uiVersion} (protocol ${PROTOCOL_VERSION}) can't talk. Update the app or the server so both run the same version.`;
+}
+
 function mismatchText(info: ServerInfo | null, side: ConnectionSide): string {
-  const here = side === "web" ? "this page" : "this app";
-  const action = side === "web" ? "Reload the page." : "Update cw-code on this computer or on the server.";
-  const local = `${here} is v${uiVersion} (protocol ${PROTOCOL_VERSION})`;
-  if (!info) return `The server runs a different cw-code version; ${local}. ${action}`;
-  return `The server runs cw-code v${info.version} (protocol ${info.protocol}); ${local}. ${action}`;
+  if (side === "desktop") return desktopMismatchText(info);
+  const local = `this page is v${uiVersion} (protocol ${PROTOCOL_VERSION})`;
+  if (!info) return `The server runs a different cw-code version; ${local}. Reload the page.`;
+  return `The server runs cw-code v${info.version} (protocol ${info.protocol}); ${local}. Reload the page.`;
 }
 
 export function describeConnectionError(error: ServerCallError | null, info: ServerInfo | null, side: ConnectionSide): ConnectionErrorText {
