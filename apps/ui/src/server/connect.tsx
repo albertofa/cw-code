@@ -1,15 +1,22 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
-import { ServerClient, TopicCache } from "@cw-code/client";
+import { ServerCallError, ServerClient, TopicCache } from "@cw-code/client";
 import type { ConnectionProfile, DesktopApi } from "@cw-code/contracts";
 import { APP_TOPIC } from "@cw-code/shared/topics";
 import { flushAllComposerDrafts } from "../components/composerDrafts.js";
 import { ipcErrorMessage } from "../components/ipcError.js";
+import { describeConnectionError, type ConnectionSide } from "./connectionErrors.js";
 import { createCwApi, type ShutdownHandlers } from "./createCwApi.js";
 import { migrateLegacyPreferences } from "./legacyPrefs.js";
 import { initTopics, waitForTopicSettled } from "./topics.js";
 
-type Phase = { kind: "connecting" } | { kind: "failed"; message: string } | { kind: "ready" };
+type Phase = { kind: "connecting" } | { kind: "failed"; error: ServerCallError } | { kind: "ready" };
 type Link = "up" | "reconnecting" | "lost";
+
+export interface ServerConnection {
+  phase: Phase;
+  link: Link;
+  connect: () => void;
+}
 
 const RECONNECTING_BANNER_DELAY_MS = 1_000;
 const APP_SETTLE_TIMEOUT_MS = 15_000;
@@ -19,6 +26,10 @@ type AppSettle = { kind: "settled"; status: string | undefined } | { kind: "time
 export function reload(): void {
   flushAllComposerDrafts();
   window.location.reload();
+}
+
+function asServerCallError(error: unknown): ServerCallError {
+  return error instanceof ServerCallError ? error : new ServerCallError(ipcErrorMessage(error));
 }
 
 async function settleAppTopic(client: ServerClient): Promise<AppSettle> {
@@ -45,21 +56,12 @@ async function settleAppTopic(client: ServerClient): Promise<AppSettle> {
   }
 }
 
-export function ServerGate({ desktop, children }: { desktop: DesktopApi; children: ReactNode }) {
-  const profile = useRef<ConnectionProfile | null>(null);
-  const [client] = useState(
-    () =>
-      new ServerClient({
-        endpoint: async () => {
-          const connection = await desktop.connection();
-          profile.current = connection.profile;
-          return connection.endpoint;
-        },
-        client: "desktop-ui",
-        reconnect: true
-      })
-  );
-  const [shutdownHandlers] = useState<ShutdownHandlers>(() => new Set());
+export function useServerConnection(
+  client: ServerClient,
+  desktop: DesktopApi | null,
+  profile: { readonly current: ConnectionProfile | null },
+  shutdownHandlers: ShutdownHandlers
+): ServerConnection {
   const topicCache = useRef<TopicCache | null>(null);
   const appHold = useRef<(() => void) | null>(null);
   const [phase, setPhase] = useState<Phase>({ kind: "connecting" });
@@ -83,20 +85,8 @@ export function ServerGate({ desktop, children }: { desktop: DesktopApi; childre
       if (settle.kind === "settled" && settle.status === "ready") void migrateLegacyPreferences(window.cw);
       setPhase({ kind: "ready" });
     };
-    open().catch((err: unknown) => setPhase({ kind: "failed", message: ipcErrorMessage(err) }));
-  }, [client, desktop, shutdownHandlers]);
-
-  useEffect(
-    () =>
-      desktop.shutdown.onRequested((event) => {
-        if (shutdownHandlers.size === 0 || client.state === "closed") {
-          desktop.shutdown.quit();
-          return;
-        }
-        for (const handler of [...shutdownHandlers]) handler(event);
-      }),
-    [client, desktop, shutdownHandlers]
-  );
+    open().catch((err: unknown) => setPhase({ kind: "failed", error: asServerCallError(err) }));
+  }, [client, desktop, profile, shutdownHandlers]);
 
   useEffect(() => {
     let bannerTimer: number | null = null;
@@ -124,6 +114,21 @@ export function ServerGate({ desktop, children }: { desktop: DesktopApi; childre
     };
   }, [client, connect]);
 
+  return { phase, link, connect };
+}
+
+export function ServerConnectionView({
+  client,
+  connection,
+  side,
+  children
+}: {
+  client: ServerClient;
+  connection: ServerConnection;
+  side: ConnectionSide;
+  children: ReactNode;
+}) {
+  const { phase, link, connect } = connection;
   const lostOverlay = link === "lost" && (
     <div className="server-gate server-gate-overlay" role="alert">
       <div className="preload-error">
@@ -143,9 +148,12 @@ export function ServerGate({ desktop, children }: { desktop: DesktopApi; childre
     );
   }
   if (phase.kind === "failed") {
+    const text = describeConnectionError(phase.error, null, side);
     return (
       <div className="server-gate">
-        <div className="preload-error">Could not connect to the cw-code server: {phase.message}</div>
+        <div className="preload-error">
+          {text.title}: {text.message}
+        </div>
         <button type="button" className="btn btn-primary" onClick={connect}>
           Retry
         </button>
@@ -161,6 +169,38 @@ export function ServerGate({ desktop, children }: { desktop: DesktopApi; childre
   );
 }
 
-export function DesktopMissing() {
-  return <div className="preload-error">cw-code must run inside the desktop app for now.</div>;
+export function DesktopGate({ desktop, children }: { desktop: DesktopApi; children: ReactNode }) {
+  const profile = useRef<ConnectionProfile | null>(null);
+  const [client] = useState(
+    () =>
+      new ServerClient({
+        endpoint: async () => {
+          const connection = await desktop.connection();
+          profile.current = connection.profile;
+          return connection.endpoint;
+        },
+        client: "desktop-ui",
+        reconnect: true
+      })
+  );
+  const [shutdownHandlers] = useState<ShutdownHandlers>(() => new Set());
+  const connection = useServerConnection(client, desktop, profile, shutdownHandlers);
+
+  useEffect(
+    () =>
+      desktop.shutdown.onRequested((event) => {
+        if (shutdownHandlers.size === 0 || client.state === "closed") {
+          desktop.shutdown.quit();
+          return;
+        }
+        for (const handler of [...shutdownHandlers]) handler(event);
+      }),
+    [client, desktop, shutdownHandlers]
+  );
+
+  return (
+    <ServerConnectionView client={client} connection={connection} side="desktop">
+      {children}
+    </ServerConnectionView>
+  );
 }

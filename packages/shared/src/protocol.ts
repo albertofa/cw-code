@@ -1,4 +1,4 @@
-import type { ServerReady } from "@cw-code/contracts";
+import type { ServerInfo, ServerReady } from "@cw-code/contracts";
 
 export const PROTOCOL_VERSION = 3;
 export const CLOSE_UNAUTHORIZED = 4401;
@@ -35,4 +35,10 @@ export function isServerReady(value: unknown): value is ServerReady {
     typeof ready.version === "string" &&
     (ready.launcherId === undefined || ready.launcherId === null || typeof ready.launcherId === "string")
   );
+}
+
+export function isServerInfo(value: unknown): value is ServerInfo {
+  if (typeof value !== "object" || value === null) return false;
+  const info = value as Record<string, unknown>;
+  return info.app === "cw-code" && typeof info.version === "string" && typeof info.protocol === "number";
 }

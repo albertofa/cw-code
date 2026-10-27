@@ -31,6 +31,7 @@ import { TOOL_TABS } from "./toolTabs.js";
 import { UpdatesSettings } from "./UpdatesSettings.js";
 import { errorMessage } from "./errorMessage.js";
 import { visibleLayerOpen } from "./openLayer.js";
+import { signOutOfBrowser } from "../server/webGate.js";
 import appIcon from "../assets/console-c.svg";
 import { version as appVersion, description as appDescription } from "../../package.json";
 import { SettingsGroup, SettingsPageHead, SettingsRow, SettingsSwitch, type BinaryPickHandler } from "./SettingsLayout.js";
@@ -254,6 +255,16 @@ function GeneralSettings() {
           </span>
         </SettingsRow>
       </SettingsGroup>
+
+      {!window.cw.capabilities.desktop && (
+        <SettingsGroup title="This browser">
+          <SettingsRow label="Sign out of this browser" hint="Forgets this browser's device token and returns to the sign-in screen.">
+            <button type="button" className="btn" onClick={signOutOfBrowser}>
+              Sign out
+            </button>
+          </SettingsRow>
+        </SettingsGroup>
+      )}
 
       <SettingsGroup title="About">
         <div className="sp-about">
