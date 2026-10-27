@@ -60,8 +60,8 @@ Core behaviors:
   fire-and-forget); the server answers `result`s and pushes `patch`es and `event`s. Payloads
   are JSON — no `Map`/`Set`/`Date`/binary (send base64). The server writes
   `userdata/server.json` and prints `CW_SERVER_READY <json>` when listening; a second server
-  on the same home prints `CW_SERVER_RUNNING <json>` and exits 3 (the shell retries for ~6 s,
-  then fails startup). `PROTOCOL_VERSION` is 3; a mismatch closes the socket.
+  on the same home prints `CW_SERVER_RUNNING <json>` and exits 3 (the shell then attaches,
+  replaces or offers to stop a foreign one; see Keep-running). `PROTOCOL_VERSION` is 3; a mismatch closes the socket.
 - Topics carry server state. `topics.subscribe` returns a `{ rev, data }` snapshot per topic
   (subscribing again returns a fresh one); after that the server pushes
   `{ t: "patch", topic, rev, ops }` with `upsert`/`remove`/`append`/`replace` ops, and a rev
@@ -93,9 +93,10 @@ Core behaviors:
   capped).
 - Devices: the owner token (`userdata/server-token`) authenticates the owner; device tokens
   (`userdata/devices.json`, SHA-256 hashes only) authenticate remote clients, which may only
-  use the `web` client kind. `devices.create`/`devices.revoke` and `serverBindHost` are
-  owner-only, but that is not a security boundary: a device token still grants full remote
-  control (terminals, sessions, files, all other settings). Treat it like a shell login.
+  use the `web` client kind. Owner-only: `devices.create`/`devices.revoke`, `server.stop`,
+  `server.setParent`, `shutdown.prepare`/`force`/`quit` and the `serverBindHost`,
+  `serverPublicUrl` and `keepServerRunning` settings. That is not a security boundary: a
+  device token still grants full remote control (terminals, sessions, files, all other settings). Treat it like a shell login.
   Per-method scopes are future work.
 - Browser entry: a browser opens the server's own address (`/`) and pairs with a device
   token. The owner creates one in Settings (`devices.create`) and gets a link
@@ -109,7 +110,7 @@ Core behaviors:
   same launcher id, version and protocol, attach (and `server.setParent` moves the server's
   parent watch to the new shell); same launcher id, other version or protocol, replace (ask the
   user, `POST /api/stop`, wait 15 s, then kill by pid); other or missing launcher id, foreign
-  (refuse after ~6 s; the user connects to it as a remote server). Without the setting the
+  (ask to stop it and start this app's own server, then the replace path; declining quits). Without the setting the
   server exits when its parent is gone. Quit is scoped: `server` stops the server (the shell
   kills it after 3 s if it does not exit), `window` (remote profile) closes only the window.
 - Connection profiles: `connections.json` in the Electron user data holds the active id

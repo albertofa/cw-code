@@ -137,6 +137,8 @@ shell loads `resources/server/ui/index.html` over `file://`, and the server serv
 directory over HTTP to browsers (it finds `ui/` next to `cw-code-server.exe`). `app.asar` holds
 only the shell's main and preload bundles, no renderer. `afterPack.cjs` also fails the build if
 `resources/server/ui/index.html` is missing.
+`sign-windows.yml` builds the UI and checks `resources/server/ui/index.html` only when the
+source SHA has `apps/ui/package.json`, so a SHA from before the web UI still packages.
 
 The `dist` and `dist:dir` scripts of `apps/desktop` run, in order, the UI build, the server
 compile, the electron-vite build (main and preload) and electron-builder, so `apps/ui/dist`
@@ -181,7 +183,7 @@ summary (also written to `<dist>/verify-windows-package.json`):
 - `app.asar` exists and contains `out/main/index.js`, and does not contain node-pty (via
   `@electron/asar` if it can be resolved from the installed toolchain; otherwise this check
   is skipped with a warning, never a hard failure);
-- `win-unpacked/resources/server/cw-code-server.exe` and `resources/server/ui/index.html` exist, and `app.asar` does not contain `out/renderer`;
+- `win-unpacked/resources/server/cw-code-server.exe` and (when the source has `apps/ui`) `resources/server/ui/index.html` exist, and `app.asar` does not contain `out/renderer`;
 - node-pty's `win32-x64` `pty.node` is present under
   `win-unpacked/resources/server/node_modules/node-pty/prebuilds/win32-x64/`;
 - installer and asar sizes;

@@ -193,7 +193,7 @@ decides (`decideServerStart` in `apps/desktop/src/main/serverAttach.ts`):
 | none, or not answering | spawn a new one |
 | same launcher id, same version and protocol | attach: reuse it; the shell then calls `server.setParent` so the server watches the new shell, not the dead one |
 | same launcher id, other version or protocol | replace: the shell asks "Restart it with version X?" (declining quits); on confirm it calls `POST /api/stop` with the owner token, waits 15 s for the pid to exit, then kills the pid and waits 3 s more |
-| other or missing launcher id | foreign: retried for about 6 s, then startup fails and says to connect to it as a remote server |
+| other or missing launcher id | foreign: the shell asks "Stop it and start this app's own server?" (Quit exits 0); on Stop and restart it takes the replace path with the owner token from the same `CW_CODE_HOME` |
 
 **Kill fallback.** Stopping a server the shell attached to sends `server.stop` (over the link,
 or `POST /api/stop` when there is none), gives the call 3 s, waits 3 s for the pid to exit and
