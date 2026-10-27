@@ -17,6 +17,7 @@ import { PrDetailView } from "./components/PrDetailView.js";
 import { UsageView } from "./components/UsageView.js";
 import { WorkflowRunModal } from "./components/WorkflowRunModal.js";
 import { ShutdownDialog } from "./components/ShutdownDialog.js";
+import { FolderBrowserHost } from "./components/FolderBrowserDialog.js";
 import { handleQuitRequest, handleShutdownExpired } from "./stores/shutdownFlow.js";
 import { RightPanelBody } from "./components/RightPanelBody.js";
 import { ToolRail } from "./components/ToolRail.js";
@@ -296,6 +297,7 @@ export function App() {
           {runModal && <WorkflowRunModal request={runModal} />}
           <ShutdownDialog />
           {confirmDialog}
+          <FolderBrowserHost />
         </>
       )}
     </div>
