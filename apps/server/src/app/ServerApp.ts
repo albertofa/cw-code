@@ -1,5 +1,6 @@
 import type { AppNotice, DeviceInfo, ServerReady, ShutdownCommitResult, ShutdownExpiredEvent, ShutdownReason, ShutdownStatus, StartupState } from "@cw-code/contracts";
 import { CLOSE_UNAUTHORIZED, PROTOCOL_VERSION, SERVER_READY_PREFIX } from "@cw-code/shared/protocol";
+import { APP_TOPIC } from "@cw-code/shared/topics";
 import { appendCrashLog, initCrashLog } from "../debug/crashLog.js";
 import { initHarnessTrace } from "../debug/harnessTrace.js";
 import { initServerLog } from "../debug/serverLog.js";
@@ -34,6 +35,11 @@ const SESSION_SETTLE_INITIAL_DELAY_MS = 5_000;
 const PARENT_CHECK_INTERVAL_MS = 2_000;
 const STOP_AFTER_REPLY_MS = 50;
 const STOP_DEADLINE_MS = 5_000;
+
+function devicesSeenBy(devices: DeviceInfo[], viewer: ClientAuth): DeviceInfo[] {
+  if (viewer.kind !== "device") return devices;
+  return devices.map((device) => (device.id === viewer.deviceId ? { ...device, current: true } : device));
+}
 
 function isProcessGone(pid: number): boolean {
   try {
@@ -105,13 +111,21 @@ export class ServerApp {
     return this.deviceTokens;
   }
 
-  deviceInfos(): DeviceInfo[] {
-    const connected = new Set(this.ws?.clients().flatMap((ctx) => (ctx.auth.kind === "device" ? [ctx.auth.deviceId] : [])));
-    return this.devices.list().map(({ id, name, createdAt, lastSeenAt }) => ({ id, name, createdAt, lastSeenAt, connected: connected.has(id) }));
+  deviceInfos(viewer: ClientAuth): DeviceInfo[] {
+    return devicesSeenBy(this.listDevices(), viewer);
   }
 
   emitDevicesChanged(): void {
-    this.emit("devices.changed", this.deviceInfos());
+    const subscribers = this.topics.subscriberIds(APP_TOPIC);
+    const devices = this.listDevices();
+    for (const ctx of this.ws?.clients() ?? []) {
+      if (subscribers.has(ctx.clientId)) this.ws?.sendEvent([ctx.clientId], "devices.changed", devicesSeenBy(devices, ctx.auth));
+    }
+  }
+
+  private listDevices(): DeviceInfo[] {
+    const connected = new Set(this.ws?.clients().flatMap((ctx) => (ctx.auth.kind === "device" ? [ctx.auth.deviceId] : [])));
+    return this.devices.list().map(({ id, name, createdAt, lastSeenAt }) => ({ id, name, createdAt, lastSeenAt, connected: connected.has(id), current: false }));
   }
 
   revokeDevice(id: string): void {

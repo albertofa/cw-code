@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { pairingLink, parseServerAddress, tokenFromHash, wsUrlFromPage } from "./serverAddress.js";
+import { isLoopbackHost, pairingLink, parseServerAddress, tokenFromHash, wsUrlFromPage } from "./serverAddress.js";
 
 describe("parseServerAddress", () => {
   test("maps http and https to ws and wss", () => {
@@ -63,5 +63,26 @@ describe("pairingLink", () => {
       wsUrl: "wss://box.example/cw/ws",
       token: "a+b/c"
     });
+  });
+});
+
+describe("isLoopbackHost", () => {
+  test.each([
+    ["127.0.0.1", true],
+    ["127.10.20.30", true],
+    ["127.255.255.255", true],
+    ["::1", true],
+    ["[::1]", true],
+    ["localhost", true],
+    ["LOCALHOST", true],
+    ["0.0.0.0", false],
+    ["::", false],
+    ["128.0.0.1", false],
+    ["127.0.0.256", false],
+    ["127.0.0", false],
+    ["192.168.1.5", false],
+    ["localhost.example.com", false],
+  ])("%p is loopback: %p", (host, expected) => {
+    expect(isLoopbackHost(host)).toBe(expected);
   });
 });

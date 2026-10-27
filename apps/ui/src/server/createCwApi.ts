@@ -7,6 +7,8 @@ import type {
   CliDiscoverResult,
   ConnectionProfile,
   DesktopApi,
+  DeviceCreateResult,
+  DeviceInfo,
   DirectoryListing,
   DirEntry,
   FileReadResult,
@@ -328,6 +330,12 @@ export function createCwApi(
       openHtmlInBrowserTab(name, html);
     },
     browseDirectories: (path, showHidden) => call<DirectoryListing>("fs.browseDirectories", { path: path ?? null, showHidden }),
-    getServerHost: () => call<ServerHost>("server.host")
+    getServerHost: () => call<ServerHost>("server.host"),
+    devices: {
+      list: () => call<DeviceInfo[]>("devices.list"),
+      create: (name) => call<DeviceCreateResult>("devices.create", { name }),
+      revoke: (id) => callVoid("devices.revoke", { id })
+    },
+    onDevicesChanged: (cb) => subscribe("devices.changed", cb)
   };
 }

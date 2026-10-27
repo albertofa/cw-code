@@ -326,7 +326,7 @@ describe("server process", () => {
   it("lets only the owner manage device tokens and closes a revoked device with 4401", async () => {
     const owner = await connect();
     const created = await owner.call<DeviceCreateResult>("devices.create", { name: "Phone" });
-    expect(created.device).toMatchObject({ name: "Phone", connected: false });
+    expect(created.device).toMatchObject({ name: "Phone", connected: false, current: false });
     expect(readFileSync(join(home, "userdata", "devices.json"), "utf8")).not.toContain(created.token);
 
     await owner.call("topics.subscribe", { topics: ["app"] });
@@ -343,7 +343,27 @@ describe("server process", () => {
     await expect(device.call("settings.set", { serverBindHost: "0.0.0.0" })).rejects.toMatchObject({ code: "forbidden" });
     await expect(device.call("devices.create", { name: "Rogue" })).rejects.toMatchObject({ code: "forbidden" });
     await expect(device.call("devices.revoke", { id: created.device.id })).rejects.toMatchObject({ code: "forbidden" });
-    expect((await device.call<DeviceInfo[]>("devices.list")).map((info) => info.id)).toContain(created.device.id);
+    const seenByDevice = await device.call<DeviceInfo[]>("devices.list");
+    expect(seenByDevice.filter((info) => info.current).map((info) => info.id)).toEqual([created.device.id]);
+    expect((await owner.call<DeviceInfo[]>("devices.list")).some((info) => info.current)).toBe(false);
+
+    await device.call("topics.subscribe", { topics: ["app"] });
+    const deviceChanged = new Promise<DeviceInfo[]>((resolve) => {
+      const off = device.on("devices.changed", (payload) => {
+        off();
+        resolve(payload as DeviceInfo[]);
+      });
+    });
+    const ownerChanged = new Promise<DeviceInfo[]>((resolve) => {
+      const off = owner.on("devices.changed", (payload) => {
+        off();
+        resolve(payload as DeviceInfo[]);
+      });
+    });
+    const second = await owner.call<DeviceCreateResult>("devices.create", { name: "Tablet" });
+    expect((await deviceChanged).filter((info) => info.current).map((info) => info.id)).toEqual([created.device.id]);
+    expect((await ownerChanged).some((info) => info.current)).toBe(false);
+    await owner.call("devices.revoke", { id: second.device.id });
 
     const changed = new Promise<DeviceInfo[]>((resolve) => {
       owner.on("devices.changed", (payload) => resolve(payload as DeviceInfo[]));
@@ -410,7 +430,11 @@ describe("bind host policy", () => {
     const firstReady = JSON.parse(await readTaggedLine(first, "CW_SERVER_READY")) as ServerReady;
     const ownerToken = readFileSync(join(dir, "userdata", "server-token"), "utf8").trim();
     const owner = await connect(ownerToken, "desktop-ui", firstReady.url);
+    await expect(owner.call("settings.set", { serverBindHost: "0.0.0.0" })).rejects.toMatchObject({ code: "bind-refused" });
+    expect((await owner.call<AppSettings>("settings.set", { serverBindHost: "127.0.0.2" })).serverBindHost).toBe("127.0.0.2");
+    const paired = await owner.call<DeviceCreateResult>("devices.create", { name: "Laptop" });
     expect((await owner.call<AppSettings>("settings.set", { serverBindHost: "0.0.0.0" })).serverBindHost).toBe("0.0.0.0");
+    await owner.call("devices.revoke", { id: paired.device.id });
     await owner.call("server.stop");
     expect(await exitWithin(first, 15_000)).toBe(0);
 

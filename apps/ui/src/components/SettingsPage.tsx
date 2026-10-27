@@ -16,6 +16,7 @@ import { NotificationSettings } from "./NotificationSettings.js";
 import { useNotifs } from "./Notifications.js";
 import { PrWorkflowSettings } from "./PrWorkflowSettings.js";
 import { healthFailure, ProjectsSettings } from "./ProjectSettings.js";
+import { RemoteAccessSettings } from "./RemoteAccessSettings.js";
 import {
   copySetting,
   HARNESS_IDS,
@@ -612,6 +613,8 @@ export function SettingsPage({
             <UpdatesSettings draft={current} fallbackVersion={appVersion} onApplied={applied} />
           </>
         );
+      case "remoteAccess":
+        return <RemoteAccessSettings />;
       case "projects":
         return <ProjectsSettings projectId={projectId} />;
       case "sourceControl":

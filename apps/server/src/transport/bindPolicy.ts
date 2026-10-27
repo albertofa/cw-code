@@ -1,16 +1,11 @@
-export const DEFAULT_BIND_HOST = "127.0.0.1";
+import { isLoopbackHost } from "@cw-code/shared/serverAddress";
 
-const IPV4_LOOPBACK = /^127(?:\.(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3}$/;
+export const DEFAULT_BIND_HOST = "127.0.0.1";
 
 export type BindDecision =
   | { kind: "listen"; host: string }
   | { kind: "refuse"; host: string; reason: string }
   | { kind: "fallback"; host: string; ignoredHost: string; reason: string };
-
-export function isLoopbackHost(host: string): boolean {
-  const normalized = host.trim().toLowerCase();
-  return normalized === "localhost" || normalized === "::1" || normalized === "[::1]" || IPV4_LOOPBACK.test(normalized);
-}
 
 export function connectHost(bindHost: string): string {
   if (bindHost === "0.0.0.0") return "127.0.0.1";

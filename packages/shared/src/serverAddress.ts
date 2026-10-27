@@ -4,6 +4,7 @@ export type ParsedServerAddress = { httpUrl: string; wsUrl: string; token: strin
 
 const HTTP_SCHEMES: Record<string, string> = { "http:": "http:", "https:": "https:", "ws:": "http:", "wss:": "https:" };
 const WS_SCHEMES: Record<string, string> = { "http:": "ws:", "https:": "wss:" };
+const IPV4_LOOPBACK = /^127(?:\.(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3}$/;
 
 export function tokenFromHash(hash: string): string | null {
   const token = new URLSearchParams(hash.replace(/^#/, "")).get("token")?.trim();
@@ -39,4 +40,9 @@ export function wsUrlFromPage(href: string): string {
 
 export function pairingLink(publicUrl: string, token: string): string {
   return `${trimTrailingSlashes(publicUrl)}/#token=${encodeURIComponent(token)}`;
+}
+
+export function isLoopbackHost(host: string): boolean {
+  const normalized = host.trim().toLowerCase();
+  return normalized === "localhost" || normalized === "::1" || normalized === "[::1]" || IPV4_LOOPBACK.test(normalized);
 }

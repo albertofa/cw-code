@@ -300,7 +300,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
 const FONT_FAMILY_MAX_LENGTH = 200;
 const BIND_HOST_PATTERN = /^[A-Za-z0-9.:\-\[\]]{0,255}$/;
 
-function bindHostOr(value: unknown, fallback: string): string {
+export function bindHostOr(value: unknown, fallback: string): string {
   if (typeof value !== "string") return fallback;
   const host = value.trim();
   return BIND_HOST_PATTERN.test(host) ? host : fallback;

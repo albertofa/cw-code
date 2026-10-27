@@ -1,6 +1,15 @@
 import type { AppSettings, DriverName } from "../cw.js";
 
-export type SettingsSection = "general" | "appearance" | "notifications" | "updates" | "projects" | "sourceControl" | "prWorkflows" | "harness";
+export type SettingsSection =
+  | "general"
+  | "appearance"
+  | "notifications"
+  | "updates"
+  | "remoteAccess"
+  | "projects"
+  | "sourceControl"
+  | "prWorkflows"
+  | "harness";
 
 export type SettingsNavId = Exclude<SettingsSection, "harness"> | DriverName;
 
@@ -23,17 +32,16 @@ export const SETTINGS_NAV: SettingsNavItem[] = [
   { id: "appearance", label: "Appearance", group: "app" },
   { id: "notifications", label: "Notifications", group: "app" },
   { id: "updates", label: "Updates", group: "app" },
+  { id: "remoteAccess", label: "Remote access", group: "app" },
   { id: "projects", label: "Projects", group: "app" },
   { id: "sourceControl", label: "Source control", group: "app" },
   { id: "prWorkflows", label: "Workflows", group: "app" },
   ...HARNESS_IDS.map((id): SettingsNavItem => ({ id, label: HARNESS_NAMES[id], group: "harnesses" }))
 ];
 
-export type DraftSettingKey = Exclude<keyof AppSettings, "githubSavedViews" | "serverBindHost">;
+export type DraftSettingKey = Exclude<keyof AppSettings, "githubSavedViews">;
 
-type SettingOwner = SettingsNavId | "remoteAccess";
-
-const SETTING_OWNER: Record<DraftSettingKey, SettingOwner> = {
+const SETTING_OWNER: Record<DraftSettingKey, SettingsNavId> = {
   claudeBinaryPath: "claude",
   opencodeBinaryPath: "opencode",
   codexBinaryPath: "codex",
@@ -84,7 +92,8 @@ const SETTING_OWNER: Record<DraftSettingKey, SettingOwner> = {
   customThemes: "appearance",
   notificationSounds: "notifications",
   keepServerRunning: "general",
-  serverPublicUrl: "remoteAccess"
+  serverPublicUrl: "remoteAccess",
+  serverBindHost: "remoteAccess"
 };
 
 export function settingsNavFor(hasShell: boolean): SettingsNavItem[] {
@@ -140,7 +149,7 @@ export function settingsPatch(saved: AppSettings, draft: AppSettings): Partial<A
 }
 
 export function changedSections(saved: AppSettings, draft: AppSettings): SettingsNavId[] {
-  const owners = new Set<SettingOwner>();
+  const owners = new Set<SettingsNavId>();
   for (const key of SETTING_KEYS) {
     if (!sameValue(saved[key], draft[key])) owners.add(SETTING_OWNER[key]);
   }

@@ -19,6 +19,8 @@ import type {
   ContextUsage,
   DesktopApi,
   DesktopConnections,
+  DeviceCreateResult,
+  DeviceInfo,
   DesktopUpdates,
   DirectoryListing,
   DirEntry,
@@ -675,6 +677,12 @@ export interface CwApi {
   openHtml(name: string, html: string): Promise<void>;
   browseDirectories(path?: string | null, showHidden?: boolean): Promise<DirectoryListing>;
   getServerHost(): Promise<ServerHost>;
+  devices: {
+    list(): Promise<DeviceInfo[]>;
+    create(name: string): Promise<DeviceCreateResult>;
+    revoke(id: string): Promise<void>;
+  };
+  onDevicesChanged(cb: (devices: DeviceInfo[]) => void): () => void;
 }
 
 export interface ShellActions {

@@ -55,6 +55,7 @@ export interface DeviceInfo {
   createdAt: number;
   lastSeenAt: number | null;
   connected: boolean;
+  current: boolean;
 }
 
 export interface DeviceCreateResult {

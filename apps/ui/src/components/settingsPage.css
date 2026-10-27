@@ -1907,3 +1907,21 @@
     padding: 0 16px;
   }
 }
+
+.pair-card {
+  width: min(520px, calc(100vw - 64px));
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.pair-copy {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.pair-copy .field {
+  flex: 1;
+  min-width: 0;
+}
