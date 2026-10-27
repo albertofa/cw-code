@@ -301,15 +301,18 @@ export function ThreadView({ hidden = false }: { hidden?: boolean }) {
     },
     [sessionId, basePath]
   );
-  const onOpenExternal = useCallback(
+  const local = window.cw.local;
+  const openExternalLocally = useCallback(
     (path: string) => {
+      if (!local) return;
       const { abs } = resolvePreviewPaths(basePath, path);
-      void window.cw.openPath(abs).catch((err: Error) => {
+      void local.openPath(abs).catch((err: Error) => {
         useNotifs.getState().push({ kind: "error", title: "Could not open file", message: err.message });
       });
     },
-    [basePath]
+    [basePath, local]
   );
+  const onOpenExternal = local ? openExternalLocally : undefined;
 
   useEffect(() => {
     stickRef.current = true;
@@ -440,7 +443,7 @@ export function ThreadView({ hidden = false }: { hidden?: boolean }) {
   );
 
   const head = (
-    <div className="head-seg main-seg" onDoubleClick={() => window.cw.toggleMaximizeWindow()}>
+    <div className="head-seg main-seg" onDoubleClick={() => window.cw.shell?.toggleMaximizeWindow()}>
       <div className="head-col col-left">
         <div className="titlebar-crumb">
           {project && session ? (

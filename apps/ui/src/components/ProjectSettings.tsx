@@ -23,6 +23,7 @@ import { useNotifs } from "./Notifications.js";
 import { shortenHome } from "./pathDisplay.js";
 import { HARNESS_IDS, HARNESS_NAMES, sameValue } from "./settingsSections.js";
 import { HelpTip, SettingsGroup, SettingsPageHead, SettingsRow } from "./SettingsLayout.js";
+import { chooseProjectFolder } from "../platform/chooseProjectFolder.js";
 
 const MAX_SCRIPT_CHARS = 20_000;
 const MAX_INSTRUCTION_CHARS = 4_000;
@@ -71,8 +72,7 @@ function ProjectList() {
 
   const addFolder = () => {
     setAdding(true);
-    window.cw
-      .pickProjectDir()
+    chooseProjectFolder()
       .then((dir) => (dir ? addProject(dir) : undefined))
       .catch((err: unknown) => {
         useNotifs.getState().push({ kind: "error", title: "Could not add project", message: errorMessage(err) });

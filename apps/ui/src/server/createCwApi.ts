@@ -5,7 +5,9 @@ import type {
   CliBinary,
   CliDiscoveredCandidate,
   CliDiscoverResult,
+  ConnectionProfile,
   DesktopApi,
+  DirectoryListing,
   DirEntry,
   FileReadResult,
   FileStatInfo,
@@ -20,6 +22,7 @@ import type {
   PrDetail,
   PrWorkflow,
   SavedGitHubView,
+  ServerHost,
   ShutdownAssessment,
   ShutdownCommitResult,
   ShutdownPrepareResult,
@@ -44,15 +47,18 @@ import type {
   ComposerChangedEvent,
   ComposerPrefs,
   CwApi,
+  LocalActions,
   ModelOption,
   PermissionOption,
   Project,
   RetryConnectionResult,
   StopTurnResult,
   Session,
-  SessionCleanupResult
+  SessionCleanupResult,
+  ShellActions
 } from "../cw.js";
 import { ipcErrorMessage } from "../components/ipcError.js";
+import { deriveCapabilities } from "../platform/capabilities.js";
 import { createPtyAttachments, type PtyOpenResult } from "./ptyAttachments.js";
 
 const BASE64_CHUNK = 0x8000;
@@ -65,49 +71,101 @@ function toBase64(data: Uint8Array): string {
   return btoa(binary);
 }
 
+const BLOB_URL_LIFETIME_MS = 60_000;
+
 export type ShutdownHandlers = Set<(event: ShutdownRequestedEvent) => void>;
 
-export function createCwApi(client: ServerClient, topics: TopicCache, desktop: DesktopApi, shutdownHandlers: ShutdownHandlers): CwApi {
-  const call = <T>(method: string, params?: unknown): Promise<T> => client.call<T>(method, params);
+type Call = <T>(method: string, params?: unknown) => Promise<T>;
+
+function shellActions(desktop: DesktopApi): ShellActions {
+  return {
+    minimizeWindow: () => desktop.minimizeWindow(),
+    toggleMaximizeWindow: () => desktop.toggleMaximizeWindow(),
+    closeWindow: () => desktop.closeWindow(),
+    isWindowMaximized: () => desktop.isWindowMaximized(),
+    onWindowMaximized: (cb) => desktop.onWindowMaximized(cb),
+    zoomIn: () => desktop.zoomIn(),
+    zoomOut: () => desktop.zoomOut(),
+    zoomReset: () => desktop.zoomReset(),
+    updates: desktop.updates,
+    connections: desktop.connections
+  };
+}
+
+function localActions(desktop: DesktopApi, call: Call): LocalActions {
+  return {
+    pickProjectDir: () => desktop.pickDirectory(),
+    openPath: (path) => desktop.openPath(path),
+    revealPath: async (sessionId, path) => {
+      const absolute = await call<string>("fs.resolvePath", { sessionId, path });
+      await desktop.showItemInFolder(absolute);
+    },
+    openDataDir: async () => {
+      const state = await call<StartupState>("startup.state");
+      if (state.mode !== "recovery") throw new Error("cw-code is not in recovery mode");
+      await desktop.openPath(state.dataDir);
+    },
+    openHarnessTrace: async () => {
+      const result = await call<{ ok: boolean; path?: string; error?: string }>("debug.tracePath");
+      if (!result.ok || !result.path) return result;
+      try {
+        await desktop.openPath(result.path);
+        return { ok: true, path: result.path };
+      } catch (err) {
+        return { ok: false, path: result.path, error: ipcErrorMessage(err) };
+      }
+    }
+  };
+}
+
+function openInBrowserTab(url: string): void {
+  window.open(url, "_blank", "noopener,noreferrer");
+}
+
+function openHtmlInBrowserTab(html: string): void {
+  const url = URL.createObjectURL(new Blob([html], { type: "text/html" }));
+  openInBrowserTab(url);
+  window.setTimeout(() => URL.revokeObjectURL(url), BLOB_URL_LIFETIME_MS);
+}
+
+export function createCwApi(
+  client: ServerClient,
+  topics: TopicCache,
+  desktop: DesktopApi | null,
+  profile: ConnectionProfile | null,
+  shutdownHandlers: ShutdownHandlers
+): CwApi {
+  const call: Call = <T>(method: string, params?: unknown): Promise<T> => client.call<T>(method, params);
   const callVoid = (method: string, params?: unknown): Promise<void> => client.call(method, params).then(() => undefined);
   const subscribe = <T>(channel: string, cb: (payload: T) => void): (() => void) => client.on(channel, (payload) => cb(payload as T));
   const ptyAttachments = createPtyAttachments((ptyId) => client.send("pty.detach", { ptyId }));
+  const capabilities = deriveCapabilities(desktop, profile);
 
   return {
     topics,
+    capabilities,
+    shell: desktop ? shellActions(desktop) : null,
+    local: desktop && capabilities.localServer ? localActions(desktop, call) : null,
     getStartupState: () => call<StartupState>("startup.state"),
     recovery: {
-      openDataDir: async () => {
-        const state = await call<StartupState>("startup.state");
-        if (state.mode !== "recovery") throw new Error("cw-code is not in recovery mode");
-        await desktop.openPath(state.dataDir);
-      },
       restore: (file, backupPath) => callVoid("recovery.restore", { file, backupPath }),
       startFresh: (file) => callVoid("recovery.startFresh", { file }),
       retry: () => callVoid("recovery.retry")
     },
-    updates: {
-      getState: () => desktop.updates.getState(),
-      check: () => desktop.updates.check(),
-      download: () => desktop.updates.download(),
-      setChannel: (channel) => desktop.updates.setChannel(channel),
-      install: (request) => desktop.updates.install(request),
-      onChanged: (cb) => desktop.updates.onChanged(cb)
-    },
     shutdown: {
       assess: () => {
-        desktop.shutdown.acknowledge();
+        desktop?.shutdown.acknowledge();
         return call<ShutdownAssessment>("shutdown.assess");
       },
       prepare: (request) => {
-        desktop.shutdown.acknowledge();
+        desktop?.shutdown.acknowledge();
         return call<ShutdownPrepareResult>("shutdown.prepare", request);
       },
       force: (token) => call<ShutdownPrepareResult>("shutdown.force", { token }),
       cancel: (token) => callVoid("shutdown.cancel", { token }),
       quit: async (token) => {
         const result = await call<ShutdownCommitResult>("shutdown.quit", { token });
-        if (result.ok) desktop.shutdown.quit();
+        if (result.ok) desktop?.shutdown.quit();
         return result;
       },
       onRequested: (cb) => {
@@ -125,17 +183,8 @@ export function createCwApi(client: ServerClient, topics: TopicCache, desktop: D
     setComposerDraft: (key, text, attachments) => callVoid("prefs.setDraft", { key, text, attachments }),
     discoverBinaries: (binaries?: CliBinary[]) => call<CliDiscoverResult>("cli.discover", { binaries }),
     verifyBinaryPath: (binary, path) => call<CliDiscoveredCandidate>("cli.verifyPath", { binary, path }),
-    isDev: desktop.isDev,
-    openHarnessTrace: async () => {
-      const result = await call<{ ok: boolean; path?: string; error?: string }>("debug.tracePath");
-      if (!result.ok || !result.path) return result;
-      try {
-        await desktop.openPath(result.path);
-        return { ok: true, path: result.path };
-      } catch (err) {
-        return { ok: false, path: result.path, error: ipcErrorMessage(err) };
-      }
-    },
+    isDev: desktop?.isDev ?? import.meta.env.DEV,
+
     addProject: (rootPath) => call<Project>("projects.add", rootPath),
     updateProjectSettings: (projectId, settings) => call<Project>("projects.updateSettings", { projectId, settings }),
     createSession: (projectId, driver, options) => call<Session>("sessions.create", { projectId, driver, options }),
@@ -238,10 +287,6 @@ export function createCwApi(client: ServerClient, topics: TopicCache, desktop: D
     createDir: (sessionId, path) => callVoid("fs.createDir", { sessionId, path }),
     renamePath: (sessionId, from, to) => callVoid("fs.renamePath", { sessionId, from, to }),
     trashPath: (sessionId, path) => callVoid("fs.trashPath", { sessionId, path }),
-    revealPath: async (sessionId, path) => {
-      const absolute = await call<string>("fs.resolvePath", { sessionId, path });
-      await desktop.showItemInFolder(absolute);
-    },
     workspaceRoot: (sessionId) => call<string>("fs.workspaceRoot", { sessionId }),
     listWorkspaceFiles: (sessionId) => call<string[]>("fs.listWorkspaceFiles", { sessionId }),
     gitBaseline: (sessionId, path) => call<GitBaseline>("fs.gitBaseline", { sessionId, path }),
@@ -261,17 +306,15 @@ export function createCwApi(client: ServerClient, topics: TopicCache, desktop: D
     detachPty: (ptyId) => ptyAttachments.detach(ptyId),
     onPtyData: (cb) => subscribe("pty.data", cb),
     onPtyExit: (cb) => subscribe("pty.exit", cb),
-    minimizeWindow: () => desktop.minimizeWindow(),
-    toggleMaximizeWindow: () => desktop.toggleMaximizeWindow(),
-    closeWindow: () => desktop.closeWindow(),
-    isWindowMaximized: () => desktop.isWindowMaximized(),
-    onWindowMaximized: (cb) => desktop.onWindowMaximized(cb),
-    zoomIn: () => desktop.zoomIn(),
-    zoomOut: () => desktop.zoomOut(),
-    zoomReset: () => desktop.zoomReset(),
-    pickProjectDir: () => desktop.pickDirectory(),
-    openPath: (path) => desktop.openPath(path),
-    openExternal: (url) => desktop.openExternal(url),
-    openHtml: (name, html) => desktop.openHtml(name, html)
+    openExternal: async (url) => {
+      if (desktop) return desktop.openExternal(url);
+      openInBrowserTab(url);
+    },
+    openHtml: async (name, html) => {
+      if (desktop) return desktop.openHtml(name, html);
+      openHtmlInBrowserTab(html);
+    },
+    browseDirectories: (path, showHidden) => call<DirectoryListing>("fs.browseDirectories", { path: path ?? null, showHidden }),
+    getServerHost: () => call<ServerHost>("server.host")
   };
 }

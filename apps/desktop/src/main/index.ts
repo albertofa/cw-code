@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, nativeImage, nativeTheme, powerMonitor, shell, type MessageBoxOptions, type WebContents } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, nativeImage, nativeTheme, powerMonitor, safeStorage, shell, type MessageBoxOptions, type WebContents } from "electron";
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -7,7 +7,10 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import type {
   AppNotice,
   AppSettings,
-  ServerEndpoint,
+  ConnectionList,
+  ConnectionProfile,
+  DesktopConnection,
+  TokenStorage,
   ServerPackageProbe,
   ShutdownAssessment,
   ShutdownCommitResult,
@@ -37,6 +40,7 @@ import { initialUpdateState, isUpdateChannel } from "./updates/updateState.js";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
 const RENDERER_SHUTDOWN_ACK_MS = 5_000;
+const LOCAL_PROFILE: ConnectionProfile = { id: "local", kind: "local", name: "This computer" };
 const INSTALL_EXIT_TIMEOUT_MS = 30_000;
 const UPDATES_PENDING_MESSAGE = "Updates are unavailable until the cw-code server is ready";
 
@@ -487,7 +491,20 @@ function registerWindowIpc(): void {
 }
 
 function registerShellIpc(): void {
-  ipcMain.handle("desktop.endpoint", (): Promise<ServerEndpoint> => serverProcess.endpoint());
+  ipcMain.handle("desktop.connection", async (): Promise<DesktopConnection> => ({ profile: LOCAL_PROFILE, endpoint: await serverProcess.endpoint() }));
+  ipcMain.handle("desktop.connections.list", (): ConnectionList => ({
+    activeId: LOCAL_PROFILE.id,
+    profiles: [LOCAL_PROFILE],
+    tokenStorage: tokenStorage()
+  }));
+  for (const channel of ["desktop.connections.save", "desktop.connections.remove", "desktop.connections.test"]) {
+    ipcMain.handle(channel, (): never => {
+      throw new Error("connection profiles are not available yet");
+    });
+  }
+  ipcMain.on("desktop.connections.activate", (_e, args: { id?: unknown } | undefined) => {
+    if (args?.id !== LOCAL_PROFILE.id) console.warn("[connections] connection profiles are not available yet");
+  });
 
   ipcMain.handle("projects.pick", async (e): Promise<string | null> => {
     const w = windowFromSender(e.sender);
@@ -526,6 +543,11 @@ function registerShellIpc(): void {
   ipcMain.handle("shell.showItemInFolder", (_e, args: { path?: unknown } | undefined): void => {
     shell.showItemInFolder(assertLocalAbsolutePath(args?.path));
   });
+}
+
+function tokenStorage(): TokenStorage {
+  if (!safeStorage.isEncryptionAvailable()) return "plain";
+  return process.platform === "linux" && safeStorage.getSelectedStorageBackend() === "basic_text" ? "basic" : "os";
 }
 
 function parseShutdownToken(args: unknown, channel: string): string {

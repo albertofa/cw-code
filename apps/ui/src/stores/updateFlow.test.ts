@@ -57,12 +57,14 @@ function installBridge(): FakeBridge {
     cancels: []
   };
   (window as unknown as { cw: unknown }).cw = {
-    updates: {
-      getState: async () => bridge.states.shift() ?? ready(1),
-      install: async (request: UpdateInstallRequest) => {
-        bridge.installs.push(request);
-        if (bridge.installResult instanceof Error) throw bridge.installResult;
-        return bridge.installResult;
+    shell: {
+      updates: {
+        getState: async () => bridge.states.shift() ?? ready(1),
+        install: async (request: UpdateInstallRequest) => {
+          bridge.installs.push(request);
+          if (bridge.installResult instanceof Error) throw bridge.installResult;
+          return bridge.installResult;
+        }
       }
     },
     shutdown: {

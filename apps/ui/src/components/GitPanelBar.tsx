@@ -113,16 +113,19 @@ export function GitPanelBar({ sessionId }: { sessionId: string }) {
 
   const pullRequest = status.pullRequest;
 
+  const local = window.cw.local;
+  const clickToOpen = local ? " (click to open)" : "";
+
   const openWorktree = () => {
-    if (!status || !status.worktreePath) return;
-    window.cw.openPath(status.worktreePath).catch((err: Error) =>
+    if (!local || !status || !status.worktreePath) return;
+    local.openPath(status.worktreePath).catch((err: Error) =>
       useNotifs.getState().push({ kind: "error", title: "Could not open worktree", message: err.message })
     );
   };
 
   const openRoot = () => {
-    if (!status.repositoryRoot) return;
-    window.cw.openPath(status.repositoryRoot).catch((err: Error) =>
+    if (!local || !status.repositoryRoot) return;
+    local.openPath(status.repositoryRoot).catch((err: Error) =>
       useNotifs.getState().push({ kind: "error", title: "Could not open repository", message: err.message })
     );
   };
@@ -175,7 +178,7 @@ export function GitPanelBar({ sessionId }: { sessionId: string }) {
             <button
               type="button"
               className="gitbar-checkout"
-              title={status.worktreePath ? `Worktree: ${status.worktreeName} — ${status.worktreePath} (click to open)` : "Worktree checkout"}
+              title={status.worktreePath ? `Worktree: ${status.worktreeName} — ${status.worktreePath}${clickToOpen}` : "Worktree checkout"}
               onMouseEnter={(e) => showHoverCard("worktree", e.currentTarget)}
               onMouseLeave={scheduleHoverClose}
               onFocus={(e) => showHoverCard("worktree", e.currentTarget)}
@@ -188,7 +191,7 @@ export function GitPanelBar({ sessionId }: { sessionId: string }) {
             <button
               type="button"
               className="gitbar-checkout"
-              title={status.repositoryRoot ? `Local checkout: ${status.repositoryRoot} (click to open)` : "Local checkout"}
+              title={status.repositoryRoot ? `Local checkout: ${status.repositoryRoot}${clickToOpen}` : "Local checkout"}
               onClick={openRoot}
             >
               <Folder size={12} aria-hidden="true" />
@@ -334,16 +337,18 @@ export function GitPanelBar({ sessionId }: { sessionId: string }) {
             <GitBranch size={13} aria-hidden="true" />
             <span className="hovercard-text" title={status.worktreePath}>{shortPath(status.worktreePath)}</span>
           </div>
-          <button
-            className="session-hovercard-action"
-            onClick={() => {
-              setHoverCard(null);
-              openWorktree();
-            }}
-          >
-            <FolderOpen size={13} aria-hidden="true" />
-            Open worktree
-          </button>
+          {local && (
+            <button
+              className="session-hovercard-action"
+              onClick={() => {
+                setHoverCard(null);
+                openWorktree();
+              }}
+            >
+              <FolderOpen size={13} aria-hidden="true" />
+              Open worktree
+            </button>
+          )}
         </div>
       )}
       {hoverCard?.kind === "stats" && (

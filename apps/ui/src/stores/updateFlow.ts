@@ -2,7 +2,7 @@ import type { UpdateActionResult, UpdateState } from "../cw.js";
 import { ipcErrorMessage } from "../components/ipcError.js";
 import { useNotifs } from "../components/Notifications.js";
 import { installTarget, matchesInstallTarget } from "../components/updateModel.js";
-import { useAppStore } from "./appStore.js";
+import { shellUpdates, useAppStore } from "./appStore.js";
 import { isShutdownFlowActive, runShutdownFlow } from "./shutdownFlow.js";
 
 const INSTALL_FAILURE_TITLE = "cw-code could not install the update";
@@ -20,7 +20,7 @@ async function releaseRestart(token: string): Promise<void> {
 }
 
 async function freshUpdateState(): Promise<UpdateState> {
-  const state = await window.cw.updates.getState();
+  const state = await shellUpdates().getState();
   useAppStore.getState().applyUpdateState(state);
   return state;
 }
@@ -70,7 +70,7 @@ export async function restartToUpdate(): Promise<void> {
     }
     let result: UpdateActionResult;
     try {
-      result = await window.cw.updates.install({ ...target, token: flow.token });
+      result = await shellUpdates().install({ ...target, token: flow.token });
     } catch (err) {
       await releaseRestart(flow.token);
       notifyInstallFailure(ipcErrorMessage(err));

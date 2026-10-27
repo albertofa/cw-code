@@ -21,6 +21,7 @@ import type { DirEntry, FsChangeEvent, GitBaseline, GitDecorations, GitFileState
 import { filesTopic } from "@cw-code/shared/topics";
 import { useConnectionEpoch, useTopicEntry } from "../server/topics.js";
 import { useDocumentVisible } from "../server/topics.js";
+import { useServerHost } from "../server/serverHost.js";
 import { useConfirm } from "./ConfirmDialog.js";
 import { ipcErrorMessage } from "./ipcError.js";
 import { isAbsolutePath } from "./Markdown.js";
@@ -582,11 +583,17 @@ function FileWorkspace({ sessionId }: { sessionId: string }) {
     [workspaceRoot, showNotice]
   );
 
+  const serverPlatform = useServerHost()?.platform ?? null;
+  const canReveal = window.cw.local !== null;
+  const revealLabel = serverPlatform === "win32" ? "Reveal in File Explorer" : "Reveal in File Manager";
+
   const revealInOs = useCallback(
     async (path: string) => {
       try {
-        if (path) await window.cw.revealPath(sessionId, path);
-        else await window.cw.openPath(await workspaceRoot());
+        const local = window.cw.local;
+        if (!local) throw new Error("revealing files needs the desktop app on the server's computer");
+        if (path) await local.revealPath(sessionId, path);
+        else await local.openPath(await workspaceRoot());
       } catch (err) {
         showNotice(`Couldn’t reveal ${path || "the workspace"}: ${ipcErrorMessage(err)}`, "error");
       }
@@ -695,7 +702,7 @@ function FileWorkspace({ sessionId }: { sessionId: string }) {
         title: `Delete ${row.name}?`,
         message: (
           <>
-            {row.isDir ? "This folder and everything in it" : "This file"} will be moved to the {navigator.userAgent.includes("Windows") ? "Recycle Bin" : "Trash"}.
+            {row.isDir ? "This folder and everything in it" : "This file"} will be moved to the {serverPlatform === "win32" ? "Recycle Bin" : "Trash"}.
             {unsaved.length > 0 && ` ${unsaved.length} open file${unsaved.length === 1 ? " has" : "s have"} unsaved changes that will be lost.`}
           </>
         ),
@@ -716,7 +723,7 @@ function FileWorkspace({ sessionId }: { sessionId: string }) {
         showNotice(`Couldn’t delete ${row.name}: ${ipcErrorMessage(err)}`, "error");
       }
     },
-    [confirm, dirtyPaths, sessionId, loadDir, setExpandedPaths, showNotice]
+    [confirm, dirtyPaths, sessionId, loadDir, setExpandedPaths, showNotice, serverPlatform]
   );
 
   const resolveConflict = useCallback(
@@ -769,7 +776,7 @@ function FileWorkspace({ sessionId }: { sessionId: string }) {
             "separator",
             { label: "Copy Path", Icon: Copy, run: () => void copyPath(row.path, false) },
             { label: "Copy Relative Path", Icon: ClipboardCopy, run: () => void copyPath(row.path, true) },
-            { label: navigator.userAgent.includes("Windows") ? "Reveal in File Explorer" : "Reveal in File Manager", Icon: ExternalLink, run: () => void revealInOs(row.path) },
+            ...(canReveal ? ([{ label: revealLabel, Icon: ExternalLink, run: () => void revealInOs(row.path) }] as MenuEntry[]) : []),
             "separator",
             { label: "Rename…", Icon: Pencil, shortcut: "F2", run: () => startRename(row) },
             { label: "Delete", Icon: Trash2, shortcut: "Del", danger: true, run: () => void deleteEntry(row) }
@@ -781,11 +788,11 @@ function FileWorkspace({ sessionId }: { sessionId: string }) {
             "separator",
             { label: "Refresh", Icon: RefreshCw, run: refreshAll },
             { label: "Collapse All", Icon: ChevronsDownUp, run: collapseAll },
-            { label: "Open Workspace Folder", Icon: FolderOpen, run: () => void revealInOs("") }
+            ...(canReveal ? ([{ label: "Open Workspace Folder", Icon: FolderOpen, run: () => void revealInOs("") }] as MenuEntry[]) : [])
           ];
       setMenu({ x: e.clientX, y: e.clientY, items });
     },
-    [openFile, startCreate, findInFolder, copyPath, revealInOs, startRename, deleteEntry, refreshAll, collapseAll]
+    [openFile, startCreate, findInFolder, copyPath, revealInOs, startRename, deleteEntry, refreshAll, collapseAll, canReveal, revealLabel]
   );
 
   const tabMenu = useCallback(
@@ -831,11 +838,11 @@ function FileWorkspace({ sessionId }: { sessionId: string }) {
                 }
               }
             ] as MenuEntry[])),
-        { label: navigator.userAgent.includes("Windows") ? "Reveal in File Explorer" : "Reveal in File Manager", Icon: ExternalLink, run: () => void revealInOs(path) }
+        ...(canReveal ? ([{ label: revealLabel, Icon: ExternalLink, run: () => void revealInOs(path) }] as MenuEntry[]) : [])
       ];
       setMenu({ x: e.clientX, y: e.clientY, items });
     },
-    [closeTab, closeTabs, copyPath, dirtyPaths, revealInOs, revealInTree, sessionId]
+    [closeTab, closeTabs, copyPath, dirtyPaths, revealInOs, revealInTree, sessionId, canReveal, revealLabel]
   );
 
   const revealRequest = usePanelStore((s) => s.revealRequest);

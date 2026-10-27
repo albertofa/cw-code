@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import type { CommandInvocation, SessionRow, SessionStatusReason, SidebarDefaults, ThreadItem } from "@cw-code/contracts";
+import type { CommandInvocation, DesktopUpdates, SessionRow, SessionStatusReason, SidebarDefaults, ThreadItem } from "@cw-code/contracts";
 import type {
   AppSettings,
   ApprovalDecision,
@@ -56,6 +56,12 @@ const composerFailureNotified = new Set<string>();
 const COMPOSER_SEND_WAIT_MS = 5000;
 const SESSION_ROW_WAIT_MS = 5000;
 const SESSION_ROW_LATE_MS = 60_000;
+
+export function shellUpdates(): DesktopUpdates {
+  const updates = window.cw.shell?.updates;
+  if (!updates) throw new Error("updates are only available in the desktop app");
+  return updates;
+}
 
 function defaultWorkspace(defaultUseWorktree: boolean): CreateSessionOptions {
   return { mode: defaultUseWorktree ? "new" : "current" };
@@ -311,8 +317,10 @@ export const useAppStore = create<AppState>((set, get) => ({
   updateRestartPending: false,
 
   subscribeUpdates() {
-    const off = window.cw.updates.onChanged((state) => get().applyUpdateState(state));
-    window.cw.updates
+    const updates = window.cw.shell?.updates;
+    if (!updates) return () => undefined;
+    const off = updates.onChanged((state) => get().applyUpdateState(state));
+    updates
       .getState()
       .then((state) => get().applyUpdateState(state))
       .catch((err: unknown) => console.warn(`update state unavailable: ${ipcErrorMessage(err)}`));
@@ -327,19 +335,19 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   async checkForUpdates() {
-    const result = await window.cw.updates.check();
+    const result = await shellUpdates().check();
     get().applyUpdateState(result.state);
     return result;
   },
 
   async downloadUpdate() {
-    const result = await window.cw.updates.download();
+    const result = await shellUpdates().download();
     get().applyUpdateState(result.state);
     return result;
   },
 
   async setUpdateChannel(channel: UpdateChannel) {
-    const result = await window.cw.updates.setChannel(channel);
+    const result = await shellUpdates().setChannel(channel);
     get().applyUpdateState(result.state);
     return result;
   },

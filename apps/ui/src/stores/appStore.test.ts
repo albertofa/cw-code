@@ -226,7 +226,7 @@ describe("appStore updates slice", () => {
       download: async () => result,
       setChannel: async () => result
     };
-    (window as unknown as { cw: { updates: typeof updates } }).cw = { updates };
+    (window as unknown as { cw: { shell: { updates: typeof updates } } }).cw = { shell: { updates } };
     return { calls, emit: (state: UpdateState) => emit(state) };
   }
 

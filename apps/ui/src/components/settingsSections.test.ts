@@ -88,6 +88,8 @@ function settingsFixture(overrides: Partial<AppSettings> = {}): AppSettings {
     themeId: "dark",
     customThemes: [],
     serverBindHost: "",
+    keepServerRunning: false,
+    serverPublicUrl: "",
     ...overrides
   };
 }

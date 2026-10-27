@@ -3,7 +3,7 @@ import { ArrowLeft, Bell, Download, Eye, FolderGit2, GitBranch, GitPullRequest, 
 import { usePrStore } from "../stores/prStore.js";
 import { useSettingsDraftStore, type HarnessCheck } from "../stores/settingsDraftStore.js";
 import { DriverIcon } from "./DriverIcon.js";
-import { SETTINGS_NAV, filterSettingsNav, viewOfNavId, type SettingsNavId, type SettingsNavItem } from "./settingsSections.js";
+import { filterSettingsNav, settingsNavFor, viewOfNavId, type SettingsNavId, type SettingsNavItem } from "./settingsSections.js";
 import { version as appVersion } from "../../package.json";
 import "./settingsPage.css";
 
@@ -38,7 +38,7 @@ export function SettingsNav({ active, onBack }: { active: SettingsNavId; onBack:
     void recheckHarnesses();
   }, [recheckHarnesses]);
 
-  const shown = filterSettingsNav(SETTINGS_NAV, query);
+  const shown = filterSettingsNav(settingsNavFor(window.cw.shell !== null), query);
   const appItems = shown.filter((item) => item.group === "app");
   const harnessItems = shown.filter((item) => item.group === "harnesses");
 
@@ -72,7 +72,7 @@ export function SettingsNav({ active, onBack }: { active: SettingsNavId; onBack:
 
   return (
     <div className="side sp-nav">
-      <div className="head-seg side-seg" onDoubleClick={() => window.cw.toggleMaximizeWindow()}>
+      <div className="head-seg side-seg" onDoubleClick={() => window.cw.shell?.toggleMaximizeWindow()}>
         <button type="button" className="sp-back" onClick={onBack}>
           <ArrowLeft size={14} aria-hidden="true" />
           Back to sessions

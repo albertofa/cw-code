@@ -100,7 +100,7 @@ export function ToolRail({
       style={hidden ? { display: "none" } : undefined}
       {...dropRail.bind}
     >
-      <div className="rail-drag" onDoubleClick={() => window.cw.toggleMaximizeWindow()} />
+      <div className="rail-drag" onDoubleClick={() => window.cw.shell?.toggleMaximizeWindow()} />
       {groups.map((group, index) => (
         <Fragment key={group.join("+")}>
           {index > 0 && <span className="rail-sep" aria-hidden="true" />}

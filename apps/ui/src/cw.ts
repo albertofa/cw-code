@@ -1,4 +1,5 @@
 import type { TopicCache } from "@cw-code/client";
+import type { UiCapabilities } from "./platform/capabilities.js";
 import type {
   AccountUsageEntry,
   AccountUsageOk,
@@ -17,6 +18,9 @@ import type {
   ContextCompactionInfo,
   ContextUsage,
   DesktopApi,
+  DesktopConnections,
+  DesktopUpdates,
+  DirectoryListing,
   DirEntry,
   FileReadResult,
   FileStatInfo,
@@ -78,6 +82,7 @@ import type {
   SavedGitHubView,
   SessionIssueLink,
   SessionRunLink,
+  ServerHost,
   WorkflowRunSummary,
   WorkflowSubject,
   ShutdownActiveTurn,
@@ -141,6 +146,8 @@ export type {
   TurnFileChange,
   TurnSnapshot,
   DirEntry,
+  DirectoryListing,
+  ServerHost,
   ImportableSession,
   ImportSessionRequest,
   NotificationSoundEvent,
@@ -509,6 +516,8 @@ export interface AppSettings {
   themeId: string;
   customThemes: CustomTheme[];
   serverBindHost: string;
+  keepServerRunning: boolean;
+  serverPublicUrl: string;
 }
 
 export type SettingsPatch = Partial<AppSettings>;
@@ -529,21 +538,16 @@ export interface PtyAttachment {
 export interface CwApi {
   topics: TopicCache;
   getStartupState(): Promise<StartupState>;
+  capabilities: UiCapabilities;
+  shell: ShellActions | null;
+  local: LocalActions | null;
   recovery: {
-    openDataDir(): Promise<void>;
     restore(file: string, backupPath: string): Promise<void>;
     startFresh(file: string): Promise<void>;
     retry(): Promise<void>;
   };
-  updates: {
-    getState(): Promise<UpdateState>;
-    check(): Promise<UpdateActionResult>;
-    download(): Promise<UpdateActionResult>;
-    setChannel(channel: UpdateChannel): Promise<UpdateActionResult>;
-    install(request: UpdateInstallRequest): Promise<UpdateActionResult>;
-    onChanged(cb: (state: UpdateState) => void): () => void;
-  };
   shutdown: {
+
     assess(): Promise<ShutdownAssessment>;
     prepare(request: ShutdownPrepareRequest): Promise<ShutdownPrepareResult>;
     force(token: string): Promise<ShutdownPrepareResult>;
@@ -560,7 +564,6 @@ export interface CwApi {
   discoverBinaries(binaries?: CliBinary[]): Promise<CliDiscoverResult>;
   verifyBinaryPath(binary: CliBinary, path: string): Promise<CliDiscoveredCandidate>;
   isDev: boolean;
-  openHarnessTrace(): Promise<{ ok: boolean; path?: string; error?: string }>;
   addProject(rootPath: string): Promise<Project>;
   updateProjectSettings(projectId: string, settings: ProjectSettings): Promise<Project>;
   createSession(projectId: string, driver: DriverName, options?: CreateSessionOptions): Promise<Session>;
@@ -651,7 +654,6 @@ export interface CwApi {
   createDir(sessionId: string, path: string): Promise<void>;
   renamePath(sessionId: string, from: string, to: string): Promise<void>;
   trashPath(sessionId: string, path: string): Promise<void>;
-  revealPath(sessionId: string, path: string): Promise<void>;
   workspaceRoot(sessionId: string): Promise<string>;
   listWorkspaceFiles(sessionId: string): Promise<string[]>;
   gitBaseline(sessionId: string, path: string): Promise<GitBaseline>;
@@ -667,6 +669,13 @@ export interface CwApi {
   detachPty(ptyId: string): void;
   onPtyData(cb: (msg: { ptyId: string; data: string }) => void): () => void;
   onPtyExit(cb: (msg: { ptyId: string; token: string; exitCode: number }) => void): () => void;
+  openExternal(url: string): Promise<void>;
+  openHtml(name: string, html: string): Promise<void>;
+  browseDirectories(path?: string | null, showHidden?: boolean): Promise<DirectoryListing>;
+  getServerHost(): Promise<ServerHost>;
+}
+
+export interface ShellActions {
   minimizeWindow(): void;
   toggleMaximizeWindow(): void;
   closeWindow(): void;
@@ -675,15 +684,21 @@ export interface CwApi {
   zoomIn(): void;
   zoomOut(): void;
   zoomReset(): void;
+  updates: DesktopUpdates;
+  connections: DesktopConnections;
+}
+
+export interface LocalActions {
   pickProjectDir(): Promise<string | null>;
   openPath(path: string): Promise<void>;
-  openExternal(url: string): Promise<void>;
-  openHtml(name: string, html: string): Promise<void>;
+  revealPath(sessionId: string, path: string): Promise<void>;
+  openDataDir(): Promise<void>;
+  openHarnessTrace(): Promise<{ ok: boolean; path?: string; error?: string }>;
 }
 
 declare global {
   interface Window {
     cw: CwApi;
-    cwDesktop: DesktopApi;
+    cwDesktop: DesktopApi | undefined;
   }
 }

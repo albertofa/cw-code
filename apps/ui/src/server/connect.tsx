@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { ServerClient, TopicCache } from "@cw-code/client";
-import type { DesktopApi } from "@cw-code/contracts";
+import type { ConnectionProfile, DesktopApi } from "@cw-code/contracts";
 import { APP_TOPIC } from "@cw-code/shared/topics";
 import { flushAllComposerDrafts } from "../components/composerDrafts.js";
 import { ipcErrorMessage } from "../components/ipcError.js";
@@ -46,7 +46,19 @@ async function settleAppTopic(client: ServerClient): Promise<AppSettle> {
 }
 
 export function ServerGate({ desktop, children }: { desktop: DesktopApi; children: ReactNode }) {
-  const [client] = useState(() => new ServerClient({ endpoint: () => desktop.serverEndpoint(), client: "desktop-ui", reconnect: true }));
+  const profile = useRef<ConnectionProfile | null>(null);
+  const [client] = useState(
+    () =>
+      new ServerClient({
+        endpoint: async () => {
+          const connection = await desktop.connection();
+          profile.current = connection.profile;
+          return connection.endpoint;
+        },
+        client: "desktop-ui",
+        reconnect: true
+      })
+  );
   const [shutdownHandlers] = useState<ShutdownHandlers>(() => new Set());
   const topicCache = useRef<TopicCache | null>(null);
   const appHold = useRef<(() => void) | null>(null);
@@ -63,7 +75,7 @@ export function ServerGate({ desktop, children }: { desktop: DesktopApi; childre
         topicCache.current.onEpoch(flushAllComposerDrafts);
       }
       initTopics(topicCache.current);
-      window.cw = createCwApi(client, topicCache.current, desktop, shutdownHandlers);
+      window.cw = createCwApi(client, topicCache.current, desktop, profile.current, shutdownHandlers);
       appHold.current ??= topicCache.current.acquire(APP_TOPIC);
       const settle = await settleAppTopic(client);
       if (settle.kind === "link-down") throw client.lastError ?? new Error("the connection to the cw-code server was lost");

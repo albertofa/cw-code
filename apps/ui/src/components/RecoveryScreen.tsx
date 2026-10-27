@@ -65,6 +65,7 @@ export function RecoveryScreen({ issues, dataDir }: { issues: MetadataIssue[]; d
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const { confirm, dialog } = useConfirm();
+  const local = window.cw.local;
 
   const run = async (action: () => Promise<void>) => {
     setBusy(true);
@@ -147,9 +148,15 @@ export function RecoveryScreen({ issues, dataDir }: { issues: MetadataIssue[]; d
           </section>
         ))}
         <div className="recovery-actions">
-          <button type="button" className="btn" disabled={busy} onClick={() => void run(() => window.cw.recovery.openDataDir())}>
-            Open data folder
-          </button>
+          {local ? (
+            <button type="button" className="btn" disabled={busy} onClick={() => void run(() => local.openDataDir())}>
+              Open data folder
+            </button>
+          ) : (
+            <button type="button" className="btn" disabled={busy} onClick={() => void run(() => navigator.clipboard.writeText(dataDir))}>
+              Copy data folder path
+            </button>
+          )}
           <button type="button" className="btn btn-primary" disabled={busy} onClick={() => void run(() => window.cw.recovery.retry())}>
             Retry
           </button>

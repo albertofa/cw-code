@@ -577,6 +577,7 @@ export function SettingsPage({
           </>
         );
       case "updates":
+        if (!window.cw.shell) return <SettingsPageHead title="Updates" description="Updates are managed by the cw-code desktop app." />;
         return (
           <>
             <SettingsPageHead title="Updates" description="The channel and background downloads apply as soon as you change them." />
@@ -596,7 +597,7 @@ export function SettingsPage({
 
   return (
     <div className="thread-col sp-page">
-      <div className="head-seg main-seg" onDoubleClick={() => window.cw.toggleMaximizeWindow()}>
+      <div className="head-seg main-seg" onDoubleClick={() => window.cw.shell?.toggleMaximizeWindow()}>
         <div className="head-col col-left">
           <nav className="sp-crumb" aria-label="Breadcrumb">
             <span>Settings</span>

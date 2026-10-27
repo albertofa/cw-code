@@ -40,11 +40,12 @@ export function PreviewPanel({
 
   const openExternal = () => {
     setExternalError(null);
-    if (isHtml) {
-      window.cw.openPath(abs).catch((err: Error) => setExternalError(err.message));
+    const local = window.cw.local;
+    if (isHtml && local) {
+      local.openPath(abs).catch((err: Error) => setExternalError(err.message));
     } else if (content != null) {
       window.cw
-        .openHtml(name, buildPreviewHtml(name, content))
+        .openHtml(name, isHtml ? content : buildPreviewHtml(name, content))
         .catch((err: Error) => setExternalError(err.message));
     }
   };

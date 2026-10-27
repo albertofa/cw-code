@@ -285,7 +285,7 @@ export function PrDetailView({ prRef }: { prRef: PrRef }) {
 
   return (
     <div className="thread-col pr-view">
-      <div className="head-seg main-seg" onDoubleClick={() => window.cw.toggleMaximizeWindow()}>
+      <div className="head-seg main-seg" onDoubleClick={() => window.cw.shell?.toggleMaximizeWindow()}>
         <div className="head-col col-left">
           <nav className="pr-detail-crumbs" aria-label="Breadcrumb">
             <button className="pr-detail-crumb-link" onClick={() => openGitHub("pr")}>Pull requests</button>

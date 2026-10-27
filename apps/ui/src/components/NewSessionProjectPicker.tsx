@@ -6,6 +6,7 @@ import { ProjectMonogram } from "./ProjectMonogram.js";
 import { shortenHome } from "./pathDisplay.js";
 import { useNotifs } from "./Notifications.js";
 import "./modelPicker.css";
+import { chooseProjectFolder } from "../platform/chooseProjectFolder.js";
 
 function byRecency(projects: Project[], recency: string[]): Project[] {
   const rank = new Map(recency.map((id, index) => [id, index]));
@@ -61,8 +62,7 @@ export function NewSessionProjectPicker({ project }: { project: Project | undefi
     if (adding) return;
     close();
     setAdding(true);
-    void window.cw
-      .pickProjectDir()
+    void chooseProjectFolder()
       .then((dir) => (dir ? addProjectForNewSession(dir) : undefined))
       .catch((err: Error) => {
         useNotifs.getState().push({ kind: "error", title: "Could not add project", message: err.message });

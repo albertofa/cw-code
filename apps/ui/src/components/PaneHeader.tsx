@@ -92,7 +92,7 @@ export function PaneTabsHeader({
   const strip = useScrollEdges(tabs.join(","));
 
   return (
-    <div className="phead" onDoubleClick={() => window.cw.toggleMaximizeWindow()}>
+    <div className="phead" onDoubleClick={() => window.cw.shell?.toggleMaximizeWindow()}>
       <div
         ref={strip.ref}
         className={`ph-tabs${strip.edges.start ? " fade-start" : ""}${strip.edges.end ? " fade-end" : ""}`}

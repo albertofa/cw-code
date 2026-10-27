@@ -203,12 +203,13 @@ function sessionsIn(ids: readonly string[], rowById: ReadonlyMap<string, Session
 
 function DebugMenu() {
   const [open, setOpen] = useState(false);
-  if (!window.cw.isDev) return null;
+  const local = window.cw.local;
+  if (!local || !window.cw.isDev) return null;
 
   const openTrace = async (): Promise<void> => {
     setOpen(false);
     try {
-      const res = await window.cw.openHarnessTrace();
+      const res = await local.openHarnessTrace();
       if (!res.ok) {
         useNotifs.getState().push({
           kind: "error",
@@ -961,7 +962,7 @@ export function Sidebar({ onOpenSkills, skillsOpen = false, hidden = false }: { 
       style={hidden ? { display: "none" } : undefined}
       onClick={() => setMenu(null)}
     >
-      <div className="head-seg side-seg" onDoubleClick={() => window.cw.toggleMaximizeWindow()}>
+      <div className="head-seg side-seg" onDoubleClick={() => window.cw.shell?.toggleMaximizeWindow()}>
         <div className="titlebar-brand">
           <img className="titlebar-logo" src={appIcon} alt="" aria-hidden="true" draggable={false} />
           <span>cw-code</span>

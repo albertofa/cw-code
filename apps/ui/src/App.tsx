@@ -39,6 +39,7 @@ import { startAppBridge } from "./server/appBridge.js";
 import { startSidebarBridge } from "./server/sidebarBridge.js";
 import { useConnectionEpoch } from "./server/topics.js";
 import { useHoldGit } from "./components/useGit.js";
+import { useBrowserAttentionTitle } from "./platform/attentionTitle.js";
 
 const RIGHT_WIDTH_DEFAULT = 520;
 const SIDE_WIDTH_DEFAULT = 320;
@@ -59,6 +60,7 @@ function sameSubagentStats(a: SubagentStats, b: SubagentStats): boolean {
 
 export function App() {
   useNotificationSounds();
+  useBrowserAttentionTitle(!window.cw.capabilities.desktop);
   const activeSessionId = useAppStore((s) => s.activeSessionId);
   const mainView = usePrStore((s) => s.mainView);
   const runModal = usePrStore((s) => s.runModal);
@@ -126,15 +128,16 @@ export function App() {
       if (!(e.ctrlKey || e.metaKey) || e.altKey) return;
       const target = e.target as HTMLElement | null;
       if (target?.closest?.(".pty-wrap")) return;
-      if (e.key === "+" || e.key === "=") {
+      const shell = window.cw.shell;
+      if (shell && (e.key === "+" || e.key === "=")) {
         e.preventDefault();
-        window.cw.zoomIn();
-      } else if (e.key === "-" || e.key === "_") {
+        shell.zoomIn();
+      } else if (shell && (e.key === "-" || e.key === "_")) {
         e.preventDefault();
-        window.cw.zoomOut();
-      } else if (e.key === "0") {
+        shell.zoomOut();
+      } else if (shell && e.key === "0") {
         e.preventDefault();
-        window.cw.zoomReset();
+        shell.zoomReset();
       } else if ((e.key.toLowerCase() === "p" && !e.shiftKey) || (e.key.toLowerCase() === "f" && e.shiftKey)) {
         const sessionId = useAppStore.getState().activeSessionId;
         if (!sessionId || visibleLayerOpen()) return;

@@ -31,7 +31,9 @@ export const SETTINGS_NAV: SettingsNavItem[] = [
 
 export type DraftSettingKey = Exclude<keyof AppSettings, "githubSavedViews" | "serverBindHost">;
 
-const SETTING_OWNER: Record<DraftSettingKey, SettingsNavId> = {
+type SettingOwner = SettingsNavId | "remoteAccess";
+
+const SETTING_OWNER: Record<DraftSettingKey, SettingOwner> = {
   claudeBinaryPath: "claude",
   opencodeBinaryPath: "opencode",
   codexBinaryPath: "codex",
@@ -80,8 +82,14 @@ const SETTING_OWNER: Record<DraftSettingKey, SettingsNavId> = {
   panelAnimationMs: "appearance",
   themeId: "appearance",
   customThemes: "appearance",
-  notificationSounds: "notifications"
+  notificationSounds: "notifications",
+  keepServerRunning: "general",
+  serverPublicUrl: "remoteAccess"
 };
+
+export function settingsNavFor(hasShell: boolean): SettingsNavItem[] {
+  return hasShell ? SETTINGS_NAV : SETTINGS_NAV.filter((item) => item.id !== "updates");
+}
 
 export function navIdOf(section: SettingsSection, harness: DriverName | undefined): SettingsNavId {
   return section === "harness" ? (harness ?? "claude") : section;
@@ -132,7 +140,7 @@ export function settingsPatch(saved: AppSettings, draft: AppSettings): Partial<A
 }
 
 export function changedSections(saved: AppSettings, draft: AppSettings): SettingsNavId[] {
-  const owners = new Set<SettingsNavId>();
+  const owners = new Set<SettingOwner>();
   for (const key of SETTING_KEYS) {
     if (!sameValue(saved[key], draft[key])) owners.add(SETTING_OWNER[key]);
   }

@@ -136,10 +136,20 @@ function installBridge(): void {
       return { stopped: true };
     },
     reloadHistory: async () => {},
-    updates: {
-      onChanged: noop,
-      getState: async () => ({ seq: 0, phase: "disabled", disabledReason: "Updates are disabled in development builds" })
+    capabilities: { desktop: true, localServer: true },
+    shell: {
+      updates: {
+        onChanged: noop,
+        getState: async () => ({ seq: 0, phase: "disabled", disabledReason: "Updates are disabled in development builds" })
+      },
+      onWindowMaximized: noop,
+      isWindowMaximized: async () => false,
+      minimizeWindow: () => {},
+      toggleMaximizeWindow: () => {},
+      closeWindow: () => {}
     },
+    local: null,
+    getServerHost: async () => ({ platform: "linux", hostname: "test", homeDir: "/home/test", webUi: false }),
     getComposer: async () => delayed({}, 400),
     setComposer: async (_id: string, prefs: unknown) => delayed(prefs, 200),
     getDefaultPrWorkflows: async () => [],
@@ -158,9 +168,7 @@ function installBridge(): void {
     listProjectFiles: async () => [],
     onSessionTitle: noop,
     topics: { acquire: () => () => {} },
-    shutdown: { onRequested: noop, onExpired: noop },
-    onWindowMaximized: noop,
-    isWindowMaximized: async () => false
+    shutdown: { onRequested: noop, onExpired: noop }
   };
   (window as unknown as { cw: Record<string, unknown> }).cw = new Proxy(explicit, {
     get(target, prop) {

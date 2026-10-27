@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from "electron";
-import type { DesktopApi, ShutdownRequestedEvent, UpdateChannel, UpdateInstallRequest, UpdateState } from "@cw-code/contracts";
+import type { DesktopApi, RemoteProfileInput, ShutdownRequestedEvent, UpdateChannel, UpdateInstallRequest, UpdateState } from "@cw-code/contracts";
 
 function subscribe<T>(channel: string, cb: (payload: T) => void): () => void {
   const listener = (_e: IpcRendererEvent, payload: T): void => cb(payload);
@@ -11,7 +11,14 @@ function subscribe<T>(channel: string, cb: (payload: T) => void): () => void {
 
 const api: DesktopApi = {
   isDev: Boolean(process.env["ELECTRON_RENDERER_URL"]),
-  serverEndpoint: () => ipcRenderer.invoke("desktop.endpoint"),
+  connection: () => ipcRenderer.invoke("desktop.connection"),
+  connections: {
+    list: () => ipcRenderer.invoke("desktop.connections.list"),
+    save: (input: RemoteProfileInput) => ipcRenderer.invoke("desktop.connections.save", input),
+    remove: (id: string) => ipcRenderer.invoke("desktop.connections.remove", { id }),
+    test: (input) => ipcRenderer.invoke("desktop.connections.test", input),
+    activate: (id: string) => ipcRenderer.send("desktop.connections.activate", { id })
+  },
   minimizeWindow: () => ipcRenderer.send("win.minimize"),
   toggleMaximizeWindow: () => ipcRenderer.send("win.toggle-maximize"),
   closeWindow: () => ipcRenderer.send("win.close"),

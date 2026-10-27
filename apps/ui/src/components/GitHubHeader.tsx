@@ -88,7 +88,7 @@ export function GitHubHeader({
       className="head-seg main-seg hub-head"
       onDoubleClick={(event) => {
         if (event.target instanceof Element && event.target.closest(".hub-search, .hub-tabs, button")) return;
-        void window.cw.toggleMaximizeWindow();
+        window.cw.shell?.toggleMaximizeWindow();
       }}
     >
       <div className="head-col col-left">
