@@ -88,14 +88,39 @@ describe("ConnectionStore", () => {
     expect(store(fs).token(profile.id)).toBe("from-link");
   });
 
-  it("keeps the saved token when an edit omits it", () => {
+  it("keeps the saved token when an edit omits it and keeps the origin", () => {
     const fs = new MemoryFs();
     const connections = store(fs);
     const created = connections.save({ name: "Studio", url: "http://studio.lan:4317", token: "first" });
-    const edited = connections.save({ id: created.id, name: "Studio 2", url: "http://studio.lan:5000" });
-    expect(edited).toEqual({ id: created.id, kind: "remote", name: "Studio 2", url: "http://studio.lan:5000" });
+    const edited = connections.save({ id: created.id, name: "Studio 2", url: "http://studio.lan:4317/" });
+    expect(edited).toEqual({ id: created.id, kind: "remote", name: "Studio 2", url: "http://studio.lan:4317" });
     expect(store(fs).token(created.id)).toBe("first");
-    connections.save({ id: created.id, name: "Studio 2", url: "http://studio.lan:5000", token: "second" });
+    connections.save({ id: created.id, name: "Studio 2", url: "http://studio.lan:4317", token: "second" });
+    expect(store(fs).token(created.id)).toBe("second");
+  });
+
+  it("needs a new token when an edit moves the profile to another origin", () => {
+    const fs = new MemoryFs();
+    const connections = store(fs);
+    const created = connections.save({ name: "Studio", url: "http://studio.lan:4317", token: "first" });
+    expect(() => connections.save({ id: created.id, name: "Studio", url: "http://studio.lan:5000" })).toThrow(
+      "enter the device token for the new address"
+    );
+    expect(store(fs).list().profiles[1]).toEqual(created);
+    connections.save({ id: created.id, name: "Studio", url: "http://studio.lan:5000", token: "second" });
+    expect(store(fs).endpoint(created.id)).toEqual<ServerEndpoint>({ url: "ws://studio.lan:5000/ws", token: "second" });
+    connections.save({ id: created.id, name: "Studio", url: "https://cw.example.com/#token=paired" });
+    expect(store(fs).token(created.id)).toBe("paired");
+  });
+
+  it("lets the active profile change its name and token but not its origin", () => {
+    const fs = new MemoryFs();
+    const connections = store(fs);
+    const created = connections.save({ name: "Studio", url: "http://studio.lan:4317", token: "first" });
+    connections.setActive(created.id);
+    connections.save({ id: created.id, name: "Studio 2", url: "http://studio.lan:4317", token: "second" });
+    expect(store(fs).endpoint(created.id)).toEqual<ServerEndpoint>({ url: "ws://studio.lan:4317/ws", token: "second" });
+    expect(() => connections.save({ id: created.id, name: "Studio 2", url: "http://other.lan:4317", token: "third" })).toThrow("in use");
     expect(store(fs).token(created.id)).toBe("second");
   });
 
@@ -109,7 +134,7 @@ describe("ConnectionStore", () => {
     expect(() => connections.save({ name: "Long", url: `http://a.lan/#token=${"t".repeat(TOKEN_MAX_LENGTH + 1)}` })).toThrow("at most");
   });
 
-  it("falls back to This computer when the active profile is removed", () => {
+  it("removes inactive profiles and refuses the active one and This computer", () => {
     const fs = new MemoryFs();
     const connections = store(fs);
     const first = connections.save({ name: "One", url: "http://one.lan", token: "1" });
@@ -117,8 +142,9 @@ describe("ConnectionStore", () => {
     connections.setActive(first.id);
     connections.remove(second.id);
     expect(connections.activeId).toBe(first.id);
+    expect(() => connections.remove(first.id)).toThrow("in use");
+    connections.setActive("local");
     connections.remove(first.id);
-    expect(connections.activeId).toBe("local");
     expect(store(fs).list()).toEqual({ activeId: "local", profiles: [LOCAL_PROFILE], tokenStorage: "os" });
     expect(() => connections.remove("local")).toThrow();
   });

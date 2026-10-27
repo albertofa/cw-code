@@ -30,10 +30,12 @@ function draftOf(profile: RemoteProfile): Draft {
 function ConnectionEditor({
   connections,
   initial,
+  urlLocked,
   onDone
 }: {
   connections: DesktopConnections;
   initial: Draft;
+  urlLocked: boolean;
   onDone: (saved: boolean) => void;
 }) {
   const formId = useId();
@@ -103,6 +105,8 @@ function ConnectionEditor({
         placeholder="https://cw.example.com or a pairing link"
         autoCapitalize="off"
         spellCheck={false}
+        readOnly={urlLocked}
+        title={urlLocked ? "Switch to another connection before changing the address of the one in use" : undefined}
         onChange={(e) => patch({ url: e.target.value })}
       />
       <label className="connections-label" htmlFor={`${formId}-token`}>
@@ -142,6 +146,7 @@ export function ConnectionsPanel({ connections }: { connections: DesktopConnecti
   const [list, setList] = useState<ConnectionList | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [editing, setEditing] = useState<Draft | null>(null);
+  const editingActive = editing !== null && editing.id === list?.activeId;
 
   const refresh = useCallback(async (): Promise<void> => {
     try {
@@ -208,8 +213,7 @@ export function ConnectionsPanel({ connections }: { connections: DesktopConnecti
                       <button
                         type="button"
                         className="btn"
-                        disabled={editing !== null || active}
-                        title={active ? "Switch to another connection before editing this one" : undefined}
+                        disabled={editing !== null}
                         onClick={() => setEditing(draftOf(profile))}
                       >
                         Edit
@@ -237,7 +241,13 @@ export function ConnectionsPanel({ connections }: { connections: DesktopConnecti
         </ul>
       )}
       {editing ? (
-        <ConnectionEditor key={editing.id ?? "new"} connections={connections} initial={editing} onDone={finishEditing} />
+        <ConnectionEditor
+          key={editing.id ?? "new"}
+          connections={connections}
+          initial={editing}
+          urlLocked={editingActive}
+          onDone={finishEditing}
+        />
       ) : (
         <div className="connections-actions">
           <button type="button" className="btn" onClick={() => setEditing(EMPTY_DRAFT)}>

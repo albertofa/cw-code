@@ -28,6 +28,7 @@ import { testConnection } from "@cw-code/client";
 import { appendCrashLog, initCrashLog } from "@cw-code/server/debug/crashLog";
 import { attachmentsDir, cwCodeHome, logsDir } from "@cw-code/server/paths/appPaths";
 import { readBytesIfExists, writeFileAtomic } from "@cw-code/server/storage/atomicFile";
+import { sandboxedPreviewDocument } from "@cw-code/shared/htmlPreview";
 import { PROTOCOL_VERSION } from "@cw-code/shared/protocol";
 import { windowBackgroundColor } from "@cw-code/shared/themes";
 import { channelOfVersion } from "@cw-code/shared/updateChannel";
@@ -129,6 +130,7 @@ const serverProcess: ServerProcess = new ServerProcess({
   },
   identity: { installId: readOrCreateInstallId(app.getPath("userData")), version: app.getVersion(), protocol: PROTOCOL_VERSION },
   confirmReplace: confirmServerReplace,
+  confirmForeignReplace: confirmForeignServerReplace,
   onAttached: (endpoint) => claimParent(endpoint, process.pid),
   onDeclined: () => exitApp(0),
   isQuitting: (): boolean => quitApproved || (link.shutdown.committed && !restartAfterFailedInstall),
@@ -249,6 +251,20 @@ async function confirmServerReplace(running: ServerReady): Promise<boolean> {
     message: `A cw-code server from version ${running.version} is still running in the background. Restart it with version ${app.getVersion()}?`,
     detail: "Running turns will stop.",
     buttons: ["Restart", "Quit"],
+    defaultId: 0,
+    cancelId: 1,
+    noLink: true
+  });
+  return response === 0;
+}
+
+async function confirmForeignServerReplace(running: ServerReady): Promise<boolean> {
+  const { response } = await dialog.showMessageBox({
+    type: "question",
+    title: "cw-code",
+    message: `A cw-code server (version ${running.version}, started by another cw-code install or from the command line) is already running on this computer. Stop it and start this app's own server?`,
+    detail: "Running turns will stop.",
+    buttons: ["Stop and restart", "Quit"],
     defaultId: 0,
     cancelId: 1,
     noLink: true
@@ -625,12 +641,11 @@ function registerShellIpc(): void {
   });
   ipcMain.handle("desktop.connections.list", (): ConnectionList => connections.list());
   ipcMain.handle("desktop.connections.save", (_e, args: unknown): ConnectionProfile => {
-    const input = parseRemoteProfileInput(args);
-    if (remoteMode && input.id === runningProfile.id) throw new Error("switch to another connection before editing the one in use");
-    return connections.save(input);
+    return connections.save(parseRemoteProfileInput(args));
   });
   ipcMain.handle("desktop.connections.remove", (_e, args: { id?: unknown } | undefined): void => {
     if (typeof args?.id !== "string") throw new Error("desktop.connections.remove requires { id }");
+    if (args.id === runningProfile.id) throw new Error("switch to another connection before removing the one in use");
     connections.remove(args.id);
   });
   ipcMain.handle("desktop.connections.test", (_e, args: unknown): Promise<ConnectionTestResult> => testConnectionInput(args));
@@ -666,7 +681,7 @@ function registerShellIpc(): void {
     const dir = attachmentsDir();
     mkdirSync(dir, { recursive: true });
     const file = join(dir, `cw-preview-${safe}.html`);
-    writeFileSync(file, args.html, "utf8");
+    writeFileSync(file, remoteMode ? sandboxedPreviewDocument(args.name, args.html) : args.html, "utf8");
     return shell.openExternal(pathToFileURL(file).href).then(() => undefined);
   });
 
@@ -762,13 +777,20 @@ async function commitWindowInstall(action: () => void): Promise<ShutdownCommitRe
   try {
     action();
   } catch (error) {
-    quitApproved = false;
+    restoreWindowAfterFailedInstall();
     throw error;
   }
   await delay(INSTALL_EXIT_TIMEOUT_MS);
   appendCrashLog(`cw-code did not exit within ${INSTALL_EXIT_TIMEOUT_MS}ms after starting the installer`);
-  quitApproved = false;
+  restoreWindowAfterFailedInstall();
   return { ok: false, message: `cw-code did not exit within ${Math.round(INSTALL_EXIT_TIMEOUT_MS / 1000)}s. Normal use has been restored.` };
+}
+
+function restoreWindowAfterFailedInstall(): void {
+  quitApproved = false;
+  serverStop = null;
+  serverStopped = false;
+  connectRemoteLink();
 }
 
 async function startAndConnectServer(): Promise<void> {

@@ -51,6 +51,7 @@ export interface ServerProcessOptions {
   isQuitting(): boolean;
   onFatal(message: string): void;
   confirmReplace(running: ServerReady): Promise<boolean>;
+  confirmForeignReplace(running: ServerReady): Promise<boolean>;
   onAttached(endpoint: ServerEndpoint): Promise<void>;
   onDeclined(): void;
 }
@@ -61,14 +62,8 @@ const LINE_KINDS: ReadonlyArray<readonly [string, ServerLine["kind"]]> = [
 ];
 
 class ServerAlreadyRunningError extends Error {
-  constructor(
-    readonly running: ServerReady,
-    foreign: boolean
-  ) {
-    super(
-      `Another cw-code instance is already using ${cwCodeHome()}. Close it first, or start this one with a different CW_CODE_HOME.` +
-        (foreign ? " It was started by another cw-code install or from the command line; connect to it as a remote server instead." : "")
-    );
+  constructor(readonly running: ServerReady) {
+    super(`Another cw-code instance is already using ${cwCodeHome()}. Close it first, or start this one with a different CW_CODE_HOME.`);
     this.name = "ServerAlreadyRunningError";
   }
 }
@@ -226,24 +221,20 @@ export class ServerProcess {
       const decision = await this.decide();
       if (decision.kind === "attach") return this.attach(decision.ready);
       if (decision.kind === "replace") {
-        await this.replace(decision.ready);
+        await this.replace(decision.ready, this.options.confirmReplace);
         continue;
       }
       if (decision.kind === "foreign") {
-        if (lastTry) throw new ServerAlreadyRunningError(decision.ready, true);
-      } else {
-        try {
-          return await this.launch();
-        } catch (error) {
-          if (!(error instanceof ServerAlreadyRunningError) || lastTry) throw error;
-        }
+        await this.replace(decision.ready, this.options.confirmForeignReplace);
+        continue;
+      }
+      try {
+        return await this.launch();
+      } catch (error) {
+        if (!(error instanceof ServerAlreadyRunningError) || lastTry) throw error;
       }
       await delay(ALREADY_RUNNING_POLL_MS);
     }
-  }
-
-  private isForeign(running: ServerReady): boolean {
-    return decideServerStart(running, this.options.identity).kind === "foreign";
   }
 
   private async decide(): Promise<StartDecision> {
@@ -281,8 +272,8 @@ export class ServerProcess {
     this.attachedWatch = null;
   }
 
-  private async replace(running: ServerReady): Promise<void> {
-    if (!(await this.options.confirmReplace(running))) throw new ServerStartDeclinedError();
+  private async replace(running: ServerReady, confirm: (running: ServerReady) => Promise<boolean>): Promise<void> {
+    if (!(await confirm(running))) throw new ServerStartDeclinedError();
     const requested = await readOwnerToken()
       .then((token) => requestServerStop(running, token))
       .then(
@@ -345,7 +336,7 @@ export class ServerProcess {
             continue;
           }
           if (parsed.kind === "running") {
-            settle(() => reject(new ServerAlreadyRunningError(parsed.ready, this.isForeign(parsed.ready))));
+            settle(() => reject(new ServerAlreadyRunningError(parsed.ready)));
             continue;
           }
           this.current = parsed.ready;

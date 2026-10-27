@@ -179,6 +179,9 @@ export class ConnectionStore {
     if (input.id && !existing) throw new Error("this connection no longer exists");
     const plainToken = input.token?.trim() || address.token;
     if (plainToken && plainToken.length > TOKEN_MAX_LENGTH) throw new Error(`the device token must be at most ${TOKEN_MAX_LENGTH} characters`);
+    const movesOrigin = existing !== null && originOf(existing.url) !== originOf(address.httpUrl);
+    if (movesOrigin && existing.id === this.document.activeId) throw new Error("switch to another connection before changing the address of the one in use");
+    if (movesOrigin && !plainToken) throw new Error("enter the device token for the new address");
     const token = plainToken ? this.sealToken(plainToken) : existing?.token;
     if (!token) throw new Error("enter a device token for this server");
     const remote: StoredRemote = { id: existing?.id ?? this.createId(), name, url: address.httpUrl, token };
@@ -190,8 +193,8 @@ export class ConnectionStore {
   remove(id: string): void {
     if (id === LOCAL_PROFILE_ID) throw new Error("This computer cannot be removed");
     if (!this.remote(id)) return;
-    const activeId = this.document.activeId === id ? LOCAL_PROFILE_ID : this.document.activeId;
-    this.persist({ ...this.document, activeId, remotes: this.document.remotes.filter((remote) => remote.id !== id) });
+    if (id === this.document.activeId) throw new Error("switch to another connection before removing the one in use");
+    this.persist({ ...this.document, remotes: this.document.remotes.filter((remote) => remote.id !== id) });
   }
 
   setActive(id: string): void {
