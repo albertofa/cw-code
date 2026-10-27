@@ -7,6 +7,10 @@ import { configuredCliBinaryPath } from "../settings/settingsUtils.js";
 import type { Router } from "../transport/Router.js";
 import { handle, requireOwner } from "./shared.js";
 
+const OWNER_ONLY_SETTINGS = ["serverBindHost", "serverPublicUrl", "keepServerRunning"] as const satisfies ReadonlyArray<
+  keyof SettingsPatch
+>;
+
 export function commitSettings(app: ServerApp, patch: SettingsPatch): AppSettings {
   const { sessions, appTopic, prStore, autoFollowUp, sidebar, githubViews } = app.requireServices();
   const saved = sessions.setSettings(patch);
@@ -24,7 +28,9 @@ export function registerSettingsHandlers(router: Router, app: ServerApp): void {
   handle(router, "settings.get", () => services().sessions.getSettings());
   handle(router, "settings.prWorkflowDefaults", () => defaultPrWorkflows());
   handle<SettingsPatch>(router, "settings.set", async (patch, ctx) => {
-    if (patch.serverBindHost !== undefined) requireOwner(ctx, "changing serverBindHost");
+    for (const key of OWNER_ONLY_SETTINGS) {
+      if (patch[key] !== undefined) requireOwner(ctx, `changing ${key}`);
+    }
     const { sessions, accountUsage, harnessMonitor } = services();
     const current = sessions.getSettings();
     const normalized = { ...patch };

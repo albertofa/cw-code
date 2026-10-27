@@ -288,6 +288,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   themeId: "dark",
   customThemes: [],
   serverBindHost: "",
+  keepServerRunning: false,
+  serverPublicUrl: "",
   notificationSounds: {
     done: { enabled: true, sound: "felt-chord", volume: 60 },
     question: { enabled: true, sound: "triple-tap", volume: 60 },
@@ -302,6 +304,19 @@ function bindHostOr(value: unknown, fallback: string): string {
   if (typeof value !== "string") return fallback;
   const host = value.trim();
   return BIND_HOST_PATTERN.test(host) ? host : fallback;
+}
+
+function publicUrlOr(value: unknown, fallback: string): string {
+  if (typeof value !== "string") return fallback;
+  let url: URL;
+  try {
+    url = new URL(value.trim());
+  } catch {
+    return fallback;
+  }
+  if (url.protocol !== "http:" && url.protocol !== "https:") return fallback;
+  if (url.username || url.password || url.search || url.hash) return fallback;
+  return url.href.replace(/\/+$/, "");
 }
 
 function fontFamilyOr(value: unknown, fallback: string): string {
@@ -462,6 +477,8 @@ function sanitize(patch: SettingsPatch): SettingsPatch {
   if (patch.themeId !== undefined) out.themeId = sanitizeThemeId(patch.themeId);
   if (patch.customThemes !== undefined) out.customThemes = sanitizeCustomThemes(patch.customThemes);
   if (patch.serverBindHost !== undefined) out.serverBindHost = bindHostOr(patch.serverBindHost, DEFAULT_SETTINGS.serverBindHost);
+  if (patch.keepServerRunning !== undefined) out.keepServerRunning = patch.keepServerRunning === true;
+  if (patch.serverPublicUrl !== undefined) out.serverPublicUrl = publicUrlOr(patch.serverPublicUrl, DEFAULT_SETTINGS.serverPublicUrl);
   if (patch.notificationSounds !== undefined) out.notificationSounds = sanitizeNotificationSounds(patch.notificationSounds);
   return out;
 }

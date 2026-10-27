@@ -2,6 +2,7 @@ import type { AppNotice, DeviceInfo, ServerReady, ShutdownCommitResult, Shutdown
 import { CLOSE_UNAUTHORIZED, PROTOCOL_VERSION, SERVER_READY_PREFIX } from "@cw-code/shared/protocol";
 import { appendCrashLog, initCrashLog } from "../debug/crashLog.js";
 import { initHarnessTrace } from "../debug/harnessTrace.js";
+import { initServerLog } from "../debug/serverLog.js";
 import { initSessionStatusTrace } from "../debug/sessionStatusTrace.js";
 import { sweepStaleSnapshotIndexes } from "../fs/GitService.js";
 import { registerHandlers } from "../handlers/index.js";
@@ -53,6 +54,7 @@ export class ServerApp {
   private sessionSettleTimer: ReturnType<typeof setInterval> | null = null;
   private sessionSettleInitialTimer: ReturnType<typeof setTimeout> | null = null;
   private parentTimer: ReturnType<typeof setInterval> | null = null;
+  private watchedParentPid: number | null = null;
   private stopping = false;
   private lastShutdownStatus: ShutdownStatus = { idle: true, committed: false, reason: null };
   private readonly shutdownPublisher = new ShutdownPublisher(() => this.publishShutdown());
@@ -122,6 +124,7 @@ export class ServerApp {
   }
 
   start(loginShellWarnings: string[]): ServerReady {
+    initServerLog(logsDir());
     try {
       const tracePath = initHarnessTrace({ logDir: logsDir() });
       console.warn(`harness trace: ${tracePath}`);
@@ -195,7 +198,7 @@ export class ServerApp {
         this.handleUiDisconnected();
       }
     });
-    const ready: ServerReady = { url, port, pid: process.pid, protocol: PROTOCOL_VERSION, version: this.version };
+    const ready: ServerReady = { url, port, pid: process.pid, protocol: PROTOCOL_VERSION, version: this.version, launcherId: this.args.launcherId };
     writeEndpoint(userdataDir(), ready);
     process.stdout.write(`CW_SERVER_READY ${JSON.stringify(ready)}\n`);
     this.watchParent();
@@ -467,11 +470,37 @@ export class ServerApp {
     services.ptys.dispose();
   }
 
+  setParent(pid: number): void {
+    this.clearParentWatch();
+    this.watchedParentPid = pid;
+    this.startParentWatch();
+  }
+
+  private keepsRunningWithoutParent(): boolean {
+    return this.services?.sessions.getSettings().keepServerRunning === true;
+  }
+
+  private clearParentWatch(): void {
+    if (this.parentTimer) clearInterval(this.parentTimer);
+    this.parentTimer = null;
+  }
+
   private watchParent(): void {
-    const parentPid = this.args.parentPid;
+    this.watchedParentPid = this.args.parentPid;
+    this.startParentWatch();
+  }
+
+  private startParentWatch(): void {
+    const parentPid = this.watchedParentPid;
     if (parentPid === null) return;
     this.parentTimer = setInterval(() => {
       if (!isProcessGone(parentPid)) return;
+      if (this.keepsRunningWithoutParent()) {
+        console.warn(`parent process ${parentPid} is gone; keeping the server running`);
+        this.watchedParentPid = null;
+        this.clearParentWatch();
+        return;
+      }
       console.warn(`parent process ${parentPid} is gone; stopping`);
       void this.stop(0);
     }, PARENT_CHECK_INTERVAL_MS);

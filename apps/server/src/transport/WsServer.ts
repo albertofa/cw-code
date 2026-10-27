@@ -5,7 +5,8 @@ import {
   CLOSE_PROTOCOL_MISMATCH,
   CLOSE_SERVER_STOPPING,
   CLOSE_UNAUTHORIZED,
-  PROTOCOL_VERSION
+  PROTOCOL_VERSION,
+  WS_PATH
 } from "@cw-code/shared/protocol";
 import { randomUUID } from "node:crypto";
 import { connectHost } from "./bindPolicy.js";
@@ -32,7 +33,6 @@ export type FrameSink = Pick<Bun.ServerWebSocket<unknown>, "readyState" | "send"
 type HelloMessage = Extract<ClientMessage, { t: "hello" }>;
 type CallMessage = Extract<ClientMessage, { t: "call" }>;
 
-const WS_PATH = "/ws";
 const MAX_PAYLOAD_BYTES = 64 * 1024 * 1024;
 const DEFAULT_HELLO_TIMEOUT_MS = 5000;
 const SOCKET_OPEN = 1;

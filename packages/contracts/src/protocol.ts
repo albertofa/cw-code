@@ -29,6 +29,7 @@ export interface ServerReady {
   pid: number;
   protocol: number;
   version: string;
+  launcherId?: string | null;
 }
 
 export interface TopicsParams {

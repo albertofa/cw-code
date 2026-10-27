@@ -763,6 +763,27 @@ describe("SettingsStore", () => {
     expect(store.set({ serverBindHost: 42 as unknown as string }).serverBindHost).toBe("");
   });
 
+  it("defaults keepServerRunning to off and coerces it to a boolean", () => {
+    const store = new SettingsStore(tempFilePath());
+    expect(store.get().keepServerRunning).toBe(false);
+    expect(store.set({ keepServerRunning: true }).keepServerRunning).toBe(true);
+    expect(store.set({ keepServerRunning: "yes" as unknown as boolean }).keepServerRunning).toBe(false);
+  });
+
+  it("sanitizes the server public URL", () => {
+    const store = new SettingsStore(tempFilePath());
+    expect(store.get().serverPublicUrl).toBe("");
+    expect(store.set({ serverPublicUrl: "  https://cw.example.com/  " }).serverPublicUrl).toBe("https://cw.example.com");
+    expect(store.set({ serverPublicUrl: "http://10.0.0.2:8080" }).serverPublicUrl).toBe("http://10.0.0.2:8080");
+    expect(store.set({ serverPublicUrl: "https://cw.example.com/base/" }).serverPublicUrl).toBe("https://cw.example.com/base");
+    expect(store.set({ serverPublicUrl: "ftp://cw.example.com" }).serverPublicUrl).toBe("");
+    expect(store.set({ serverPublicUrl: "https://user:pw@cw.example.com" }).serverPublicUrl).toBe("");
+    expect(store.set({ serverPublicUrl: "https://cw.example.com/?a=1" }).serverPublicUrl).toBe("");
+    expect(store.set({ serverPublicUrl: "https://cw.example.com/#token=x" }).serverPublicUrl).toBe("");
+    expect(store.set({ serverPublicUrl: "not a url" }).serverPublicUrl).toBe("");
+    expect(store.set({ serverPublicUrl: 5 as unknown as string }).serverPublicUrl).toBe("");
+  });
+
   it("defaults panel animation to off", () => {
     expect(new SettingsStore(tempFilePath()).get().panelAnimationMs).toBe(0);
   });

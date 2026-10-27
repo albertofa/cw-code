@@ -57,6 +57,8 @@ const SETTINGS: AppSettings = {
   themeId: "dark",
   customThemes: [],
   serverBindHost: "",
+  keepServerRunning: false,
+  serverPublicUrl: "",
   notificationSounds: {
     done: { enabled: true, sound: "felt-chord", volume: 60 },
     question: { enabled: true, sound: "triple-tap", volume: 60 },

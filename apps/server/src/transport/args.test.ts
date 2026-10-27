@@ -3,7 +3,7 @@ import { parseServerArgs } from "./args.js";
 
 describe("parseServerArgs", () => {
   test("applies defaults", () => {
-    expect(parseServerArgs([])).toEqual({ host: null, port: 0, parentPid: null, legacyUserData: [], allowOrigins: [] });
+    expect(parseServerArgs([])).toEqual({ host: null, port: 0, parentPid: null, legacyUserData: [], allowOrigins: [], launcherId: null, uiDir: null });
   });
 
   test("parses each flag", () => {
@@ -13,6 +13,8 @@ describe("parseServerArgs", () => {
       parentPid: 4321,
       legacyUserData: ["/old"],
       allowOrigins: [],
+      launcherId: null,
+      uiDir: null,
     });
   });
 
@@ -23,6 +25,8 @@ describe("parseServerArgs", () => {
       parentPid: 7,
       legacyUserData: ["/a=b"],
       allowOrigins: [],
+      launcherId: null,
+      uiDir: null,
     });
   });
 
@@ -35,6 +39,16 @@ describe("parseServerArgs", () => {
       "http://localhost:5173",
       "https://cw.example",
     ]);
+  });
+
+  test("parses the launcher id and the UI directory in both forms", () => {
+    expect(parseServerArgs(["--launcher-id", "abc-123", "--ui-dir", "/srv/ui"])).toMatchObject({ launcherId: "abc-123", uiDir: "/srv/ui" });
+    expect(parseServerArgs(["--launcher-id=abc-123", "--ui-dir=/srv/ui=dist"])).toMatchObject({ launcherId: "abc-123", uiDir: "/srv/ui=dist" });
+  });
+
+  test("rejects missing launcher id and UI directory values", () => {
+    expect(() => parseServerArgs(["--launcher-id"])).toThrow("missing value for --launcher-id");
+    expect(() => parseServerArgs(["--ui-dir="])).toThrow("missing value for --ui-dir");
   });
 
   test("rejects unknown flags", () => {
