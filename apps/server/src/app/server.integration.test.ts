@@ -7,6 +7,7 @@ import type {
   DeviceCreateResult,
   DeviceInfo,
   Project,
+  ServerHost,
   ServerReady,
   SessionMeta,
   ShutdownPrepareResult,
@@ -117,6 +118,11 @@ describe("server process", () => {
     expect(ready.pid).toBe(server.pid);
     expect(ready.url).toBe(`ws://127.0.0.1:${ready.port}/ws`);
     expect(JSON.parse(readFileSync(join(home, "userdata", "server.json"), "utf8"))).toEqual(ready);
+  });
+
+  it("reports the host it listens on from server.host", async () => {
+    const client = await connect();
+    expect((await client.call<ServerHost>("server.host")).bindHost).toBe("127.0.0.1");
   });
 
   it("records no launcher id when started directly and tees output to server.log", () => {

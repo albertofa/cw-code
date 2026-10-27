@@ -130,6 +130,10 @@ export function bindTopic<D = Record<string, unknown>>(topic: string, onState: (
   };
 }
 
+export function onConnectionEpoch(cb: () => void): () => void {
+  return topicCache().onEpoch(() => cb());
+}
+
 export function useConnectionEpoch(): number {
   const topics = topicCache();
   const subscribe = useCallback((onChange: () => void) => topics.onEpoch(() => onChange()), [topics]);

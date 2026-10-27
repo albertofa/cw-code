@@ -43,6 +43,7 @@ export interface ServerHost {
   hostname: string;
   homeDir: string;
   webUi: boolean;
+  bindHost?: string;
 }
 
 export interface TopicsParams {

@@ -9,7 +9,10 @@ function hostPlatform(): ServerHost["platform"] {
 }
 
 export function registerServerHandlers(router: Router, app: ServerApp): void {
-  handle(router, "server.host", (): ServerHost => ({ platform: hostPlatform(), hostname: hostname(), homeDir: homedir(), webUi: app.uiDir !== null }));
+  handle(router, "server.host", (): ServerHost => {
+    const host: ServerHost = { platform: hostPlatform(), hostname: hostname(), homeDir: homedir(), webUi: app.uiDir !== null };
+    return app.bindHost === null ? host : { ...host, bindHost: app.bindHost };
+  });
   handle(router, "server.stop", (_args, ctx) => {
     requireOwner(ctx, "stopping the server");
     app.scheduleStop(0);

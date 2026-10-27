@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import type { DeviceInfo } from "@cw-code/contracts";
 import { isLoopbackHost, pairingLink } from "@cw-code/shared/serverAddress";
+import { useServerHost } from "../server/serverHost.js";
 import { useDevicesStore, viewerIsOwner, watchDevices } from "../stores/devicesStore.js";
 import { useSettingsDraftStore } from "../stores/settingsDraftStore.js";
 import { useConfirm } from "./ConfirmDialog.js";
@@ -11,7 +12,8 @@ import { SettingsGroup, SettingsPageHead, SettingsRow } from "./SettingsLayout.j
 
 const UNREACHABLE_NOTICE =
   "Other devices can't reach this server yet. Set up Tailscale Serve or a reverse proxy (docs/operations/hosting.md) and enter its address above.";
-const NO_ADDRESS_NOTICE = "Enter the server address above to get a pairing link.";
+const NO_ADDRESS_NOTICE =
+  "Enter the address other devices use (for example http://<this machine's LAN IP>:<port>) above to get a pairing link.";
 
 interface Pairing {
   name: string;
@@ -20,16 +22,17 @@ interface Pairing {
   notice: string | null;
 }
 
-function pageOrigin(): string | null {
-  const { protocol, origin } = window.location;
-  return protocol === "http:" || protocol === "https:" ? origin : null;
+function pageBase(): string | null {
+  const base = new URL(".", window.location.href);
+  if (base.protocol !== "http:" && base.protocol !== "https:") return null;
+  return base.href.replace(/\/+$/, "");
 }
 
 function pairingTarget(publicUrl: string, bindHost: string): { base: string | null; notice: string | null } {
   if (publicUrl) return { base: publicUrl, notice: null };
-  const base = pageOrigin();
+  const base = pageBase();
   if (base) return { base, notice: null };
-  return { base: null, notice: isLoopbackHost(bindHost || "127.0.0.1") ? UNREACHABLE_NOTICE : NO_ADDRESS_NOTICE };
+  return { base: null, notice: isLoopbackHost(bindHost) ? UNREACHABLE_NOTICE : NO_ADDRESS_NOTICE };
 }
 
 function DeviceRow({ device, now, canRevoke, onRevoke }: { device: DeviceInfo; now: number; canRevoke: boolean; onRevoke: (device: DeviceInfo) => void }) {
@@ -62,6 +65,7 @@ export function RemoteAccessSettings() {
   const loadError = useDevicesStore((s) => s.error);
   const createDevice = useDevicesStore((s) => s.create);
   const revokeDevice = useDevicesStore((s) => s.revoke);
+  const serverHost = useServerHost();
   const { confirm, dialog: confirmDialog } = useConfirm();
   const [name, setName] = useState("");
   const [creating, setCreating] = useState(false);
@@ -82,6 +86,7 @@ export function RemoteAccessSettings() {
   if (!draft) return null;
   const owner = viewerIsOwner(devices);
   const canManage = owner === true;
+  const target = pairingTarget(saved?.serverPublicUrl ?? "", serverHost?.bindHost ?? (saved?.serverBindHost || "127.0.0.1"));
 
   const pair = async (e: FormEvent) => {
     e.preventDefault();
@@ -91,7 +96,6 @@ export function RemoteAccessSettings() {
     setActionError(null);
     try {
       const result = await createDevice(trimmed);
-      const target = pairingTarget(saved?.serverPublicUrl ?? "", saved?.serverBindHost ?? "");
       setPairing({
         name: result.device.name,
         token: result.token,
@@ -109,9 +113,7 @@ export function RemoteAccessSettings() {
   const revoke = async (device: DeviceInfo) => {
     const ok = await confirm({
       title: `Revoke ${device.name}?`,
-      message: device.current
-        ? "This is the device you're using. This window will disconnect and must sign in again with another token."
-        : "The device is disconnected and its token stops working.",
+      message: "The device is disconnected and its token stops working.",
       confirmLabel: "Revoke",
       danger: true
     });
@@ -141,6 +143,7 @@ export function RemoteAccessSettings() {
             onChange={(e) => set({ serverPublicUrl: e.target.value })}
           />
         </SettingsRow>
+        {canManage && target.notice && <p className="sp-hint">{target.notice}</p>}
         <SettingsRow
           label="Bind host"
           hint="Applies after the server restarts. Empty listens on 127.0.0.1; a non-loopback host needs a paired device first."

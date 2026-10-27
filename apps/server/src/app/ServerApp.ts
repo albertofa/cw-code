@@ -69,12 +69,17 @@ export class ServerApp {
   private unwireShutdownPublishing: () => void = () => {};
   private pendingShellNotices: AppNotice[] = [];
   readonly uiDir: string | null;
+  private listenHost: string | null = null;
 
   constructor(
     private readonly args: ServerArgs,
     private readonly version: string
   ) {
     this.uiDir = resolveUiDir(args.uiDir);
+  }
+
+  get bindHost(): string | null {
+    return this.listenHost;
   }
 
   get startupState(): StartupState {
@@ -208,6 +213,7 @@ export class ServerApp {
     const ws = new WsServer({ host, port: this.args.port, authorize, isOriginAllowed, onOriginRejected, version: this.version, router: this.router, http });
     const { url, port } = this.bind(ws, host);
     this.ws = ws;
+    this.listenHost = host;
     this.applyStores(stores);
     ws.onClientAccepted((ctx) => {
       if (ctx.client === "desktop-shell") this.flushShellNotices(ctx.clientId);
