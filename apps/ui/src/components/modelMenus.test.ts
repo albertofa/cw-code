@@ -1,8 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import type { ModelOption } from "../cw.js";
-import { CLAUDE_CURATED_MODELS as DRIVER_CURATED_MODELS } from "@cw-code/server/providers/claude/ClaudeCliDriver";
 import {
-  CLAUDE_CURATED_MODELS,
   contextWindowLabel,
   defaultModelPatch,
   effortLabel,
@@ -25,12 +23,6 @@ import {
 function opt(id: string, extra: Partial<ModelOption> = {}): ModelOption {
   return { id, label: id, source: "live", ...extra };
 }
-
-describe("CLAUDE_CURATED_MODELS", () => {
-  it("matches the list the Claude driver reports", () => {
-    expect(CLAUDE_CURATED_MODELS).toEqual(DRIVER_CURATED_MODELS);
-  });
-});
 
 describe("context suffix helpers", () => {
   it("detects the 1M suffix case-insensitively and only at the end", () => {

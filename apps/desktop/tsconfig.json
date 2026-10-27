@@ -3,7 +3,6 @@
   "compilerOptions": {
     "module": "ESNext",
     "moduleResolution": "bundler",
-    "jsx": "react-jsx",
     "types": ["node", "electron-vite/node", "bun-types/test"],
     "noEmit": true,
     "baseUrl": ".",

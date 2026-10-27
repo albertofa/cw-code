@@ -3,7 +3,7 @@ import { iconFileName, resolveIconName, type IconManifest } from "./iconTheme.js
 
 const theme = manifest as unknown as IconManifest;
 
-const urls = import.meta.glob<string>("../../../../node_modules/material-icon-theme/icons/*.svg", {
+const urls = import.meta.glob<string>("../../node_modules/material-icon-theme/icons/*.svg", {
   query: "?no-inline",
   import: "default",
   eager: true

@@ -1,10 +1,10 @@
-import "../../../../tests/dom.js";
+import "../../tests/dom.js";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "bun:test";
 import type { ChatMessage } from "../stores/appStore.js";
 import { AgentsPanel } from "./AgentsPanel.js";
-import { installFakeTopics } from "../../../../tests/fakeTopics.js";
+import { installFakeTopics } from "../../tests/fakeTopics.js";
 
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 (Element.prototype as unknown as { scrollTo: () => void }).scrollTo = () => {};

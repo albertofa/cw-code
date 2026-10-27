@@ -262,7 +262,7 @@ The approved logo is Option C, Console C: a cut-corner C and command-line bar,
 white on the existing `#7c42ff` violet tile, paired with a lowercase Inter
 wordmark. The master is `design/brand/assets/app-icon.svg` at the repository root.
 The 22px title-bar icon and 40px About icon use the renderer copy at
-`src/renderer/src/assets/console-c.svg`. The runtime and Windows installer use
+`apps/ui/src/assets/console-c.svg`. The runtime and Windows installer use
 `resources/icon.ico`; the brand generator synchronizes both copies.
 
 Preserve the existing UI layout and `theme.css` font/color values. This addition

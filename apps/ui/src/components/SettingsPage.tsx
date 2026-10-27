@@ -32,7 +32,7 @@ import { UpdatesSettings } from "./UpdatesSettings.js";
 import { errorMessage } from "./errorMessage.js";
 import { visibleLayerOpen } from "./openLayer.js";
 import appIcon from "../assets/console-c.svg";
-import { version as appVersion, description as appDescription } from "../../../../package.json";
+import { version as appVersion, description as appDescription } from "../../package.json";
 import { SettingsGroup, SettingsPageHead, SettingsRow, SettingsSwitch, type BinaryPickHandler } from "./SettingsLayout.js";
 import "./settingsPage.css";
 

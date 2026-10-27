@@ -4,7 +4,7 @@ import { usePrStore } from "../stores/prStore.js";
 import { useSettingsDraftStore, type HarnessCheck } from "../stores/settingsDraftStore.js";
 import { DriverIcon } from "./DriverIcon.js";
 import { SETTINGS_NAV, filterSettingsNav, viewOfNavId, type SettingsNavId, type SettingsNavItem } from "./settingsSections.js";
-import { version as appVersion } from "../../../../package.json";
+import { version as appVersion } from "../../package.json";
 import "./settingsPage.css";
 
 const APP_ICONS: Partial<Record<SettingsNavId, ReactNode>> = {

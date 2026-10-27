@@ -30,10 +30,14 @@ Core behaviors:
 - `apps/desktop`: Electron shell only — spawns and supervises its own server (never attaches
   to another instance's), owns the window, zoom, attention badge, native dialogs, OS
   open/reveal and auto-updates, and exposes them to the renderer as `window.cwDesktop` (`DesktopApi`).
-- `apps/desktop/src/renderer`: the UI. Talks to the server only through `@cw-code/client`
-  (`window.cw` is built from it in `renderer/src/server/createCwApi.ts`) and to the shell only
-  through `window.cwDesktop`. It never spawns processes, touches the filesystem, or imports
-  server code.
+- `apps/ui` (`@cw-code/ui`): the UI, a standalone Vite + React app (`base: "./"`). Talks to
+  the server only through `@cw-code/client` (`window.cw` is built from it in
+  `src/server/createCwApi.ts`) and to the shell only through `window.cwDesktop`. It never
+  spawns processes, touches the filesystem, or imports Electron, server code or `node:`
+  built-ins (`src/boundaries.test.ts` enforces it). The build (`apps/ui/dist`) ships once, at
+  `resources/server/ui/`: `apps/server/scripts/compile.ts` copies it into the server dist and
+  the packaged shell loads it from there over `file://`. In dev, electron-vite serves it with
+  HMR as the shell's renderer.
 - `packages/contracts`: shared types only, no runtime values (resolves to `dist` at runtime).
   `packages/shared`: source-only runtime helpers usable by server, shell and UI
   (`@cw-code/shared/<module>`, incl. protocol constants). `packages/client`: `ServerClient`
@@ -89,7 +93,7 @@ Core behaviors:
   `~/.cw-code/userdata/attachments`, worktrees in `~/.cw-code/worktrees`.
   The home is `CW_CODE_HOME` when set. Unpackaged runs (`bun run dev`) default to
   `~/.cw-code-dev`, so they never share a home with an installed instance.
-- Tests run on `bun test`; use `bun run test` (packages run sequentially; each sets its own flags and preload, helpers in `apps/*/tests`); builds via electron-vite, the server compile script, and electron-builder (Windows NSIS; Linux AppImage and deb).
+- Tests run on `bun test`; use `bun run test` (packages run sequentially; each sets its own flags and preload, helpers in `apps/*/tests`); builds via Vite (`@cw-code/ui`, built before the server compile), electron-vite (main and preload only), the server compile script, and electron-builder (Windows NSIS; Linux AppImage and deb).
 
 ## Guidelines
 

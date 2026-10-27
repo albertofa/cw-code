@@ -1,5 +1,5 @@
 import type { TopicCache, TopicState } from "@cw-code/client";
-import { initTopics } from "../src/renderer/src/server/topics.js";
+import { initTopics } from "../src/server/topics.js";
 
 export interface FakeTopics {
   set(topic: string, data: Record<string, unknown>): void;

@@ -1,4 +1,4 @@
-import "../../../../tests/dom.js";
+import "../../tests/dom.js";
 import { describe, expect, it } from "bun:test";
 import { buildTextIndex, chunkAt, findMatches, rangeForSpan, shouldServeScroll, snippet } from "./threadFind.js";
 

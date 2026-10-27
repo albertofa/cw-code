@@ -1,4 +1,4 @@
-import "../../../../tests/dom.js";
+import "../../tests/dom.js";
 import { beforeEach, describe, expect, it } from "bun:test";
 import type { AppSettings, Project, ProjectSettings } from "../cw.js";
 import { useAppStore } from "../stores/appStore.js";

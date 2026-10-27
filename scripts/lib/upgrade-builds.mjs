@@ -37,6 +37,8 @@ export function buildMainBundle(desktopDir, testBuild) {
 }
 
 export function buildServer(desktopDir) {
+  const uiDir = join(desktopDir, "..", "ui");
+  runNodeScript(desktopBin(uiDir, "vite", "vite"), ["build"], uiDir, buildEnv(false));
   const serverDir = join(desktopDir, "..", "server");
   runNodeScript(join(serverDir, "scripts", "compile.ts"), [], serverDir, buildEnv(false));
 }

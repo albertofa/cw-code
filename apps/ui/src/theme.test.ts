@@ -1,4 +1,4 @@
-import "../../../tests/dom.js";
+import "../tests/dom.js";
 import { afterEach, describe, expect, it } from "bun:test";
 import { deriveThemeTokens } from "@cw-code/shared/themes";
 import type { CustomTheme } from "./cw.js";

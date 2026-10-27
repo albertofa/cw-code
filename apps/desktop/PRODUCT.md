@@ -45,7 +45,7 @@ The application is a visual desktop shell over the user's installed CLI binaries
 
 ## Evidence on Hand
 
-- The current renderer implementation and theme live under `apps/desktop/src/renderer/`.
+- The current renderer implementation and theme live under `apps/ui/`.
 - User-supplied reference captures of T3 Code, JetBrains Rider, and VS Code live under `.cw/pastes/`.
 - The rejected first-round mockups live under `design/mockups/` and are anti-reference evidence: they repeated one three-column structure, used too much explanatory text, and relied excessively on borders and divider lines.
 - No external customer claims, usage metrics, or brand assets are established and none should be invented.

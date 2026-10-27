@@ -1,7 +1,7 @@
 import { app, BrowserWindow, dialog, ipcMain, nativeImage, nativeTheme, powerMonitor, shell, type MessageBoxOptions, type WebContents } from "electron";
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import type {
@@ -401,7 +401,7 @@ function loadRenderer(window: BrowserWindow): Promise<void> {
 }
 
 function rendererIndexPath(): string {
-  return join(__dirname, "../renderer/index.html");
+  return app.isPackaged ? join(process.resourcesPath, "server", "ui", "index.html") : resolve(app.getAppPath(), "..", "ui", "dist", "index.html");
 }
 
 function isAppUrl(url: string): boolean {

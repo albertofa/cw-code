@@ -108,6 +108,7 @@ async function checkPackage(distDir) {
   const serverDir = join(distDir, "win-unpacked", "resources", "server");
   const serverExePath = join(serverDir, "cw-code-server.exe");
   const ptyNativePath = join(serverDir, "node_modules", "node-pty", "prebuilds", "win32-x64", "pty.node");
+  const uiIndexPath = join(serverDir, "ui", "index.html");
 
   const report = {
     version,
@@ -115,9 +116,10 @@ async function checkPackage(distDir) {
     installer: { path: installerPath, exists: existsSync(installerPath), sizeBytes: fileSize(installerPath) },
     blockmap: { path: blockmapPath, exists: existsSync(blockmapPath) },
     unpackedExe: { path: unpackedExePath, exists: existsSync(unpackedExePath) },
-    asar: { path: asarPath, exists: existsSync(asarPath), sizeBytes: fileSize(asarPath), containsMainEntry: null, containsNodePty: null },
+    asar: { path: asarPath, exists: existsSync(asarPath), sizeBytes: fileSize(asarPath), containsMainEntry: null, containsNodePty: null, containsRenderer: null },
     serverExe: { path: serverExePath, exists: existsSync(serverExePath), sizeBytes: fileSize(serverExePath) },
     nodePtyNative: { path: ptyNativePath, exists: existsSync(ptyNativePath) },
+    uiIndex: { path: uiIndexPath, exists: existsSync(uiIndexPath) },
     probe: null
   };
 
@@ -128,6 +130,7 @@ async function checkPackage(distDir) {
   if (!report.asar.exists) problems.push(`app.asar not found: ${asarPath}`);
   if (!report.serverExe.exists) problems.push(`server binary not found: ${serverExePath}`);
   if (!report.nodePtyNative.exists) problems.push(`node-pty win32-x64 native binary not found: ${ptyNativePath}`);
+  if (!report.uiIndex.exists) problems.push(`bundled UI not found: ${uiIndexPath}`);
 
   if (report.asar.exists) {
     const asarLib = await resolveAsarLib(desktopDir);
@@ -137,6 +140,8 @@ async function checkPackage(distDir) {
       report.asar.containsNodePty = entries.some((entry) => entry.includes("/node_modules/node-pty/"));
       if (!report.asar.containsMainEntry) problems.push("app.asar does not contain out/main/index.js");
       if (report.asar.containsNodePty) problems.push("app.asar still contains node-pty; it ships only with the server under resources/server");
+      report.asar.containsRenderer = entries.some((entry) => entry.includes("out/renderer/"));
+      if (report.asar.containsRenderer) problems.push("app.asar still contains out/renderer; the UI ships once, under resources/server/ui");
     }
   }
 
@@ -358,6 +363,7 @@ async function main() {
   console.log(`  app.asar: ${report.asar.exists ? "OK" : "MISSING"} (${megabytes(report.asar.sizeBytes)})`);
   console.log(`  server binary: ${report.serverExe.exists ? "OK" : "MISSING"} (${megabytes(report.serverExe.sizeBytes)})`);
   console.log(`  node-pty win32-x64 native binary: ${report.nodePtyNative.exists ? "OK" : "MISSING"}`);
+  console.log(`  bundled UI: ${report.uiIndex.exists ? "OK" : "MISSING"}`);
   if (report.probe) {
     console.log(`  probe: rendererLoaded=${report.probe.rendererLoaded} nodePty.spawned=${report.probe.nodePty.spawned} durationMs=${report.probe.durationMs}`);
   }

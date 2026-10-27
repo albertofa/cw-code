@@ -1,4 +1,4 @@
-import "../../../../tests/dom.js";
+import "../../tests/dom.js";
 import { beforeEach, describe, expect, it, vi } from "bun:test";
 import type { SessionMeta, SessionRow, UpdateActionResult, UpdateState } from "@cw-code/contracts";
 import { DEFAULT_COMPOSER, useAppStore } from "./appStore.js";

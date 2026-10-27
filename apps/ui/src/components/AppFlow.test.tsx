@@ -1,10 +1,10 @@
-import "../../../../tests/dom.js";
+import "../../tests/dom.js";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "bun:test";
 import type { ThreadItem } from "@cw-code/contracts";
 import { DEFAULT_APPEARANCE } from "../appearanceFonts.js";
-import { installFakeTopics, type FakeTopics } from "../../../../tests/fakeTopics.js";
+import { installFakeTopics, type FakeTopics } from "../../tests/fakeTopics.js";
 import type { Session } from "../cw.js";
 
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;

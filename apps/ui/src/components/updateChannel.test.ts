@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { channelOfVersion as mainChannelOfVersion } from "../../../main/updates/updateState.js";
+import { channelOfVersion as mainChannelOfVersion } from "../../../desktop/src/main/updates/updateState.js";
 import { channelOfVersion } from "./updateChannel.js";
 
 const VERSIONS = ["0.0.1-alpha.21", "1.2.0", " 1.2.0-alpha.3 ", "1.2.0-beta.1", "1.2.0-alphabet", "alpha", "", "1.2-alpha.1", "v1.2.0-alpha.1"];

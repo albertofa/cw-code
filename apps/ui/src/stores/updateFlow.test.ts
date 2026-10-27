@@ -1,4 +1,4 @@
-import "../../../../tests/dom.js";
+import "../../tests/dom.js";
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import type { ShutdownAssessment, ShutdownPrepareRequest, ShutdownPrepareResult, UpdateActionResult, UpdateInstallRequest, UpdateState } from "../cw.js";
 import { useNotifs } from "../components/Notifications.js";
