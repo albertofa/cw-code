@@ -10,6 +10,7 @@ import type {
   ConnectionList,
   ConnectionProfile,
   DesktopConnection,
+  ServerReady,
   TokenStorage,
   ServerPackageProbe,
   ShutdownAssessment,
@@ -17,20 +18,24 @@ import type {
   ShutdownPrepareRequest,
   ShutdownPrepareResult,
   ShutdownRequestedEvent,
+  ShutdownScope,
   ShutdownStatus,
   UpdateActionResult,
   UpdateState
 } from "@cw-code/contracts";
 import { appendCrashLog, initCrashLog } from "@cw-code/server/debug/crashLog";
 import { attachmentsDir, cwCodeHome, logsDir } from "@cw-code/server/paths/appPaths";
+import { PROTOCOL_VERSION } from "@cw-code/shared/protocol";
 import { windowBackgroundColor } from "@cw-code/shared/themes";
 import { channelOfVersion } from "@cw-code/shared/updateChannel";
 import { attentionDescription, shouldFlash } from "./attention.js";
 import { badgeLabel, renderBadge } from "./badgeImage.js";
 import { failedServerProbe, RendererProbeTracker, runPackageProbe } from "./debug/packageProbe.js";
+import { readOrCreateInstallId } from "./installId.js";
 import { assertLocalAbsolutePath, resolveOpenTarget } from "./openPathPolicy.js";
 import { ServerLink, type ServerLinkChange } from "./serverLink.js";
-import { ServerProcess } from "./serverProcess.js";
+import { ServerProcess, ServerStartDeclinedError } from "./serverProcess.js";
+import { ServerTray } from "./tray.js";
 import { ElectronUpdaterAdapter } from "./updates/ElectronUpdaterAdapter.js";
 import { UpdateService } from "./updates/UpdateService.js";
 import { createUpdateLogFile } from "./updates/updateLog.js";
@@ -74,6 +79,7 @@ let serverFailure: string | null = null;
 let restartAfterFailedInstall = false;
 let serverStop: Promise<void> | null = null;
 let serverStopped = false;
+let tray: ServerTray | null = null;
 
 const serverProcess: ServerProcess = new ServerProcess({
   launch: {
@@ -82,6 +88,8 @@ const serverProcess: ServerProcess = new ServerProcess({
     appPath: app.getAppPath(),
     legacyUserData: app.getPath("userData")
   },
+  identity: { installId: readOrCreateInstallId(app.getPath("userData")), version: app.getVersion(), protocol: PROTOCOL_VERSION },
+  confirmReplace: confirmServerReplace,
   isQuitting: (): boolean => quitApproved || (link.shutdown.committed && !restartAfterFailedInstall),
   onFatal: (message) => reportFatalError("cw-code server stopped", new Error(message))
 });
@@ -170,12 +178,51 @@ function applyUpdatePreferences(): void {
   });
 }
 
+async function confirmServerReplace(running: ServerReady): Promise<boolean> {
+  const { response } = await dialog.showMessageBox({
+    type: "question",
+    title: "cw-code",
+    message: `A cw-code server from version ${running.version} is still running in the background. Restart it with version ${app.getVersion()}?`,
+    detail: "Running turns will stop.",
+    buttons: ["Restart", "Quit"],
+    defaultId: 0,
+    cancelId: 1,
+    noLink: true
+  });
+  return response === 0;
+}
+
+function syncTray(): void {
+  const wanted = link.settings?.keepServerRunning === true && !isQuitApproved();
+  if (wanted && !tray) {
+    tray = new ServerTray({ iconPath: brandingIconPath(), open: focusMainWindow, stopAndQuit: stopServerAndQuit }, link.attentionCount);
+    return;
+  }
+  if (wanted || !tray) return;
+  destroyTray();
+  if (liveMainWindow()?.isVisible() === false) focusMainWindow();
+}
+
+function destroyTray(): void {
+  tray?.destroy();
+  tray = null;
+}
+
+function stopServerAndQuit(): void {
+  focusMainWindow();
+  requestShutdown("server");
+}
+
 function handleLinkChange(change: ServerLinkChange): void {
   if (change === "shutdown" && !link.shutdown.committed) restartAfterFailedInstall = false;
-  if (change === "settings") syncWindowBackground();
+  if (change === "settings") {
+    syncWindowBackground();
+    syncTray();
+  }
   if (change === "attention") {
     if (link.attentionCount === null) clearAttention();
     else applyAttention(link.attentionCount);
+    tray?.setAttention(link.attentionCount);
   }
   if (change === "settings" || change === "startup") {
     ensureUpdateService();
@@ -224,14 +271,14 @@ function quitWithoutDialog(): void {
   void stopServer().then(() => app.quit());
 }
 
-function requestShutdown(): void {
+function requestShutdown(scope: ShutdownScope = "server"): void {
   const window = liveMainWindow();
   if (!link.isOpen || link.startup?.mode !== "ready" || !window || window.webContents.isCrashed()) {
     quitWithoutDialog();
     return;
   }
   if (isQuitApproved()) return;
-  const event: ShutdownRequestedEvent = { reason: "quit" };
+  const event: ShutdownRequestedEvent = { reason: "quit", scope };
   window.webContents.send("shutdown.requested", event);
   clearShutdownAck();
   shutdownAckTimer = setTimeout(() => {
@@ -259,6 +306,10 @@ function windowIconFile(): string {
   return process.platform === "linux" ? "icon.png" : "icon.ico";
 }
 
+function brandingIconPath(): string {
+  return app.isPackaged ? join(process.resourcesPath, "branding", windowIconFile()) : join(app.getAppPath(), "resources", windowIconFile());
+}
+
 function currentWindowBackground(): string {
   const settings = link.settings;
   return windowBackgroundColor(settings?.themeId ?? "dark", settings?.customThemes ?? [], !nativeTheme.shouldUseDarkColors);
@@ -274,9 +325,7 @@ function createBrowserWindow(): BrowserWindow {
     height: 900,
     frame: false,
     title: "cw-code",
-    icon: app.isPackaged
-      ? join(process.resourcesPath, "branding", windowIconFile())
-      : join(app.getAppPath(), "resources", windowIconFile()),
+    icon: brandingIconPath(),
     backgroundColor: currentWindowBackground(),
     autoHideMenuBar: true,
     webPreferences: {
@@ -337,7 +386,8 @@ async function createWindow(): Promise<void> {
   window.on("close", (event) => {
     if (process.platform === "darwin" || isQuitApproved()) return;
     event.preventDefault();
-    requestShutdown();
+    if (tray) window.hide();
+    else requestShutdown();
   });
   window.on("session-end", endOfSession);
   if (link.attentionCount !== null) applyAttention(link.attentionCount);
@@ -587,14 +637,19 @@ async function commitInstall(token: string, action: () => void): Promise<Shutdow
   return { ok: false, message: `cw-code did not exit within ${Math.round(INSTALL_EXIT_TIMEOUT_MS / 1000)}s. Normal use has been restored.` };
 }
 
+async function startAndConnectServer(): Promise<void> {
+  await serverProcess.start();
+  await link.connect();
+  if (serverProcess.attached) await link.call("server.setParent", { pid: process.pid });
+}
+
 async function restoreAfterFailedInstall(): Promise<void> {
   quitApproved = false;
   restartAfterFailedInstall = true;
   serverStop = null;
   serverStopped = false;
   try {
-    await serverProcess.start();
-    await link.connect();
+    await startAndConnectServer();
   } catch (error) {
     reportFatalError("cw-code server stopped", error);
   }
@@ -651,6 +706,10 @@ function reportFatalError(title: string, error: unknown): void {
 }
 
 function reportFatalStartupError(error: unknown): void {
+  if (error instanceof ServerStartDeclinedError) {
+    app.exit(0);
+    return;
+  }
   reportFatalError("cw-code could not start", error);
 }
 
@@ -702,10 +761,9 @@ function startUpdateAutotest(pending: PendingUpdateAutotest | null): void {
 
 async function connectServer(): Promise<void> {
   try {
-    await serverProcess.start();
-    await link.connect();
+    await startAndConnectServer();
   } catch (error) {
-    if (!packageProbeOutPath()) throw error;
+    if (!packageProbeOutPath() || error instanceof ServerStartDeclinedError) throw error;
     serverFailure = errorMessage(error);
     appendCrashLog(`server did not start: ${serverFailure}`);
   }
@@ -765,6 +823,7 @@ if (!app.requestSingleInstanceLock()) {
     }
     clearShutdownAck();
     quitApproved = true;
+    destroyTray();
     if (serverStopped) return;
     event.preventDefault();
     void stopServer().then(() => app.quit());

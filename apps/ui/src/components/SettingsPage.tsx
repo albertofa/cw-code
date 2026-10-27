@@ -266,6 +266,23 @@ function GeneralSettings() {
         </SettingsGroup>
       )}
 
+      {window.cw.capabilities.localServer && (
+        <SettingsGroup title="Background server">
+          <SettingsRow
+            label="Keep the server running when the window closes"
+            hint="Closing the window hides cw-code in the tray so running turns keep going. Use “Stop server and quit” in the tray to exit."
+            htmlFor="sp-keep-server"
+          >
+            <SettingsSwitch
+              id="sp-keep-server"
+              checked={draft.keepServerRunning}
+              onChange={(next) => set({ keepServerRunning: next })}
+              label="Keep the server running when the window closes"
+            />
+          </SettingsRow>
+        </SettingsGroup>
+      )}
+
       <SettingsGroup title="About">
         <div className="sp-about">
           <img src={appIcon} alt="" aria-hidden="true" draggable={false} />

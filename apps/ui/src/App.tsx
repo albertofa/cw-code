@@ -123,7 +123,7 @@ export function App() {
     const offSkills = window.cw.onSkillsChanged((result) => useSkillsStore.getState().applyList(result));
     const offComposer = window.cw.onComposerChanged(({ sessionId, prefs }) => useAppStore.getState().applyComposer(sessionId, prefs));
     const offUpdates = useAppStore.getState().subscribeUpdates();
-    const offShutdown = window.cw.shutdown.onRequested(() => void handleQuitRequest());
+    const offShutdown = window.cw.shutdown.onRequested((event) => void handleQuitRequest(event.scope));
     const offShutdownExpired = window.cw.shutdown.onExpired(() => handleShutdownExpired());
     const onKey = (e: KeyboardEvent) => {
       if (!(e.ctrlKey || e.metaKey) || e.altKey) return;

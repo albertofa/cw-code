@@ -93,6 +93,7 @@ import type {
   ShutdownPrepareResult,
   ShutdownReason,
   ShutdownRequestedEvent,
+  ShutdownScope,
   ShutdownTerminal,
   SkillDetail,
   SkillMeta,
@@ -163,6 +164,7 @@ export type {
   ShutdownPrepareRequest,
   ShutdownPrepareResult,
   ShutdownReason,
+  ShutdownScope,
   ShutdownTerminal,
   AccountUsageEntry,
   AccountUsageOk,
@@ -552,6 +554,7 @@ export interface CwApi {
     force(token: string): Promise<ShutdownPrepareResult>;
     cancel(token: string): Promise<void>;
     quit(token: string): Promise<ShutdownCommitResult>;
+    quitWindow(): void;
     onRequested(cb: (event: ShutdownRequestedEvent) => void): () => void;
     onExpired(cb: (event: ShutdownExpiredEvent) => void): () => void;
   };

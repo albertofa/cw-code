@@ -62,6 +62,10 @@ describe("serverArgs", () => {
   it("ignores an invalid renderer url", () => {
     expect(serverArgs(0, 42, "/legacy", { ELECTRON_RENDERER_URL: "not a url" })).toEqual(base);
   });
+
+  it("passes the launcher id when one is given", () => {
+    expect(serverArgs(0, 42, "/legacy", {}, "install-1")).toEqual([...base, "--launcher-id", "install-1"]);
+  });
 });
 
 describe("serverCommand", () => {
@@ -94,5 +98,13 @@ describe("serverCommand", () => {
       file: "/custom/bun",
       args: ["/custom/entry.ts", ...args]
     });
+  });
+
+  it("forwards the launcher id to packaged and development servers", () => {
+    const launcherArgs = serverArgs(0, 42, "/legacy", {}, "install-1");
+    const packaged = { isPackaged: true, resourcesPath: resolve("/opt/cw-code/resources"), appPath: "", legacyUserData: "" };
+    const dev = { isPackaged: false, resourcesPath: "", appPath: resolve("/repo/apps/desktop"), legacyUserData: "" };
+    expect(serverCommand(packaged, "win32", {}, launcherArgs, noBun).args).toEqual([...launcherArgs]);
+    expect(serverCommand(dev, "linux", {}, launcherArgs, noBun).args.slice(-2)).toEqual(["--launcher-id", "install-1"]);
   });
 });

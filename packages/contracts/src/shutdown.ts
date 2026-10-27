@@ -1,5 +1,7 @@
 export type ShutdownReason = "quit" | "update";
 
+export type ShutdownScope = "server" | "window";
+
 export interface ShutdownStatus {
   idle: boolean;
   committed: boolean;
@@ -42,6 +44,7 @@ export interface ShutdownPrepareRequest {
 
 export interface ShutdownRequestedEvent {
   reason: ShutdownReason;
+  scope: ShutdownScope;
 }
 
 export interface ShutdownExpiredEvent {

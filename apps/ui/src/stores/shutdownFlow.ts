@@ -1,4 +1,4 @@
-import type { ShutdownAssessment, ShutdownPrepareResult, ShutdownReason } from "../cw.js";
+import type { ShutdownAssessment, ShutdownPrepareResult, ShutdownReason, ShutdownScope } from "../cw.js";
 import { ipcErrorMessage } from "../components/ipcError.js";
 import { useNotifs } from "../components/Notifications.js";
 import { useAppStore, type ShutdownUiState } from "./appStore.js";
@@ -6,11 +6,17 @@ import { useEditorBuffers, type DirtyBuffer } from "./editorBuffers.js";
 
 export const SHUTDOWN_PREPARE_TIMEOUT_MS = 10_000;
 
+const NOTHING_TO_STOP: ShutdownAssessment = { activeTurns: [], backgroundTasks: 0, terminals: [] };
+
+type FlowOutcome = { scope: "server"; token: string } | { scope: "window" };
+
 interface ActiveFlow {
   reason: ShutdownReason;
+  scope: ShutdownScope;
   token: string | null;
-  promise: Promise<{ token: string } | null>;
-  resolve: (result: { token: string } | null) => void;
+  promise: Promise<FlowOutcome | null>;
+  serverResult: Promise<{ token: string } | null>;
+  resolve: (result: FlowOutcome | null) => void;
   preparing: boolean;
 }
 
@@ -37,7 +43,7 @@ function showUi(state: ShutdownUiState): void {
   useAppStore.setState({ shutdown: state });
 }
 
-function finish(result: { token: string } | null, error?: { title: string; message: string }): void {
+function finish(result: FlowOutcome | null, error?: { title: string; message: string }): void {
   const flow = active;
   if (!flow) return;
   active = null;
@@ -50,15 +56,30 @@ export function isShutdownFlowActive(): boolean {
   return active !== null;
 }
 
-export function runShutdownFlow(reason: ShutdownReason): Promise<{ token: string } | null> {
-  if (active) return active.promise;
-  let resolve: (result: { token: string } | null) => void = () => {};
-  const promise = new Promise<{ token: string } | null>((settle) => {
+function startFlow(reason: ShutdownReason, scope: ShutdownScope): ActiveFlow {
+  if (active) return active;
+  let resolve: (result: FlowOutcome | null) => void = () => {};
+  const promise = new Promise<FlowOutcome | null>((settle) => {
     resolve = settle;
   });
-  active = { reason, token: null, promise, resolve, preparing: false };
-  void begin(active);
-  return promise;
+  const serverResult = promise.then((outcome) => (outcome?.scope === "server" ? { token: outcome.token } : null));
+  const flow: ActiveFlow = { reason, scope, token: null, promise, serverResult, resolve, preparing: false };
+  active = flow;
+  void (scope === "window" ? beginWindow(flow) : begin(flow));
+  return flow;
+}
+
+export function runShutdownFlow(reason: ShutdownReason): Promise<{ token: string } | null> {
+  return startFlow(reason, "server").serverResult;
+}
+
+function beginWindow(flow: ActiveFlow): void {
+  const dirty = useEditorBuffers.getState().dirty();
+  if (dirty.length === 0) {
+    finish({ scope: "window" });
+    return;
+  }
+  showUi({ reason: flow.reason, assessment: NOTHING_TO_STOP, dirty, phase: "review", error: null, pending: [] });
 }
 
 async function begin(flow: ActiveFlow): Promise<void> {
@@ -79,6 +100,10 @@ async function begin(flow: ActiveFlow): Promise<void> {
 }
 
 async function prepare(flow: ActiveFlow, assessment: ShutdownAssessment, stopActiveTurns: boolean): Promise<void> {
+  if (flow.scope === "window") {
+    finish({ scope: "window" });
+    return;
+  }
   if (flow.preparing) return;
   flow.preparing = true;
   try {
@@ -115,7 +140,7 @@ async function prepareOnce(flow: ActiveFlow, assessment: ShutdownAssessment, sto
     return;
   }
   if (result.ok) {
-    finish({ token: result.token });
+    finish({ scope: "server", token: result.token });
     return;
   }
   if (result.code === "blocked") {
@@ -147,7 +172,7 @@ async function prepareOnce(flow: ActiveFlow, assessment: ShutdownAssessment, sto
 export async function applyShutdownAssessment(assessment: ShutdownAssessment): Promise<void> {
   const flow = active;
   const current = ui();
-  if (!flow || !current || (current.phase !== "review" && current.phase !== "waiting")) return;
+  if (!flow || flow.scope === "window" || !current || (current.phase !== "review" && current.phase !== "waiting")) return;
   const dirty = useEditorBuffers.getState().dirty();
   patchUi({ assessment, dirty });
   if (current.phase !== "waiting" || assessment.activeTurns.length > 0 || flow.preparing) return;
@@ -237,7 +262,7 @@ export async function shutdownForce(): Promise<void> {
   try {
     const result = await window.cw.shutdown.force(flow.token);
     if (active !== flow) return;
-    if (result.ok) finish({ token: result.token });
+    if (result.ok) finish({ scope: "server", token: result.token });
     else patchUi({ phase: "timeout", error: "Some processes could not be stopped." });
   } catch (err) {
     if (active !== flow) return;
@@ -268,13 +293,17 @@ export function handleShutdownExpired(): void {
   });
 }
 
-export async function handleQuitRequest(): Promise<void> {
+export async function handleQuitRequest(scope: ShutdownScope = "server"): Promise<void> {
   if (active) {
     await refreshShutdownAssessment();
     return;
   }
-  const result = await runShutdownFlow("quit");
-  if (!result) return;
-  const committed = await window.cw.shutdown.quit(result.token);
+  const outcome = await startFlow("quit", scope).promise;
+  if (!outcome) return;
+  if (outcome.scope === "window") {
+    window.cw.shutdown.quitWindow();
+    return;
+  }
+  const committed = await window.cw.shutdown.quit(outcome.token);
   if (!committed.ok) useNotifs.getState().push({ kind: "error", title: "cw-code did not quit", message: committed.message, sticky: true });
 }

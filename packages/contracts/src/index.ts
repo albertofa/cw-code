@@ -157,6 +157,7 @@ export type {
 } from "./updates.js";
 export type {
   ShutdownReason,
+  ShutdownScope,
   ShutdownStatus,
   ShutdownActiveTurn,
   ShutdownTerminal,

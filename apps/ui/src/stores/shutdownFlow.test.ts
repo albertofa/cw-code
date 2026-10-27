@@ -5,6 +5,7 @@ import { useAppStore } from "./appStore.js";
 import { useEditorBuffers } from "./editorBuffers.js";
 import {
   applyShutdownAssessment,
+  handleQuitRequest,
   handleShutdownExpired,
   hasShutdownBlockers,
   runShutdownFlow,
@@ -33,6 +34,9 @@ interface FakeShutdownApi {
   saveCalls: Array<{ sessionId: string; path: string; content: string }>;
   failSave: boolean;
   prepareGate: Promise<void> | null;
+  assessCalls: number;
+  quitCalls: string[];
+  quitWindowCalls: number;
 }
 
 function installCw(): FakeShutdownApi {
@@ -44,11 +48,17 @@ function installCw(): FakeShutdownApi {
     forceCalls: [],
     saveCalls: [],
     failSave: false,
-    prepareGate: null
+    prepareGate: null,
+    assessCalls: 0,
+    quitCalls: [],
+    quitWindowCalls: 0
   };
   const cw = {
     shutdown: {
-      assess: async () => api.assessments.shift() ?? EMPTY,
+      assess: async () => {
+        api.assessCalls += 1;
+        return api.assessments.shift() ?? EMPTY;
+      },
       prepare: async (request: ShutdownPrepareRequest) => {
         api.prepareCalls.push(request);
         if (api.prepareGate) await api.prepareGate;
@@ -61,7 +71,13 @@ function installCw(): FakeShutdownApi {
       cancel: async (token: string) => {
         api.cancelCalls.push(token);
       },
-      quit: async () => ({ ok: true }),
+      quit: async (token: string) => {
+        api.quitCalls.push(token);
+        return { ok: true };
+      },
+      quitWindow: () => {
+        api.quitWindowCalls += 1;
+      },
       onRequested: () => () => {}
     },
     writeFileGuarded: async (sessionId: string, path: string, content: string) => {
@@ -283,6 +299,51 @@ describe("runShutdownFlow", () => {
 
   it("ignores pushes when no dialog is open", async () => {
     await applyShutdownAssessment(BUSY);
+    expect(useAppStore.getState().shutdown).toBeNull();
+  });
+});
+
+describe("handleQuitRequest", () => {
+  let api: FakeShutdownApi;
+
+  beforeEach(() => {
+    api = installCw();
+    useAppStore.setState({ shutdown: null });
+    useEditorBuffers.setState({ buffers: {} });
+  });
+
+  afterEach(async () => {
+    await shutdownCancel();
+  });
+
+  it("prepares and commits the server shutdown for the server scope", async () => {
+    await handleQuitRequest("server");
+    expect(api.prepareCalls).toHaveLength(1);
+    expect(api.quitCalls).toEqual(["token-1"]);
+    expect(api.quitWindowCalls).toBe(0);
+  });
+
+  it("closes only the window for the window scope without asking the server", async () => {
+    api.assessments = [BUSY];
+    await handleQuitRequest("window");
+    expect(api.assessCalls).toBe(0);
+    expect(api.prepareCalls).toHaveLength(0);
+    expect(api.quitCalls).toEqual([]);
+    expect(api.quitWindowCalls).toBe(1);
+  });
+
+  it("reviews dirty files with an empty assessment before closing the window", async () => {
+    dirtyFile("sess_a", "a.ts", "A");
+    const pending = handleQuitRequest("window");
+    await settle();
+    expect(useAppStore.getState().shutdown).toMatchObject({ reason: "quit", phase: "review", assessment: EMPTY });
+    await applyShutdownAssessment(BUSY);
+    expect(useAppStore.getState().shutdown?.assessment).toEqual(EMPTY);
+    shutdownDiscardAll();
+    await shutdownProceed();
+    await pending;
+    expect(api.prepareCalls).toHaveLength(0);
+    expect(api.quitWindowCalls).toBe(1);
     expect(useAppStore.getState().shutdown).toBeNull();
   });
 });

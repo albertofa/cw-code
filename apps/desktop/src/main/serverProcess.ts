@@ -6,17 +6,21 @@ import { join, resolve } from "node:path";
 import type { ServerEndpoint, ServerReady } from "@cw-code/contracts";
 import { appendCrashLog } from "@cw-code/server/debug/crashLog";
 import { cwCodeHome, userdataDir } from "@cw-code/server/paths/appPaths";
+import { confirmLiveEndpoint, isProcessAlive, readLiveEndpoint } from "@cw-code/server/transport/endpointFile";
 import { isServerReady, SERVER_READY_PREFIX, SERVER_RUNNING_PREFIX, SERVER_TOKEN_FILE } from "@cw-code/shared/protocol";
 import { resolveBunBinary, type BunLookup } from "./bunBinary.js";
+import { decideServerStart, requestServerStop, waitForPidExit, type LauncherIdentity, type StartDecision } from "./serverAttach.js";
 
 export const READY_TIMEOUT_MS = 60_000;
 export const STOP_CALL_TIMEOUT_MS = 3_000;
 export const STOP_EXIT_TIMEOUT_MS = 3_000;
+export const REPLACE_EXIT_TIMEOUT_MS = 15_000;
 export const MAX_RESTARTS = 3;
 export const RESTART_WINDOW_MS = 60_000;
 const ALREADY_RUNNING_RETRY_MS = 6_000;
 const ALREADY_RUNNING_POLL_MS = 500;
 const RESTART_DELAY_MS = 500;
+const ATTACHED_POLL_MS = 1_000;
 const STDERR_TAIL_LINES = 50;
 
 export interface ServerLine {
@@ -43,8 +47,10 @@ export interface ServerStopLink {
 
 export interface ServerProcessOptions {
   launch: ServerLaunch;
+  identity: LauncherIdentity;
   isQuitting(): boolean;
   onFatal(message: string): void;
+  confirmReplace(running: ServerReady): Promise<boolean>;
 }
 
 const LINE_KINDS: ReadonlyArray<readonly [string, ServerLine["kind"]]> = [
@@ -53,9 +59,22 @@ const LINE_KINDS: ReadonlyArray<readonly [string, ServerLine["kind"]]> = [
 ];
 
 class ServerAlreadyRunningError extends Error {
-  constructor() {
-    super(`Another cw-code instance is already using ${cwCodeHome()}. Close it first, or start this one with a different CW_CODE_HOME.`);
+  constructor(
+    readonly running: ServerReady,
+    foreign: boolean
+  ) {
+    super(
+      `Another cw-code instance is already using ${cwCodeHome()}. Close it first, or start this one with a different CW_CODE_HOME.` +
+        (foreign ? " It was started by another cw-code install or from the command line; connect to it as a remote server instead." : "")
+    );
     this.name = "ServerAlreadyRunningError";
+  }
+}
+
+export class ServerStartDeclinedError extends Error {
+  constructor() {
+    super("the background cw-code server was left running");
+    this.name = "ServerStartDeclinedError";
   }
 }
 
@@ -83,8 +102,9 @@ export function allowRestart(history: readonly number[], now: number, max = MAX_
   return recent.length >= max ? null : [...recent, now];
 }
 
-export function serverArgs(port: number, parentPid: number, legacyUserData: string, env: NodeJS.ProcessEnv): string[] {
+export function serverArgs(port: number, parentPid: number, legacyUserData: string, env: NodeJS.ProcessEnv, launcherId?: string): string[] {
   const args = ["--port", String(port), "--parent-pid", String(parentPid), "--legacy-user-data", legacyUserData];
+  if (launcherId) args.push("--launcher-id", launcherId);
   const rendererUrl = env.ELECTRON_RENDERER_URL?.trim();
   if (!rendererUrl) return args;
   try {
@@ -112,6 +132,10 @@ export function serverCommand(
   }
   const entry = env.CW_SERVER_ENTRY?.trim() || resolve(launch.appPath, "..", "server", "src", "index.ts");
   return { file: resolveBunBinary({ env, platform, ...files }), args: [entry, ...args], env: { ...env } };
+}
+
+async function readOwnerToken(): Promise<string> {
+  return (await readFile(join(userdataDir(), SERVER_TOKEN_FILE), "utf8")).trim();
 }
 
 function describeExit(code: number | null, signal: NodeJS.Signals | null): string {
@@ -145,6 +169,8 @@ function delay(ms: number): Promise<void> {
 export class ServerProcess {
   private current: ServerReady | null = null;
   private child: ChildProcess | null = null;
+  private attachedPid: number | null = null;
+  private attachedWatch: NodeJS.Timeout | null = null;
   private port = 0;
   private stderrTail: string[] = [];
   private restarts: number[] = [];
@@ -158,6 +184,10 @@ export class ServerProcess {
     return this.current;
   }
 
+  get attached(): boolean {
+    return this.attachedPid !== null;
+  }
+
   start(): Promise<ServerReady> {
     this.stopRequested = false;
     this.stopping = null;
@@ -167,8 +197,7 @@ export class ServerProcess {
   async endpoint(): Promise<ServerEndpoint> {
     const ready = this.current;
     if (!ready) throw new Error("the cw-code server is not running");
-    const token = (await readFile(join(userdataDir(), SERVER_TOKEN_FILE), "utf8")).trim();
-    return { url: ready.url, token };
+    return { url: ready.url, token: await readOwnerToken() };
   }
 
   onExit(cb: (expected: boolean) => void): () => void {
@@ -180,7 +209,7 @@ export class ServerProcess {
 
   stop(link?: ServerStopLink): Promise<void> {
     this.stopRequested = true;
-    this.stopping ??= this.stopChild(link);
+    this.stopping ??= this.attachedPid !== null ? this.stopAttached(this.attachedPid, link) : this.stopChild(link);
     return this.stopping;
   }
 
@@ -191,13 +220,64 @@ export class ServerProcess {
   private async launchExclusive(): Promise<ServerReady> {
     const deadline = Date.now() + ALREADY_RUNNING_RETRY_MS;
     for (;;) {
-      try {
-        return await this.launch();
-      } catch (error) {
-        if (!(error instanceof ServerAlreadyRunningError) || Date.now() >= deadline) throw error;
+      const decision = await this.decide();
+      if (decision.kind === "attach") return this.attach(decision.ready);
+      if (decision.kind === "replace") {
+        await this.replace(decision.ready);
+        continue;
+      }
+      if (decision.kind === "foreign") {
+        if (Date.now() >= deadline) throw new ServerAlreadyRunningError(decision.ready, true);
+      } else {
+        try {
+          return await this.launch();
+        } catch (error) {
+          if (!(error instanceof ServerAlreadyRunningError) || Date.now() >= deadline) throw error;
+        }
       }
       await delay(ALREADY_RUNNING_POLL_MS);
     }
+  }
+
+  private isForeign(running: ServerReady): boolean {
+    return decideServerStart(running, this.options.identity).kind === "foreign";
+  }
+
+  private async decide(): Promise<StartDecision> {
+    const existing = readLiveEndpoint(userdataDir());
+    if (!existing || !(await confirmLiveEndpoint(existing))) return { kind: "spawn" };
+    return decideServerStart(existing, this.options.identity);
+  }
+
+  private attach(ready: ServerReady): ServerReady {
+    this.child = null;
+    this.current = ready;
+    this.port = ready.port;
+    this.attachedPid = ready.pid;
+    this.clearAttachedWatch();
+    const watch = setInterval(() => {
+      if (isProcessAlive(ready.pid)) return;
+      this.clearAttachedWatch();
+      if (this.attachedPid !== ready.pid) return;
+      this.attachedPid = null;
+      this.handleExit(`the background server (pid ${ready.pid}) exited`);
+    }, ATTACHED_POLL_MS);
+    watch.unref();
+    this.attachedWatch = watch;
+    console.warn(`[server] attached to the background server on ${ready.url} (pid ${ready.pid})`);
+    return ready;
+  }
+
+  private clearAttachedWatch(): void {
+    if (this.attachedWatch) clearInterval(this.attachedWatch);
+    this.attachedWatch = null;
+  }
+
+  private async replace(running: ServerReady): Promise<void> {
+    if (!(await this.options.confirmReplace(running))) throw new ServerStartDeclinedError();
+    await requestServerStop(running, await readOwnerToken());
+    if (await waitForPidExit(running.pid, REPLACE_EXIT_TIMEOUT_MS)) return;
+    throw new Error(`the cw-code server from version ${running.version} (pid ${running.pid}) did not stop within ${REPLACE_EXIT_TIMEOUT_MS / 1000}s`);
   }
 
   private launch(): Promise<ServerReady> {
@@ -205,19 +285,22 @@ export class ServerProcess {
       this.options.launch,
       process.platform,
       process.stdout.isTTY || process.stdin.isTTY ? { ...process.env, CW_LAUNCHED_FROM_TERMINAL: "1" } : process.env,
-      serverArgs(this.port, process.pid, this.options.launch.legacyUserData, process.env),
+      serverArgs(this.port, process.pid, this.options.launch.legacyUserData, process.env, this.options.identity.installId),
       { homeDir: homedir(), exists: existsSync }
     );
     this.stderrTail = [];
     return new Promise<ServerReady>((resolvePromise, reject) => {
       let child: ChildProcess;
       try {
-        child = spawn(command.file, command.args, { env: command.env, stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
+        child = spawn(command.file, command.args, { env: command.env, stdio: ["ignore", "pipe", "pipe"], windowsHide: true, detached: true });
       } catch (error) {
         reject(new Error(`could not start the cw-code server (${command.file}): ${errorMessage(error)}`));
         return;
       }
+      child.unref();
       this.child = child;
+      this.attachedPid = null;
+      this.clearAttachedWatch();
       let settled = false;
       let started = false;
       const settle = (finish: () => void): void => {
@@ -245,7 +328,7 @@ export class ServerProcess {
             continue;
           }
           if (parsed.kind === "running") {
-            settle(() => reject(new ServerAlreadyRunningError()));
+            settle(() => reject(new ServerAlreadyRunningError(parsed.ready, this.isForeign(parsed.ready))));
             continue;
           }
           this.current = parsed.ready;
@@ -323,6 +406,25 @@ export class ServerProcess {
         appendCrashLog(`cw-code server restart failed: ${lastFailure}`);
       }
     }
+  }
+
+  private async stopAttached(pid: number, link?: ServerStopLink): Promise<void> {
+    const running = this.current;
+    const request = link
+      ? link.call("server.stop")
+      : running
+        ? readOwnerToken().then((token) => requestServerStop(running, token))
+        : Promise.resolve();
+    const stopCall = request.catch((error: unknown) => {
+      console.warn(`[server] server.stop failed: ${errorMessage(error)}`);
+    });
+    if (!(await settlesWithin(stopCall, STOP_CALL_TIMEOUT_MS))) console.warn(`[server] server.stop did not answer within ${STOP_CALL_TIMEOUT_MS}ms`);
+    const exited = await waitForPidExit(pid, STOP_EXIT_TIMEOUT_MS);
+    if (!exited) console.warn(`[server] the background server (pid ${pid}) did not exit within ${STOP_EXIT_TIMEOUT_MS}ms`);
+    if (this.attachedPid !== pid) return;
+    this.clearAttachedWatch();
+    this.attachedPid = null;
+    if (exited) this.notifyExit(true);
   }
 
   private async stopChild(link?: ServerStopLink): Promise<void> {

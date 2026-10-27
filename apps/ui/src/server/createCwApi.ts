@@ -181,6 +181,7 @@ export function createCwApi(
         if (result.ok) desktop?.shutdown.quit();
         return result;
       },
+      quitWindow: () => desktop?.shutdown.quit(),
       onRequested: (cb) => {
         shutdownHandlers.add(cb);
         return () => {
