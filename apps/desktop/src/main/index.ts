@@ -33,6 +33,7 @@ import { badgeLabel, renderBadge } from "./badgeImage.js";
 import { failedServerProbe, RendererProbeTracker, runPackageProbe } from "./debug/packageProbe.js";
 import { readOrCreateInstallId } from "./installId.js";
 import { assertLocalAbsolutePath, resolveOpenTarget } from "./openPathPolicy.js";
+import { claimParent } from "./serverAttach.js";
 import { ServerLink, type ServerLinkChange } from "./serverLink.js";
 import { ServerProcess, ServerStartDeclinedError } from "./serverProcess.js";
 import { ServerTray } from "./tray.js";
@@ -90,6 +91,8 @@ const serverProcess: ServerProcess = new ServerProcess({
   },
   identity: { installId: readOrCreateInstallId(app.getPath("userData")), version: app.getVersion(), protocol: PROTOCOL_VERSION },
   confirmReplace: confirmServerReplace,
+  onAttached: (endpoint) => claimParent(endpoint, process.pid),
+  onDeclined: () => exitApp(0),
   isQuitting: (): boolean => quitApproved || (link.shutdown.committed && !restartAfterFailedInstall),
   onFatal: (message) => reportFatalError("cw-code server stopped", new Error(message))
 });
@@ -206,6 +209,11 @@ function syncTray(): void {
 function destroyTray(): void {
   tray?.destroy();
   tray = null;
+}
+
+function exitApp(code: number): void {
+  destroyTray();
+  app.exit(code);
 }
 
 function stopServerAndQuit(): void {
@@ -441,10 +449,10 @@ async function startPackageProbe(window: BrowserWindow, outPath: string): Promis
       renderer,
       probeServer
     }).then(
-      (result) => app.exit(result.rendererLoaded ? 0 : 1),
+      (result) => exitApp(result.rendererLoaded ? 0 : 1),
       (err: unknown) => {
         appendCrashLog(`package probe failed: ${errorMessage(err)}`);
-        app.exit(1);
+        exitApp(1);
       }
     );
   }, 3000);
@@ -640,7 +648,6 @@ async function commitInstall(token: string, action: () => void): Promise<Shutdow
 async function startAndConnectServer(): Promise<void> {
   await serverProcess.start();
   await link.connect();
-  if (serverProcess.attached) await link.call("server.setParent", { pid: process.pid });
 }
 
 async function restoreAfterFailedInstall(): Promise<void> {
@@ -687,6 +694,7 @@ function registerUpdateIpc(): void {
 
 function registerShutdownIpc(): void {
   ipcMain.on("shutdown.ack", () => clearShutdownAck());
+  ipcMain.on("app.stop-server-and-quit", () => stopServerAndQuit());
   ipcMain.on("app.quit", () => {
     clearShutdownAck();
     quitApproved = true;
@@ -702,12 +710,12 @@ function reportFatalError(title: string, error: unknown): void {
     title,
     `${errorMessage(error)}\n\nDetails were written to ${join(logsDir(), "crash.log")}. Nothing in your data folder was deleted.`
   );
-  app.exit(1);
+  exitApp(1);
 }
 
 function reportFatalStartupError(error: unknown): void {
   if (error instanceof ServerStartDeclinedError) {
-    app.exit(0);
+    exitApp(0);
     return;
   }
   reportFatalError("cw-code could not start", error);
@@ -818,6 +826,7 @@ if (!app.requestSingleInstanceLock()) {
   app.on("before-quit", (event) => {
     if (!isQuitApproved() && link.isOpen && liveMainWindow()) {
       event.preventDefault();
+      focusMainWindow();
       requestShutdown();
       return;
     }

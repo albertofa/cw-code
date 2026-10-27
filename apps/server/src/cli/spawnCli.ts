@@ -53,7 +53,7 @@ export function spawnCli(
 export function spawnCli(binary: string, args: string[], opts?: SpawnOptions): ChildProcess;
 export function spawnCli(binary: string, args: string[], opts: SpawnOptions = {}): ChildProcess {
   const target = cliSpawnTarget(binary, args);
-  return spawn(target.file, target.args, { detached: detachProcessGroup, ...opts, env: childEnv(opts.env) });
+  return spawn(target.file, target.args, { detached: detachProcessGroup, windowsHide: true, ...opts, env: childEnv(opts.env) });
 }
 
 export function execCliFile(
@@ -64,7 +64,7 @@ export function execCliFile(
   const target = cliSpawnTarget(binary, args);
   return new Promise((resolve, reject) => {
     try {
-      execFile(target.file, target.args, { ...opts, env: childEnv(opts.env) }, (error, stdout, stderr) => {
+      execFile(target.file, target.args, { windowsHide: true, ...opts, env: childEnv(opts.env) }, (error, stdout, stderr) => {
         if (error) {
           reject(error);
           return;

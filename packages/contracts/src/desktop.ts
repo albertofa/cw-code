@@ -67,5 +67,6 @@ export interface DesktopApi {
     onRequested(cb: (event: ShutdownRequestedEvent) => void): () => void;
     acknowledge(): void;
     quit(): void;
+    stopServerAndQuit(): void;
   };
 }

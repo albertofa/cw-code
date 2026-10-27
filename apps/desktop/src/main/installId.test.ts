@@ -35,6 +35,15 @@ describe("readOrCreateInstallId", () => {
     expect(readOrCreateInstallId(root, () => UUID)).toBe(UUID);
   });
 
+  it("adopts the id another launch wrote first", () => {
+    const createId = (): string => {
+      writeFileSync(join(root, INSTALL_ID_FILE), `${OTHER}\n`);
+      return UUID;
+    };
+    expect(readOrCreateInstallId(root, createId)).toBe(OTHER);
+    expect(readFileSync(join(root, INSTALL_ID_FILE), "utf8").trim()).toBe(OTHER);
+  });
+
   it("defaults to a random UUID", () => {
     expect(readOrCreateInstallId(root)).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
   });

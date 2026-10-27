@@ -43,7 +43,8 @@ const api: DesktopApi = {
   shutdown: {
     onRequested: (cb) => subscribe<ShutdownRequestedEvent>("shutdown.requested", cb),
     acknowledge: () => ipcRenderer.send("shutdown.ack"),
-    quit: () => ipcRenderer.send("app.quit")
+    quit: () => ipcRenderer.send("app.quit"),
+    stopServerAndQuit: () => ipcRenderer.send("app.stop-server-and-quit")
   }
 };
 

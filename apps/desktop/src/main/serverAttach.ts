@@ -1,4 +1,5 @@
-import type { ServerReady } from "@cw-code/contracts";
+import { ServerClient } from "@cw-code/client";
+import type { ServerEndpoint, ServerReady } from "@cw-code/contracts";
 import { isProcessAlive } from "@cw-code/server/transport/endpointFile";
 import { STOP_PATH } from "@cw-code/shared/protocol";
 
@@ -35,6 +36,30 @@ export async function requestServerStop(ready: ServerReady, token: string): Prom
     signal: AbortSignal.timeout(STOP_REQUEST_TIMEOUT_MS)
   });
   if (response.status !== 202) throw new Error(`the running cw-code server refused to stop (HTTP ${response.status})`);
+}
+
+export function killAndWait(
+  pid: number,
+  timeoutMs: number,
+  kill: (pid: number) => void = (target) => process.kill(target),
+  isAlive: (pid: number) => boolean = isProcessAlive
+): Promise<boolean> {
+  try {
+    kill(pid);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ESRCH") return Promise.resolve(true);
+  }
+  return waitForPidExit(pid, timeoutMs, isAlive);
+}
+
+export async function claimParent(endpoint: ServerEndpoint, pid: number): Promise<void> {
+  const client = new ServerClient({ endpoint, client: "desktop-shell", reconnect: false });
+  try {
+    await client.connect();
+    await client.call("server.setParent", { pid });
+  } finally {
+    client.close();
+  }
 }
 
 export async function waitForPidExit(pid: number, timeoutMs: number, isAlive: (pid: number) => boolean = isProcessAlive): Promise<boolean> {

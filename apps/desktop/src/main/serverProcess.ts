@@ -9,7 +9,7 @@ import { cwCodeHome, userdataDir } from "@cw-code/server/paths/appPaths";
 import { confirmLiveEndpoint, isProcessAlive, readLiveEndpoint } from "@cw-code/server/transport/endpointFile";
 import { isServerReady, SERVER_READY_PREFIX, SERVER_RUNNING_PREFIX, SERVER_TOKEN_FILE } from "@cw-code/shared/protocol";
 import { resolveBunBinary, type BunLookup } from "./bunBinary.js";
-import { decideServerStart, requestServerStop, waitForPidExit, type LauncherIdentity, type StartDecision } from "./serverAttach.js";
+import { decideServerStart, killAndWait, requestServerStop, waitForPidExit, type LauncherIdentity, type StartDecision } from "./serverAttach.js";
 
 export const READY_TIMEOUT_MS = 60_000;
 export const STOP_CALL_TIMEOUT_MS = 3_000;
@@ -51,6 +51,8 @@ export interface ServerProcessOptions {
   isQuitting(): boolean;
   onFatal(message: string): void;
   confirmReplace(running: ServerReady): Promise<boolean>;
+  onAttached(endpoint: ServerEndpoint): Promise<void>;
+  onDeclined(): void;
 }
 
 const LINE_KINDS: ReadonlyArray<readonly [string, ServerLine["kind"]]> = [
@@ -220,6 +222,7 @@ export class ServerProcess {
   private async launchExclusive(): Promise<ServerReady> {
     const deadline = Date.now() + ALREADY_RUNNING_RETRY_MS;
     for (;;) {
+      const lastTry = Date.now() >= deadline;
       const decision = await this.decide();
       if (decision.kind === "attach") return this.attach(decision.ready);
       if (decision.kind === "replace") {
@@ -227,12 +230,12 @@ export class ServerProcess {
         continue;
       }
       if (decision.kind === "foreign") {
-        if (Date.now() >= deadline) throw new ServerAlreadyRunningError(decision.ready, true);
+        if (lastTry) throw new ServerAlreadyRunningError(decision.ready, true);
       } else {
         try {
           return await this.launch();
         } catch (error) {
-          if (!(error instanceof ServerAlreadyRunningError) || Date.now() >= deadline) throw error;
+          if (!(error instanceof ServerAlreadyRunningError) || lastTry) throw error;
         }
       }
       await delay(ALREADY_RUNNING_POLL_MS);
@@ -249,7 +252,7 @@ export class ServerProcess {
     return decideServerStart(existing, this.options.identity);
   }
 
-  private attach(ready: ServerReady): ServerReady {
+  private async attach(ready: ServerReady): Promise<ServerReady> {
     this.child = null;
     this.current = ready;
     this.port = ready.port;
@@ -265,6 +268,11 @@ export class ServerProcess {
     watch.unref();
     this.attachedWatch = watch;
     console.warn(`[server] attached to the background server on ${ready.url} (pid ${ready.pid})`);
+    try {
+      await this.options.onAttached(await this.endpoint());
+    } catch (error) {
+      console.warn(`[server] could not take over the background server's parent watch: ${errorMessage(error)}`);
+    }
     return ready;
   }
 
@@ -275,8 +283,17 @@ export class ServerProcess {
 
   private async replace(running: ServerReady): Promise<void> {
     if (!(await this.options.confirmReplace(running))) throw new ServerStartDeclinedError();
-    await requestServerStop(running, await readOwnerToken());
-    if (await waitForPidExit(running.pid, REPLACE_EXIT_TIMEOUT_MS)) return;
+    const requested = await readOwnerToken()
+      .then((token) => requestServerStop(running, token))
+      .then(
+        () => true,
+        (error: unknown) => {
+          console.warn(`[server] could not ask the old server to stop: ${errorMessage(error)}`);
+          return false;
+        }
+      );
+    if (requested && (await waitForPidExit(running.pid, REPLACE_EXIT_TIMEOUT_MS))) return;
+    if (await killAndWait(running.pid, STOP_EXIT_TIMEOUT_MS)) return;
     throw new Error(`the cw-code server from version ${running.version} (pid ${running.pid}) did not stop within ${REPLACE_EXIT_TIMEOUT_MS / 1000}s`);
   }
 
@@ -374,7 +391,10 @@ export class ServerProcess {
     this.notifyExit(expected);
     if (expected) return;
     appendCrashLog(`cw-code server exited unexpectedly: ${reason}${this.tailText()}`);
-    void this.recover(reason);
+    this.recover(reason).catch((error: unknown) => {
+      if (error instanceof ServerStartDeclinedError) this.options.onDeclined();
+      else this.options.onFatal(errorMessage(error));
+    });
   }
 
   private abandonRecovery(): boolean {
@@ -402,6 +422,7 @@ export class ServerProcess {
         console.warn(`[server] restarted on ${ready.url}`);
         return;
       } catch (error) {
+        if (error instanceof ServerStartDeclinedError) throw error;
         lastFailure = errorMessage(error);
         appendCrashLog(`cw-code server restart failed: ${lastFailure}`);
       }
@@ -419,8 +440,11 @@ export class ServerProcess {
       console.warn(`[server] server.stop failed: ${errorMessage(error)}`);
     });
     if (!(await settlesWithin(stopCall, STOP_CALL_TIMEOUT_MS))) console.warn(`[server] server.stop did not answer within ${STOP_CALL_TIMEOUT_MS}ms`);
-    const exited = await waitForPidExit(pid, STOP_EXIT_TIMEOUT_MS);
-    if (!exited) console.warn(`[server] the background server (pid ${pid}) did not exit within ${STOP_EXIT_TIMEOUT_MS}ms`);
+    let exited = await waitForPidExit(pid, STOP_EXIT_TIMEOUT_MS);
+    if (!exited) {
+      console.warn(`[server] the background server (pid ${pid}) did not exit within ${STOP_EXIT_TIMEOUT_MS}ms; killing it`);
+      exited = await killAndWait(pid, STOP_EXIT_TIMEOUT_MS);
+    }
     if (this.attachedPid !== pid) return;
     this.clearAttachedWatch();
     this.attachedPid = null;

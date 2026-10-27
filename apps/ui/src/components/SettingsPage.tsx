@@ -48,6 +48,7 @@ const TEXT_INPUT_TYPES = new Set(["text", "search", "email", "number", "url", "t
 
 function GeneralSettings() {
   const draft = useSettingsDraftStore((s) => s.draft);
+  const keepsServerRunning = useSettingsDraftStore((s) => s.saved?.keepServerRunning === true);
   const set = useSettingsDraftStore((s) => s.set);
   const checks = useSettingsDraftStore((s) => s.harnessChecks);
   const checksError = useSettingsDraftStore((s) => s.harnessChecksError);
@@ -271,7 +272,7 @@ function GeneralSettings() {
         <SettingsGroup title="Background server">
           <SettingsRow
             label="Keep the server running when the window closes"
-            hint="Closing the window hides cw-code in the tray so running turns keep going. Use “Stop server and quit” in the tray to exit."
+            hint="Closing the window hides cw-code in the tray so running turns keep going. To exit, use “Stop server and quit” in the tray or below."
             htmlFor="sp-keep-server"
           >
             <SettingsSwitch
@@ -281,6 +282,13 @@ function GeneralSettings() {
               label="Keep the server running when the window closes"
             />
           </SettingsRow>
+          {keepsServerRunning && window.cw.shell && (
+            <SettingsRow label="Stop server and quit" hint="Stops the background server and closes cw-code, after reviewing running turns and unsaved files.">
+              <button type="button" className="btn" onClick={() => window.cw.shell?.stopServerAndQuit()}>
+                Stop server and quit
+              </button>
+            </SettingsRow>
+          )}
         </SettingsGroup>
       )}
 

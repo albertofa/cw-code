@@ -557,6 +557,7 @@ export interface CwApi {
     cancel(token: string): Promise<void>;
     quit(token: string): Promise<ShutdownCommitResult>;
     quitWindow(): void;
+    acknowledge(): void;
     onRequested(cb: (event: ShutdownRequestedEvent) => void): () => void;
     onExpired(cb: (event: ShutdownExpiredEvent) => void): () => void;
   };
@@ -694,6 +695,7 @@ export interface ShellActions {
   zoomIn(): void;
   zoomOut(): void;
   zoomReset(): void;
+  stopServerAndQuit(): void;
   updates: DesktopUpdates;
   connections: DesktopConnections;
 }

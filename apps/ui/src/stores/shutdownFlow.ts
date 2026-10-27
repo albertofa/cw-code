@@ -74,6 +74,7 @@ export function runShutdownFlow(reason: ShutdownReason): Promise<{ token: string
 }
 
 function beginWindow(flow: ActiveFlow): void {
+  window.cw.shutdown.acknowledge();
   const dirty = useEditorBuffers.getState().dirty();
   if (dirty.length === 0) {
     finish({ scope: "window" });

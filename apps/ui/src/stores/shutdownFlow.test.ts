@@ -37,6 +37,7 @@ interface FakeShutdownApi {
   assessCalls: number;
   quitCalls: string[];
   quitWindowCalls: number;
+  acknowledgeCalls: number;
 }
 
 function installCw(): FakeShutdownApi {
@@ -51,7 +52,8 @@ function installCw(): FakeShutdownApi {
     prepareGate: null,
     assessCalls: 0,
     quitCalls: [],
-    quitWindowCalls: 0
+    quitWindowCalls: 0,
+    acknowledgeCalls: 0
   };
   const cw = {
     shutdown: {
@@ -77,6 +79,9 @@ function installCw(): FakeShutdownApi {
       },
       quitWindow: () => {
         api.quitWindowCalls += 1;
+      },
+      acknowledge: () => {
+        api.acknowledgeCalls += 1;
       },
       onRequested: () => () => {}
     },
@@ -330,6 +335,7 @@ describe("handleQuitRequest", () => {
     expect(api.prepareCalls).toHaveLength(0);
     expect(api.quitCalls).toEqual([]);
     expect(api.quitWindowCalls).toBe(1);
+    expect(api.acknowledgeCalls).toBe(1);
   });
 
   it("reviews dirty files with an empty assessment before closing the window", async () => {
@@ -337,6 +343,7 @@ describe("handleQuitRequest", () => {
     const pending = handleQuitRequest("window");
     await settle();
     expect(useAppStore.getState().shutdown).toMatchObject({ reason: "quit", phase: "review", assessment: EMPTY });
+    expect(api.acknowledgeCalls).toBe(1);
     await applyShutdownAssessment(BUSY);
     expect(useAppStore.getState().shutdown?.assessment).toEqual(EMPTY);
     shutdownDiscardAll();

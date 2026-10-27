@@ -89,6 +89,7 @@ function shellActions(desktop: DesktopApi): ShellActions {
     zoomIn: () => desktop.zoomIn(),
     zoomOut: () => desktop.zoomOut(),
     zoomReset: () => desktop.zoomReset(),
+    stopServerAndQuit: () => desktop.shutdown.stopServerAndQuit(),
     updates: desktop.updates,
     connections: desktop.connections
   };
@@ -184,6 +185,7 @@ export function createCwApi(
         return result;
       },
       quitWindow: () => desktop?.shutdown.quit(),
+      acknowledge: () => desktop?.shutdown.acknowledge(),
       onRequested: (cb) => {
         shutdownHandlers.add(cb);
         return () => {
