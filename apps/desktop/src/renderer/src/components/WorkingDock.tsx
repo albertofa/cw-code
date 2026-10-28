@@ -15,7 +15,11 @@ function runningStep(messages: ChatMessage[], turnId: string, basePath: string):
     if (!summary.subject) return summary.verb;
     const subject =
       summary.subjectKind === "file" && basePath ? relativizeToBase(basePath, summary.subject) : summary.subject;
-    return `${summary.verb} ${subject}`;
+    const commandCount =
+      summary.commandCount !== undefined && summary.commandCount > 1
+        ? ` · ${summary.commandCount} commands`
+        : "";
+    return `${summary.verb}${commandCount} ${subject}`;
   }
   return undefined;
 }

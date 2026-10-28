@@ -108,6 +108,17 @@ describe("ToolCard row", () => {
     expect(detail?.textContent).toContain("all green");
   });
 
+  it("keeps the full command in the subject title and badges compound calls", async () => {
+    const command = `git grep -n "x" -- .; git checkout -q --detach origin/master && dotnet test`;
+    const el = await render(
+      toolMsg({ id: "b5", toolName: "Bash", toolInput: { command, description: "run it" } })
+    );
+    const subject = el.querySelector(".tool-subject");
+    expect(subject?.getAttribute("title")).toBe(command);
+    expect(el.textContent).toContain("3 commands");
+    expect(el.textContent).not.toContain("run it");
+  });
+
   it("labels failed tools and their error output", async () => {
     const el = await render(
       toolMsg({ id: "b2", toolName: "Bash", toolInput: { command: "false" }, toolOutput: "boom", toolDone: true, isError: true })

@@ -14,6 +14,7 @@ import {
 import type { ChatMessage } from "../stores/appStore.js";
 import { useAppStore } from "../stores/appStore.js";
 import {
+  countShellCommands,
   describeToolCall,
   extractCommandFragment,
   extractFileDiff,
@@ -157,10 +158,11 @@ export const ToolCard = memo(function ToolCard({
     if (isShell) {
       const command = extractCommandFragment(message.text);
       if (command) {
-        const flat = command.replace(/\s+/g, " ").trim();
-        summary.subject = flat.length > 90 ? `${flat.slice(0, 89)}…` : flat;
+        summary.subject = command.replace(/\s+/g, " ").trim();
         summary.subjectKind = "text";
-        if (flat.length > 90) summary.fullSubject = command;
+        summary.fullSubject = command;
+        const commandCount = countShellCommands(command);
+        if (commandCount > 1) summary.commandCount = commandCount;
       }
     } else {
       const file = extractFileFragment(message.text);
@@ -255,8 +257,13 @@ export const ToolCard = memo(function ToolCard({
           </span>
         )}
         {summary.subject && summary.subjectKind !== "file" && (
-          <span className="tool-subject" title={summary.subject}>
+          <span className="tool-subject" title={summary.fullSubject ?? summary.subject}>
             {open ? summary.subject : (displaySubject ?? summary.subject)}
+          </span>
+        )}
+        {summary.commandCount !== undefined && summary.commandCount > 1 && (
+          <span className="tool-stat" title={`This shell call runs ${summary.commandCount} commands`}>
+            {summary.commandCount} commands
           </span>
         )}
         {summary.stat && (
