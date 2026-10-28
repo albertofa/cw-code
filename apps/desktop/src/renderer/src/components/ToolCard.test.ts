@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import {
+  countShellCommands,
   describeToolCall,
   describeWaitingTools,
   extractCommandFragment,
@@ -40,13 +41,31 @@ describe("describeToolCall", () => {
     expect(oc?.stat).toEqual({ added: 3, removed: 1 });
   });
 
-  it("abbreviates Bash commands and keeps the full command for details", () => {
-    const cmd = `cd C:/x && ${"y".repeat(200)}`;
+  it("uses the full Bash command and counts compound statements", () => {
+    const cmd = `git grep -n "a;b" -- .; git checkout -q --detach origin/master && dotnet test`;
     const s = describeToolCall("Bash", { command: cmd, description: "run it" });
     expect(s?.verb).toBe("Bash");
-    expect(s?.subject?.length).toBeLessThanOrEqual(90);
+    expect(s?.subject).toBe(cmd);
     expect(s?.fullSubject).toBe(cmd);
-    expect(s?.meta).toEqual(["run it"]);
+    expect(s?.commandCount).toBe(3);
+    expect(s?.meta).toBeUndefined();
+  });
+
+  it("counts multi-line shell commands and keeps the original for details", () => {
+    const cmd = "git status\ngit log";
+    const s = describeToolCall("shell", { command: cmd, description: "inspect" });
+    expect(s?.subject).toBe("git status git log");
+    expect(s?.fullSubject).toBe(cmd);
+    expect(s?.commandCount).toBe(2);
+    expect(s?.meta).toBeUndefined();
+  });
+
+  it("does not badge a single shell command", () => {
+    const s = describeToolCall("Bash", { command: "pnpm test", description: "run tests" });
+    expect(s?.subject).toBe("pnpm test");
+    expect(s?.fullSubject).toBe("pnpm test");
+    expect(s?.commandCount).toBeUndefined();
+    expect(s?.meta).toBeUndefined();
   });
 
   it("summarizes Skill, Task and Todos", () => {
@@ -119,6 +138,23 @@ describe("describeToolCall", () => {
     });
     expect(s?.verb).toBe("Question");
     expect(s?.subject).toBe("Asked 2 questions");
+  });
+});
+
+describe("countShellCommands", () => {
+  it("ignores separators inside quotes and counts top-level operators", () => {
+    expect(countShellCommands('git grep "a;b" -- .')).toBe(1);
+    expect(countShellCommands("a && b || c")).toBe(3);
+    expect(countShellCommands("a; b\nc")).toBe(3);
+    expect(countShellCommands("a\\;b")).toBe(1);
+    expect(countShellCommands("echo $(git status; git log)")).toBe(1);
+    expect(countShellCommands("echo `git status; git log`")).toBe(1);
+  });
+
+  it("counts the review test-merge chain as six commands", () => {
+    const command =
+      "git grep x; git checkout y && git merge z && git status | head && dotnet build a && dotnet test b";
+    expect(countShellCommands(command)).toBe(6);
   });
 });
 

@@ -26,6 +26,8 @@ export interface ToolSummary {
   subjectKind?: "file" | "text";
   stat?: DiffStat;
   fullSubject?: string;
+  /** Number of top-level shell commands in a compound command line. */
+  commandCount?: number;
   meta?: string[];
 }
 
@@ -80,6 +82,80 @@ function truncate(s: string, n: number): string {
 
 function oneLine(s: string): string {
   return s.replace(/\s+/g, " ").trim();
+}
+
+/**
+ * Counts top-level commands in a shell line for the row badge. This is a
+ * display hint, not a shell parser: separators inside quotes, escapes,
+ * command substitutions, and backticks are ignored.
+ */
+export function countShellCommands(command: string): number {
+  let count = 0;
+  let hasCommand = false;
+  let quote: '"' | "'" | null = null;
+  let escaped = false;
+  let substitutionDepth = 0;
+  let inBackticks = false;
+  for (let index = 0; index < command.length; index += 1) {
+    const character = command[index]!;
+    if (escaped) {
+      escaped = false;
+      hasCommand = true;
+      continue;
+    }
+    if (character === "\\" && quote !== "'") {
+      escaped = true;
+      hasCommand = true;
+      continue;
+    }
+    if (quote !== null) {
+      if (character === quote) quote = null;
+      hasCommand = true;
+      continue;
+    }
+    if (inBackticks) {
+      if (character === "`") inBackticks = false;
+      hasCommand = true;
+      continue;
+    }
+    if (character === '"' || character === "'") {
+      quote = character;
+      hasCommand = true;
+      continue;
+    }
+    if (character === "`") {
+      inBackticks = true;
+      hasCommand = true;
+      continue;
+    }
+    if (character === "$" && command[index + 1] === "(") {
+      substitutionDepth += 1;
+      hasCommand = true;
+      index += 1;
+      continue;
+    }
+    if (character === ")" && substitutionDepth > 0) {
+      substitutionDepth -= 1;
+      hasCommand = true;
+      continue;
+    }
+    if (substitutionDepth > 0) {
+      if (!/\s/.test(character)) hasCommand = true;
+      continue;
+    }
+    const isAnd = character === "&" && command[index + 1] === "&";
+    const isOr = character === "|" && command[index + 1] === "|";
+    if (character === ";" || character === "\n" || isAnd || isOr) {
+      if (hasCommand) {
+        count += 1;
+        hasCommand = false;
+      }
+      if (isAnd || isOr) index += 1;
+      continue;
+    }
+    if (!/\s/.test(character)) hasCommand = true;
+  }
+  return hasCommand ? count + 1 : count;
 }
 
 const PATCH_FILE_MARKERS =
@@ -261,13 +337,14 @@ export function describeToolCall(toolName: string, input: unknown): ToolSummary 
     case "bash":
     case "shell": {
       const command = pick(args, "command", "cmd") ?? "";
-      const description = pick(args, "description");
-      if (command) {
-        summary.subject = truncate(oneLine(command), 90);
+      const flat = oneLine(command);
+      if (flat) {
+        summary.subject = flat;
         summary.subjectKind = "text";
-        if (oneLine(command).length > 90) summary.fullSubject = command;
+        summary.fullSubject = command;
+        const commandCount = countShellCommands(command);
+        if (commandCount > 1) summary.commandCount = commandCount;
       }
-      if (description) summary.meta = [description];
       break;
     }
     case "glob": {
