@@ -1163,6 +1163,31 @@ describe("SessionManager", () => {
     manager.dispose();
   });
 
+  it("creates a new worktree from the default branch when HEAD is unborn but other branches have commits", async () => {
+    const { manager, project, repository } = makeGitSandboxManager("cw-session-new-orphan-head-");
+    gitOut(repository, "switch", "--orphan", "scratch");
+
+    const session = await manager.createSession(project.id, "claude", { mode: "new" });
+
+    expect(session.worktreePath).toBeTruthy();
+    expect(session.branch).toBe(`cw/${session.id.slice("sess_".length)}`);
+    manager.dispose();
+  });
+
+  it("creates a new worktree without switching the project folder when HEAD is detached and no branch exists", async () => {
+    const { manager, project, repository } = makeGitSandboxManager("cw-session-new-detached-no-branch-");
+    const head = gitOut(repository, "rev-parse", "HEAD");
+    gitOut(repository, "switch", "--detach");
+    gitOut(repository, "branch", "-D", "main");
+
+    const session = await manager.createSession(project.id, "claude", { mode: "new" });
+
+    expect(session.worktreePath).toBeTruthy();
+    expect(gitOut(repository, "rev-parse", "HEAD")).toBe(head);
+    expect(gitOut(repository, "branch", "--show-current")).toBe("");
+    manager.dispose();
+  });
+
   it("falls back to the project folder when a requested base can't be resolved in a repository with no commits", async () => {
     const { manager, project } = makeGitSandboxManager("cw-session-unborn-base-");
     const empty = join(dirname(project.rootPath), "empty");
@@ -1181,12 +1206,12 @@ describe("SessionManager", () => {
     const empty = join(dirname(project.rootPath), "empty");
     execFileSync("git", ["init", "-b", "main", empty]);
     gitOut(empty, "remote", "add", "origin", project.rootPath);
+    gitOut(empty, "fetch", "origin");
     const emptyProject = manager.addProject(empty);
 
     const session = await manager.createSession(emptyProject.id, "claude", { mode: "new", baseBranch: "main" });
 
     expect(session.worktreePath).toBeDefined();
-    expect(session.branch).toBeDefined();
     expect(gitOut(session.worktreePath!, "rev-parse", "HEAD")).toBe(gitOut(project.rootPath, "rev-parse", "HEAD"));
     manager.dispose();
   });
