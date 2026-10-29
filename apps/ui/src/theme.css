@@ -6108,8 +6108,26 @@ select.field option {
   color: var(--faint);
 }
 
+.working-dock-background {
+  margin: 0;
+  padding: 0 0 2px;
+  list-style: none;
+}
+
+.working-dock-bg-row {
+  gap: 7px;
+  height: 24px;
+  padding-left: 23px;
+}
+
+.working-dock-bg-icon,
+.working-dock-bg-more {
+  flex: none;
+  color: var(--faint);
+}
+
 @container working-dock (max-width: 320px) {
-  .working-dock-step {
+  .working-dock-row:not(.working-dock-bg-row) .working-dock-step {
     display: none;
   }
 }
