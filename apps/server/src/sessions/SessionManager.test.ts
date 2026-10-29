@@ -1174,6 +1174,20 @@ describe("SessionManager", () => {
     manager.dispose();
   });
 
+  it("creates a new worktree without switching the project folder when HEAD is detached and no branch exists", async () => {
+    const { manager, project, repository } = makeGitSandboxManager("cw-session-new-detached-no-branch-");
+    const head = gitOut(repository, "rev-parse", "HEAD");
+    gitOut(repository, "switch", "--detach");
+    gitOut(repository, "branch", "-D", "main");
+
+    const session = await manager.createSession(project.id, "claude", { mode: "new" });
+
+    expect(session.worktreePath).toBeTruthy();
+    expect(gitOut(repository, "rev-parse", "HEAD")).toBe(head);
+    expect(gitOut(repository, "branch", "--show-current")).toBe("");
+    manager.dispose();
+  });
+
   it("stays on the author's PR branch without a dirty check when it is already checked out in the project folder", async () => {
     const { manager, project, repository } = makeGitSandboxManager("cw-session-current-at-root-");
     gitOut(repository, "switch", "-c", "feature/pr");

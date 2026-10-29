@@ -47,7 +47,7 @@ class GatedGit extends GitService {
     return true;
   }
 
-  override async hasBranchCommits(): Promise<boolean> {
+  override async hasAnyCommit(): Promise<boolean> {
     return true;
   }
 
