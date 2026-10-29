@@ -1206,13 +1206,24 @@ describe("SessionManager", () => {
     const empty = join(dirname(project.rootPath), "empty");
     execFileSync("git", ["init", "-b", "main", empty]);
     gitOut(empty, "remote", "add", "origin", project.rootPath);
-    gitOut(empty, "fetch", "origin");
     const emptyProject = manager.addProject(empty);
 
     const session = await manager.createSession(emptyProject.id, "claude", { mode: "new", baseBranch: "main" });
 
     expect(session.worktreePath).toBeDefined();
     expect(gitOut(session.worktreePath!, "rev-parse", "HEAD")).toBe(gitOut(project.rootPath, "rev-parse", "HEAD"));
+    manager.dispose();
+  });
+
+  it("falls back to the project folder when HEAD is unborn and no default branch can start a worktree", async () => {
+    const { manager, project, repository } = makeGitSandboxManager("cw-session-unborn-orphan-default-");
+    gitOut(repository, "branch", "-m", "main", "trunk");
+    gitOut(repository, "switch", "--orphan", "main");
+
+    const session = await manager.createSession(project.id, "claude", { mode: "new" });
+
+    expect(session.worktreePath).toBeUndefined();
+    expect(session.branch).toBeUndefined();
     manager.dispose();
   });
 
