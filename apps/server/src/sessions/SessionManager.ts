@@ -85,7 +85,7 @@ import { defaultGitHubAccounts } from "../github/GitHubAccounts.js";
 import { changedWorktreeBranch, comparableRoot, isWorktreeOrphaned, looksLikeWorktree, pinsWorktree, rootsOverlap, sameWorktreePath } from "./worktreeCleanup.js";
 import { SettingsStore } from "../settings/SettingsStore.js";
 import { resolveClaudeModels } from "../settings/settingsUtils.js";
-import { permissionOption, withSyntheticFullAccess } from "../providers/permissions.js";
+import { isPermissionMode, permissionOption, withSyntheticFullAccess } from "../providers/permissions.js";
 import { TracingCliDriver } from "../debug/tracingDriver.js";
 import { CLAUDE_CURATED_MODELS, ClaudeCliDriver } from "../providers/claude/ClaudeCliDriver.js";
 import { OpencodeDriver } from "../providers/opencode/OpencodeDriver.js";
@@ -235,12 +235,6 @@ const SETTLEABLE_STATUSES: ReadonlySet<SessionStatus> = new Set(["holding", "don
 
 function autoFinishedTarget(value: AppSettings["prFinishedSessionStatus"]): value is "idle" | "resolved" | "archived" {
   return value !== "none";
-}
-
-const PERMISSION_MODES: ReadonlySet<string> = new Set<PermissionMode>(["auto", "acceptEdits", "bypassPermissions", "manual"]);
-
-function isPermissionMode(mode: string): mode is PermissionMode {
-  return PERMISSION_MODES.has(mode);
 }
 
 function resolvePermissionMode(mode: string | undefined): PermissionMode {

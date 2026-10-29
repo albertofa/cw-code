@@ -1,4 +1,5 @@
 import type { AppSettings, PermissionMode, SettingsPatch } from "@cw-code/contracts";
+import { PERMISSION_MODES } from "../providers/permissions.js";
 
 export const AGENT_METHODS: ReadonlySet<string> = new Set([
   "projects.list",
@@ -33,17 +34,10 @@ export const SAFE_MODEL_ID = /^[A-Za-z0-9][A-Za-z0-9._:/@[\]+-]{0,127}$/;
 
 const AGENT_MODEL_SETTINGS = ["claudeDefaultModel", "codexDefaultModel", "opencodeDefaultModel"] as const;
 
-const PERMISSION_RANK: Record<PermissionMode, number> = {
-  manual: 0,
-  acceptEdits: 1,
-  auto: 2,
-  bypassPermissions: 3
-};
-
 export function capPermissionMode(requested: PermissionMode | undefined, callerMode: PermissionMode | undefined): PermissionMode {
   const cap = callerMode ?? "manual";
   if (requested === undefined) return cap;
-  return PERMISSION_RANK[requested] < PERMISSION_RANK[cap] ? requested : cap;
+  return PERMISSION_MODES.indexOf(requested) < PERMISSION_MODES.indexOf(cap) ? requested : cap;
 }
 
 export interface PermissionModeSource {

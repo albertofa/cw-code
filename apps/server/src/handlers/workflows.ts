@@ -14,7 +14,8 @@ import type { ServerApp } from "../app/ServerApp.js";
 import { assertIssueRef, assertRunRef } from "../github/githubRefs.js";
 import { assertPrRef } from "../github/PullRequestService.js";
 import { DRIVER_KINDS } from "../prefs/PreferencesStore.js";
-import { sanitizeWorkflowHarness, VALID_EFFORTS, VALID_PERMISSION_MODES, VALID_PR_WORKSPACES } from "../settings/SettingsStore.js";
+import { isPermissionMode } from "../providers/permissions.js";
+import { sanitizeWorkflowHarness, VALID_EFFORTS, VALID_PR_WORKSPACES } from "../settings/SettingsStore.js";
 import type { Router } from "../transport/Router.js";
 import { handle, parseArgs, parseBoolean, parseOptionalBoolean, parseString } from "./shared.js";
 
@@ -71,9 +72,7 @@ function parsePrefs(value: unknown): ComposerPrefs {
   if (typeof raw.model === "string" && raw.model.length <= MAX_ID_LENGTH) prefs.model = raw.model;
   if (typeof raw.variant === "string" && raw.variant.length <= MAX_ID_LENGTH) prefs.variant = raw.variant;
   if (VALID_EFFORTS.includes(raw.effort as NonNullable<ComposerPrefs["effort"]>)) prefs.effort = raw.effort as ComposerPrefs["effort"];
-  if (VALID_PERMISSION_MODES.includes(raw.permissionMode as NonNullable<ComposerPrefs["permissionMode"]>)) {
-    prefs.permissionMode = raw.permissionMode as ComposerPrefs["permissionMode"];
-  }
+  if (isPermissionMode(raw.permissionMode)) prefs.permissionMode = raw.permissionMode;
   return prefs;
 }
 

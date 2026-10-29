@@ -3,6 +3,7 @@ import type { CallToolResult, McpServer, ServerContext } from "@modelcontextprot
 import { z } from "zod";
 import { agentTurnPermissionMode, SAFE_MODEL_ID } from "../agent/agentPolicy.js";
 import type { SessionWatch } from "../agent/SessionWatch.js";
+import { PERMISSION_MODES } from "../providers/permissions.js";
 import type { SessionManager } from "../sessions/SessionManager.js";
 import type { CallContext, Router } from "../transport/Router.js";
 
@@ -19,7 +20,6 @@ export const WAIT_MAX_MS = 240_000;
 export const WAIT_PROGRESS_INTERVAL_MS = 15_000;
 
 const DRIVERS = ["claude", "codex", "opencode"] as const;
-const PERMISSION_MODES = ["manual", "acceptEdits", "auto", "bypassPermissions"] as const;
 const EFFORTS = ["minimal", "low", "medium", "high", "xhigh", "max"] as const;
 const HIDDEN_STATUSES: ReadonlySet<SessionMeta["status"]> = new Set(["resolved", "archived"]);
 const READ_ONLY = { readOnlyHint: true } as const;

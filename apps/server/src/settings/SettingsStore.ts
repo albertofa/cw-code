@@ -10,7 +10,6 @@ import type {
   NotificationSoundId,
   NotificationSoundPreference,
   NotificationSoundSettings,
-  PermissionMode,
   PrFinishedSessionStatus,
   PrSuggestCondition,
   PrWorkflow,
@@ -21,6 +20,7 @@ import type {
   SettingsPatch,
   ThemeBase
 } from "@cw-code/contracts";
+import { PERMISSION_MODES } from "../providers/permissions.js";
 import { writeFileAtomic } from "../storage/atomicFile.js";
 import { backupBeforeRepair } from "../storage/backups.js";
 import { isMetadataDocument, type MetadataDocument, type MetadataMigration, type MetadataSchema } from "../storage/metadataDocument.js";
@@ -58,7 +58,6 @@ const VALID_WORKFLOW_TARGETS: readonly PrWorkflow["target"][] = ["pr", "issue", 
 export const VALID_PR_WORKSPACES: readonly PrWorkspaceChoice[] = ["checkout", "worktree", "linked"];
 const VALID_DRIVERS: readonly DriverKind[] = ["claude", "opencode", "codex"];
 export const VALID_EFFORTS: readonly EffortLevel[] = ["minimal", "low", "medium", "high", "xhigh", "max"];
-export const VALID_PERMISSION_MODES: readonly PermissionMode[] = ["auto", "acceptEdits", "bypassPermissions", "manual"];
 const VALID_VIEW_KINDS: readonly GitHubKind[] = ["pr", "issue", "run"];
 const VALID_VIEW_GROUPS: readonly GitHubViewGroup[] = ["triage", "repo", "none"];
 const VALID_THEME_BASES: readonly ThemeBase[] = ["dark", "light"];
@@ -99,7 +98,7 @@ export function sanitizeWorkflowHarness(raw: unknown): PrWorkflowHarness {
     driver,
     model: driver && typeof o.model === "string" ? o.model.trim() : "",
     effort: oneOf(o.effort, VALID_EFFORTS),
-    permissionMode: oneOf(o.permissionMode, VALID_PERMISSION_MODES)
+    permissionMode: oneOf(o.permissionMode, PERMISSION_MODES)
   };
 }
 
