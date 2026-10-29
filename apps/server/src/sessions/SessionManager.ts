@@ -758,7 +758,12 @@ export class SessionManager {
     if (!repository) {
       return this.store.createSession(projectId, driver, "New session", { id });
     }
-    if (mode === "current" || !(await this.git.hasCommits(project.rootPath))) {
+    if (mode === "current") {
+      return this.createCurrentCheckoutSession(project, driver, id, options);
+    }
+    const unborn = !(await this.git.hasCommits(project.rootPath));
+    this.assertNotReserved();
+    if (unborn && !options.prHead && !options.baseBranch) {
       return this.createCurrentCheckoutSession(project, driver, id, options);
     }
     if (mode === "previous" && options.reuseWorktreePath) {
@@ -772,7 +777,13 @@ export class SessionManager {
         });
       }
     }
-    const worktree = await this.createSessionWorktree(project, id, options);
+    let worktree: CreatedWorktree;
+    try {
+      worktree = await this.createSessionWorktree(project, id, options);
+    } catch (err) {
+      if (!unborn) throw err;
+      return this.createCurrentCheckoutSession(project, driver, id, options);
+    }
     const session = this.store.createSession(projectId, driver, "New session", {
       id,
       worktreePath: worktree.path,
