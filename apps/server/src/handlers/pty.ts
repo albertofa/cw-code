@@ -24,7 +24,7 @@ export function registerPtyHandlers(router: Router, app: ServerApp): void {
           root,
           args.kind,
           sessions.resumeCursorFor(args.sessionId),
-          await sessions.terminalEnv(args.sessionId, root),
+          await sessions.terminalEnv(args.sessionId, root, args.kind),
           (ptyId, data) => app.emit("pty.data", { ptyId, data }),
           () => sessions.terminalLaunch(args.sessionId, args.kind, root)
         )

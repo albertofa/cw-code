@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
@@ -49,4 +50,9 @@ export async function writeClaudePlugin(dir: string, version: string): Promise<v
 
 export function claudePluginArgs(dir: string | null): string[] {
   return dir === null ? [] : ["--plugin-dir", dir];
+}
+
+export function agentTokenFingerprint(env: Record<string, string> | undefined): string {
+  const token = env?.[CW_AGENT_TOKEN_ENV];
+  return token ? createHash("sha256").update(token).digest("hex").slice(0, 16) : "";
 }

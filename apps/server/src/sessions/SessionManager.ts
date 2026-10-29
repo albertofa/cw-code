@@ -1991,17 +1991,17 @@ export class SessionManager {
     }
   }
 
-  async terminalEnv(sessionId: string, cwd: string): Promise<Record<string, string>> {
+  async terminalEnv(sessionId: string, cwd: string, kind: string): Promise<Record<string, string>> {
     const session = this.store.getSession(sessionId);
     const project = session ? this.store.getProject(session.projectId) : undefined;
     if (project) await this.refreshGitHubToken(project);
-    return this.turnEnv(sessionId, cwd);
+    return this.turnEnv(sessionId, cwd, { agent: kind === "claude" });
   }
 
-  turnEnv(sessionId: string, cwd: string): Record<string, string> {
+  turnEnv(sessionId: string, cwd: string, include: { agent?: boolean } = {}): Record<string, string> {
     const session = this.store.getSession(sessionId);
     const project = session ? this.store.getProject(session.projectId) : undefined;
-    return buildTurnEnv(process.env, this.sessionEnvVars(sessionId, session, project, cwd, { githubAccount: true, agent: true }));
+    return buildTurnEnv(process.env, this.sessionEnvVars(sessionId, session, project, cwd, { githubAccount: true, agent: include.agent }));
   }
 
   private async captureTurnSnapshot(sessionId: string, cwd: string): Promise<Omit<TurnSnapshot, "turnId"> | null> {
@@ -2313,7 +2313,7 @@ export class SessionManager {
         attachments: resolveAttachments(project.rootPath, cwd, opts?.attachments ?? []),
         ...(opts?.command ? { command: opts.command } : {}),
         ...(!opts?.command && opts?.skills?.length ? { skills: opts.skills } : {}),
-        env: buildTurnEnv(process.env, this.sessionEnvVars(session.id, session, project, cwd, { githubAccount: session.driver === "claude", agent: true }))
+        env: buildTurnEnv(process.env, this.sessionEnvVars(session.id, session, project, cwd, { githubAccount: session.driver === "claude", agent: session.driver === "claude" }))
       });
       this.turnPermissionModes.set(sessionId, resolvePermissionMode(prefs.permissionMode));
       const startedAt = Date.now();

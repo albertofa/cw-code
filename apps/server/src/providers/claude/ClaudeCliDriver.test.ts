@@ -428,6 +428,22 @@ describe("ClaudeCliDriver persistent process", () => {
     driver.dispose();
   });
 
+  it("respawns the process when the session's agent token changes, keeping it while the token stays", async () => {
+    const { driver, children, spawnCalls } = makeDriver();
+    const turn = async (token: string, child: number): Promise<void> => {
+      driver.startTurn({ sessionId: "s1", cwd: "C:\\proj", prompt: "go", env: { CW_AGENT_TOKEN: token } });
+      await settle();
+      children[child]?.stdout.write(`${resultLine()}\n`);
+      await settle();
+    };
+    await turn("token-a", 0);
+    await turn("token-a", 0);
+    expect(spawnCalls).toHaveLength(1);
+    await turn("token-b", 1);
+    expect(spawnCalls).toHaveLength(2);
+    driver.dispose();
+  });
+
   it("never launches auto-title turns with --chrome", async () => {
     const { driver, spawnCalls } = makeDriver(() => false, () => ({ ...SETTINGS, claudeChromeEnabled: true }));
     driver.startTurn({ sessionId: "title:s1", cwd: "C:\\proj", prompt: "title this", maxTurns: 1 });

@@ -1846,10 +1846,11 @@ describe("SessionManager", () => {
     });
     const project = manager.addProject("C:\\proj-agent-env");
     const session = await manager.createSession(project.id, "claude");
-    expect(manager.turnEnv(session.id, "C:\\proj-agent-env")).toMatchObject({
+    expect(manager.turnEnv(session.id, "C:\\proj-agent-env", { agent: true })).toMatchObject({
       CW_MCP_URL: "http://127.0.0.1:1/mcp",
       CW_AGENT_TOKEN: `token-${session.id}`
     });
+    expect(manager.turnEnv(session.id, "C:\\proj-agent-env")["CW_AGENT_TOKEN"]).toBeUndefined();
     const titleEnv = (
       manager as unknown as { sessionEnvVars(id: string, session: undefined, project: undefined, cwd: string): Record<string, string> }
     ).sessionEnvVars(`title:${session.id}`, undefined, undefined, "C:\\title");
@@ -1858,7 +1859,7 @@ describe("SessionManager", () => {
     manager.dispose();
   });
 
-  it("gives the agent env to turns and terminals but not to worktree scripts", async () => {
+  it("gives the agent env to Claude turns and Claude terminals but not to worktree scripts", async () => {
     const { manager, fake } = makeManager();
     (manager as unknown as { agentEnv: (sessionId: string) => Record<string, string> }).agentEnv = (sessionId) => ({
       CW_MCP_URL: "http://127.0.0.1:1/mcp",
@@ -1868,7 +1869,7 @@ describe("SessionManager", () => {
     const session = await manager.createSession(project.id, "claude");
     await manager.startTurn(session.id, "hello");
     expect((fake.lastRequest?.env as Record<string, string> | undefined)?.["CW_AGENT_TOKEN"]).toBe(`token-${session.id}`);
-    expect((await manager.terminalEnv(session.id, project.rootPath))["CW_AGENT_TOKEN"]).toBe(`token-${session.id}`);
+    expect((await manager.terminalEnv(session.id, project.rootPath, "claude"))["CW_AGENT_TOKEN"]).toBe(`token-${session.id}`);
     const scriptEnv = (
       manager as unknown as { worktreeScriptEnv(id: string, project: Project, path: string, branch: string | undefined): Record<string, string> }
     ).worktreeScriptEnv(session.id, project, project.rootPath, "cw/branch");
@@ -1877,6 +1878,38 @@ describe("SessionManager", () => {
     expect(scriptEnv["CW_AGENT_TOKEN"]).toBeUndefined();
     expect(scriptEnv["CW_MCP_URL"]).toBeUndefined();
     fake.completeAll();
+    manager.dispose();
+  });
+
+  it.each(["codex", "opencode"] as const)("keeps the agent env out of %s turns, whose harness process is shared", async (driver) => {
+    const { manager, fake } = makeManager();
+    (manager as unknown as { agentEnv: (sessionId: string) => Record<string, string> }).agentEnv = (sessionId) => ({
+      CW_MCP_URL: "http://127.0.0.1:1/mcp",
+      CW_AGENT_TOKEN: `token-${sessionId}`
+    });
+    const project = manager.addProject(`C:\\proj-agent-${driver}-env`);
+    const session = await manager.createSession(project.id, driver);
+    await manager.startTurn(session.id, "hello");
+    const env = fake.lastRequest?.env as Record<string, string> | undefined;
+    expect(env?.["CW_SESSION_ID"]).toBe(session.id);
+    expect(env?.["CW_AGENT_TOKEN"]).toBeUndefined();
+    expect(env?.["CW_MCP_URL"]).toBeUndefined();
+    fake.completeAll();
+    manager.dispose();
+  });
+
+  it.each(["codex", "opencode", "shell"])("keeps the agent env out of %s terminals", async (kind) => {
+    const { manager } = makeManager();
+    (manager as unknown as { agentEnv: (sessionId: string) => Record<string, string> }).agentEnv = (sessionId) => ({
+      CW_MCP_URL: "http://127.0.0.1:1/mcp",
+      CW_AGENT_TOKEN: `token-${sessionId}`
+    });
+    const project = manager.addProject(`C:\\proj-agent-${kind}-pty`);
+    const session = await manager.createSession(project.id, "claude");
+    const env = await manager.terminalEnv(session.id, project.rootPath, kind);
+    expect(env["CW_SESSION_ID"]).toBe(session.id);
+    expect(env["CW_AGENT_TOKEN"]).toBeUndefined();
+    expect(env["CW_MCP_URL"]).toBeUndefined();
     manager.dispose();
   });
 

@@ -23,7 +23,7 @@ import type {
   TurnHandle,
   TurnRequest
 } from "@cw-code/contracts";
-import { claudePluginArgs } from "../../agent/claudePlugin.js";
+import { agentTokenFingerprint, claudePluginArgs } from "../../agent/claudePlugin.js";
 import { parseExtraArgs } from "../../settings/settingsUtils.js";
 import { detachProcessGroup, hasExited, killProcessTree, waitForExit } from "../../processTree.js";
 import { sanitizedChildEnv } from "../../shellEnvironment.js";
@@ -211,7 +211,8 @@ export class ClaudeCliDriver implements CliDriver {
       request.model ?? "",
       request.effort ?? "",
       request.permissionMode ?? "",
-      this.turnLaunchArgs(request)
+      this.turnLaunchArgs(request),
+      agentTokenFingerprint(request.env)
     ]);
   }
 

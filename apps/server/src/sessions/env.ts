@@ -1,3 +1,7 @@
+import { CW_AGENT_TOKEN_ENV, CW_MCP_URL_ENV } from "../agent/claudePlugin.js";
+
+const NOT_INHERITED: ReadonlySet<string> = new Set([CW_AGENT_TOKEN_ENV, CW_MCP_URL_ENV]);
+
 export function buildTurnEnv(
   processEnv: Record<string, string | undefined>,
   sessionVars: Record<string, string>,
@@ -5,7 +9,7 @@ export function buildTurnEnv(
 ): Record<string, string> {
   const out: Record<string, string> = {};
   for (const [key, value] of Object.entries(processEnv)) {
-    if (typeof value === "string") out[key] = value;
+    if (typeof value === "string" && !NOT_INHERITED.has(key.toUpperCase())) out[key] = value;
   }
   for (const [key, value] of Object.entries(sessionVars)) {
     if (typeof value === "string") out[key] = value;

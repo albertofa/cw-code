@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync, statSync, utimesSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { claudePluginArgs, claudePluginFiles, writeClaudePlugin } from "./claudePlugin.js";
+import { agentTokenFingerprint, claudePluginArgs, claudePluginFiles, writeClaudePlugin } from "./claudePlugin.js";
 
 describe("claudePluginFiles", () => {
   it("declares the plugin name and version", () => {
@@ -30,6 +30,17 @@ describe("claudePluginArgs", () => {
   it("adds the plugin directory only when available", () => {
     expect(claudePluginArgs("C:\\plugin")).toEqual(["--plugin-dir", "C:\\plugin"]);
     expect(claudePluginArgs(null)).toEqual([]);
+  });
+});
+
+describe("agentTokenFingerprint", () => {
+  it("is empty without a token and never contains the token", () => {
+    expect(agentTokenFingerprint(undefined)).toBe("");
+    expect(agentTokenFingerprint({ CW_MCP_URL: "http://127.0.0.1:1/mcp" })).toBe("");
+    const fingerprint = agentTokenFingerprint({ CW_AGENT_TOKEN: "secret-token" });
+    expect(fingerprint).toMatch(/^[0-9a-f]{16}$/);
+    expect(fingerprint).not.toContain("secret-token");
+    expect(agentTokenFingerprint({ CW_AGENT_TOKEN: "other-token" })).not.toBe(fingerprint);
   });
 });
 
