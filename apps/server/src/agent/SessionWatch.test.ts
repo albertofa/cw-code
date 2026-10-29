@@ -55,6 +55,14 @@ describe("SessionWatch", () => {
     expect(await pending).toEqual({ status: "input-required", lastResultText: "all done", timedOut: false });
   });
 
+  it("reports the result of a turn that settles right after the status change", async () => {
+    const { watch, change } = setup([session("working")]);
+    const pending = watch.wait("s1", 5_000);
+    change(session("done"));
+    watch.turnSettled("s1", turnDone("late result"));
+    expect(await pending).toEqual({ status: "done", lastResultText: "late result", timedOut: false });
+  });
+
   it("stays pending while changes keep the session working", async () => {
     const { watch, change } = setup([session("working")]);
     const pending = watch.wait("s1", 5_000);

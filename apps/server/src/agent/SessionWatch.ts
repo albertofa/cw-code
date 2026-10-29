@@ -24,9 +24,11 @@ export class SessionWatch {
 
   sessionChanged(meta: SessionMeta): void {
     if (meta.status === "working") return;
-    for (const waiter of [...this.waiters]) {
-      if (waiter.sessionId === meta.id) waiter.settle({ status: meta.status, timedOut: false });
-    }
+    const settling = [...this.waiters].filter((waiter) => waiter.sessionId === meta.id);
+    if (settling.length === 0) return;
+    queueMicrotask(() => {
+      for (const waiter of settling) waiter.settle({ status: meta.status, timedOut: false });
+    });
   }
 
   turnSettled(sessionId: string, event: SettledTurnEvent): void {
