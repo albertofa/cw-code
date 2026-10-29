@@ -3,9 +3,23 @@ import type { ServerApp } from "../app/ServerApp.js";
 import type { CliVersionCheck } from "@cw-code/contracts";
 import { checkCliVersion } from "../cliVersions.js";
 import { defaultPrWorkflows } from "../settings/prWorkflowDefaults.js";
+import { bindHostOr, DEFAULT_SETTINGS } from "../settings/SettingsStore.js";
 import { configuredCliBinaryPath } from "../settings/settingsUtils.js";
+import { bindRefusal, DEFAULT_BIND_HOST } from "../transport/bindPolicy.js";
 import type { Router } from "../transport/Router.js";
 import { handle, requireOwner } from "./shared.js";
+
+const OWNER_ONLY_SETTINGS = ["serverBindHost", "serverPublicUrl", "keepServerRunning"] as const satisfies ReadonlyArray<
+  keyof SettingsPatch
+>;
+
+function assertBindHostAllowed(app: ServerApp, value: unknown): void {
+  const host = bindHostOr(value, DEFAULT_SETTINGS.serverBindHost) || DEFAULT_BIND_HOST;
+  if (!bindRefusal(host, app.devices.count())) return;
+  throw Object.assign(new Error(`Pair a device before binding the server to ${host}; without a device token the server would not listen there.`), {
+    code: "bind-refused"
+  });
+}
 
 export function commitSettings(app: ServerApp, patch: SettingsPatch): AppSettings {
   const { sessions, appTopic, prStore, autoFollowUp, sidebar, githubViews } = app.requireServices();
@@ -24,7 +38,10 @@ export function registerSettingsHandlers(router: Router, app: ServerApp): void {
   handle(router, "settings.get", () => services().sessions.getSettings());
   handle(router, "settings.prWorkflowDefaults", () => defaultPrWorkflows());
   handle<SettingsPatch>(router, "settings.set", async (patch, ctx) => {
-    if (patch.serverBindHost !== undefined) requireOwner(ctx, "changing serverBindHost");
+    for (const key of OWNER_ONLY_SETTINGS) {
+      if (patch[key] !== undefined) requireOwner(ctx, `changing ${key}`);
+    }
+    if (patch.serverBindHost !== undefined) assertBindHostAllowed(app, patch.serverBindHost);
     const { sessions, accountUsage, harnessMonitor } = services();
     const current = sessions.getSettings();
     const normalized = { ...patch };

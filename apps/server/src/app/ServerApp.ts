@@ -1,7 +1,9 @@
 import type { AppNotice, DeviceInfo, ServerReady, ShutdownCommitResult, ShutdownExpiredEvent, ShutdownReason, ShutdownStatus, StartupState } from "@cw-code/contracts";
 import { CLOSE_UNAUTHORIZED, PROTOCOL_VERSION, SERVER_READY_PREFIX } from "@cw-code/shared/protocol";
+import { APP_TOPIC } from "@cw-code/shared/topics";
 import { appendCrashLog, initCrashLog } from "../debug/crashLog.js";
 import { initHarnessTrace } from "../debug/harnessTrace.js";
+import { initServerLog } from "../debug/serverLog.js";
 import { initSessionStatusTrace } from "../debug/sessionStatusTrace.js";
 import { sweepStaleSnapshotIndexes } from "../fs/GitService.js";
 import { registerHandlers } from "../handlers/index.js";
@@ -14,6 +16,8 @@ import type { ServerArgs } from "../transport/args.js";
 import { decideBindHost } from "../transport/bindPolicy.js";
 import { removeEndpoint, writeEndpoint } from "../transport/endpointFile.js";
 import { DeviceTokens } from "../transport/deviceTokens.js";
+import type { HttpRoutesOptions } from "../transport/httpRoutes.js";
+import { resolveUiDir } from "../transport/uiDir.js";
 import { createOriginPolicy, createRejectedOriginLogger } from "../transport/originPolicy.js";
 import { loadOrCreateOwnerToken, tokensEqual } from "../transport/ownerToken.js";
 import { Router, type ClientAuth } from "../transport/Router.js";
@@ -31,6 +35,11 @@ const SESSION_SETTLE_INITIAL_DELAY_MS = 5_000;
 const PARENT_CHECK_INTERVAL_MS = 2_000;
 const STOP_AFTER_REPLY_MS = 50;
 const STOP_DEADLINE_MS = 5_000;
+
+function devicesSeenBy(devices: DeviceInfo[], viewer: ClientAuth): DeviceInfo[] {
+  if (viewer.kind !== "device") return devices;
+  return devices.map((device) => (device.id === viewer.deviceId ? { ...device, current: true } : device));
+}
 
 function isProcessGone(pid: number): boolean {
   try {
@@ -53,16 +62,25 @@ export class ServerApp {
   private sessionSettleTimer: ReturnType<typeof setInterval> | null = null;
   private sessionSettleInitialTimer: ReturnType<typeof setTimeout> | null = null;
   private parentTimer: ReturnType<typeof setInterval> | null = null;
+  private watchedParentPid: number | null = null;
   private stopping = false;
   private lastShutdownStatus: ShutdownStatus = { idle: true, committed: false, reason: null };
   private readonly shutdownPublisher = new ShutdownPublisher(() => this.publishShutdown());
   private unwireShutdownPublishing: () => void = () => {};
   private pendingShellNotices: AppNotice[] = [];
+  readonly uiDir: string | null;
+  private listenHost: string | null = null;
 
   constructor(
     private readonly args: ServerArgs,
     private readonly version: string
-  ) {}
+  ) {
+    this.uiDir = resolveUiDir(args.uiDir);
+  }
+
+  get bindHost(): string | null {
+    return this.listenHost;
+  }
 
   get startupState(): StartupState {
     return this.state;
@@ -98,13 +116,21 @@ export class ServerApp {
     return this.deviceTokens;
   }
 
-  deviceInfos(): DeviceInfo[] {
-    const connected = new Set(this.ws?.clients().flatMap((ctx) => (ctx.auth.kind === "device" ? [ctx.auth.deviceId] : [])));
-    return this.devices.list().map(({ id, name, createdAt, lastSeenAt }) => ({ id, name, createdAt, lastSeenAt, connected: connected.has(id) }));
+  deviceInfos(viewer: ClientAuth): DeviceInfo[] {
+    return devicesSeenBy(this.listDevices(), viewer);
   }
 
   emitDevicesChanged(): void {
-    this.emit("devices.changed", this.deviceInfos());
+    const subscribers = this.topics.subscriberIds(APP_TOPIC);
+    const devices = this.listDevices();
+    for (const ctx of this.ws?.clients() ?? []) {
+      if (subscribers.has(ctx.clientId)) this.ws?.sendEvent([ctx.clientId], "devices.changed", devicesSeenBy(devices, ctx.auth));
+    }
+  }
+
+  private listDevices(): DeviceInfo[] {
+    const connected = new Set(this.ws?.clients().flatMap((ctx) => (ctx.auth.kind === "device" ? [ctx.auth.deviceId] : [])));
+    return this.devices.list().map(({ id, name, createdAt, lastSeenAt }) => ({ id, name, createdAt, lastSeenAt, connected: connected.has(id), current: false }));
   }
 
   revokeDevice(id: string): void {
@@ -122,6 +148,7 @@ export class ServerApp {
   }
 
   start(loginShellWarnings: string[]): ServerReady {
+    initServerLog(logsDir());
     try {
       const tracePath = initHarnessTrace({ logDir: logsDir() });
       console.warn(`harness trace: ${tracePath}`);
@@ -177,9 +204,16 @@ export class ServerApp {
       console.warn(entry);
       appendCrashLog(entry);
     });
-    const ws = new WsServer({ host, port: this.args.port, authorize, isOriginAllowed, onOriginRejected, version: this.version, router: this.router });
+    const http = {
+      uiDir: this.uiDir,
+      info: { app: "cw-code", version: this.version, protocol: PROTOCOL_VERSION },
+      ownerToken,
+      stop: () => this.scheduleStop(0)
+    } satisfies HttpRoutesOptions;
+    const ws = new WsServer({ host, port: this.args.port, authorize, isOriginAllowed, onOriginRejected, version: this.version, router: this.router, http });
     const { url, port } = this.bind(ws, host);
     this.ws = ws;
+    this.listenHost = host;
     this.applyStores(stores);
     ws.onClientAccepted((ctx) => {
       if (ctx.client === "desktop-shell") this.flushShellNotices(ctx.clientId);
@@ -195,7 +229,7 @@ export class ServerApp {
         this.handleUiDisconnected();
       }
     });
-    const ready: ServerReady = { url, port, pid: process.pid, protocol: PROTOCOL_VERSION, version: this.version };
+    const ready: ServerReady = { url, port, pid: process.pid, protocol: PROTOCOL_VERSION, version: this.version, launcherId: this.args.launcherId };
     writeEndpoint(userdataDir(), ready);
     process.stdout.write(`CW_SERVER_READY ${JSON.stringify(ready)}\n`);
     this.watchParent();
@@ -467,11 +501,37 @@ export class ServerApp {
     services.ptys.dispose();
   }
 
+  setParent(pid: number): void {
+    this.clearParentWatch();
+    this.watchedParentPid = pid;
+    this.startParentWatch();
+  }
+
+  private keepsRunningWithoutParent(): boolean {
+    return this.services?.sessions.getSettings().keepServerRunning === true;
+  }
+
+  private clearParentWatch(): void {
+    if (this.parentTimer) clearInterval(this.parentTimer);
+    this.parentTimer = null;
+  }
+
   private watchParent(): void {
-    const parentPid = this.args.parentPid;
+    this.watchedParentPid = this.args.parentPid;
+    this.startParentWatch();
+  }
+
+  private startParentWatch(): void {
+    const parentPid = this.watchedParentPid;
     if (parentPid === null) return;
     this.parentTimer = setInterval(() => {
       if (!isProcessGone(parentPid)) return;
+      if (this.keepsRunningWithoutParent()) {
+        console.warn(`parent process ${parentPid} is gone; keeping the server running`);
+        this.watchedParentPid = null;
+        this.clearParentWatch();
+        return;
+      }
       console.warn(`parent process ${parentPid} is gone; stopping`);
       void this.stop(0);
     }, PARENT_CHECK_INTERVAL_MS);

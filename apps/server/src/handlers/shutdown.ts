@@ -1,7 +1,7 @@
 import type { ShutdownPrepareRequest, ShutdownReason } from "@cw-code/contracts";
 import type { ServerApp } from "../app/ServerApp.js";
 import type { Router } from "../transport/Router.js";
-import { handle } from "./shared.js";
+import { handle, requireOwner } from "./shared.js";
 
 const SHUTDOWN_REASONS: ShutdownReason[] = ["quit", "update"];
 const SHUTDOWN_TIMEOUT_MAX_MS = 120_000;
@@ -46,11 +46,13 @@ export function registerShutdownHandlers(router: Router, app: ServerApp): void {
   };
   handle(router, "shutdown.assess", () => shutdown().assess());
   handle(router, "shutdown.status", () => app.shutdownStatus());
-  handle(router, "shutdown.prepare", (args) => {
+  handle(router, "shutdown.prepare", (args, ctx) => {
+    requireOwner(ctx, "preparing a shutdown");
     const request = parseShutdownPrepare(args);
     return reporting(() => shutdown().prepare(request));
   });
-  handle(router, "shutdown.force", (args) => {
+  handle(router, "shutdown.force", (args, ctx) => {
+    requireOwner(ctx, "forcing a shutdown");
     const token = parseShutdownToken(args, "shutdown.force");
     return reporting(() => shutdown().force(token));
   });
@@ -60,5 +62,8 @@ export function registerShutdownHandlers(router: Router, app: ServerApp): void {
       shutdown().cancel(token);
     });
   });
-  handle(router, "shutdown.quit", (args) => app.quit(parseShutdownToken(args, "shutdown.quit")));
+  handle(router, "shutdown.quit", (args, ctx) => {
+    requireOwner(ctx, "quitting the server");
+    return app.quit(parseShutdownToken(args, "shutdown.quit"));
+  });
 }

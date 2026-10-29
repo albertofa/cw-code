@@ -51,7 +51,7 @@ export function killProcessTreeByPid(pid: number | undefined): void {
   if (pid === undefined || !Number.isFinite(pid) || pid <= 0) return;
   if (process.platform === "win32") {
     try {
-      execFileSync("taskkill", ["/PID", String(pid), "/T", "/F"], { stdio: "ignore" });
+      execFileSync("taskkill", ["/PID", String(pid), "/T", "/F"], { stdio: "ignore", windowsHide: true });
     } catch {
       signal(pid, "SIGTERM");
     }
@@ -85,7 +85,7 @@ export function killProcessTree(proc: ChildProcess | undefined): void {
   if (!proc || proc.pid === undefined) return;
   if (process.platform === "win32") {
     try {
-      execFileSync("taskkill", ["/PID", String(proc.pid), "/T", "/F"], { stdio: "ignore" });
+      execFileSync("taskkill", ["/PID", String(proc.pid), "/T", "/F"], { stdio: "ignore", windowsHide: true });
       return;
     } catch {
     }

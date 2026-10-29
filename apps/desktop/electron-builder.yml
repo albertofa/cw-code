@@ -8,6 +8,7 @@ npmRebuild: false
 asar: true
 files:
   - "out/**"
+  - "!out/renderer/**"
   - "package.json"
 afterPack: build/afterPack.cjs
 toolsets:

@@ -1,0 +1,52 @@
+{
+  "name": "@cw-code/ui",
+  "version": "0.0.1-alpha.21",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "bun --bun vite",
+    "build": "bun --bun vite build",
+    "typecheck": "bun --bun tsc --noEmit -p tsconfig.json",
+    "test": "bun test --parallel --timeout 20000"
+  },
+  "dependencies": {
+    "@codemirror/autocomplete": "^6.20.4",
+    "@codemirror/commands": "^6.11.1",
+    "@codemirror/language": "^6.13.1",
+    "@codemirror/language-data": "^6.5.2",
+    "@codemirror/search": "^6.7.2",
+    "@codemirror/state": "^6.7.6",
+    "@codemirror/view": "^6.43.15",
+    "@fontsource-variable/jetbrains-mono": "^5.3.0",
+    "@lezer/highlight": "^1.2.5",
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/xterm": "^5.5.0",
+    "lucide-react": "^1.43.0",
+    "material-icon-theme": "5.39.0",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0",
+    "react-markdown": "^10.1.0",
+    "rehype-raw": "^7.0.0",
+    "rehype-sanitize": "^6.0.0",
+    "remark-gfm": "^4.0.1",
+    "shiki": "^4.5.0",
+    "zustand": "^5.0.5"
+  },
+  "devDependencies": {
+    "@cw-code/client": "workspace:*",
+    "@cw-code/contracts": "workspace:*",
+    "@cw-code/shared": "workspace:*",
+    "@happy-dom/global-registrator": "^21.0.4",
+    "@types/node": "^22.10.2",
+    "@types/react": "^19.1.0",
+    "@types/react-dom": "^19.1.0",
+    "@vitejs/plugin-react": "^4.3.4",
+    "bun-types": "1.4.3",
+    "happy-dom": "^21.0.4",
+    "typescript": "^5.6.3",
+    "vite": "^6.0.6"
+  },
+  "description": "A desktop workspace for Claude Code, OpenCode, and Codex.",
+  "license": "MIT",
+  "homepage": "https://github.com/albertofa/cw-code"
+}

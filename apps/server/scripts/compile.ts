@@ -18,6 +18,7 @@ const BUN_TARGET_OS: Readonly<Record<string, NodeJS.Platform>> = { windows: "win
 
 const serverDir = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const distDir = join(serverDir, "dist");
+const uiDistDir = resolve(serverDir, "..", "ui", "dist");
 
 function fail(message: string): never {
   console.error(`[server build] ${message}`);
@@ -75,12 +76,25 @@ function copyNodePty(ptyDir: string, layout: NativeLayout): string {
   return outDir;
 }
 
+function requireUiBuild(): void {
+  if (!existsSync(join(uiDistDir, "index.html"))) fail("apps/ui/dist/index.html is missing; run bun --filter @cw-code/ui build first");
+}
+
+function copyUi(): string {
+  const outDir = join(distDir, "ui");
+  cpSync(uiDistDir, outDir, { recursive: true });
+  return outDir;
+}
+
 const target = parseTarget(process.argv.slice(2));
 const ptyDir = dirname(createRequire(join(serverDir, "package.json")).resolve("node-pty/package.json"));
 const layout = requireNodePtyNatives(target, ptyDir);
+requireUiBuild();
 const outfile = join(distDir, target.platform === "win32" ? "cw-code-server.exe" : "cw-code-server");
 rmSync(distDir, { recursive: true, force: true });
 compileServer(target, outfile);
 const ptyOut = copyNodePty(ptyDir, layout);
+const uiOut = copyUi();
 console.log(`[server build] ${outfile}`);
 console.log(`[server build] ${ptyOut}`);
+console.log(`[server build] ${uiOut}`);

@@ -3,13 +3,14 @@ import { filesTopic } from "@cw-code/shared/topics";
 import { readFileSync, statSync } from "node:fs";
 import { isAbsolute, relative, resolve, sep } from "node:path";
 import type { ServerApp } from "../app/ServerApp.js";
+import { browseDirectories } from "../fs/directoryBrowser.js";
 import { IMAGE_MAX_BYTES, imageExtMime, resolveFileTarget } from "../fs/FileService.js";
 import { configuredGitBinary } from "../fs/GitService.js";
 import { moveToTrash } from "../fs/trash.js";
 import { gitBaseline, listWorkspaceFiles, searchText } from "../fs/workspaceQueries.js";
 import { attachmentsDir } from "../paths/appPaths.js";
 import type { Router } from "../transport/Router.js";
-import { assertString, handle, parseArgs, parseList, parseOptionalNumber, parseString, parseTextSearchQuery } from "./shared.js";
+import { assertString, handle, parseArgs, parseList, parseOptionalBoolean, parseOptionalNumber, parseOptionalString, parseString, parseTextSearchQuery } from "./shared.js";
 
 const MAX_WATCHED_PATHS = 2_000;
 
@@ -47,6 +48,11 @@ function readAttachmentImage(path: string): { mime: string; base64: string } {
 
 export function registerFileHandlers(router: Router, app: ServerApp): void {
   const services = () => app.requireServices();
+  handle(router, "fs.browseDirectories", (args) => {
+    const params = args === undefined || args === null ? {} : parseArgs(args, "fs.browseDirectories");
+    const path = params.path === null ? null : (parseOptionalString(params.path, "path") ?? null);
+    return browseDirectories(path, { showHidden: parseOptionalBoolean(params.showHidden, "showHidden") });
+  });
   const gitBinary = (): string => configuredGitBinary(services().sessions.getSettings());
   const fsRoot = (args: Record<string, unknown>): Promise<string> =>
     services().sessions.ensureWorktree(parseString(args.sessionId, "sessionId"));

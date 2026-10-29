@@ -2,6 +2,7 @@ import { existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { sha512Base64 } from "../tools/release/src/rehash.ts";
 import { requireDisposableEnvironment } from "./lib/package-probe.mjs";
+import { resolveAsarLib } from "./lib/windows-install.mjs";
 import {
   DEB_INSTALL_DIR,
   DEB_LAUNCHER,
@@ -79,7 +80,7 @@ async function describeArtifact(path) {
   return { path, exists, sizeBytes: fileSize(path), sha512: exists ? await sha512Base64(path) : null };
 }
 
-async function checkArtifacts(distDir, version) {
+async function checkArtifacts(distDir, desktopDir, version) {
   const appImagePath = join(distDir, `cw-code-${version}-x86_64.AppImage`);
   const debPath = join(distDir, `cw-code-${version}-amd64.deb`);
   const latestPath = join(distDir, "latest-linux.yml");
@@ -87,6 +88,8 @@ async function checkArtifacts(distDir, version) {
   const serverDir = join(distDir, "linux-unpacked", "resources", "server");
   const serverBinaryPath = join(serverDir, "cw-code-server");
   const ptyNativePath = join(serverDir, "node_modules", "node-pty", "build", "Release", "pty.node");
+  const uiIndexPath = join(serverDir, "ui", "index.html");
+  const asarPath = join(distDir, "linux-unpacked", "resources", "app.asar");
   const artifacts = {
     appImage: await describeArtifact(appImagePath),
     deb: await describeArtifact(debPath),
@@ -97,7 +100,9 @@ async function checkArtifacts(distDir, version) {
       sizeBytes: fileSize(serverBinaryPath),
       executable: existsSync(serverBinaryPath) && (statSync(serverBinaryPath).mode & 0o111) !== 0
     },
-    nodePtyNative: { path: ptyNativePath, exists: existsSync(ptyNativePath) }
+    nodePtyNative: { path: ptyNativePath, exists: existsSync(ptyNativePath) },
+    uiIndex: { path: uiIndexPath, exists: existsSync(uiIndexPath) },
+    asar: { path: asarPath, exists: existsSync(asarPath), containsRenderer: null }
   };
   const problems = [];
   if (!artifacts.appImage.exists) problems.push(`AppImage not found: ${appImagePath}`);
@@ -107,6 +112,16 @@ async function checkArtifacts(distDir, version) {
   if (!artifacts.serverBinary.exists) problems.push(`server binary not found: ${serverBinaryPath}`);
   else if (!artifacts.serverBinary.executable) problems.push(`server binary is not executable: ${serverBinaryPath}`);
   if (!artifacts.nodePtyNative.exists) problems.push(`node-pty native module not found: ${ptyNativePath}`);
+  if (!artifacts.uiIndex.exists) problems.push(`bundled UI not found: ${uiIndexPath}`);
+  if (!artifacts.asar.exists) problems.push(`app.asar not found: ${asarPath}`);
+  else {
+    const asarLib = await resolveAsarLib(desktopDir);
+    if (asarLib) {
+      const entries = asarLib.listPackage(asarPath).map((entry) => entry.replace(/\\/g, "/"));
+      artifacts.asar.containsRenderer = entries.some((entry) => entry.includes("out/renderer/"));
+      if (artifacts.asar.containsRenderer) problems.push("app.asar still contains out/renderer; the UI ships once, under resources/server/ui");
+    }
+  }
   return { artifacts, problems };
 }
 
@@ -198,7 +213,7 @@ async function verify(args, summary) {
   summary.apparmorRestrictUnprivilegedUserns = readUsernsRestriction();
   summary.unprivilegedUsernsUsable = unprivilegedUsernsUsable();
 
-  const { artifacts, problems } = await checkArtifacts(args.dist, version);
+  const { artifacts, problems } = await checkArtifacts(args.dist, args.desktopDir, version);
   summary.artifacts = artifacts;
   summary.problems.push(...problems);
 
@@ -224,6 +239,7 @@ function printSummary(summary, args) {
     console.log(`  latest-linux.yml: ${summary.artifacts.latestLinuxYml.matchesVersion ? "OK" : "MISSING OR STALE"}`);
     console.log(`  server binary: ${summary.artifacts.serverBinary.executable ? "OK" : "MISSING OR NOT EXECUTABLE"}`);
     console.log(`  node-pty native module: ${summary.artifacts.nodePtyNative.exists ? "OK" : "MISSING"}`);
+    console.log(`  bundled UI: ${summary.artifacts.uiIndex.exists ? "OK" : "MISSING"}`);
     console.log(`  apparmor_restrict_unprivileged_userns: ${summary.apparmorRestrictUnprivilegedUserns ?? "absent"}`);
     console.log(`  unprivileged user namespaces usable: ${summary.unprivilegedUsernsUsable}`);
   }

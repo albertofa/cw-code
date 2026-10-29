@@ -1,11 +1,11 @@
 import { defineConfig } from "electron-vite";
-import react from "@vitejs/plugin-react";
 import { resolve } from "node:path";
+import { UI_ROOT, uiConfig } from "../ui/vite.config";
 
 const updateTestBuild = process.env.CW_UPDATE_TEST_BUILD === "1";
 const outRoot = updateTestBuild ? "out-updatetest" : "out";
 
-export default defineConfig({
+export default defineConfig(({ command }) => ({
   main: {
     define: { __CW_UPDATE_TEST_BUILD__: JSON.stringify(updateTestBuild) },
     build: {
@@ -16,27 +16,5 @@ export default defineConfig({
   preload: {
     build: { outDir: resolve(__dirname, outRoot, "preload"), emptyOutDir: true }
   },
-  renderer: {
-    root: "src/renderer",
-    resolve: { alias: { "@": resolve(__dirname, "src/renderer/src") } },
-    plugins: [react()],
-    server: { port: 9369 },
-    worker: { format: "es" },
-    optimizeDeps: {
-      include: [
-        "shiki/core",
-        "shiki/engine/javascript",
-        "shiki/langs",
-        "@codemirror/autocomplete",
-        "@codemirror/commands",
-        "@codemirror/language",
-        "@codemirror/language-data",
-        "@codemirror/search",
-        "@codemirror/state",
-        "@codemirror/view",
-        "@lezer/highlight"
-      ]
-    },
-    build: { outDir: resolve(__dirname, outRoot, "renderer"), emptyOutDir: true }
-  }
-});
+  ...(command === "serve" ? { renderer: { ...uiConfig, build: { rollupOptions: { input: resolve(UI_ROOT, "index.html") } } } } : {})
+}));

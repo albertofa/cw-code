@@ -2,9 +2,10 @@ const fs = require("node:fs/promises");
 const path = require("node:path");
 
 const SERVER_DIR = path.join("resources", "server");
+const UI_INDEX = path.join(SERVER_DIR, "ui", "index.html");
 const SERVER_FILES = {
-  win32: [path.join(SERVER_DIR, "cw-code-server.exe"), path.join(SERVER_DIR, "node_modules", "node-pty", "prebuilds", "win32-x64", "pty.node")],
-  linux: [path.join(SERVER_DIR, "cw-code-server"), path.join(SERVER_DIR, "node_modules", "node-pty", "build", "Release", "pty.node")]
+  win32: [path.join(SERVER_DIR, "cw-code-server.exe"), path.join(SERVER_DIR, "node_modules", "node-pty", "prebuilds", "win32-x64", "pty.node"), UI_INDEX],
+  linux: [path.join(SERVER_DIR, "cw-code-server"), path.join(SERVER_DIR, "node_modules", "node-pty", "build", "Release", "pty.node"), UI_INDEX]
 };
 
 const sandboxWrapper = (executableName, binaryName) => `#!/bin/sh
@@ -33,7 +34,7 @@ async function requireServerFiles(context) {
   for (const file of required) {
     const target = path.join(context.appOutDir, file);
     if (!(await exists(target))) {
-      throw new Error(`cw-code server file missing from the package: ${target}. Run bun --filter @cw-code/server compile before electron-builder.`);
+      throw new Error(`cw-code server file missing from the package: ${target}. Run bun --filter @cw-code/ui build and bun --filter @cw-code/server compile before electron-builder.`);
     }
   }
 }

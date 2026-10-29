@@ -1,4 +1,4 @@
-import type { ServerReady } from "@cw-code/contracts";
+import type { ServerInfo, ServerReady } from "@cw-code/contracts";
 
 export const PROTOCOL_VERSION = 3;
 export const CLOSE_UNAUTHORIZED = 4401;
@@ -11,6 +11,9 @@ export const SERVER_TOKEN_FILE = "server-token";
 export const SERVER_ENDPOINT_FILE = "server.json";
 export const SERVER_READY_PREFIX = "CW_SERVER_READY ";
 export const SERVER_RUNNING_PREFIX = "CW_SERVER_RUNNING ";
+export const WS_PATH = "/ws";
+export const INFO_PATH = "/api/info";
+export const STOP_PATH = "/api/stop";
 export const EXIT_ALREADY_RUNNING = 3;
 export const PASTE_IMAGE_MAX_BYTES = 32 * 1024 * 1024;
 
@@ -29,6 +32,13 @@ export function isServerReady(value: unknown): value is ServerReady {
     typeof ready.port === "number" &&
     typeof ready.pid === "number" &&
     typeof ready.protocol === "number" &&
-    typeof ready.version === "string"
+    typeof ready.version === "string" &&
+    (ready.launcherId === undefined || ready.launcherId === null || typeof ready.launcherId === "string")
   );
+}
+
+export function isServerInfo(value: unknown): value is ServerInfo {
+  if (typeof value !== "object" || value === null) return false;
+  const info = value as Record<string, unknown>;
+  return info.app === "cw-code" && typeof info.version === "string" && typeof info.protocol === "number";
 }

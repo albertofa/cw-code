@@ -29,6 +29,21 @@ export interface ServerReady {
   pid: number;
   protocol: number;
   version: string;
+  launcherId?: string | null;
+}
+
+export interface ServerInfo {
+  app: "cw-code";
+  version: string;
+  protocol: number;
+}
+
+export interface ServerHost {
+  platform: "win32" | "linux" | "darwin";
+  hostname: string;
+  homeDir: string;
+  webUi: boolean;
+  bindHost?: string;
 }
 
 export interface TopicsParams {
@@ -41,6 +56,7 @@ export interface DeviceInfo {
   createdAt: number;
   lastSeenAt: number | null;
   connected: boolean;
+  current: boolean;
 }
 
 export interface DeviceCreateResult {

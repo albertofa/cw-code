@@ -7,6 +7,7 @@ import type {
   DeviceCreateResult,
   DeviceInfo,
   Project,
+  ServerHost,
   ServerReady,
   SessionMeta,
   ShutdownPrepareResult,
@@ -118,6 +119,58 @@ describe("server process", () => {
     expect(ready.url).toBe(`ws://127.0.0.1:${ready.port}/ws`);
     expect(JSON.parse(readFileSync(join(home, "userdata", "server.json"), "utf8"))).toEqual(ready);
   });
+
+  it("reports the host it listens on from server.host", async () => {
+    const client = await connect();
+    expect((await client.call<ServerHost>("server.host")).bindHost).toBe("127.0.0.1");
+  });
+
+  it("records no launcher id when started directly and tees output to server.log", () => {
+    expect(ready.launcherId).toBeNull();
+    expect(readFileSync(join(home, "logs", "server.log"), "utf8")).toContain("[warn]");
+  });
+
+  it("keeps answering after its stdout and stderr pipes are closed from the other side", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "cw-server-pipes-"));
+    const proc = Bun.spawn([process.execPath, ENTRY, "--port", "0", "--launcher-id", "install-1"], {
+      env: { ...process.env, CW_CODE_HOME: dir },
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "pipe"
+    });
+    processes.push(proc);
+    try {
+      const detached = JSON.parse(await readTaggedLine(proc, "CW_SERVER_READY")) as ServerReady;
+      expect(detached.launcherId).toBe("install-1");
+      await Promise.all([proc.stdout.cancel(), proc.stderr.cancel()]);
+      const detachedToken = readFileSync(join(dir, "userdata", "server-token"), "utf8").trim();
+      const owner = await connect(detachedToken, "desktop-ui", detached.url);
+      await owner.call("settings.set", { claudeReasoningExpanded: true });
+      expect(await owner.call("startup.state")).toEqual({ mode: "ready" });
+      expect(proc.exitCode).toBeNull();
+      await owner.call("server.stop");
+      expect(await exitWithin(proc, 15_000)).toBe(0);
+    } finally {
+      if (proc.exitCode === null) proc.kill();
+    }
+  }, STARTUP_TIMEOUT_MS + 20_000);
+
+  it("keeps running after the parent exits when keepServerRunning is on and stops when it is off", async () => {
+    const owner = await connect();
+    const parent = Bun.spawn([process.execPath, "-e", "setTimeout(() => {}, 60000)"], { stdin: "ignore", stdout: "ignore", stderr: "ignore" });
+    try {
+      await owner.call("settings.set", { keepServerRunning: true });
+      await owner.call("server.setParent", { pid: parent.pid });
+      parent.kill();
+      await parent.exited;
+      await Bun.sleep(3_000);
+      expect(server.exitCode).toBeNull();
+      expect(readFileSync(join(home, "logs", "server.log"), "utf8")).toContain(`parent process ${parent.pid} is gone; keeping the server running`);
+    } finally {
+      parent.kill();
+      await owner.call("settings.set", { keepServerRunning: false });
+    }
+  }, 20_000);
 
   it("serves the app over the websocket", async () => {
     const client = await connect();
@@ -279,7 +332,7 @@ describe("server process", () => {
   it("lets only the owner manage device tokens and closes a revoked device with 4401", async () => {
     const owner = await connect();
     const created = await owner.call<DeviceCreateResult>("devices.create", { name: "Phone" });
-    expect(created.device).toMatchObject({ name: "Phone", connected: false });
+    expect(created.device).toMatchObject({ name: "Phone", connected: false, current: false });
     expect(readFileSync(join(home, "userdata", "devices.json"), "utf8")).not.toContain(created.token);
 
     await owner.call("topics.subscribe", { topics: ["app"] });
@@ -296,7 +349,27 @@ describe("server process", () => {
     await expect(device.call("settings.set", { serverBindHost: "0.0.0.0" })).rejects.toMatchObject({ code: "forbidden" });
     await expect(device.call("devices.create", { name: "Rogue" })).rejects.toMatchObject({ code: "forbidden" });
     await expect(device.call("devices.revoke", { id: created.device.id })).rejects.toMatchObject({ code: "forbidden" });
-    expect((await device.call<DeviceInfo[]>("devices.list")).map((info) => info.id)).toContain(created.device.id);
+    const seenByDevice = await device.call<DeviceInfo[]>("devices.list");
+    expect(seenByDevice.filter((info) => info.current).map((info) => info.id)).toEqual([created.device.id]);
+    expect((await owner.call<DeviceInfo[]>("devices.list")).some((info) => info.current)).toBe(false);
+
+    await device.call("topics.subscribe", { topics: ["app"] });
+    const deviceChanged = new Promise<DeviceInfo[]>((resolve) => {
+      const off = device.on("devices.changed", (payload) => {
+        off();
+        resolve(payload as DeviceInfo[]);
+      });
+    });
+    const ownerChanged = new Promise<DeviceInfo[]>((resolve) => {
+      const off = owner.on("devices.changed", (payload) => {
+        off();
+        resolve(payload as DeviceInfo[]);
+      });
+    });
+    const second = await owner.call<DeviceCreateResult>("devices.create", { name: "Tablet" });
+    expect((await deviceChanged).filter((info) => info.current).map((info) => info.id)).toEqual([created.device.id]);
+    expect((await ownerChanged).some((info) => info.current)).toBe(false);
+    await owner.call("devices.revoke", { id: second.device.id });
 
     const changed = new Promise<DeviceInfo[]>((resolve) => {
       owner.on("devices.changed", (payload) => resolve(payload as DeviceInfo[]));
@@ -319,6 +392,16 @@ describe("server process", () => {
     expect(running).toEqual(ready);
     expect(await exitWithin(second, STARTUP_TIMEOUT_MS)).toBe(3);
   }, STARTUP_TIMEOUT_MS + 5_000);
+
+  it("rejects server.stop and server.setParent from a device token", async () => {
+    const owner = await connect();
+    const created = await owner.call<DeviceCreateResult>("devices.create", { name: "Stopper" });
+    const device = await connect(created.token, "web");
+    await expect(device.call("server.stop")).rejects.toMatchObject({ code: "forbidden" });
+    await expect(device.call("server.setParent", { pid: process.pid })).rejects.toMatchObject({ code: "forbidden" });
+    await expect(owner.call("server.setParent", { pid: 0 })).rejects.toThrow("pid must be a positive integer");
+    await owner.call("devices.revoke", { id: created.device.id });
+  });
 
   it("stops on server.stop and removes the endpoint file", async () => {
     const client = await connect();
@@ -353,7 +436,11 @@ describe("bind host policy", () => {
     const firstReady = JSON.parse(await readTaggedLine(first, "CW_SERVER_READY")) as ServerReady;
     const ownerToken = readFileSync(join(dir, "userdata", "server-token"), "utf8").trim();
     const owner = await connect(ownerToken, "desktop-ui", firstReady.url);
+    await expect(owner.call("settings.set", { serverBindHost: "0.0.0.0" })).rejects.toMatchObject({ code: "bind-refused" });
+    expect((await owner.call<AppSettings>("settings.set", { serverBindHost: "127.0.0.2" })).serverBindHost).toBe("127.0.0.2");
+    const paired = await owner.call<DeviceCreateResult>("devices.create", { name: "Laptop" });
     expect((await owner.call<AppSettings>("settings.set", { serverBindHost: "0.0.0.0" })).serverBindHost).toBe("0.0.0.0");
+    await owner.call("devices.revoke", { id: paired.device.id });
     await owner.call("server.stop");
     expect(await exitWithin(first, 15_000)).toBe(0);
 

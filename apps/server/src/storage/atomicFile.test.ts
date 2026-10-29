@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, type OpenMode, type PathLike } from "node:fs";
+import { mkdtempSync, readFileSync, statSync, type Mode, type OpenMode, type PathLike } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, mock, vi } from "bun:test";
@@ -19,13 +19,13 @@ const actual = { ...(await import("node:fs")) };
 mock.module("node:fs", () => {
   return {
     ...actual,
-    openSync: vi.fn((path: PathLike, flags: OpenMode) => {
+    openSync: vi.fn((path: PathLike, flags: OpenMode, mode?: Mode) => {
       if (directorySync.dir !== null && path === directorySync.dir) {
         directorySync.opened += 1;
         expect(flags).toBe("r");
         return DIRECTORY_FD;
       }
-      return actual.openSync(path, flags);
+      return actual.openSync(path, flags, mode);
     }),
     fsyncSync: vi.fn((fd: number) => {
       if (fd !== DIRECTORY_FD) return actual.fsyncSync(fd);
@@ -57,6 +57,14 @@ afterEach(() => {
 });
 
 describe("writeFileAtomic", () => {
+  it.skipIf(realPlatform === "win32")("creates the file with the requested mode", () => {
+    const { file } = tempTarget();
+
+    writeFileAtomic(file, "{}", { mode: 0o600 });
+
+    expect(statSync(file).mode & 0o777).toBe(0o600);
+  });
+
   it("fsyncs the parent directory after the rename on POSIX", () => {
     setPlatform("linux");
     const { file } = tempTarget();

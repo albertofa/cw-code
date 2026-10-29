@@ -166,6 +166,12 @@ jobs:
             echo "::error::CW_UPDATE_TEST_BUILD is set; a production package must never contain the update autotest mode"
             exit 1
           fi
+      - name: Detect the web UI package (absent before Phase 4)
+        id: ui
+        run: |
+          if [ -f apps/ui/package.json ]; then echo "present=true" >> "$GITHUB_OUTPUT"; else echo "present=false" >> "$GITHUB_OUTPUT"; fi
+      - if: steps.ui.outputs.present == 'true'
+        run: bun --filter @cw-code/ui build
       - run: bun --filter @cw-code/server compile
       - run: bun --filter @cw-code/desktop build
       - name: Package win-unpacked (NSIS target writes app-update.yml; the installer built here is discarded)
@@ -179,8 +185,12 @@ jobs:
           fi
           bun --bun --cwd apps/desktop electron-builder "${args[@]}"
       - name: Check the packaged app layout
+        env:
+          UI_PRESENT: ${{ steps.ui.outputs.present }}
         run: |
-          for file in cw-code.exe resources/app-update.yml resources/elevate.exe resources/server/cw-code-server.exe; do
+          files=(cw-code.exe resources/app-update.yml resources/elevate.exe resources/server/cw-code-server.exe)
+          if [ "$UI_PRESENT" = "true" ]; then files+=(resources/server/ui/index.html); fi
+          for file in "${files[@]}"; do
             [ -f "apps/desktop/dist/win-unpacked/$file" ] || { echo "::error::win-unpacked/$file is missing"; exit 1; }
           done
       - name: Check out the gate tooling from the signing workflow's commit

@@ -1,5 +1,8 @@
 import { beforeEach, describe, expect, test } from "bun:test";
 import type { SidebarReorderRequest } from "@cw-code/contracts";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { ServerApp } from "../app/ServerApp.js";
 import type { SidebarStatusAction } from "../sidebar/SidebarService.js";
 import { Router, type CallContext } from "../transport/Router.js";
@@ -37,7 +40,11 @@ beforeEach(() => {
         calls.push(["openSession", sessionId, reason]);
         return null;
       },
-      hasSession: (sessionId: string) => sessionId === "s1"
+      hasSession: (sessionId: string) => sessionId === "s1",
+      addProject: (rootPath: string) => {
+        calls.push(["addProject", rootPath]);
+        return { id: "p1", rootPath, name: "p" };
+      }
     },
     threads: { reloadHistory: async (sessionId: string) => calls.push(["reloadHistory", sessionId]) },
     fileWatcher: { unwatch: async (sessionId: string) => calls.push(["unwatch", sessionId]) },
@@ -117,5 +124,31 @@ describe("threads.reloadHistory", () => {
     const [result] = await Promise.allSettled([router.dispatch("threads.reloadHistory", { sessionId: "missing" }, ctx)]);
     expect(result?.status).toBe("rejected");
     expect(calls).toEqual([]);
+  });
+});
+
+describe("projects.add", () => {
+  test("accepts an existing folder", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "cw-add-"));
+    try {
+      await router.dispatch("projects.add", dir, ctx);
+      expect(calls).toEqual([["addProject", dir]]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("rejects relative, missing and file paths before adding", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "cw-add-"));
+    const file = join(dir, "a.txt");
+    writeFileSync(file, "x");
+    try {
+      for (const path of ["relative/dir", join(dir, "missing"), file]) {
+        await expect(router.dispatch("projects.add", path, ctx)).rejects.toThrow(`folder not found on the server: ${path}`);
+      }
+      expect(calls).toEqual([]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

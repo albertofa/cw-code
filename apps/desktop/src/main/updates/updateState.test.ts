@@ -3,7 +3,6 @@ import type { UpdateState } from "@cw-code/contracts";
 import {
   RELEASE_NOTES_MAX_CHARS,
   boundedText,
-  channelOfVersion,
   compareVersions,
   initialUpdateState,
   isEligible,
@@ -57,14 +56,6 @@ describe("compareVersions", () => {
       expect(compareVersions(bad, "1.0.0")).toBeNull();
       expect(compareVersions("1.0.0", bad)).toBeNull();
     }
-  });
-});
-
-describe("channelOfVersion", () => {
-  it("derives the channel from the prerelease tag", () => {
-    expect(channelOfVersion("0.0.1-alpha.21")).toBe("alpha");
-    expect(channelOfVersion("1.0.0")).toBe("stable");
-    expect(channelOfVersion("1.0.0-beta.1")).toBe("stable");
   });
 });
 

@@ -108,6 +108,8 @@ export interface AppSettings {
   themeId: string;
   customThemes: CustomTheme[];
   serverBindHost: string;
+  keepServerRunning: boolean;
+  serverPublicUrl: string;
 }
 
 export type SettingsPatch = Partial<AppSettings>;

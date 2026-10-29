@@ -758,7 +758,11 @@ export class SessionManager {
     if (!repository) {
       return this.store.createSession(projectId, driver, "New session", { id });
     }
-    if (mode === "current" || !(await this.git.hasAnyCommit(project.rootPath))) {
+    if (mode === "current") {
+      return this.createCurrentCheckoutSession(project, driver, id, options);
+    }
+    const requestsBase = Boolean(options.prHead || options.baseBranch);
+    if (!requestsBase && !(await this.git.hasAnyCommit(project.rootPath))) {
       return this.createCurrentCheckoutSession(project, driver, id, options);
     }
     if (mode === "previous" && options.reuseWorktreePath) {
@@ -772,7 +776,14 @@ export class SessionManager {
         });
       }
     }
-    const worktree = await this.createSessionWorktree(project, id, options);
+    let worktree: CreatedWorktree;
+    try {
+      worktree = await this.createSessionWorktree(project, id, options);
+    } catch (err) {
+      if (await this.git.hasCommits(project.rootPath)) throw err;
+      console.warn(`worktree for ${project.name} could not start from an unborn HEAD: ${(err as Error).message}`);
+      return this.createCurrentCheckoutSession(project, driver, id, options);
+    }
     const session = this.store.createSession(projectId, driver, "New session", {
       id,
       worktreePath: worktree.path,

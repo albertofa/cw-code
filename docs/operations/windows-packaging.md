@@ -130,8 +130,19 @@ OpenConsole.exe}` must ship next to `prebuilds/win32-x64/conpty.node`.
   `node_modules/node-pty/prebuilds/win32-x64/pty.node` is missing from the packed
   `resources/server/`.
 
-The `dist` and `dist:dir` scripts of `apps/desktop` build the server first, so
-`apps/server/dist` always exists when electron-builder runs. Running electron-builder
+The web UI ships once, at `resources/server/ui/` (`index.html` plus `assets/`). It is built
+by `bun --filter @cw-code/ui build` into `apps/ui/dist`, and `scripts/compile.ts` copies that
+into `apps/server/dist/ui` (it fails if `apps/ui/dist/index.html` is missing). The packaged
+shell loads `resources/server/ui/index.html` over `file://`, and the server serves the same
+directory over HTTP to browsers (it finds `ui/` next to `cw-code-server.exe`). `app.asar` holds
+only the shell's main and preload bundles, no renderer. `afterPack.cjs` also fails the build if
+`resources/server/ui/index.html` is missing.
+`sign-windows.yml` builds the UI and checks `resources/server/ui/index.html` only when the
+source SHA has `apps/ui/package.json`, so a SHA from before the web UI still packages.
+
+The `dist` and `dist:dir` scripts of `apps/desktop` run, in order, the UI build, the server
+compile, the electron-vite build (main and preload) and electron-builder, so `apps/ui/dist`
+and `apps/server/dist` always exist when electron-builder runs. Running electron-builder
 alone on a clean checkout fails in `afterPack`.
 
 The packaged startup probe (below) confirms that the sidecar loads and spawns a PTY.
@@ -139,7 +150,7 @@ The packaged startup probe (below) confirms that the sidecar loads and spawns a 
 ## Packaging locally
 
 ```sh
-bun --filter @cw-code/desktop dist       # server compile + electron-vite build + NSIS installer, --publish never
+bun --filter @cw-code/desktop dist       # UI build + server compile + electron-vite build + NSIS installer, --publish never
 bun --filter @cw-code/desktop dist:dir   # same, but --dir (unpacked win-unpacked/ only, for diagnostics)
 ```
 
@@ -172,7 +183,7 @@ summary (also written to `<dist>/verify-windows-package.json`):
 - `app.asar` exists and contains `out/main/index.js`, and does not contain node-pty (via
   `@electron/asar` if it can be resolved from the installed toolchain; otherwise this check
   is skipped with a warning, never a hard failure);
-- `win-unpacked/resources/server/cw-code-server.exe` exists;
+- `win-unpacked/resources/server/cw-code-server.exe` and (when the source has `apps/ui`) `resources/server/ui/index.html` exist, and `app.asar` does not contain `out/renderer`;
 - node-pty's `win32-x64` `pty.node` is present under
   `win-unpacked/resources/server/node_modules/node-pty/prebuilds/win32-x64/`;
 - installer and asar sizes;

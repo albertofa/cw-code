@@ -1,37 +1,61 @@
-import { app, BrowserWindow, dialog, ipcMain, nativeImage, nativeTheme, powerMonitor, shell, type MessageBoxOptions, type WebContents } from "electron";
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { app, BrowserWindow, dialog, ipcMain, nativeImage, nativeTheme, powerMonitor, safeStorage, shell, type MessageBoxOptions, type WebContents } from "electron";
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import type {
   AppNotice,
   AppSettings,
+  ConnectionList,
+  ConnectionProfile,
+  ConnectionTestResult,
+  DesktopConnection,
   ServerEndpoint,
+  ServerReady,
   ServerPackageProbe,
   ShutdownAssessment,
   ShutdownCommitResult,
   ShutdownPrepareRequest,
   ShutdownPrepareResult,
   ShutdownRequestedEvent,
+  ShutdownScope,
   ShutdownStatus,
   UpdateActionResult,
   UpdateState
 } from "@cw-code/contracts";
+import { testConnection } from "@cw-code/client";
 import { appendCrashLog, initCrashLog } from "@cw-code/server/debug/crashLog";
 import { attachmentsDir, cwCodeHome, logsDir } from "@cw-code/server/paths/appPaths";
+import { readBytesIfExists, writeFileAtomic } from "@cw-code/server/storage/atomicFile";
+import { sandboxedPreviewDocument } from "@cw-code/shared/htmlPreview";
+import { PROTOCOL_VERSION } from "@cw-code/shared/protocol";
 import { windowBackgroundColor } from "@cw-code/shared/themes";
+import { channelOfVersion } from "@cw-code/shared/updateChannel";
+import { resolveAppImageRelaunch } from "./appImage.js";
 import { attentionDescription, shouldFlash } from "./attention.js";
 import { badgeLabel, renderBadge } from "./badgeImage.js";
+import {
+  ConnectionStore,
+  LOCAL_PROFILE,
+  parseConnectionTestInput,
+  parseRemoteProfileInput,
+  type ConnectionsFs,
+  type TokenCipher
+} from "./connections.js";
 import { failedServerProbe, RendererProbeTracker, runPackageProbe } from "./debug/packageProbe.js";
+import { readOrCreateInstallId } from "./installId.js";
 import { assertLocalAbsolutePath, resolveOpenTarget } from "./openPathPolicy.js";
+import { claimParent } from "./serverAttach.js";
 import { ServerLink, type ServerLinkChange } from "./serverLink.js";
-import { ServerProcess } from "./serverProcess.js";
+import { ServerProcess, ServerStartDeclinedError } from "./serverProcess.js";
+import { ServerTray } from "./tray.js";
 import { ElectronUpdaterAdapter } from "./updates/ElectronUpdaterAdapter.js";
 import { UpdateService } from "./updates/UpdateService.js";
+import { LocalUpdatePreferences, type StoredUpdatePreferences } from "./updates/localUpdatePreferences.js";
 import { createUpdateLogFile } from "./updates/updateLog.js";
 import { firstRunChannelPatch, updatePreferences, type UpdatePreferences } from "./updates/updatePreferences.js";
-import { channelOfVersion, initialUpdateState, isUpdateChannel } from "./updates/updateState.js";
+import { initialUpdateState, isUpdateChannel } from "./updates/updateState.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -69,6 +93,33 @@ let serverFailure: string | null = null;
 let restartAfterFailedInstall = false;
 let serverStop: Promise<void> | null = null;
 let serverStopped = false;
+let tray: ServerTray | null = null;
+let pendingActivation: string | null = null;
+
+const electronCipher: TokenCipher = {
+  storage: () => {
+    if (!safeStorage.isEncryptionAvailable()) return "plain";
+    return process.platform === "linux" && safeStorage.getSelectedStorageBackend() === "basic_text" ? "basic" : "os";
+  },
+  encrypt: (plain) => safeStorage.encryptString(plain),
+  decrypt: (data) => safeStorage.decryptString(Buffer.from(data))
+};
+
+const PRIVATE_FILE_MODE = 0o600;
+
+const connectionsFs: ConnectionsFs = {
+  read: (path) => readBytesIfExists(path)?.toString("utf8") ?? null,
+  write: (path, data) => {
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileAtomic(path, data, { mode: PRIVATE_FILE_MODE });
+  },
+  rename: renameSync
+};
+
+const connections = new ConnectionStore({ userDataDir: app.getPath("userData"), cipher: electronCipher, fs: connectionsFs });
+const runningProfile: ConnectionProfile = packageProbeOutPath() ? LOCAL_PROFILE : (connections.profile(connections.activeId) ?? LOCAL_PROFILE);
+const remoteMode = runningProfile.kind === "remote";
+const localUpdatePreferences = new LocalUpdatePreferences(app.getPath("userData"), connectionsFs);
 
 const serverProcess: ServerProcess = new ServerProcess({
   launch: {
@@ -77,11 +128,20 @@ const serverProcess: ServerProcess = new ServerProcess({
     appPath: app.getAppPath(),
     legacyUserData: app.getPath("userData")
   },
+  identity: { installId: readOrCreateInstallId(app.getPath("userData")), version: app.getVersion(), protocol: PROTOCOL_VERSION },
+  confirmReplace: confirmServerReplace,
+  confirmForeignReplace: confirmForeignServerReplace,
+  onAttached: (endpoint) => claimParent(endpoint, process.pid),
+  onDeclined: () => exitApp(0),
   isQuitting: (): boolean => quitApproved || (link.shutdown.committed && !restartAfterFailedInstall),
   onFatal: (message) => reportFatalError("cw-code server stopped", new Error(message))
 });
 
-const link: ServerLink = new ServerLink(() => serverProcess.endpoint());
+const link: ServerLink = new ServerLink(serverEndpoint, remoteMode ? "web" : "desktop-shell");
+
+async function serverEndpoint(): Promise<ServerEndpoint> {
+  return remoteMode ? connections.endpoint(runningProfile.id) : serverProcess.endpoint();
+}
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -110,7 +170,7 @@ function readTextOrNull(path: string): string | null {
   }
 }
 
-function createUpdateService(settings: AppSettings): UpdateService {
+function createUpdateService(settings: StoredUpdatePreferences): UpdateService {
   const logger = createUpdateLogFile({
     filePath: join(logsDir(), "updater.log"),
     console: { info: (message) => console.warn(message), warn: (message) => console.warn(message) }
@@ -132,13 +192,36 @@ function createUpdateService(settings: AppSettings): UpdateService {
     createAdapter: (kind) => new ElectronUpdaterAdapter({ kind, homeDir: homedir(), sink: logger }),
     logger,
     homeDir: homedir(),
-    canRunScheduledCheck: () => link.shutdown.idle
+    canRunScheduledCheck: () => remoteMode || link.shutdown.idle
+  });
+}
+
+function updateSettingsSource(): StoredUpdatePreferences | null {
+  if (remoteMode) return localUpdatePreferences.get();
+  return link.startup?.mode === "ready" ? link.settings : null;
+}
+
+function saveLocalUpdatePreferences(patch: Partial<StoredUpdatePreferences>): void {
+  try {
+    localUpdatePreferences.set(patch);
+  } catch (error) {
+    console.warn(`[updates] could not save the update preferences on this computer: ${errorMessage(error)}`);
+  }
+}
+
+function saveFirstRunChannel(patch: Pick<AppSettings, "updateChannel">): void {
+  if (remoteMode) {
+    saveLocalUpdatePreferences(patch);
+    return;
+  }
+  link.call("settings.set", patch).catch((error: unknown) => {
+    console.warn(`could not save the default update channel: ${errorMessage(error)}`);
   });
 }
 
 function ensureUpdateService(): void {
-  const settings = link.settings;
-  if (updates || link.startup?.mode !== "ready" || !settings) return;
+  const settings = updateSettingsSource();
+  if (updates || !settings) return;
   const service = createUpdateService(settings);
   updates = service;
   appliedPreferences = updatePreferences(settings, app.getVersion());
@@ -146,16 +229,12 @@ function ensureUpdateService(): void {
   sendToMainWindow("updates.changed", service.getState());
   service.start();
   const firstRunChannel = firstRunChannelPatch(settings, app.getVersion(), service.getState().phase !== "disabled");
-  if (firstRunChannel) {
-    link.call("settings.set", firstRunChannel).catch((error: unknown) => {
-      console.warn(`could not save the default update channel: ${errorMessage(error)}`);
-    });
-  }
+  if (firstRunChannel) saveFirstRunChannel(firstRunChannel);
 }
 
 function applyUpdatePreferences(): void {
   const settings = link.settings;
-  if (!updates || !settings) return;
+  if (remoteMode || !updates || !settings) return;
   const next = updatePreferences(settings, app.getVersion());
   if (appliedPreferences?.channel === next.channel && appliedPreferences.autoDownload === next.autoDownload) return;
   appliedPreferences = next;
@@ -165,12 +244,71 @@ function applyUpdatePreferences(): void {
   });
 }
 
+async function confirmServerReplace(running: ServerReady): Promise<boolean> {
+  const { response } = await dialog.showMessageBox({
+    type: "question",
+    title: "cw-code",
+    message: `A cw-code server from version ${running.version} is still running in the background. Restart it with version ${app.getVersion()}?`,
+    detail: "Running turns will stop.",
+    buttons: ["Restart", "Quit"],
+    defaultId: 0,
+    cancelId: 1,
+    noLink: true
+  });
+  return response === 0;
+}
+
+async function confirmForeignServerReplace(running: ServerReady): Promise<boolean> {
+  const { response } = await dialog.showMessageBox({
+    type: "question",
+    title: "cw-code",
+    message: `A cw-code server (version ${running.version}, started by another cw-code install or from the command line) is already running on this computer. Stop it and start this app's own server?`,
+    detail: "Running turns will stop.",
+    buttons: ["Stop and restart", "Quit"],
+    defaultId: 0,
+    cancelId: 1,
+    noLink: true
+  });
+  return response === 0;
+}
+
+function syncTray(): void {
+  const wanted = !remoteMode && link.settings?.keepServerRunning === true && !isQuitApproved();
+  if (wanted && !tray) {
+    tray = new ServerTray({ iconPath: brandingIconPath(), open: focusMainWindow, stopAndQuit: stopServerAndQuit }, link.attentionCount);
+    return;
+  }
+  if (wanted || !tray) return;
+  destroyTray();
+  if (liveMainWindow()?.isVisible() === false) focusMainWindow();
+}
+
+function destroyTray(): void {
+  tray?.destroy();
+  tray = null;
+}
+
+function exitApp(code: number): void {
+  destroyTray();
+  app.exit(code);
+}
+
+function stopServerAndQuit(): void {
+  if (remoteMode) return;
+  focusMainWindow();
+  requestShutdown("server");
+}
+
 function handleLinkChange(change: ServerLinkChange): void {
   if (change === "shutdown" && !link.shutdown.committed) restartAfterFailedInstall = false;
-  if (change === "settings") syncWindowBackground();
+  if (change === "settings") {
+    syncWindowBackground();
+    syncTray();
+  }
   if (change === "attention") {
     if (link.attentionCount === null) clearAttention();
     else applyAttention(link.attentionCount);
+    tray?.setAttention(link.attentionCount);
   }
   if (change === "settings" || change === "startup") {
     ensureUpdateService();
@@ -190,7 +328,7 @@ function showNotice(notice: AppNotice): void {
 }
 
 function isQuitApproved(): boolean {
-  return quitApproved || link.shutdown.committed;
+  return quitApproved || (!remoteMode && link.shutdown.committed);
 }
 
 function clearShutdownAck(): void {
@@ -201,8 +339,7 @@ function clearShutdownAck(): void {
 
 function stopServer(): Promise<void> {
   if (serverStop) return serverStop;
-  const stopping = serverProcess
-    .stop(link.isOpen ? link : undefined)
+  const stopping = (remoteMode ? Promise.resolve() : serverProcess.stop(link.isOpen ? link : undefined))
     .catch((error: unknown) => console.warn(`[server] stop failed: ${errorMessage(error)}`))
     .finally(() => {
       serverStopped = true;
@@ -219,14 +356,20 @@ function quitWithoutDialog(): void {
   void stopServer().then(() => app.quit());
 }
 
-function requestShutdown(): void {
+function closeScope(): ShutdownScope {
+  return remoteMode ? "window" : "server";
+}
+
+function requestShutdown(scope: ShutdownScope = closeScope(), activation: string | null = null): void {
+  if (!isQuitApproved() && activation !== null) pendingActivation = activation;
   const window = liveMainWindow();
-  if (!link.isOpen || link.startup?.mode !== "ready" || !window || window.webContents.isCrashed()) {
+  const serverReady = scope === "window" || (link.isOpen && link.startup?.mode === "ready");
+  if (!serverReady || !window || window.webContents.isCrashed()) {
     quitWithoutDialog();
     return;
   }
   if (isQuitApproved()) return;
-  const event: ShutdownRequestedEvent = { reason: "quit" };
+  const event: ShutdownRequestedEvent = { reason: "quit", scope };
   window.webContents.send("shutdown.requested", event);
   clearShutdownAck();
   shutdownAckTimer = setTimeout(() => {
@@ -237,6 +380,7 @@ function requestShutdown(): void {
 }
 
 function endOfSession(): void {
+  pendingActivation = null;
   clearShutdownAck();
   quitApproved = true;
   void stopServer();
@@ -254,6 +398,10 @@ function windowIconFile(): string {
   return process.platform === "linux" ? "icon.png" : "icon.ico";
 }
 
+function brandingIconPath(): string {
+  return app.isPackaged ? join(process.resourcesPath, "branding", windowIconFile()) : join(app.getAppPath(), "resources", windowIconFile());
+}
+
 function currentWindowBackground(): string {
   const settings = link.settings;
   return windowBackgroundColor(settings?.themeId ?? "dark", settings?.customThemes ?? [], !nativeTheme.shouldUseDarkColors);
@@ -269,9 +417,7 @@ function createBrowserWindow(): BrowserWindow {
     height: 900,
     frame: false,
     title: "cw-code",
-    icon: app.isPackaged
-      ? join(process.resourcesPath, "branding", windowIconFile())
-      : join(app.getAppPath(), "resources", windowIconFile()),
+    icon: brandingIconPath(),
     backgroundColor: currentWindowBackground(),
     autoHideMenuBar: true,
     webPreferences: {
@@ -332,7 +478,8 @@ async function createWindow(): Promise<void> {
   window.on("close", (event) => {
     if (process.platform === "darwin" || isQuitApproved()) return;
     event.preventDefault();
-    requestShutdown();
+    if (tray) window.hide();
+    else requestShutdown();
   });
   window.on("session-end", endOfSession);
   if (link.attentionCount !== null) applyAttention(link.attentionCount);
@@ -386,10 +533,10 @@ async function startPackageProbe(window: BrowserWindow, outPath: string): Promis
       renderer,
       probeServer
     }).then(
-      (result) => app.exit(result.rendererLoaded ? 0 : 1),
+      (result) => exitApp(result.rendererLoaded ? 0 : 1),
       (err: unknown) => {
         appendCrashLog(`package probe failed: ${errorMessage(err)}`);
-        app.exit(1);
+        exitApp(1);
       }
     );
   }, 3000);
@@ -401,7 +548,7 @@ function loadRenderer(window: BrowserWindow): Promise<void> {
 }
 
 function rendererIndexPath(): string {
-  return join(__dirname, "../renderer/index.html");
+  return app.isPackaged ? join(process.resourcesPath, "server", "ui", "index.html") : resolve(app.getAppPath(), "..", "ui", "dist", "index.html");
 }
 
 function isAppUrl(url: string): boolean {
@@ -486,7 +633,23 @@ function registerWindowIpc(): void {
 }
 
 function registerShellIpc(): void {
-  ipcMain.handle("desktop.endpoint", (): Promise<ServerEndpoint> => serverProcess.endpoint());
+  ipcMain.handle("desktop.connection", async (): Promise<DesktopConnection> => {
+    const profile = connections.profile(runningProfile.id) ?? runningProfile;
+    const endpoint = await serverEndpoint();
+    connectRemoteLink();
+    return { profile, endpoint };
+  });
+  ipcMain.handle("desktop.connections.list", (): ConnectionList => connections.list());
+  ipcMain.handle("desktop.connections.save", (_e, args: unknown): ConnectionProfile => {
+    return connections.save(parseRemoteProfileInput(args));
+  });
+  ipcMain.handle("desktop.connections.remove", (_e, args: { id?: unknown } | undefined): void => {
+    if (typeof args?.id !== "string") throw new Error("desktop.connections.remove requires { id }");
+    if (args.id === runningProfile.id) throw new Error("switch to another connection before removing the one in use");
+    connections.remove(args.id);
+  });
+  ipcMain.handle("desktop.connections.test", (_e, args: unknown): Promise<ConnectionTestResult> => testConnectionInput(args));
+  ipcMain.on("desktop.connections.activate", (_e, args: { id?: unknown } | undefined) => activateConnection(args));
 
   ipcMain.handle("projects.pick", async (e): Promise<string | null> => {
     const w = windowFromSender(e.sender);
@@ -518,13 +681,57 @@ function registerShellIpc(): void {
     const dir = attachmentsDir();
     mkdirSync(dir, { recursive: true });
     const file = join(dir, `cw-preview-${safe}.html`);
-    writeFileSync(file, args.html, "utf8");
+    writeFileSync(file, remoteMode ? sandboxedPreviewDocument(args.name, args.html) : args.html, "utf8");
     return shell.openExternal(pathToFileURL(file).href).then(() => undefined);
   });
 
   ipcMain.handle("shell.showItemInFolder", (_e, args: { path?: unknown } | undefined): void => {
     shell.showItemInFolder(assertLocalAbsolutePath(args?.path));
   });
+}
+
+function applyPendingActivation(): void {
+  const id = pendingActivation;
+  pendingActivation = null;
+  if (!id) return;
+  try {
+    connections.setActive(id);
+  } catch (error) {
+    dialog.showErrorBox("cw-code could not switch connections", `${errorMessage(error)}\n\ncw-code will open with the current connection next time.`);
+    return;
+  }
+  app.relaunch(resolveAppImageRelaunch(process.env, process.execPath, process.argv) ?? undefined);
+}
+
+function activateConnection(args: { id?: unknown } | undefined): void {
+  const id = typeof args?.id === "string" ? args.id : "";
+  if (!connections.profile(id)) {
+    console.warn("[connections] cannot switch to a connection that does not exist");
+    return;
+  }
+  if (id === runningProfile.id) return;
+  requestShutdown(runningProfile.kind === "local" ? "server" : "window", id);
+}
+
+function connectRemoteLink(): void {
+  if (!remoteMode || link.isOpen || isQuitApproved()) return;
+  link.connect().catch((error: unknown) => console.warn(`[server] could not connect to ${runningProfile.name}: ${errorMessage(error)}`));
+}
+
+function storedTestToken(input: { url: string; token?: string; id?: string }): string | null {
+  if (input.token) return input.token;
+  return input.id ? connections.testToken(input.id, input.url) : null;
+}
+
+async function testConnectionInput(args: unknown): Promise<ConnectionTestResult> {
+  const input = parseConnectionTestInput(args);
+  let token: string | null;
+  try {
+    token = storedTestToken(input);
+  } catch (error) {
+    return { ok: false, code: "unauthorized", message: errorMessage(error) };
+  }
+  return testConnection(input.url, token);
 }
 
 function parseShutdownToken(args: unknown, channel: string): string {
@@ -564,20 +771,52 @@ async function commitInstall(token: string, action: () => void): Promise<Shutdow
   return { ok: false, message: `cw-code did not exit within ${Math.round(INSTALL_EXIT_TIMEOUT_MS / 1000)}s. Normal use has been restored.` };
 }
 
+async function commitWindowInstall(action: () => void): Promise<ShutdownCommitResult> {
+  clearShutdownAck();
+  quitApproved = true;
+  try {
+    action();
+  } catch (error) {
+    restoreWindowAfterFailedInstall();
+    throw error;
+  }
+  await delay(INSTALL_EXIT_TIMEOUT_MS);
+  appendCrashLog(`cw-code did not exit within ${INSTALL_EXIT_TIMEOUT_MS}ms after starting the installer`);
+  restoreWindowAfterFailedInstall();
+  return { ok: false, message: `cw-code did not exit within ${Math.round(INSTALL_EXIT_TIMEOUT_MS / 1000)}s. Normal use has been restored.` };
+}
+
+function restoreWindowAfterFailedInstall(): void {
+  quitApproved = false;
+  serverStop = null;
+  serverStopped = false;
+  connectRemoteLink();
+}
+
+async function startAndConnectServer(): Promise<void> {
+  if (remoteMode) {
+    connectRemoteLink();
+    return;
+  }
+  await serverProcess.start();
+  await link.connect();
+}
+
 async function restoreAfterFailedInstall(): Promise<void> {
   quitApproved = false;
   restartAfterFailedInstall = true;
   serverStop = null;
   serverStopped = false;
   try {
-    await serverProcess.start();
-    await link.connect();
+    await startAndConnectServer();
   } catch (error) {
     reportFatalError("cw-code server stopped", error);
   }
 }
 
 async function installUpdate(service: UpdateService, args: unknown): Promise<UpdateActionResult> {
+  pendingActivation = null;
+  if (remoteMode) return service.install(args, { commit: commitWindowInstall, reason: () => "update", release: () => undefined });
   const token = parseShutdownToken(args, "updates.install");
   const status = await link.call<ShutdownStatus>("shutdown.status").catch(() => link.shutdown);
   return service.install(args, {
@@ -602,13 +841,27 @@ function registerUpdateIpc(): void {
     if (!updates) return pendingUpdateResult();
     const channel = args && typeof args === "object" ? (args as { channel?: unknown }).channel : undefined;
     const result = await updates.setChannel(channel);
-    if (result.ok && isUpdateChannel(channel)) await link.call("settings.set", { updateChannel: channel });
+    if (!result.ok || !isUpdateChannel(channel)) return result;
+    if (remoteMode) saveLocalUpdatePreferences({ updateChannel: channel });
+    else await link.call("settings.set", { updateChannel: channel });
     return result;
+  });
+  ipcMain.handle("updates.setAutoDownload", async (_e, args: unknown): Promise<UpdateActionResult> => {
+    if (!updates) return pendingUpdateResult();
+    const enabled = args && typeof args === "object" ? (args as { enabled?: unknown }).enabled : undefined;
+    if (typeof enabled !== "boolean") throw new Error("updates.setAutoDownload requires { enabled: boolean }");
+    if (remoteMode) saveLocalUpdatePreferences({ updateBackgroundDownload: enabled });
+    else await link.call("settings.set", { updateBackgroundDownload: enabled });
+    return updates.setAutoDownload(enabled);
   });
 }
 
 function registerShutdownIpc(): void {
   ipcMain.on("shutdown.ack", () => clearShutdownAck());
+  ipcMain.on("shutdown.dismissed", () => {
+    pendingActivation = null;
+  });
+  ipcMain.on("app.stop-server-and-quit", () => stopServerAndQuit());
   ipcMain.on("app.quit", () => {
     clearShutdownAck();
     quitApproved = true;
@@ -624,10 +877,14 @@ function reportFatalError(title: string, error: unknown): void {
     title,
     `${errorMessage(error)}\n\nDetails were written to ${join(logsDir(), "crash.log")}. Nothing in your data folder was deleted.`
   );
-  app.exit(1);
+  exitApp(1);
 }
 
 function reportFatalStartupError(error: unknown): void {
+  if (error instanceof ServerStartDeclinedError) {
+    exitApp(0);
+    return;
+  }
   reportFatalError("cw-code could not start", error);
 }
 
@@ -679,10 +936,9 @@ function startUpdateAutotest(pending: PendingUpdateAutotest | null): void {
 
 async function connectServer(): Promise<void> {
   try {
-    await serverProcess.start();
-    await link.connect();
+    await startAndConnectServer();
   } catch (error) {
-    if (!packageProbeOutPath()) throw error;
+    if (!packageProbeOutPath() || error instanceof ServerStartDeclinedError) throw error;
     serverFailure = errorMessage(error);
     appendCrashLog(`server did not start: ${serverFailure}`);
   }
@@ -737,12 +993,17 @@ if (!app.requestSingleInstanceLock()) {
   app.on("before-quit", (event) => {
     if (!isQuitApproved() && link.isOpen && liveMainWindow()) {
       event.preventDefault();
+      focusMainWindow();
       requestShutdown();
       return;
     }
     clearShutdownAck();
     quitApproved = true;
-    if (serverStopped) return;
+    destroyTray();
+    if (serverStopped) {
+      applyPendingActivation();
+      return;
+    }
     event.preventDefault();
     void stopServer().then(() => app.quit());
   });

@@ -39,7 +39,7 @@ beforeAll(() => {
   process.env.CW_CODE_HOME = home;
   mkdirSync(dirname(settingsFilePath()), { recursive: true });
   writeFileSync(settingsFilePath(), JSON.stringify(unavailableBinaries(home)), "utf8");
-  app = new ServerApp({ host: null, port: 0, parentPid: null, legacyUserData: [], allowOrigins: [] }, "test");
+  app = new ServerApp({ host: null, port: 0, parentPid: null, legacyUserData: [], allowOrigins: [], launcherId: null, uiDir: null }, "test");
   app.reboot();
   const running = app.currentServices();
   if (!running) throw new Error("services did not start");

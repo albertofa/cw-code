@@ -9,12 +9,12 @@ import type {
   UpdateProgress,
   UpdateState
 } from "@cw-code/contracts";
+import { channelOfVersion } from "@cw-code/shared/updateChannel";
 import { isInsideAppDir } from "../appImage.js";
 import type { UpdaterAdapter, UpdaterCheckOutcome, UpdaterDownloadedInfo, UpdaterDownloadHandle } from "./ElectronUpdaterAdapter.js";
 import { describeUpdateError, formatLogValue, isMissingReleaseError, redactUpdateText, updateErrorCode, type UpdateLogSink } from "./updateLog.js";
 import {
   boundedText,
-  channelOfVersion,
   initialUpdateState,
   isEligible,
   isUpdateChannel,

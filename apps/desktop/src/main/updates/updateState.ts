@@ -3,7 +3,6 @@ import type { UpdateChannel, UpdateProgress, UpdateState } from "@cw-code/contra
 export const RELEASE_NOTES_MAX_CHARS = 20_000;
 
 const VERSION_RE = /^(\d+)\.(\d+)\.(\d+)(?:-alpha\.(\d+))?$/;
-const ALPHA_VERSION_RE = /^\d+\.\d+\.\d+-alpha/;
 
 interface ParsedVersion {
   core: [number, number, number];
@@ -61,10 +60,6 @@ export function compareVersions(a: string, b: string): -1 | 0 | 1 | null {
   if (left.alpha === null) return 1;
   if (right.alpha === null) return -1;
   return sign(left.alpha - right.alpha);
-}
-
-export function channelOfVersion(version: string): UpdateChannel {
-  return typeof version === "string" && ALPHA_VERSION_RE.test(version.trim()) ? "alpha" : "stable";
 }
 
 export function isEligible(candidate: string, running: string, channel: UpdateChannel): boolean {

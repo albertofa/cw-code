@@ -14,7 +14,7 @@ import type {
 } from "@cw-code/contracts";
 import { traceSessionStatus, type SessionStatusReason } from "../debug/sessionStatusTrace.js";
 import { isValidPrLink, upsertLink } from "../github/prLinks.js";
-import { expandHome } from "../skills/skillPaths.js";
+import { expandProjectRoot } from "../skills/skillPaths.js";
 import { sanitizeProjectSettings } from "./projectSettings.js";
 import { writeFileAtomic } from "../storage/atomicFile.js";
 import { backupBeforeRepair } from "../storage/backups.js";
@@ -260,11 +260,7 @@ export class SessionStore {
   }
 
   addProject(rootPath: string): Project {
-    const trimmed = rootPath.trim();
-    const expanded = trimmed === "~" || trimmed.startsWith("~/") || trimmed.startsWith("~\\")
-      ? expandHome(trimmed)
-      : trimmed;
-    const normalized = normalizeRoot(expanded);
+    const normalized = normalizeRoot(expandProjectRoot(rootPath));
     const existing = this.data.projects.find((p) => p.rootPath === normalized);
     if (existing) return existing;
     const project: Project = {

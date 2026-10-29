@@ -27,8 +27,8 @@ function renameWithRetry(from: string, to: string): void {
   }
 }
 
-function writeAndSync(path: string, bytes: Uint8Array): void {
-  const fd = openSync(path, "wx");
+function writeAndSync(path: string, bytes: Uint8Array, mode: number | undefined): void {
+  const fd = openSync(path, "wx", mode);
   try {
     let offset = 0;
     while (offset < bytes.length) offset += writeSync(fd, bytes, offset, bytes.length - offset);
@@ -61,10 +61,14 @@ function removeTemp(path: string): void {
   }
 }
 
-export function writeFileAtomic(path: string, data: string | Uint8Array): void {
+export interface AtomicWriteOptions {
+  mode?: number;
+}
+
+export function writeFileAtomic(path: string, data: string | Uint8Array, options: AtomicWriteOptions = {}): void {
   const tmp = `${path}.${process.pid}.${randomBytes(6).toString("hex")}.tmp`;
   try {
-    writeAndSync(tmp, typeof data === "string" ? Buffer.from(data, "utf8") : data);
+    writeAndSync(tmp, typeof data === "string" ? Buffer.from(data, "utf8") : data, options.mode);
     renameWithRetry(tmp, path);
   } catch (error) {
     removeTemp(tmp);

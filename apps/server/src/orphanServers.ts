@@ -63,7 +63,7 @@ export function selectOrphanServerPids(processes: ProcessSnapshot[], platform: N
 
 function execFileAsync(file: string, args: string[], timeoutMs: number): Promise<string> {
   return new Promise((resolve, reject) => {
-    execFile(file, args, { timeout: timeoutMs, maxBuffer: 32 * 1024 * 1024, env: sanitizedChildEnv(process.env, process.platform) }, (error, stdout) => {
+    execFile(file, args, { timeout: timeoutMs, windowsHide: true, maxBuffer: 32 * 1024 * 1024, env: sanitizedChildEnv(process.env, process.platform) }, (error, stdout) => {
       if (error) {
         reject(error);
         return;

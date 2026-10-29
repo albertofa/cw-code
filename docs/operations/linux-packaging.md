@@ -32,11 +32,11 @@ lists them.
 
 ```sh
 bun install
-bun --filter @cw-code/desktop dist:linux   # server compile + electron-vite build + AppImage and deb, --publish never
+bun --filter @cw-code/desktop dist:linux   # UI build + server compile + electron-vite build + AppImage and deb, --publish never
 ```
 
-Build on Linux x64. `dist:linux` is `bun --filter @cw-code/server compile && electron-vite
-build && electron-builder --linux AppImage deb --x64 --publish never`; output goes to
+Build on Linux x64. `dist:linux` is `bun --filter @cw-code/ui build && bun --filter @cw-code/server compile
+&& electron-vite build && electron-builder --linux AppImage deb --x64 --publish never`; output goes to
 `apps/desktop/dist/`, the unpacked tree to `apps/desktop/dist/linux-unpacked/`.
 
 The server compile step runs `apps/server/scripts/compile.ts`; the server's plain `build`
@@ -50,6 +50,12 @@ electron-builder ships both through `extraResources` to `resources/server/`, out
 starts `resources/server/cw-code-server` and sets `CW_NODE_PTY` to
 `resources/server/node_modules/node-pty/lib/index.js`.
 
+The web UI ships once, at `resources/server/ui/`: `bun --filter @cw-code/ui build` writes
+`apps/ui/dist`, and the compile step copies it to `apps/server/dist/ui` (and fails if
+`apps/ui/dist/index.html` is missing). The packaged shell loads `resources/server/ui/index.html`
+over `file://`; the server serves the same directory to browsers, finding `ui/` next to
+`cw-code-server`. `app.asar` carries only the shell's main and preload bundles.
+
 **Prerequisites for contributors.** `node-pty` 1.1.0 ships prebuilds for Windows and
 macOS only, so on Linux `bun install` compiles it from source with `node-gyp`. You need
 a C++ toolchain and Python 3 (`sudo apt-get install build-essential python3` on Debian
@@ -60,8 +66,9 @@ happens: installs on Windows and macOS are unaffected. `electron-builder.yml` se
 
 `apps/desktop/build/afterPack.cjs` runs for the Linux targets only and does two things.
 It fails the build with "cw-code server file missing from the package" if
-`resources/server/cw-code-server` or `resources/server/node_modules/node-pty/build/Release/pty.node`
-is absent, so a package without a server or a terminal backend can never be produced, and it
+`resources/server/cw-code-server`, `resources/server/node_modules/node-pty/build/Release/pty.node`
+or `resources/server/ui/index.html` is absent, so a package without a server, a terminal backend
+or a UI can never be produced, and it
 makes the server binary executable (`chmod 755`). It also installs the launcher described
 under [Launcher and sandbox](#launcher-and-sandbox).
 
@@ -216,7 +223,7 @@ also refuses when a `cw-code` deb is already installed. It:
 
 1. checks that the AppImage, the deb and `latest-linux.yml` exist, that the feed's
    version matches `apps/desktop/package.json`, and that `linux-unpacked/resources/server/`
-   holds an executable `cw-code-server` and `node_modules/node-pty/build/Release/pty.node`;
+   holds an executable `cw-code-server`, `node_modules/node-pty/build/Release/pty.node` and `ui/index.html`;
 2. starts the AppImage under `xvfb-run` (FUSE mount, or extract-and-run when FUSE is not
    usable) with the packaged startup probe;
 3. with `--install-deb`: `apt-get install`s the deb, checks the dpkg version, the

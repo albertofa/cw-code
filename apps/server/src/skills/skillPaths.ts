@@ -29,6 +29,11 @@ export function expandHome(input: string, homeDir: string = defaultHomeDir()): s
   return normalize(input);
 }
 
+export function expandProjectRoot(input: string): string {
+  const trimmed = input.trim();
+  return trimmed === "~" || trimmed.startsWith("~/") || trimmed.startsWith("~\\") ? expandHome(trimmed) : trimmed;
+}
+
 function isWindowsStylePath(value: string): boolean {
   return /^[a-zA-Z]:[\\/]/.test(value) || value.includes("\\");
 }

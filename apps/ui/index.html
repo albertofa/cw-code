@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="dark light" />
+    <meta name="description" content="A desktop workspace for Claude Code, OpenCode, and Codex." />
+    <link rel="icon" type="image/svg+xml" href="./src/assets/console-c.svg" />
+    <script src="./theme-boot.js"></script>
+    <style>
+      html,
+      body {
+        background: #080a0f;
+        margin: 0;
+      }
+      html[data-theme="light"] {
+        background: #e9ebf1;
+      }
+    </style>
+    <title>cw-code</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="./src/main.tsx"></script>
+  </body>
+</html>

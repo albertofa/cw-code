@@ -6,6 +6,7 @@ extraMetadata:
   main: out-updatetest/main/index.js
 files:
   - "out-updatetest/**"
+  - "!out-updatetest/renderer/**"
   - "!out/**"
 directories:
   output: dist-updatetest

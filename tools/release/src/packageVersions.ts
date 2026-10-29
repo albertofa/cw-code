@@ -5,6 +5,7 @@ export const DEFAULT_PACKAGE_RELATIVE_PATHS = [
   "package.json",
   "apps/desktop/package.json",
   "apps/server/package.json",
+  "apps/ui/package.json",
   "packages/client/package.json",
   "packages/contracts/package.json",
   "packages/shared/package.json"

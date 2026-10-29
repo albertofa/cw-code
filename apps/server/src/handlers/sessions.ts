@@ -9,9 +9,12 @@ import type {
   SidebarReorderRequest,
   SidebarSection
 } from "@cw-code/contracts";
+import { stat } from "node:fs/promises";
+import { isAbsolute } from "node:path";
 import type { ServerApp } from "../app/ServerApp.js";
 import type { Services } from "../app/services.js";
 import type { SessionStatusReason } from "../debug/sessionStatusTrace.js";
+import { expandProjectRoot } from "../skills/skillPaths.js";
 import type { Router } from "../transport/Router.js";
 import { handle, knownSessionId, parseArgs, parseBoolean, parseString } from "./shared.js";
 
@@ -48,10 +51,21 @@ async function resolveSession(
   return result;
 }
 
+async function assertProjectFolder(rootPath: string): Promise<void> {
+  const expanded = expandProjectRoot(rootPath);
+  const notFound = new Error(`folder not found on the server: ${expanded}`);
+  if (!isAbsolute(expanded)) throw notFound;
+  const isFolder = await stat(expanded).then((info) => info.isDirectory(), () => false);
+  if (!isFolder) throw notFound;
+}
+
 export function registerSessionHandlers(router: Router, app: ServerApp): void {
   const services = () => app.requireServices();
   handle(router, "projects.list", () => services().sessions.listProjects());
-  handle<string>(router, "projects.add", (rootPath) => services().sessions.addProject(rootPath));
+  handle<string>(router, "projects.add", async (rootPath) => {
+    await assertProjectFolder(rootPath);
+    return services().sessions.addProject(rootPath);
+  });
   handle<{ projectId: string; settings: ProjectSettings }>(router, "projects.updateSettings", (args) =>
     services().sessions.updateProjectSettings(args.projectId, args.settings)
   );

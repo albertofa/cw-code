@@ -1188,6 +1188,45 @@ describe("SessionManager", () => {
     manager.dispose();
   });
 
+  it("falls back to the project folder when a requested base can't be resolved in a repository with no commits", async () => {
+    const { manager, project } = makeGitSandboxManager("cw-session-unborn-base-");
+    const empty = join(dirname(project.rootPath), "empty");
+    execFileSync("git", ["init", "-b", "main", empty]);
+    const emptyProject = manager.addProject(empty);
+
+    const session = await manager.createSession(emptyProject.id, "claude", { mode: "new", baseBranch: "main" });
+
+    expect(session.worktreePath).toBeUndefined();
+    expect(session.createNotice).toBe(`${emptyProject.name} has no commits yet; the session runs without its own branch`);
+    manager.dispose();
+  });
+
+  it("creates a worktree from a remote base when the local repository has no commits yet", async () => {
+    const { manager, project } = makeGitSandboxManager("cw-session-unborn-remote-");
+    const empty = join(dirname(project.rootPath), "empty");
+    execFileSync("git", ["init", "-b", "main", empty]);
+    gitOut(empty, "remote", "add", "origin", project.rootPath);
+    const emptyProject = manager.addProject(empty);
+
+    const session = await manager.createSession(emptyProject.id, "claude", { mode: "new", baseBranch: "main" });
+
+    expect(session.worktreePath).toBeDefined();
+    expect(gitOut(session.worktreePath!, "rev-parse", "HEAD")).toBe(gitOut(project.rootPath, "rev-parse", "HEAD"));
+    manager.dispose();
+  });
+
+  it("falls back to the project folder when HEAD is unborn and no default branch can start a worktree", async () => {
+    const { manager, project, repository } = makeGitSandboxManager("cw-session-unborn-orphan-default-");
+    gitOut(repository, "branch", "-m", "main", "trunk");
+    gitOut(repository, "switch", "--orphan", "main");
+
+    const session = await manager.createSession(project.id, "claude", { mode: "new" });
+
+    expect(session.worktreePath).toBeUndefined();
+    expect(session.branch).toBeUndefined();
+    manager.dispose();
+  });
+
   it("stays on the author's PR branch without a dirty check when it is already checked out in the project folder", async () => {
     const { manager, project, repository } = makeGitSandboxManager("cw-session-current-at-root-");
     gitOut(repository, "switch", "-c", "feature/pr");

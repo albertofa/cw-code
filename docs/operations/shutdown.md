@@ -127,7 +127,8 @@ resumes it through the CLI's own resume cursor.
 - The coordinator lives in the cw-code server (`apps/server`); the Electron
   shell (`apps/desktop/src/main`) only owns the window and the quit decision.
 - On Windows and Linux, closing the main window is intercepted while the server
-  link is open: the shell sends `shutdown.requested { reason: "quit" }` to the
+  link is open (and, with keep-running on, hides the window instead; see below): the
+  shell sends `shutdown.requested { reason: "quit", scope }` to the
   renderer. If the renderer does not acknowledge (it does so when it calls
   `shutdown.assess` or `shutdown.prepare` on the server) within 5 s (hung or
   crashed renderer), the shell stops the server gracefully (`server.stop`, which
@@ -158,9 +159,65 @@ sends `shutdown.requested` to the renderer. The renderer API is
 `updates.install` commits a token through the same coordinator (see
 `updater.md`).
 
+## Scopes, tray and the background server
+
+A quit request carries a scope (`ShutdownScope` in `packages/contracts/src/shutdown.ts`).
+
+- `server`: the full flow above. The coordinator assesses and prepares, the renderer commits
+  with `shutdown.quit`, and the shell stops the server before the app exits. This is the scope
+  on the local profile.
+- `window`: used on a remote profile, where the server is not the shell's to stop. The dialog
+  appears only when editor buffers are dirty (Save all, Discard all, or per file). No turn is
+  stopped, no terminal is closed and no token is taken; the renderer calls the shell's
+  `quit` (`cw.shutdown.quitWindow()`) and the server keeps running.
+
+**Keep-running.** With the owner-only `keepServerRunning` setting on, the local profile shows
+a tray icon (Open cw-code, Stop server and quit; on Windows a click also opens the window;
+the tooltip carries the attention count) and closing the window hides it
+instead of quitting. Turns, terminals and the server keep going. The tray is removed when the
+setting is turned off (a hidden window is shown again), and on quit. macOS keeps its own
+close behaviour (the app stays running); the tray menu and Cmd+Q still apply.
+Without the setting, closing the window runs the `server` flow as before.
+
+"Stop server and quit" in the tray, or in the app, shows the `server` dialog (turns,
+terminals, dirty buffers) and then stops the server. Quitting by any other route (Cmd+Q, the
+dialog on close without a tray) also stops it: only closing the window keeps the server up.
+
+**Starting against a running server.** The shell passes `--launcher-id <installId>` to the
+server it spawns (`install-id` in the Electron user data) and the server records it in
+`userdata/server.json`. On start the shell reads that file, confirms the process is live and
+decides (`decideServerStart` in `apps/desktop/src/main/serverAttach.ts`):
+
+| Running server | Decision |
+| --- | --- |
+| none, or not answering | spawn a new one |
+| same launcher id, same version and protocol | attach: reuse it; the shell then calls `server.setParent` so the server watches the new shell, not the dead one |
+| same launcher id, other version or protocol | replace: the shell asks "Restart it with version X?" (declining quits); on confirm it calls `POST /api/stop` with the owner token, waits 15 s for the pid to exit, then kills the pid and waits 3 s more |
+| other or missing launcher id | foreign: the shell asks "Stop it and start this app's own server?" (Quit exits 0); on Stop and restart it takes the replace path with the owner token from the same `CW_CODE_HOME` |
+
+**Kill fallback.** Stopping a server the shell attached to sends `server.stop` (over the link,
+or `POST /api/stop` when there is none), gives the call 3 s, waits 3 s for the pid to exit and
+then kills it by pid. For a child the shell spawned it is `server.stop` (or SIGTERM when there is
+no link), 3 s to close, then SIGKILL. A failed stop is logged and the quit continues. If the
+server's parent disappears and `keepServerRunning` is off, the server stops itself
+(`--parent-pid`); with it on it keeps running and drops the parent watch.
+
+**Remote mode.** When the active profile is remote the shell never spawns, attaches to,
+stops or replaces a server, never shows the tray, and ignores stop-server-and-quit. Closing
+the window or quitting uses the `window` scope. Update installs also skip the server
+coordinator: the UI runs the window flow (`runWindowShutdownFlow`) before the installer. Switching profiles runs the
+quit flow with the current profile's scope, then relaunches on the new profile.
+
+## Updating or installing by hand
+
+With keep-running on, the server (`cw-code-server`) can be alive with no window. The in-app
+update runs the `server` flow, so it stops the server first. A manual install over the same
+folder should start with "Stop server and quit" from the tray; otherwise the old server can
+still hold files in the install directory.
+
 ## Renderer flow
 
-`stores/shutdownFlow.ts` exports `runShutdownFlow(reason)`, which resolves to
+`apps/ui/src/stores/shutdownFlow.ts` exports `runShutdownFlow(reason)`, which resolves to
 `{ token }` once the app is prepared or `null` when the user cancels. Quit
 calls `cw.shutdown.quit(token)` afterwards.
 
