@@ -5,28 +5,40 @@ import { parseAppUpdateYaml } from "./upgrade-builds.mjs";
 const DEVTOOLS_TIMEOUT_MS = 90_000;
 export const POLL_MS = 1_000;
 
+const BRIDGE_WAIT_MS = 20_000;
+
+const RENDERER_BRIDGE = `
+  const bridgeDeadline = Date.now() + ${BRIDGE_WAIT_MS};
+  while (!window.cw && Date.now() < bridgeDeadline) await new Promise((resolve) => setTimeout(resolve, 250));
+  const cw = window.cw;
+  const updates = cw?.shell?.updates ?? cw?.updates;
+  const bridgeError = !updates || !cw.shutdown ? "window.cw bridge is not available" : null;
+`;
+
 export const RENDERER_DRIVER = `(async () => {
   const steps = [];
-  const cw = window.cw;
-  if (!cw || !cw.updates || !cw.shutdown) return { steps, error: "window.cw bridge is not available" };
+  ${RENDERER_BRIDGE}
+  if (bridgeError) return { steps, error: bridgeError };
   const summary = (result) => ({ ok: result.ok, code: result.code ?? null, message: result.message ?? null, phase: result.state.phase, availableVersion: result.state.availableVersion, downloadedVersion: result.state.downloadedVersion, error: result.state.error });
-  const check = await cw.updates.check();
+  const check = await updates.check();
   steps.push({ step: "check", ...summary(check) });
   if (check.state.phase !== "available" && check.state.phase !== "ready") return { steps };
-  const download = await cw.updates.download();
+  const download = await updates.download();
   steps.push({ step: "download", ...summary(download) });
-  const state = await cw.updates.getState();
+  const state = await updates.getState();
   if (state.phase !== "ready" || !state.downloadedVersion) return { steps };
   const prepared = await cw.shutdown.prepare({ reason: "update", stopActiveTurns: true, timeoutMs: 15000 });
   steps.push({ step: "prepare", ok: prepared.ok, code: prepared.code ?? null });
   if (!prepared.ok) return { steps };
-  void cw.updates.install({ version: state.downloadedVersion, channel: state.channel, token: prepared.token });
+  void updates.install({ version: state.downloadedVersion, channel: state.channel, token: prepared.token });
   steps.push({ step: "install-requested", version: state.downloadedVersion, channel: state.channel });
   return { steps };
 })()`;
 
 export const RENDERER_UPDATE_STATE = `(async () => {
-  const state = await window.cw.updates.getState();
+  ${RENDERER_BRIDGE}
+  if (bridgeError) throw new Error(bridgeError);
+  const state = await updates.getState();
   return { runningVersion: state.runningVersion, phase: state.phase, channel: state.channel, disabledReason: state.disabledReason ?? null };
 })()`;
 

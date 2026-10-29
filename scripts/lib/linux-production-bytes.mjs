@@ -283,7 +283,7 @@ async function readRendererState(port, timeoutMs) {
     try {
       return { page, state: await evaluateInPage(page, RENDERER_UPDATE_STATE, STATE_TIMEOUT_MS) };
     } catch (err) {
-      if (!/Execution context was destroyed|Cannot find context|reading 'updates'/.test(err.message) || Date.now() >= deadline) throw err;
+      if (!/Execution context was destroyed|Cannot find context|bridge is not available/.test(err.message) || Date.now() >= deadline) throw err;
       await sleep(1_000);
     }
   }
