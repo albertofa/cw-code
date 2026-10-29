@@ -196,6 +196,8 @@ function wireServiceEvents(
     prStore.onSessionsChanged();
     if (session.status === "archived" || session.status === "resolved") {
       revokeAgentToken(session.id);
+      sessionWatch.forget(session.id);
+      sessions.forgetTurnPermissionMode(session.id);
       gitTopic.forgetKeptHead(session.id);
       filesTopic.forget(session.id);
       threads.forget(session.id);

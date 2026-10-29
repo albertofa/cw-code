@@ -35,6 +35,10 @@ export class SessionWatch {
     this.results.set(sessionId, event.type === "turn.done" ? event.resultText : event.message || null);
   }
 
+  forget(sessionId: string): void {
+    this.results.delete(sessionId);
+  }
+
   lastResult(sessionId: string): string | null {
     return this.results.get(sessionId) ?? null;
   }

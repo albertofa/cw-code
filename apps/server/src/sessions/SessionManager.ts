@@ -1801,6 +1801,10 @@ export class SessionManager {
     return this.turnPermissionModes.get(sessionId);
   }
 
+  forgetTurnPermissionMode(sessionId: string): void {
+    this.turnPermissionModes.delete(sessionId);
+  }
+
   setComposer(sessionId: string, prefs: ComposerPrefs): ComposerPrefs {
     const session = this.store.getSession(sessionId);
     if (!session) throw new Error(`unknown session ${sessionId}`);

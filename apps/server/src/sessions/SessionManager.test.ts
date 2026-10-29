@@ -1931,6 +1931,8 @@ describe("SessionManager", () => {
     expect(manager.turnPermissionMode(session.id)).toBe("manual");
     expect(manager.getComposer(session.id).permissionMode).toBe("bypassPermissions");
     fake.completeAll();
+    manager.forgetTurnPermissionMode(session.id);
+    expect(manager.turnPermissionMode(session.id)).toBeUndefined();
     manager.dispose();
   });
 

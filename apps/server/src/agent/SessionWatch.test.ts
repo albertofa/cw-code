@@ -111,6 +111,19 @@ describe("SessionWatch", () => {
     expect(watch.lastResult("s1")).toBeNull();
   });
 
+  it("forgets a session's stored result without settling its waiters", async () => {
+    const { watch, change } = setup([session("working"), session("idle", "s2")]);
+    watch.turnSettled("s1", turnDone("old"));
+    watch.turnSettled("s2", turnDone("kept"));
+    const pending = watch.wait("s1", 5_000);
+    watch.forget("s1");
+    expect(watch.lastResult("s1")).toBeNull();
+    expect(watch.lastResult("s2")).toBe("kept");
+    expect(await isPending(pending)).toBe(true);
+    change(session("idle"));
+    expect(await pending).toEqual({ status: "idle", lastResultText: null, timedOut: false });
+  });
+
   it("settles pending waiters as timed out on dispose and keeps working afterwards", async () => {
     const { watch, change } = setup([session("working")]);
     const first = watch.wait("s1", 5_000);
