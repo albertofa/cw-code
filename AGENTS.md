@@ -103,15 +103,19 @@ Core behaviors:
   `@modelcontextprotocol/server` `createMcpHandler`, with the SDK's stateless fallback for
   2025-era `initialize` clients (no `Mcp-Session-Id`, GET/DELETE 405). Callers authenticate with
   a per-session agent token (`AgentTokens`, in memory, revoked on resolve/archive) sent as
-  `Bearer`; any `Origin` is rejected and the idle timeout is lifted only after the token verifies.
-  Agent calls go through `Router.dispatch` with `auth.kind === "agent"`: only `AGENT_METHODS` are
-  allowed, `settings.set` accepts only `AGENT_WRITABLE_SETTINGS`, `turns.start`/`sessions.create`
-  reject extra arguments, and a turn an agent starts never runs above the lower of the caller's
-  stored mode and the mode its current turn started with (agent-created sessions store that cap).
-  Turn and terminal spawns get `CW_MCP_URL` and `CW_AGENT_TOKEN` (never worktree scripts or title
-  turns); Claude spawns add `--plugin-dir <userdata>/harness/claude-plugin`, a plugin cw-code
-  writes at startup with the `cw` MCP entry and the `cw-code` skill. Codex and opencode injection
-  are not wired yet.
+  `Bearer`; any `Origin` is rejected and the idle timeout is raised to 255 s only after the token
+  verifies. Agent calls go through `Router.dispatch` with `auth.kind === "agent"`: only
+  `AGENT_METHODS` are allowed; `settings.set` accepts only `AGENT_WRITABLE_SETTINGS`; `turns.start`
+  rejects `command`, `attachments`, `acceptFolderHead` and `prRefs`; `sessions.create` accepts
+  only the `useWorktree` option; model ids (`turns.start` `model`/`variant`, the default and
+  enabled model settings) must pass `isSafeModelId`; and a turn an agent starts never runs above
+  the lower of the caller's stored mode and the mode its current turn started with
+  (agent-created sessions store that cap). Env injection is Claude-only: Claude turns and Claude
+  terminal tabs get `CW_MCP_URL` and `CW_AGENT_TOKEN` (never other drivers, whose harness
+  process is shared across sessions, nor worktree scripts or title turns; an inherited pair is
+  stripped) and `--plugin-dir <userdata>/harness/claude-plugin`, a plugin cw-code writes at
+  startup with the `cw` MCP entry and the `cw-code` skill. A changed token respawns the session's
+  Claude process.
 - Browser entry: a browser opens the server's own address (`/`) and pairs with a device
   token. The owner creates one in Settings (`devices.create`) and gets a link
   `<serverPublicUrl>/#token=<token>`; the UI reads the hash, removes it from the address bar and
