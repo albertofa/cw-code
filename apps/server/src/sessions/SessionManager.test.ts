@@ -1149,16 +1149,42 @@ describe("SessionManager", () => {
     manager.dispose();
   });
 
-  it("runs a current-checkout session without a branch and with a notice when the repository has no commits yet", async () => {
-    const { manager, project } = makeGitSandboxManager("cw-session-current-unborn-");
+  it.each(["current", "new", "previous"] as const)("runs a %s-mode session in the project folder without a branch when the repository has no commits yet", async (mode) => {
+    const { manager, project } = makeGitSandboxManager(`cw-session-${mode}-unborn-`);
     const empty = join(dirname(project.rootPath), "empty");
     execFileSync("git", ["init", "-b", "main", empty]);
     const emptyProject = manager.addProject(empty);
 
-    const session = await manager.createSession(emptyProject.id, "claude", { mode: "current" });
+    const session = await manager.createSession(emptyProject.id, "claude", { mode, reuseWorktreePath: join(empty, "missing") });
 
     expect(session.branch).toBeUndefined();
+    expect(session.worktreePath).toBeUndefined();
     expect(session.createNotice).toBe(`${emptyProject.name} has no commits yet; the session runs without its own branch`);
+    manager.dispose();
+  });
+
+  it("creates a new worktree from the default branch when HEAD is unborn but other branches have commits", async () => {
+    const { manager, project, repository } = makeGitSandboxManager("cw-session-new-orphan-head-");
+    gitOut(repository, "switch", "--orphan", "scratch");
+
+    const session = await manager.createSession(project.id, "claude", { mode: "new" });
+
+    expect(session.worktreePath).toBeTruthy();
+    expect(session.branch).toBe(`cw/${session.id.slice("sess_".length)}`);
+    manager.dispose();
+  });
+
+  it("creates a new worktree without switching the project folder when HEAD is detached and no branch exists", async () => {
+    const { manager, project, repository } = makeGitSandboxManager("cw-session-new-detached-no-branch-");
+    const head = gitOut(repository, "rev-parse", "HEAD");
+    gitOut(repository, "switch", "--detach");
+    gitOut(repository, "branch", "-D", "main");
+
+    const session = await manager.createSession(project.id, "claude", { mode: "new" });
+
+    expect(session.worktreePath).toBeTruthy();
+    expect(gitOut(repository, "rev-parse", "HEAD")).toBe(head);
+    expect(gitOut(repository, "branch", "--show-current")).toBe("");
     manager.dispose();
   });
 

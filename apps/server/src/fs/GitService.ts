@@ -1333,6 +1333,12 @@ export class GitService {
     return (await this.headCommit(root, 10_000)) !== null;
   }
 
+  async hasAnyCommit(root: string): Promise<boolean> {
+    if (await this.hasCommits(root)) return true;
+    const output = await execText(this.settings().gitBinaryPath, ["for-each-ref", "--count=1", "--format=%(objectname)", "refs/heads", "refs/remotes"], root, 10_000);
+    return output.trim().length > 0;
+  }
+
   async isWorkingTreeDirty(root: string): Promise<boolean> {
     return (await this.git(root).raw(["status", "--porcelain", "--untracked-files=no"])).trim().length > 0;
   }

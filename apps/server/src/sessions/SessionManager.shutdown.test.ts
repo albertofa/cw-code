@@ -47,6 +47,10 @@ class GatedGit extends GitService {
     return true;
   }
 
+  override async hasAnyCommit(): Promise<boolean> {
+    return true;
+  }
+
   override async pruneWorktrees(): Promise<void> {
     await this.pass();
   }
