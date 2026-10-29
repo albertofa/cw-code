@@ -361,7 +361,7 @@ function closeScope(): ShutdownScope {
 }
 
 function requestShutdown(scope: ShutdownScope = closeScope(), activation: string | null = null): void {
-  if (!isQuitApproved()) pendingActivation = activation;
+  if (!isQuitApproved() && activation !== null) pendingActivation = activation;
   const window = liveMainWindow();
   const serverReady = scope === "window" || (link.isOpen && link.startup?.mode === "ready");
   if (!serverReady || !window || window.webContents.isCrashed()) {
