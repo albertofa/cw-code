@@ -1838,6 +1838,26 @@ describe("SessionManager", () => {
     manager.dispose();
   });
 
+  it("adds the agent env to regular sessions only", async () => {
+    const { manager } = makeManager();
+    (manager as unknown as { agentEnv: (sessionId: string) => Record<string, string> }).agentEnv = (sessionId) => ({
+      CW_MCP_URL: "http://127.0.0.1:1/mcp",
+      CW_AGENT_TOKEN: `token-${sessionId}`
+    });
+    const project = manager.addProject("C:\\proj-agent-env");
+    const session = await manager.createSession(project.id, "claude");
+    expect(manager.turnEnv(session.id, "C:\\proj-agent-env")).toMatchObject({
+      CW_MCP_URL: "http://127.0.0.1:1/mcp",
+      CW_AGENT_TOKEN: `token-${session.id}`
+    });
+    const titleEnv = (
+      manager as unknown as { sessionEnvVars(id: string, session: undefined, project: undefined, cwd: string): Record<string, string> }
+    ).sessionEnvVars(`title:${session.id}`, undefined, undefined, "C:\\title");
+    expect(titleEnv["CW_AGENT_TOKEN"]).toBeUndefined();
+    expect(titleEnv["CW_MCP_URL"]).toBeUndefined();
+    manager.dispose();
+  });
+
   it("overrides stale CW_* values inherited from the process env", () => {
     const { manager } = makeManager();
     stubEnv("CW_WORKTREE_PATH", "C:\\stale-worktree");

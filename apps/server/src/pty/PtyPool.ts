@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
+import { claudePluginArgs } from "../agent/claudePlugin.js";
 import { toShellTarget } from "./resolve.js";
 import { parseExtraArgs } from "../settings/settingsUtils.js";
 import { traceHarnessCall, truncateError } from "../debug/harnessTrace.js";
@@ -114,7 +115,8 @@ export class PtyPool {
 
   constructor(
     private getSettings: () => AppSettings,
-    private loadModule: () => Promise<PtyModule> = loadPty
+    private loadModule: () => Promise<PtyModule> = loadPty,
+    private claudePluginDir: () => string | null = () => null
   ) {}
 
   setExitEmitter(onExit: (ptyId: string, token: string, exitCode: number) => void): void {
@@ -256,7 +258,7 @@ export class PtyPool {
     if (kind === "claude") {
       const s = this.getSettings();
       file = s.claudeBinaryPath;
-      extra = parseExtraArgs(s.claudeExtraArgs);
+      extra = [...claudePluginArgs(this.claudePluginDir()), ...parseExtraArgs(s.claudeExtraArgs)];
     } else if (kind === "opencode") {
       const s = this.getSettings();
       file = s.opencodeBinaryPath;

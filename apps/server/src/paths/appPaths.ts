@@ -48,6 +48,10 @@ export function opencodePluginDir(home?: string, env?: NodeJS.ProcessEnv): strin
   return join(userdataDir(home, env), "cw-opencode-plugin");
 }
 
+export function claudePluginDir(home?: string, env?: NodeJS.ProcessEnv): string {
+  return join(userdataDir(home, env), "harness", "claude-plugin");
+}
+
 export function opencodeServerDir(home?: string, env?: NodeJS.ProcessEnv): string {
   return join(userdataDir(home, env), "cw-opencode-server");
 }

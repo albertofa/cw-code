@@ -89,6 +89,9 @@ export interface ServiceHooks {
   legacyAppRoots: string[];
   onShutdownRecovered: (failure: string | null) => void;
   onShutdownExpired: (reason: ShutdownReason) => void;
+  agentEnv: (sessionId: string) => Record<string, string>;
+  revokeAgentToken: (sessionId: string) => void;
+  claudePluginDir: () => string | null;
 }
 
 const PR_STATE_REUSE_MS = 60_000;
@@ -170,7 +173,7 @@ function wireServiceEvents(
     sidebar,
     sessionWatch
   }: Services,
-  { emit, dropTopic, assessmentChanged }: ServiceHooks
+  { emit, dropTopic, assessmentChanged, revokeAgentToken }: ServiceHooks
 ): void {
   sessions.setEmitter((sessionId, event) => {
     if (event.type === "task.updated") assessmentChanged();
@@ -192,6 +195,7 @@ function wireServiceEvents(
     prTracker.setTracked(sessions.trackedPrRefs());
     prStore.onSessionsChanged();
     if (session.status === "archived" || session.status === "resolved") {
+      revokeAgentToken(session.id);
       gitTopic.forgetKeptHead(session.id);
       filesTopic.forget(session.id);
       threads.forget(session.id);
@@ -239,7 +243,9 @@ export function createServices(stores: { sessionStore: SessionStore; settingsSto
       ptys.killSession(sessionId);
       void fileWatcher.unwatch(sessionId);
     },
-    legacyAppRoots: hooks.legacyAppRoots
+    legacyAppRoots: hooks.legacyAppRoots,
+    agentEnv: hooks.agentEnv,
+    claudePluginDir: hooks.claudePluginDir
   });
   pullRequests = new PullRequestService(git, () => sessions.getSettings(), (rootPath) => sessions.addProject(rootPath));
   const prStore = new PrStore({
@@ -272,7 +278,7 @@ export function createServices(stores: { sessionStore: SessionStore; settingsSto
     session: (sessionId) => sessions.findSession(sessionId),
     setWatched: (sessionIds) => sourceControl.setWatched(sessionIds)
   });
-  const ptys = new PtyPool(() => sessions.getSettings());
+  const ptys = new PtyPool(() => sessions.getSettings(), undefined, hooks.claudePluginDir);
   const shutdown = new ShutdownCoordinator({ sessions, ptys, onRecovered: hooks.onShutdownRecovered, onExpired: hooks.onShutdownExpired });
   const preferences = new PreferencesStore(preferencesFilePath());
   const appTopic = new AppTopic(hooks.topics, {

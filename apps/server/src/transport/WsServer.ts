@@ -81,9 +81,16 @@ export function sendRaw(ws: FrameSink, data: string): void {
   ws.close(CLOSE_CLIENT_TOO_SLOW, "client too slow");
 }
 
+function urlHost(host: string): string {
+  return host.includes(":") && !host.startsWith("[") ? `[${host}]` : host;
+}
+
 export function wsUrl(host: string, port: number): string {
-  const urlHost = host.includes(":") && !host.startsWith("[") ? `[${host}]` : host;
-  return `ws://${urlHost}:${port}${WS_PATH}`;
+  return `ws://${urlHost(host)}:${port}${WS_PATH}`;
+}
+
+export function mcpUrl(host: string, port: number): string {
+  return `http://${urlHost(host)}:${port}${MCP_PATH}`;
 }
 
 export class WsServer {

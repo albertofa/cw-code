@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import type { AppSettings } from "@cw-code/contracts";
-import { buildResumeArgs, PtyPool, type PtyInstance, type PtyModule } from "./PtyPool.js";
+import { buildResumeArgs, PtyPool, type PtyInstance, type PtyKind, type PtyModule } from "./PtyPool.js";
 import { SHUTDOWN_RESERVED_MESSAGE } from "../shutdown/shutdownReservation.js";
 
 describe("buildResumeArgs", () => {
@@ -92,6 +92,30 @@ function makePool() {
 }
 
 const noData = (): void => {};
+
+describe("PtyPool cw plugin", () => {
+  async function spawnedCommandLine(pluginDir: string | null, kind: PtyKind): Promise<string> {
+    const calls: string[][] = [];
+    const module: PtyModule = {
+      spawn: (_file, args) => {
+        calls.push(args);
+        return new FakePty();
+      }
+    };
+    const pool = new PtyPool(() => SETTINGS, async () => module, () => pluginDir);
+    await pool.open("sess_a", ".", kind, "cursor", undefined, noData);
+    return (calls[0] ?? []).join(" ");
+  }
+
+  it("passes --plugin-dir to Claude terminals only when the plugin is available", async () => {
+    expect(await spawnedCommandLine("C:\\plugin", "claude")).toContain("--plugin-dir C:\\plugin");
+    expect(await spawnedCommandLine(null, "claude")).not.toContain("--plugin-dir");
+  });
+
+  it("never passes --plugin-dir to other terminals", async () => {
+    expect(await spawnedCommandLine("C:\\plugin", "codex")).not.toContain("--plugin-dir");
+  });
+});
 
 describe("PtyPool shutdown support", () => {
   it("lists open terminals with their session and kind", async () => {

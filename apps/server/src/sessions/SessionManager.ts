@@ -126,6 +126,8 @@ export interface SessionManagerOptions {
   prUpdatedAt?: (ref: PrRef) => number | null;
   usageLedger?: UsageLedger;
   driverFactory?: DriverFactory;
+  agentEnv?: (sessionId: string) => Record<string, string>;
+  claudePluginDir?: () => string | null;
   /** Earlier app data folders whose worktrees may still hold sessions cw-code started. */
   legacyAppRoots?: string[];
 }
@@ -133,12 +135,15 @@ export interface SessionManagerOptions {
 export type DriverFactory = (
   route: (event: ThreadEvent) => void,
   getSettings: () => AppSettings,
-  isInWorkingSet: (sessionId: string) => boolean
+  isInWorkingSet: (sessionId: string) => boolean,
+  claudePluginDir: () => string | null
 ) => Record<DriverKind, CliDriver>;
 
 export function defaultDriverFactory(overrides: Partial<Record<DriverKind, CliDriver>> = {}): DriverFactory {
-  return (route, getSettings, isInWorkingSet) => ({
-    claude: overrides.claude ?? new TracingCliDriver(new ClaudeCliDriver(route, getSettings, undefined, undefined, isInWorkingSet)),
+  return (route, getSettings, isInWorkingSet, claudePluginDir) => ({
+    claude:
+      overrides.claude ??
+      new TracingCliDriver(new ClaudeCliDriver(route, getSettings, undefined, undefined, isInWorkingSet, claudePluginDir)),
     opencode:
       overrides.opencode ??
       new TracingCliDriver(new OpencodeDriver(route, getSettings, undefined, { sharedRoot: opencodeServerDir() })),
@@ -287,6 +292,8 @@ export class SessionManager {
   private nativeSessions = new Map<string, NativeSession>();
   private remoteSlugs = new Map<string, string | null>();
   private legacyAppRoots: string[];
+  private agentEnv: (sessionId: string) => Record<string, string>;
+  private claudePluginDir: () => string | null;
 
   constructor(opts: SessionManagerOptions = {}) {
     const dbPath = opts.dbPath ?? sessionDbPath();
@@ -310,6 +317,8 @@ export class SessionManager {
     this.usageLedger = opts.usageLedger ?? new UsageLedger(dataDir ? join(dataDir, "usage") : usageDir());
     this.titleGenPath = dataDir ? join(dataDir, "title-gen") : titleGenDir();
     this.legacyAppRoots = opts.legacyAppRoots ?? [];
+    this.agentEnv = opts.agentEnv ?? (() => ({}));
+    this.claudePluginDir = opts.claudePluginDir ?? (() => null);
     this.driverFactory = opts.driverFactory ?? defaultDriverFactory(opts.drivers);
     this.drivers = this.buildDrivers();
     this.watchDriverActivity();
@@ -375,7 +384,8 @@ export class SessionManager {
       (sessionId) => {
         const status = this.store.getSession(sessionId)?.status;
         return status !== undefined && isWorkingSetStatus(status);
-      }
+      },
+      () => this.claudePluginDir()
     );
   }
 
@@ -1946,7 +1956,8 @@ export class SessionManager {
       CW_WORKTREE_PATH: cwd,
       CW_PROJECT_ROOT: project?.rootPath ?? cwd,
       CW_SESSION_ID: session?.id ?? sessionId,
-      ...(withGitHubAccount ? this.githubAccountVars(session?.id ?? sessionId, project) : {})
+      ...(withGitHubAccount ? this.githubAccountVars(session?.id ?? sessionId, project) : {}),
+      ...(session && !sessionId.startsWith("title:") ? this.agentEnv(sessionId) : {})
     };
   }
 

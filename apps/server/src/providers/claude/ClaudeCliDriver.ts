@@ -23,6 +23,7 @@ import type {
   TurnHandle,
   TurnRequest
 } from "@cw-code/contracts";
+import { claudePluginArgs } from "../../agent/claudePlugin.js";
 import { parseExtraArgs } from "../../settings/settingsUtils.js";
 import { detachProcessGroup, hasExited, killProcessTree, waitForExit } from "../../processTree.js";
 import { sanitizedChildEnv } from "../../shellEnvironment.js";
@@ -184,7 +185,8 @@ export class ClaudeCliDriver implements CliDriver {
     private getSettings: () => AppSettings,
     private spawnFn: typeof spawn = spawnCli as typeof spawn,
     private killFn: (proc: ChildProcess | undefined) => void = killProcessTree,
-    private isInWorkingSet: (sessionId: string) => boolean = () => false
+    private isInWorkingSet: (sessionId: string) => boolean = () => false,
+    private claudePluginDir: () => string | null = () => null
   ) {}
 
   private configuredBinary(): string {
@@ -197,7 +199,9 @@ export class ClaudeCliDriver implements CliDriver {
 
   private turnLaunchArgs(request: TurnRequest): string[] {
     const args = this.extraArgs();
-    if (this.getSettings().claudeChromeEnabled && !request.sessionId.startsWith("title:")) args.push("--chrome");
+    if (request.sessionId.startsWith("title:")) return args;
+    if (this.getSettings().claudeChromeEnabled) args.push("--chrome");
+    args.push(...claudePluginArgs(this.claudePluginDir()));
     return args;
   }
 
