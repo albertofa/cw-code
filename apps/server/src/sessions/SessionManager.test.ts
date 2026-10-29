@@ -1149,15 +1149,16 @@ describe("SessionManager", () => {
     manager.dispose();
   });
 
-  it("runs a current-checkout session without a branch and with a notice when the repository has no commits yet", async () => {
-    const { manager, project } = makeGitSandboxManager("cw-session-current-unborn-");
+  it.each(["current", "new", "previous"] as const)("runs a %s-mode session in the project folder without a branch when the repository has no commits yet", async (mode) => {
+    const { manager, project } = makeGitSandboxManager(`cw-session-${mode}-unborn-`);
     const empty = join(dirname(project.rootPath), "empty");
     execFileSync("git", ["init", "-b", "main", empty]);
     const emptyProject = manager.addProject(empty);
 
-    const session = await manager.createSession(emptyProject.id, "claude", { mode: "current" });
+    const session = await manager.createSession(emptyProject.id, "claude", { mode, reuseWorktreePath: join(empty, "missing") });
 
     expect(session.branch).toBeUndefined();
+    expect(session.worktreePath).toBeUndefined();
     expect(session.createNotice).toBe(`${emptyProject.name} has no commits yet; the session runs without its own branch`);
     manager.dispose();
   });
