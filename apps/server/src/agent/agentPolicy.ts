@@ -26,10 +26,6 @@ export const AGENT_WRITABLE_SETTINGS: ReadonlySet<keyof AppSettings> = new Set<k
   "idleResolveAfterDays",
   "holdingAutoExpireEnabled",
   "holdingHours",
-  "autoTitleEnabled",
-  "autoTitleDriver",
-  "autoTitleModel",
-  "autoTitleEffort",
   "sourceControlRefreshIntervalSeconds",
   "prRefreshIntervalSeconds"
 ]);
@@ -47,19 +43,42 @@ export function capPermissionMode(requested: PermissionMode | undefined, callerM
   return PERMISSION_RANK[requested] < PERMISSION_RANK[cap] ? requested : cap;
 }
 
+export interface PermissionModeSource {
+  getComposer(sessionId: string): { permissionMode?: PermissionMode };
+  turnPermissionMode(sessionId: string): PermissionMode | undefined;
+}
+
+export function callerPermissionCap(sessions: PermissionModeSource, callerSessionId: string): PermissionMode {
+  return capPermissionMode(sessions.turnPermissionMode(callerSessionId), sessions.getComposer(callerSessionId).permissionMode);
+}
+
 export function agentTurnPermissionMode(
-  sessions: { getComposer(sessionId: string): { permissionMode?: PermissionMode } },
+  sessions: PermissionModeSource,
   targetSessionId: string,
   callerSessionId: string,
   requested: PermissionMode | undefined
 ): PermissionMode {
   const target = requested ?? sessions.getComposer(targetSessionId).permissionMode;
-  return capPermissionMode(target, sessions.getComposer(callerSessionId).permissionMode);
+  return capPermissionMode(target, callerPermissionCap(sessions, callerSessionId));
+}
+
+function forbidden(message: string): Error {
+  return Object.assign(new Error(message), { code: "forbidden" });
 }
 
 export function assertAgentSettingsPatch(patch: SettingsPatch): void {
   const denied = Object.keys(patch).find((key) => !AGENT_WRITABLE_SETTINGS.has(key as keyof AppSettings));
-  if (denied !== undefined) {
-    throw Object.assign(new Error(`changing ${denied} is not available to agents`), { code: "forbidden" });
-  }
+  if (denied !== undefined) throw forbidden(`changing ${denied} is not available to agents`);
+}
+
+export function assertAgentOmits(args: object, fields: readonly string[], method: string): void {
+  const denied = fields.find((field) => Reflect.get(args, field) !== undefined);
+  if (denied !== undefined) throw forbidden(`${method} ${denied} is not available to agents`);
+}
+
+export function assertAgentCreateOptions(options: unknown): void {
+  if (options === undefined) return;
+  if (options === null || typeof options !== "object") throw forbidden("sessions.create options must be an object");
+  const denied = Object.keys(options).find((key) => key !== "useWorktree");
+  if (denied !== undefined) throw forbidden(`sessions.create option ${denied} is not available to agents`);
 }

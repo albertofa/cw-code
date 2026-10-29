@@ -1,4 +1,4 @@
-import type { PermissionMode, Project, SessionMeta } from "@cw-code/contracts";
+import type { ComposerPrefs, PermissionMode, Project, SessionMeta } from "@cw-code/contracts";
 import type { CallToolResult, McpServer, ServerContext } from "@modelcontextprotocol/server";
 import { z } from "zod";
 import { agentTurnPermissionMode } from "../agent/agentPolicy.js";
@@ -9,7 +9,7 @@ import type { CallContext, Router } from "../transport/Router.js";
 export interface CwToolsDeps {
   router: Router;
   watch: Pick<SessionWatch, "wait" | "lastResult">;
-  sessions: Pick<SessionManager, "getComposer">;
+  sessions: Pick<SessionManager, "getComposer" | "turnPermissionMode">;
   callerSessionId: string;
 }
 
@@ -113,10 +113,11 @@ export function registerCwTools(server: McpServer, deps: CwToolsDeps): void {
       run(async () => {
         const session = (await listSessions(undefined)).find((candidate) => candidate.id === sessionId);
         if (!session) throw new Error(`unknown session ${sessionId}`);
+        const composer = (await call("composer.get", { sessionId })) as ComposerPrefs;
         return {
           ...sessionRow(session),
           model: session.model ?? null,
-          permissionMode: session.permissionMode ?? null,
+          permissionMode: composer.permissionMode ?? null,
           worktreePath: session.worktreePath ?? null,
           lastResultText: deps.watch.lastResult(sessionId)
         };
@@ -184,27 +185,36 @@ export function registerCwTools(server: McpServer, deps: CwToolsDeps): void {
   server.registerTool(
     "session_wait",
     {
-      description: `Block until the session stops working or timeoutMs passes (default ${WAIT_DEFAULT_MS}, ${WAIT_MIN_MS}-${WAIT_MAX_MS}). Returns {status, lastResultText, timedOut}; returns at once if the session is not working.`,
+      description: `Block until another session (not your own) stops working or timeoutMs passes (default ${WAIT_DEFAULT_MS}, ${WAIT_MIN_MS}-${WAIT_MAX_MS}). Returns {status, lastResultText, timedOut}; returns at once if the session is not working.`,
       inputSchema: z.object({ sessionId: z.string(), timeoutMs: z.number().int().optional() }),
       annotations: READ_ONLY
     },
     ({ sessionId, timeoutMs }, request: ServerContext) =>
       run(async () => {
+        assertNotOwnSession(sessionId, "wait on");
         const progressToken = request.mcpReq._meta?.progressToken;
         let ticks = 0;
-        const progress =
-          progressToken === undefined
-            ? null
-            : setInterval(() => {
-                ticks += 1;
-                request.mcpReq
-                  .notify({ method: "notifications/progress", params: { progressToken, progress: ticks, message: `waiting for session ${sessionId}` } })
-                  .catch((error: unknown) => console.warn(`[mcp] session_wait progress failed: ${(error as Error).message}`));
-              }, WAIT_PROGRESS_INTERVAL_MS);
+        let progress: ReturnType<typeof setInterval> | null = null;
+        const stopProgress = (): void => {
+          if (progress) clearInterval(progress);
+          progress = null;
+        };
+        if (progressToken !== undefined) {
+          progress = setInterval(() => {
+            ticks += 1;
+            request.mcpReq
+              .notify({ method: "notifications/progress", params: { progressToken, progress: ticks, message: `waiting for session ${sessionId}` } })
+              .catch((error: unknown) => {
+                if (progress === null) return;
+                stopProgress();
+                console.warn(`[mcp] session_wait progress stopped: ${error instanceof Error ? error.message : String(error)}`);
+              });
+          }, WAIT_PROGRESS_INTERVAL_MS);
+        }
         try {
           return await deps.watch.wait(sessionId, clampWait(timeoutMs), request.mcpReq.signal);
         } finally {
-          if (progress) clearInterval(progress);
+          stopProgress();
         }
       })
   );
@@ -234,7 +244,7 @@ export function registerCwTools(server: McpServer, deps: CwToolsDeps): void {
   server.registerTool(
     "settings_set",
     {
-      description: "Change cw-code app settings with a partial patch (only model, worktree, session lifecycle, auto-title and refresh settings are writable). Returns the full settings.",
+      description: "Change cw-code app settings with a partial patch (only model, worktree, session lifecycle and refresh settings are writable). Returns the full settings.",
       inputSchema: z.object({ patch: z.record(z.string(), z.unknown()) })
     },
     ({ patch }) => run(() => call("settings.set", patch))

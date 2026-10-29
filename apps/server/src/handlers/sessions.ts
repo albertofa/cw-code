@@ -11,12 +11,13 @@ import type {
 } from "@cw-code/contracts";
 import { stat } from "node:fs/promises";
 import { isAbsolute } from "node:path";
+import { assertAgentCreateOptions, callerPermissionCap } from "../agent/agentPolicy.js";
 import type { ServerApp } from "../app/ServerApp.js";
 import type { Services } from "../app/services.js";
 import type { SessionStatusReason } from "../debug/sessionStatusTrace.js";
 import { expandProjectRoot } from "../skills/skillPaths.js";
 import type { Router } from "../transport/Router.js";
-import { handle, knownSessionId, parseArgs, parseBoolean, parseString } from "./shared.js";
+import { handle, knownSessionId, parseArgs, parseBoolean, parseString, setComposer } from "./shared.js";
 
 function parseSection(value: unknown, name: string): SidebarSection {
   if (value !== "main" && value !== "resolved") throw new Error(`${name} must be main or resolved`);
@@ -70,9 +71,15 @@ export function registerSessionHandlers(router: Router, app: ServerApp): void {
     services().sessions.updateProjectSettings(args.projectId, args.settings)
   );
   handle<string>(router, "sessions.list", (projectId) => services().sessions.listSessions(projectId));
-  handle<{ projectId: string; driver: DriverKind; options?: CreateSessionOptions }>(router, "sessions.create", (args) =>
-    services().sessions.createSession(args.projectId, args.driver, args.options)
-  );
+  handle<{ projectId: string; driver: DriverKind; options?: CreateSessionOptions }>(router, "sessions.create", async (args, ctx) => {
+    if (ctx.auth.kind !== "agent") return services().sessions.createSession(args.projectId, args.driver, args.options);
+    assertAgentCreateOptions(args.options);
+    const { sessions } = services();
+    const permissionMode = callerPermissionCap(sessions, ctx.auth.sessionId);
+    const created = await sessions.createSession(args.projectId, args.driver, args.options);
+    const prefs = setComposer(app, created.id, { permissionMode });
+    return { ...created, permissionMode: prefs.permissionMode };
+  });
   handle<DriverKind>(router, "sessions.importable", (driver) => services().sessions.listImportableSessions(driver));
   handle<ImportSessionRequest>(router, "sessions.import", (request) => services().sessions.importSession(request));
   handle<{ sessionId: string; title: string }>(router, "sessions.rename", (args) =>

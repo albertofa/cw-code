@@ -19,6 +19,7 @@ import type {
   IssueRef,
   ModelOption,
   NativeSession,
+  PermissionMode,
   PermissionOption,
   PrLinkSnapshot,
   PrRef,
@@ -236,6 +237,17 @@ function autoFinishedTarget(value: AppSettings["prFinishedSessionStatus"]): valu
   return value !== "none";
 }
 
+const PERMISSION_MODES: ReadonlySet<string> = new Set<PermissionMode>(["auto", "acceptEdits", "bypassPermissions", "manual"]);
+
+function isPermissionMode(mode: string): mode is PermissionMode {
+  return PERMISSION_MODES.has(mode);
+}
+
+function resolvePermissionMode(mode: string | undefined): PermissionMode {
+  const resolved = mode ?? "auto";
+  return isPermissionMode(resolved) ? resolved : "manual";
+}
+
 export class SessionManager {
   private store: SessionStore;
   private settings: SettingsStore;
@@ -287,6 +299,7 @@ export class SessionManager {
   private prUpdatedAt: (ref: PrRef) => number | null;
   private turnPrRefs = new Map<string, PrRef[]>();
   private turnFinalReviews = new Map<string, { ref: PrRef; sha: string }>();
+  private turnPermissionModes = new Map<string, PermissionMode>();
   private usageLedger: UsageLedger;
   private titleGenPath: string;
   private nativeSessions = new Map<string, NativeSession>();
@@ -1782,20 +1795,16 @@ export class SessionManager {
   getComposer(sessionId: string): ComposerPrefs {
     const session = this.store.getSession(sessionId);
     if (!session) throw new Error(`unknown session ${sessionId}`);
-    const model = session.model;
-    const permissionMode = session.permissionMode ?? "auto";
     return {
-      model,
+      model: session.model,
       effort: session.effort ?? "medium",
       variant: session.variant,
-      permissionMode:
-        permissionMode === "auto" ||
-        permissionMode === "acceptEdits" ||
-        permissionMode === "bypassPermissions" ||
-        permissionMode === "manual"
-          ? permissionMode
-          : "manual"
+      permissionMode: resolvePermissionMode(session.permissionMode)
     };
+  }
+
+  turnPermissionMode(sessionId: string): PermissionMode | undefined {
+    return this.turnPermissionModes.get(sessionId);
   }
 
   setComposer(sessionId: string, prefs: ComposerPrefs): ComposerPrefs {
@@ -1950,14 +1959,14 @@ export class SessionManager {
     session: SessionMeta | undefined,
     project: Project | undefined,
     cwd: string,
-    withGitHubAccount = false
+    include: { githubAccount?: boolean; agent?: boolean } = {}
   ): Record<string, string> {
     return {
       CW_WORKTREE_PATH: cwd,
       CW_PROJECT_ROOT: project?.rootPath ?? cwd,
       CW_SESSION_ID: session?.id ?? sessionId,
-      ...(withGitHubAccount ? this.githubAccountVars(session?.id ?? sessionId, project) : {}),
-      ...(session && !sessionId.startsWith("title:") ? this.agentEnv(sessionId) : {})
+      ...(include.githubAccount ? this.githubAccountVars(session?.id ?? sessionId, project) : {}),
+      ...(include.agent && session ? this.agentEnv(session.id) : {})
     };
   }
 
@@ -1992,7 +2001,7 @@ export class SessionManager {
   turnEnv(sessionId: string, cwd: string): Record<string, string> {
     const session = this.store.getSession(sessionId);
     const project = session ? this.store.getProject(session.projectId) : undefined;
-    return buildTurnEnv(process.env, this.sessionEnvVars(sessionId, session, project, cwd, true));
+    return buildTurnEnv(process.env, this.sessionEnvVars(sessionId, session, project, cwd, { githubAccount: true, agent: true }));
   }
 
   private async captureTurnSnapshot(sessionId: string, cwd: string): Promise<Omit<TurnSnapshot, "turnId"> | null> {
@@ -2304,8 +2313,9 @@ export class SessionManager {
         attachments: resolveAttachments(project.rootPath, cwd, opts?.attachments ?? []),
         ...(opts?.command ? { command: opts.command } : {}),
         ...(!opts?.command && opts?.skills?.length ? { skills: opts.skills } : {}),
-        env: buildTurnEnv(process.env, this.sessionEnvVars(session.id, session, project, cwd, session.driver === "claude"))
+        env: buildTurnEnv(process.env, this.sessionEnvVars(session.id, session, project, cwd, { githubAccount: session.driver === "claude", agent: true }))
       });
+      this.turnPermissionModes.set(sessionId, resolvePermissionMode(prefs.permissionMode));
       const startedAt = Date.now();
       this.activeTurns.set(handle.turnId, { sessionId, startedAt });
       const restoreWorking = this.store.getSession(sessionId)?.status !== "working";
@@ -2610,13 +2620,10 @@ export class SessionManager {
     }
     const cwd = await this.ensureWorktree(sessionId);
     this.assertNotReserved();
-    const result = await driver.retryConnection({
-      sessionId,
-      cwd,
-      resumeCursor: session.resumeCursor,
-      permissionMode: this.getComposer(sessionId).permissionMode
-    });
+    const { permissionMode } = this.getComposer(sessionId);
+    const result = await driver.retryConnection({ sessionId, cwd, resumeCursor: session.resumeCursor, permissionMode });
     if (result.status === "running" && result.turnId) {
+      this.turnPermissionModes.set(sessionId, resolvePermissionMode(permissionMode));
       const startedAt = Date.now();
       this.activeTurns.set(result.turnId, { sessionId, startedAt });
       this.onEvent(sessionId, { type: "turn.started", turnId: result.turnId, sessionId, startedAt, prompt: "" });

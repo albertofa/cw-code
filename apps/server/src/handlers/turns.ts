@@ -1,10 +1,12 @@
 import type { ApprovalDecision, CommandInvocation, DriverKind, PrRef } from "@cw-code/contracts";
 import { isSkillMentionList } from "@cw-code/shared/skillMentions";
-import { agentTurnPermissionMode } from "../agent/agentPolicy.js";
+import { agentTurnPermissionMode, assertAgentOmits } from "../agent/agentPolicy.js";
 import type { ServerApp } from "../app/ServerApp.js";
 import { assertPrRef } from "../github/PullRequestService.js";
 import type { Router } from "../transport/Router.js";
-import { handle, knownSessionId } from "./shared.js";
+import { handle, knownSessionId, setComposer } from "./shared.js";
+
+const AGENT_FORBIDDEN_TURN_FIELDS = ["command", "attachments", "acceptFolderHead", "prRefs"] as const;
 
 interface TurnPrefs {
   model?: string;
@@ -33,6 +35,7 @@ export function registerTurnHandlers(router: Router, app: ServerApp): void {
   const sessions = () => app.requireServices().sessions;
   const turns = () => app.requireServices().turns;
   handle<StartTurnArgs>(router, "turns.start", (args, ctx) => {
+    if (ctx.auth.kind === "agent") assertAgentOmits(args, AGENT_FORBIDDEN_TURN_FIELDS, "turns.start");
     if (args.skills !== undefined && !isSkillMentionList(args.skills)) throw new Error("invalid skills");
     if (args.prRefs !== undefined && !Array.isArray(args.prRefs)) throw new Error("invalid prRefs");
     if (args.acceptFolderHead !== undefined && typeof args.acceptFolderHead !== "string") throw new Error("invalid acceptFolderHead");
@@ -66,9 +69,5 @@ export function registerTurnHandlers(router: Router, app: ServerApp): void {
   handle<DriverTarget>(router, "permissions.listFor", (args) => sessions().listPermissionModesFor(args.projectId, args.driver));
   handle<{ driver: DriverKind }>(router, "permissions.listForHarness", (args) => sessions().listPermissionModesForHarness(args.driver));
   handle<{ sessionId: string }>(router, "composer.get", (args) => sessions().getComposer(args.sessionId));
-  handle<{ sessionId: string; prefs: TurnPrefs }>(router, "composer.set", (args) => {
-    const prefs = sessions().setComposer(args.sessionId, args.prefs);
-    app.emit("composer.changed", { sessionId: args.sessionId, prefs });
-    return prefs;
-  });
+  handle<{ sessionId: string; prefs: TurnPrefs }>(router, "composer.set", (args) => setComposer(app, args.sessionId, args.prefs));
 }

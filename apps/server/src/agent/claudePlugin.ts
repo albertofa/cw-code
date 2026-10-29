@@ -15,7 +15,7 @@ The tools are \`mcp__plugin_cw-code_cw__*\`: projects_list, sessions_list, sessi
 - Delegate work with session_create, then call session_wait (repeat while it returns timedOut), then session_get for the result.
 - Never prompt, stop or wait on your own session. Its id is in the environment variable CW_SESSION_ID.
 - Child sessions never run with more permissions than this one.
-- settings_set only accepts model, title, refresh and holding preferences.
+- settings_set only accepts model, worktree, session lifecycle and refresh preferences.
 `;
 
 function json(value: unknown): string {

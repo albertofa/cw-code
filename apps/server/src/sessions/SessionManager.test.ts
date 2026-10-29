@@ -1858,6 +1858,49 @@ describe("SessionManager", () => {
     manager.dispose();
   });
 
+  it("gives the agent env to turns and terminals but not to worktree scripts", async () => {
+    const { manager, fake } = makeManager();
+    (manager as unknown as { agentEnv: (sessionId: string) => Record<string, string> }).agentEnv = (sessionId) => ({
+      CW_MCP_URL: "http://127.0.0.1:1/mcp",
+      CW_AGENT_TOKEN: `token-${sessionId}`
+    });
+    const project = manager.addProject("C:\\proj-agent-script-env");
+    const session = await manager.createSession(project.id, "claude");
+    await manager.startTurn(session.id, "hello");
+    expect((fake.lastRequest?.env as Record<string, string> | undefined)?.["CW_AGENT_TOKEN"]).toBe(`token-${session.id}`);
+    expect((await manager.terminalEnv(session.id, project.rootPath))["CW_AGENT_TOKEN"]).toBe(`token-${session.id}`);
+    const scriptEnv = (
+      manager as unknown as { worktreeScriptEnv(id: string, project: Project, path: string, branch: string | undefined): Record<string, string> }
+    ).worktreeScriptEnv(session.id, project, project.rootPath, "cw/branch");
+    expect(scriptEnv["CW_SESSION_ID"]).toBe(session.id);
+    expect(scriptEnv["CW_BRANCH"]).toBe("cw/branch");
+    expect(scriptEnv["CW_AGENT_TOKEN"]).toBeUndefined();
+    expect(scriptEnv["CW_MCP_URL"]).toBeUndefined();
+    fake.completeAll();
+    manager.dispose();
+  });
+
+  it("records the permission mode each turn starts with and keeps it after the turn ends", async () => {
+    const { manager, fake } = makeManager();
+    const project = manager.addProject("C:\\proj-turn-mode");
+    const session = await manager.createSession(project.id, "claude");
+    expect(manager.turnPermissionMode(session.id)).toBeUndefined();
+
+    await manager.startTurn(session.id, "first");
+    expect(manager.turnPermissionMode(session.id)).toBe("auto");
+    fake.completeAll();
+    await waitFor(async () => expect((await manager.listSessions(project.id)).find((s) => s.id === session.id)?.status).not.toBe("working"));
+    expect(manager.turnPermissionMode(session.id)).toBe("auto");
+
+    manager.setComposer(session.id, { permissionMode: "bypassPermissions" });
+    await manager.startTurn(session.id, "second", { prefs: { permissionMode: "manual" } });
+    expect(fake.lastRequest?.permissionMode).toBe("manual");
+    expect(manager.turnPermissionMode(session.id)).toBe("manual");
+    expect(manager.getComposer(session.id).permissionMode).toBe("bypassPermissions");
+    fake.completeAll();
+    manager.dispose();
+  });
+
   it("overrides stale CW_* values inherited from the process env", () => {
     const { manager } = makeManager();
     stubEnv("CW_WORKTREE_PATH", "C:\\stale-worktree");

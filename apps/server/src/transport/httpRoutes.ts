@@ -9,7 +9,7 @@ export interface HttpRoutesOptions {
   info: ServerInfo;
   ownerToken: string;
   stop(): void;
-  mcp?: (req: Request) => Promise<Response>;
+  mcp?: (req: Request, extendTimeout: (seconds: number) => void) => Promise<Response>;
 }
 
 const BEARER_PATTERN = /^bearer\s+(\S+)\s*$/i;
@@ -92,11 +92,15 @@ async function handleStatic(req: Request, pathname: string, opts: HttpRoutesOpti
   return reply(file, 200, headers);
 }
 
-export function handleHttp(req: Request, opts: HttpRoutesOptions): Response | Promise<Response> | null {
+export function handleHttp(
+  req: Request,
+  opts: HttpRoutesOptions,
+  extendTimeout: (seconds: number) => void = () => {}
+): Response | Promise<Response> | null {
   const { pathname } = new URL(req.url);
   if (pathname === WS_PATH) return null;
   if (pathname === INFO_PATH) return handleInfo(req, opts);
   if (pathname === STOP_PATH) return handleStop(req, opts);
-  if (pathname === MCP_PATH) return opts.mcp ? opts.mcp(req) : reply("not found", 404);
+  if (pathname === MCP_PATH) return opts.mcp ? opts.mcp(req, extendTimeout) : reply("not found", 404);
   return handleStatic(req, pathname, opts);
 }

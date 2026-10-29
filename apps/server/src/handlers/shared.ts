@@ -1,4 +1,4 @@
-import type { TextSearchQuery } from "@cw-code/contracts";
+import type { ComposerPrefs, TextSearchQuery } from "@cw-code/contracts";
 import type { ServerApp } from "../app/ServerApp.js";
 import type { SessionManager } from "../sessions/SessionManager.js";
 import type { CallContext, Router } from "../transport/Router.js";
@@ -9,6 +9,12 @@ export function handle<T = unknown>(router: Router, method: string, handler: (ar
 
 export function requireOwner(ctx: CallContext, action: string): void {
   if (ctx.auth.kind !== "owner") throw Object.assign(new Error(`${action} requires the owner token`), { code: "forbidden" });
+}
+
+export function setComposer(app: Pick<ServerApp, "requireServices" | "emit">, sessionId: string, prefs: ComposerPrefs): ComposerPrefs {
+  const updated = app.requireServices().sessions.setComposer(sessionId, prefs);
+  app.emit("composer.changed", { sessionId, prefs: updated });
+  return updated;
 }
 
 export function subscribeIfConnected(app: Pick<ServerApp, "isConnected" | "topics">, clientId: string, topics: string[]): void {

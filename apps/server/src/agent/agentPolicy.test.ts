@@ -2,7 +2,15 @@ import { describe, expect, test } from "bun:test";
 import type { PermissionMode } from "@cw-code/contracts";
 import { requireOwner } from "../handlers/shared.js";
 import { Router, type CallContext } from "../transport/Router.js";
-import { agentTurnPermissionMode, assertAgentSettingsPatch, capPermissionMode } from "./agentPolicy.js";
+import {
+  AGENT_WRITABLE_SETTINGS,
+  agentTurnPermissionMode,
+  assertAgentCreateOptions,
+  assertAgentOmits,
+  assertAgentSettingsPatch,
+  callerPermissionCap,
+  capPermissionMode
+} from "./agentPolicy.js";
 
 const agent: CallContext = { clientId: "c", client: "mcp", auth: { kind: "agent", sessionId: "s1" } };
 const owner: CallContext = { clientId: "c", client: "desktop-ui", auth: { kind: "owner" } };
@@ -55,7 +63,11 @@ describe("capPermissionMode", () => {
 
 describe("agentTurnPermissionMode", () => {
   const composers: Record<string, PermissionMode> = { caller: "manual", target: "bypassPermissions", trusted: "auto" };
-  const sessions = { getComposer: (id: string) => ({ permissionMode: composers[id] }) };
+  const turnModes: Record<string, PermissionMode> = { target: "manual" };
+  const sessions = {
+    getComposer: (id: string) => ({ permissionMode: composers[id] }),
+    turnPermissionMode: (id: string): PermissionMode | undefined => turnModes[id]
+  };
 
   test("caps the requested mode at the caller session mode", () => {
     expect(agentTurnPermissionMode(sessions, "target", "caller", "bypassPermissions")).toBe("manual");
@@ -68,6 +80,52 @@ describe("agentTurnPermissionMode", () => {
 
   test("keeps a requested mode below the cap", () => {
     expect(agentTurnPermissionMode(sessions, "target", "trusted", "acceptEdits")).toBe("acceptEdits");
+  });
+
+  test("caps at the caller's running turn mode when it is below its stored mode", () => {
+    expect(callerPermissionCap(sessions, "target")).toBe("manual");
+    expect(agentTurnPermissionMode(sessions, "trusted", "target", "bypassPermissions")).toBe("manual");
+  });
+
+  test("uses the stored mode when the caller has not run a turn", () => {
+    expect(callerPermissionCap(sessions, "trusted")).toBe("auto");
+  });
+
+  test("keeps the stored mode when the running turn is above it", () => {
+    const raised = { ...sessions, turnPermissionMode: (): PermissionMode => "bypassPermissions" };
+    expect(callerPermissionCap(raised, "trusted")).toBe("auto");
+  });
+});
+
+describe("AGENT_WRITABLE_SETTINGS", () => {
+  test.each(["autoTitleEnabled", "autoTitleDriver", "autoTitleModel", "autoTitleEffort"] as const)("excludes %s", (key) => {
+    expect(AGENT_WRITABLE_SETTINGS.has(key)).toBe(false);
+    expect(() => assertAgentSettingsPatch({ [key]: "x" })).toThrow(key);
+  });
+});
+
+describe("agent argument guards", () => {
+  test("rejects a set forbidden field with the forbidden code", () => {
+    expect(() => assertAgentOmits({ prompt: "p", command: { name: "x" } }, ["command"], "turns.start")).toThrow("turns.start command");
+    let caught: unknown;
+    try {
+      assertAgentOmits({ attachments: [] }, ["attachments"], "turns.start");
+    } catch (error) {
+      caught = error;
+    }
+    expect((caught as { code?: string } | undefined)?.code).toBe("forbidden");
+  });
+
+  test("ignores fields that are absent or undefined", () => {
+    expect(() => assertAgentOmits({ prompt: "p", command: undefined }, ["command", "prRefs"], "turns.start")).not.toThrow();
+  });
+
+  test("allows only useWorktree in sessions.create options", () => {
+    expect(() => assertAgentCreateOptions(undefined)).not.toThrow();
+    expect(() => assertAgentCreateOptions({ useWorktree: false })).not.toThrow();
+    expect(() => assertAgentCreateOptions({ useWorktree: true, baseBranch: "main" })).toThrow("baseBranch");
+    expect(() => assertAgentCreateOptions({ reuseWorktreePath: "/x" })).toThrow("reuseWorktreePath");
+    expect(() => assertAgentCreateOptions("new")).toThrow("must be an object");
   });
 });
 

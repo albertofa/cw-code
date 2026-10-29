@@ -115,8 +115,7 @@ export class WsServer {
         if (!http) {
           if (new URL(req.url).pathname !== WS_PATH) return new Response("not found", { status: 404 });
         } else {
-          if (http.mcp && new URL(req.url).pathname === MCP_PATH) srv.timeout(req, 0);
-          const response = handleHttp(req, http);
+          const response = handleHttp(req, http, (seconds) => srv.timeout(req, seconds));
           if (response) return response;
         }
         const origin = req.headers.get("origin");
