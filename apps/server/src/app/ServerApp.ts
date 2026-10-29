@@ -489,6 +489,7 @@ export class ServerApp {
       console.warn(`preferences flush before exit failed: ${(err as Error).message}`);
     }
     services.autoFollowUp.dispose();
+    services.sessionWatch.dispose();
     services.prStore.dispose();
     services.threads.dispose();
     void services.sourceControl.dispose();
