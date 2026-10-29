@@ -57,6 +57,7 @@ let settings: Record<string, unknown>;
 let router: Router;
 let extended: number[];
 let route: ReturnType<typeof createMcpRoute>;
+let watch: SessionWatch;
 
 function findSession(id: string): SessionMeta {
   const session = sessions.find((candidate) => candidate.id === id);
@@ -83,12 +84,34 @@ const fakeSessions = {
   setSettings: (patch: SettingsPatch) => Object.assign(settings, patch)
 };
 
+function setStatus(id: string, status: SessionMeta["status"]): void {
+  const session = findSession(id);
+  session.status = status;
+  watch.sessionChanged({ ...session });
+}
+
+function completeTurn(id: string, resultText: string): void {
+  watch.turnSettled(id, {
+    type: "turn.done",
+    turnId: "t",
+    sessionId: id,
+    resumeCursor: "",
+    resultText,
+    usage: [],
+    numTurns: 1,
+    isError: false,
+    backgroundTasks: 0
+  });
+  setStatus(id, "idle");
+}
+
 const noop = (): void => {};
 
 function buildRouter(): Router {
   const built = new Router();
   const turns = {
     start: async (sessionId: string, prompt: string, input: StartTurnInput) => {
+      setStatus(sessionId, "working");
       started.push({ sessionId, prompt, input });
       turnModes.set(sessionId, input.prefs?.permissionMode ?? fakeSessions.getComposer(sessionId).permissionMode ?? "auto");
       return `turn-${started.length}`;
@@ -179,7 +202,7 @@ beforeEach(() => {
   settings = { claudeDefaultModel: "opus" };
   extended = [];
   router = buildRouter();
-  const watch = new SessionWatch({ getSession: (id) => sessions.find((session) => session.id === id) });
+  watch = new SessionWatch({ getSession: (id) => sessions.find((session) => session.id === id) });
   route = createMcpRoute({ router, tokens, watch, sessions: fakeSessions, version: "9.9.9" });
 });
 
@@ -348,6 +371,16 @@ describe("mcp modern era", () => {
   test("returns at once when waiting on a session that is not working", async () => {
     const result = await client.callTool({ name: "session_wait", arguments: { sessionId: "target" } });
     expect(JSON.parse(toolText(result))).toEqual({ status: "idle", lastResultText: null, timedOut: false });
+  });
+
+  test("waits on a sent turn while it works and resolves when it completes", async () => {
+    await client.callTool({ name: "session_send", arguments: { sessionId: "target", prompt: "next" } });
+    expect(findSession("target").status).toBe("working");
+    const waiting = client.callTool({ name: "session_wait", arguments: { sessionId: "target", timeoutMs: 5_000 } });
+    const pending = Symbol("pending");
+    expect(await Promise.race([waiting, new Promise((resolve) => setTimeout(() => resolve(pending), 50))])).toBe(pending);
+    completeTurn("target", "finished");
+    expect(JSON.parse(toolText(await waiting))).toEqual({ status: "idle", lastResultText: "finished", timedOut: false });
   });
 
   test("times out waiting on a session that keeps working", async () => {
