@@ -758,7 +758,7 @@ export class SessionManager {
     if (!repository) {
       return this.store.createSession(projectId, driver, "New session", { id });
     }
-    if (mode === "current" || !(await this.git.hasCommits(project.rootPath))) {
+    if (mode === "current" || !(await this.git.hasBranchCommits(project.rootPath))) {
       return this.createCurrentCheckoutSession(project, driver, id, options);
     }
     if (mode === "previous" && options.reuseWorktreePath) {

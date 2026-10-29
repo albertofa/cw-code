@@ -1163,6 +1163,17 @@ describe("SessionManager", () => {
     manager.dispose();
   });
 
+  it("creates a new worktree from the default branch when HEAD is unborn but other branches have commits", async () => {
+    const { manager, project, repository } = makeGitSandboxManager("cw-session-new-orphan-head-");
+    gitOut(repository, "switch", "--orphan", "scratch");
+
+    const session = await manager.createSession(project.id, "claude", { mode: "new" });
+
+    expect(session.worktreePath).toBeTruthy();
+    expect(session.branch).toBe(`cw/${session.id.slice("sess_".length)}`);
+    manager.dispose();
+  });
+
   it("stays on the author's PR branch without a dirty check when it is already checked out in the project folder", async () => {
     const { manager, project, repository } = makeGitSandboxManager("cw-session-current-at-root-");
     gitOut(repository, "switch", "-c", "feature/pr");
