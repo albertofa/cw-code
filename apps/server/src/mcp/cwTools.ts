@@ -15,7 +15,7 @@ export interface CwToolsDeps {
 
 export const WAIT_DEFAULT_MS = 120_000;
 export const WAIT_MIN_MS = 1_000;
-export const WAIT_MAX_MS = 600_000;
+export const WAIT_MAX_MS = 240_000;
 export const WAIT_PROGRESS_INTERVAL_MS = 15_000;
 
 const DRIVERS = ["claude", "codex", "opencode"] as const;

@@ -218,7 +218,8 @@ describe("mcp route gate", () => {
   test("extends the idle timeout to a finite value beyond the longest wait once the bearer verifies", async () => {
     await callRoute(post({ jsonrpc: "2.0", id: 1, method: "tools/list", params: {} }, { "MCP-Protocol-Version": "2025-11-25" }));
     expect(extended).toEqual([MCP_IDLE_TIMEOUT_SECONDS]);
-    expect(MCP_IDLE_TIMEOUT_SECONDS).toBe(Math.ceil(WAIT_MAX_MS / 1000) + 30);
+    expect(MCP_IDLE_TIMEOUT_SECONDS).toBe(255);
+    expect(WAIT_MAX_MS / 1000).toBeLessThan(MCP_IDLE_TIMEOUT_SECONDS);
   });
 });
 
