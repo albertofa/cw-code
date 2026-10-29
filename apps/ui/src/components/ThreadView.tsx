@@ -258,7 +258,6 @@ export function ThreadView({ hidden = false }: { hidden?: boolean }) {
   const stickRef = useRef(true);
   const lastSeenIdRef = useRef<string | null>(null);
   const hiddenRef = useRef(hidden);
-  hiddenRef.current = hidden;
   const savedScrollTopRef = useRef(0);
   const lastDistanceRef = useRef(0);
   const [atBottom, setAtBottom] = useState(true);
@@ -277,11 +276,13 @@ export function ThreadView({ hidden = false }: { hidden?: boolean }) {
       ? "chat"
       : resolveMainTab(panelMainOrder, panelDockByTab, session.driver, panelActiveMain, hasPr, isToolAvailable);
   const showMainTool: DockableTabId | null = resolvedMainTab === "chat" ? null : resolvedMainTab;
-  const threadMounted = !showNew && showMainTool === null;
+  const threadMounted = !showNew;
+  const threadHidden = hidden || showMainTool !== null;
+  hiddenRef.current = threadHidden;
   const find = useThreadFind({
     scrollRef,
     contentRef: innerRef,
-    enabled: threadMounted && !hidden,
+    enabled: threadMounted && !threadHidden,
     revision: messages
   });
   const basePath = session?.worktreePath ?? project?.rootPath ?? "";
@@ -323,12 +324,12 @@ export function ThreadView({ hidden = false }: { hidden?: boolean }) {
   }, [activeSessionId]);
 
   useLayoutEffect(() => {
-    if (hidden) return;
+    if (threadHidden) return;
     const el = scrollRef.current;
     if (!el) return;
     if (stickRef.current) pinToBottom(el);
     else el.scrollTop = savedScrollTopRef.current;
-  }, [hidden]);
+  }, [threadHidden, threadMounted]);
 
   useEffect(() => {
     const last = messages[messages.length - 1];
@@ -336,13 +337,13 @@ export function ThreadView({ hidden = false }: { hidden?: boolean }) {
       lastSeenIdRef.current = last.id;
       if (last.role === "user") stickRef.current = true;
     }
-    if (hidden) return;
+    if (threadHidden) return;
     const raf = requestAnimationFrame(() => {
       const el = scrollRef.current;
       if (el && stickRef.current) pinToBottom(el);
     });
     return () => cancelAnimationFrame(raf);
-  }, [messages, busyTurn, hidden]);
+  }, [messages, busyTurn, threadHidden]);
 
   useEffect(() => {
     const el = scrollRef.current;
@@ -583,15 +584,21 @@ export function ThreadView({ hidden = false }: { hidden?: boolean }) {
     <>
       {head}
       <MainTabStrip sessionId={session.id} driver={session.driver} hasPr={hasPr} />
-      {showMainTool !== null ? (
+      {showMainTool !== null && (
         <div
           className={`main-tool-body${dropMain.over ? " drop-target-active" : ""}`}
           {...dropMain.bind}
         >
           <ToolContent tab={showMainTool} sessionId={session.id} panel="main" />
         </div>
-      ) : (
-      <div className="thread-stage" ref={stageRef}>
+      )}
+      <ThreadVisibleContext.Provider value={!threadHidden}>
+      <div
+        className="thread-stage"
+        ref={stageRef}
+        hidden={showMainTool !== null}
+        style={showMainTool !== null ? { display: "none" } : undefined}
+      >
       <div
         className={`thread-body${dropMain.over ? " drop-target-active" : ""}`}
         {...dropMain.bind}
@@ -680,7 +687,7 @@ export function ThreadView({ hidden = false }: { hidden?: boolean }) {
         />
       </div>
       </div>
-      )}
+      </ThreadVisibleContext.Provider>
       {(isBottomOpen(panelDockByTab, isToolAvailable) || draggingTab !== null) && (
         <BottomPanel sessionId={session.id} />
       )}
