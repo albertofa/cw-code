@@ -1,5 +1,6 @@
 import type { ApprovalDecision, CommandInvocation, DriverKind, PrRef } from "@cw-code/contracts";
 import { isSkillMentionList } from "@cw-code/shared/skillMentions";
+import { agentTurnPermissionMode } from "../agent/agentPolicy.js";
 import type { ServerApp } from "../app/ServerApp.js";
 import { assertPrRef } from "../github/PullRequestService.js";
 import type { Router } from "../transport/Router.js";
@@ -31,13 +32,17 @@ interface DriverTarget {
 export function registerTurnHandlers(router: Router, app: ServerApp): void {
   const sessions = () => app.requireServices().sessions;
   const turns = () => app.requireServices().turns;
-  handle<StartTurnArgs>(router, "turns.start", (args) => {
+  handle<StartTurnArgs>(router, "turns.start", (args, ctx) => {
     if (args.skills !== undefined && !isSkillMentionList(args.skills)) throw new Error("invalid skills");
     if (args.prRefs !== undefined && !Array.isArray(args.prRefs)) throw new Error("invalid prRefs");
     if (args.acceptFolderHead !== undefined && typeof args.acceptFolderHead !== "string") throw new Error("invalid acceptFolderHead");
     for (const ref of args.prRefs ?? []) assertPrRef(ref);
+    const prefs =
+      ctx.auth.kind === "agent"
+        ? { ...args.prefs, permissionMode: agentTurnPermissionMode(sessions(), args.sessionId, ctx.auth.sessionId, args.prefs?.permissionMode) }
+        : args.prefs;
     return turns().start(args.sessionId, args.prompt, {
-      prefs: args.prefs,
+      prefs,
       attachments: args.attachments,
       ...(args.command ? { command: args.command } : {}),
       ...(args.skills?.length ? { skills: args.skills } : {}),

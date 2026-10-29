@@ -5,6 +5,7 @@ import {
   CLOSE_PROTOCOL_MISMATCH,
   CLOSE_SERVER_STOPPING,
   CLOSE_UNAUTHORIZED,
+  MCP_PATH,
   PROTOCOL_VERSION,
   WS_PATH
 } from "@cw-code/shared/protocol";
@@ -107,6 +108,7 @@ export class WsServer {
         if (!http) {
           if (new URL(req.url).pathname !== WS_PATH) return new Response("not found", { status: 404 });
         } else {
+          if (http.mcp && new URL(req.url).pathname === MCP_PATH) srv.timeout(req, 0);
           const response = handleHttp(req, http);
           if (response) return response;
         }

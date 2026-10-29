@@ -47,6 +47,16 @@ export function capPermissionMode(requested: PermissionMode | undefined, callerM
   return PERMISSION_RANK[requested] < PERMISSION_RANK[cap] ? requested : cap;
 }
 
+export function agentTurnPermissionMode(
+  sessions: { getComposer(sessionId: string): { permissionMode?: PermissionMode } },
+  targetSessionId: string,
+  callerSessionId: string,
+  requested: PermissionMode | undefined
+): PermissionMode {
+  const target = requested ?? sessions.getComposer(targetSessionId).permissionMode;
+  return capPermissionMode(target, sessions.getComposer(callerSessionId).permissionMode);
+}
+
 export function assertAgentSettingsPatch(patch: SettingsPatch): void {
   const denied = Object.keys(patch).find((key) => !AGENT_WRITABLE_SETTINGS.has(key as keyof AppSettings));
   if (denied !== undefined) {

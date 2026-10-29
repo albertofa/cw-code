@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import type { PermissionMode } from "@cw-code/contracts";
 import { requireOwner } from "../handlers/shared.js";
 import { Router, type CallContext } from "../transport/Router.js";
-import { assertAgentSettingsPatch, capPermissionMode } from "./agentPolicy.js";
+import { agentTurnPermissionMode, assertAgentSettingsPatch, capPermissionMode } from "./agentPolicy.js";
 
 const agent: CallContext = { clientId: "c", client: "mcp", auth: { kind: "agent", sessionId: "s1" } };
 const owner: CallContext = { clientId: "c", client: "desktop-ui", auth: { kind: "owner" } };
@@ -50,6 +50,24 @@ describe("capPermissionMode", () => {
 
   test("undefined requested inherits the caller mode", () => {
     expect(capPermissionMode(undefined, "auto")).toBe("auto");
+  });
+});
+
+describe("agentTurnPermissionMode", () => {
+  const composers: Record<string, PermissionMode> = { caller: "manual", target: "bypassPermissions", trusted: "auto" };
+  const sessions = { getComposer: (id: string) => ({ permissionMode: composers[id] }) };
+
+  test("caps the requested mode at the caller session mode", () => {
+    expect(agentTurnPermissionMode(sessions, "target", "caller", "bypassPermissions")).toBe("manual");
+  });
+
+  test("falls back to the target session's stored mode, still capped", () => {
+    expect(agentTurnPermissionMode(sessions, "target", "caller", undefined)).toBe("manual");
+    expect(agentTurnPermissionMode(sessions, "target", "trusted", undefined)).toBe("auto");
+  });
+
+  test("keeps a requested mode below the cap", () => {
+    expect(agentTurnPermissionMode(sessions, "target", "trusted", "acceptEdits")).toBe("acceptEdits");
   });
 });
 

@@ -1,12 +1,14 @@
 import type { AppNotice, DeviceInfo, ServerReady, ShutdownCommitResult, ShutdownExpiredEvent, ShutdownReason, ShutdownStatus, StartupState } from "@cw-code/contracts";
 import { CLOSE_UNAUTHORIZED, PROTOCOL_VERSION, SERVER_READY_PREFIX } from "@cw-code/shared/protocol";
 import { APP_TOPIC } from "@cw-code/shared/topics";
+import { AgentTokens } from "../agent/AgentTokens.js";
 import { appendCrashLog, initCrashLog } from "../debug/crashLog.js";
 import { initHarnessTrace } from "../debug/harnessTrace.js";
 import { initServerLog } from "../debug/serverLog.js";
 import { initSessionStatusTrace } from "../debug/sessionStatusTrace.js";
 import { sweepStaleSnapshotIndexes } from "../fs/GitService.js";
 import { registerHandlers } from "../handlers/index.js";
+import { createMcpRoute } from "../mcp/mcpRoute.js";
 import { reapOrphanedServers } from "../orphanServers.js";
 import { claudeCommandsCachePath, logsDir, opencodeModelsCachePath, sessionDbPath, settingsFilePath, userdataDir } from "../paths/appPaths.js";
 import { initClaudeCommandsCache } from "../providers/claude/claudeCommands.js";
@@ -54,6 +56,7 @@ export class ServerApp {
   readonly router = new Router();
   readonly topics = new TopicHub((clientIds, frame) => this.ws?.sendTo(clientIds, frame));
   readonly clientInputs = new ClientInputs();
+  readonly agentTokens = new AgentTokens();
   private deviceTokens: DeviceTokens | null = null;
   private services: Services | null = null;
   private state: StartupState = { mode: "ready" };
@@ -204,11 +207,24 @@ export class ServerApp {
       console.warn(entry);
       appendCrashLog(entry);
     });
+    const services = (): Services => this.requireServices();
+    const mcp = createMcpRoute({
+      router: this.router,
+      tokens: this.agentTokens,
+      version: this.version,
+      get watch() {
+        return services().sessionWatch;
+      },
+      get sessions() {
+        return services().sessions;
+      }
+    });
     const http = {
       uiDir: this.uiDir,
       info: { app: "cw-code", version: this.version, protocol: PROTOCOL_VERSION },
       ownerToken,
-      stop: () => this.scheduleStop(0)
+      stop: () => this.scheduleStop(0),
+      mcp
     } satisfies HttpRoutesOptions;
     const ws = new WsServer({ host, port: this.args.port, authorize, isOriginAllowed, onOriginRejected, version: this.version, router: this.router, http });
     const { url, port } = this.bind(ws, host);

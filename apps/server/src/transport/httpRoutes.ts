@@ -1,5 +1,5 @@
 import type { ServerInfo } from "@cw-code/contracts";
-import { INFO_PATH, STOP_PATH, WS_PATH } from "@cw-code/shared/protocol";
+import { INFO_PATH, MCP_PATH, STOP_PATH, WS_PATH } from "@cw-code/shared/protocol";
 import { sameOrigin } from "./originPolicy.js";
 import { tokensEqual } from "./ownerToken.js";
 import { contentTypeFor, resolveStaticPath } from "./staticFiles.js";
@@ -9,6 +9,7 @@ export interface HttpRoutesOptions {
   info: ServerInfo;
   ownerToken: string;
   stop(): void;
+  mcp?: (req: Request) => Promise<Response>;
 }
 
 const BEARER_PATTERN = /^bearer\s+(\S+)\s*$/i;
@@ -39,7 +40,7 @@ export function cspFor(host: string): string {
   ].join("; ");
 }
 
-function reply(body: BodyInit | null, status: number, headers: Record<string, string> = {}): Response {
+export function reply(body: BodyInit | null, status: number, headers: Record<string, string> = {}): Response {
   return new Response(body, { status, headers: { ...SECURITY_HEADERS, ...headers } });
 }
 
@@ -51,7 +52,7 @@ function isReadMethod(method: string): boolean {
   return method === "GET" || method === "HEAD";
 }
 
-function bearerToken(req: Request): string | null {
+export function bearerToken(req: Request): string | null {
   return BEARER_PATTERN.exec(req.headers.get("authorization") ?? "")?.[1] ?? null;
 }
 
@@ -96,5 +97,6 @@ export function handleHttp(req: Request, opts: HttpRoutesOptions): Response | Pr
   if (pathname === WS_PATH) return null;
   if (pathname === INFO_PATH) return handleInfo(req, opts);
   if (pathname === STOP_PATH) return handleStop(req, opts);
+  if (pathname === MCP_PATH) return opts.mcp ? opts.mcp(req) : reply("not found", 404);
   return handleStatic(req, pathname, opts);
 }
