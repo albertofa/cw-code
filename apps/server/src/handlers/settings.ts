@@ -5,6 +5,7 @@ import { checkCliVersion } from "../cliVersions.js";
 import { defaultPrWorkflows } from "../settings/prWorkflowDefaults.js";
 import { bindHostOr, DEFAULT_SETTINGS } from "../settings/SettingsStore.js";
 import { configuredCliBinaryPath } from "../settings/settingsUtils.js";
+import { assertAgentSettingsPatch } from "../agent/agentPolicy.js";
 import { bindRefusal, DEFAULT_BIND_HOST } from "../transport/bindPolicy.js";
 import type { Router } from "../transport/Router.js";
 import { handle, requireOwner } from "./shared.js";
@@ -38,6 +39,7 @@ export function registerSettingsHandlers(router: Router, app: ServerApp): void {
   handle(router, "settings.get", () => services().sessions.getSettings());
   handle(router, "settings.prWorkflowDefaults", () => defaultPrWorkflows());
   handle<SettingsPatch>(router, "settings.set", async (patch, ctx) => {
+    if (ctx.auth.kind === "agent") assertAgentSettingsPatch(patch);
     for (const key of OWNER_ONLY_SETTINGS) {
       if (patch[key] !== undefined) requireOwner(ctx, `changing ${key}`);
     }
