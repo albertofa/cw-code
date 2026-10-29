@@ -29,7 +29,7 @@ Core behaviors:
   `bun build --compile` binary with `node-pty` as a sidecar (`CW_NODE_PTY`).
   The same listener has a small HTTP surface (`transport/httpRoutes.ts`): `GET /api/info`
   (`{ app, version, protocol }`, unauthenticated), `POST /api/stop` (owner token as `Bearer`;
-  rejects a cross-origin `Origin`) and, for every other path, the built UI as static files
+  rejects a cross-origin `Origin`), `/mcp` (agent tools, see Agent tools) and, for every other path, the built UI as static files
   (read-only, no SPA fallback; unknown paths are 404). The UI directory is `--ui-dir`, else
   `ui/` next to the compiled binary, else `apps/ui/dist` when run from source; none found
   means no web UI (`ServerHost.webUi` is false). HTML responses carry a CSP built from the
@@ -97,7 +97,21 @@ Core behaviors:
   `server.setParent`, `shutdown.prepare`/`force`/`quit` and the `serverBindHost`,
   `serverPublicUrl` and `keepServerRunning` settings. That is not a security boundary: a
   device token still grants full remote control (terminals, sessions, files, all other settings). Treat it like a shell login.
-  Per-method scopes are future work.
+  Per-method scopes exist only for agent tokens (see Agent tools).
+- Agent tools: `/mcp` serves the `cw` MCP server (sessions, settings, usage, monitoring) to the
+  harness CLIs cw-code spawns, statelessly: MCP revision 2026-07-28 through
+  `@modelcontextprotocol/server` `createMcpHandler`, with the SDK's stateless fallback for
+  2025-era `initialize` clients (no `Mcp-Session-Id`, GET/DELETE 405). Callers authenticate with
+  a per-session agent token (`AgentTokens`, in memory, revoked on resolve/archive) sent as
+  `Bearer`; any `Origin` is rejected and the idle timeout is lifted only after the token verifies.
+  Agent calls go through `Router.dispatch` with `auth.kind === "agent"`: only `AGENT_METHODS` are
+  allowed, `settings.set` accepts only `AGENT_WRITABLE_SETTINGS`, `turns.start`/`sessions.create`
+  reject extra arguments, and a turn an agent starts never runs above the lower of the caller's
+  stored mode and the mode its current turn started with (agent-created sessions store that cap).
+  Turn and terminal spawns get `CW_MCP_URL` and `CW_AGENT_TOKEN` (never worktree scripts or title
+  turns); Claude spawns add `--plugin-dir <userdata>/harness/claude-plugin`, a plugin cw-code
+  writes at startup with the `cw` MCP entry and the `cw-code` skill. Codex and opencode injection
+  are not wired yet.
 - Browser entry: a browser opens the server's own address (`/`) and pairs with a device
   token. The owner creates one in Settings (`devices.create`) and gets a link
   `<serverPublicUrl>/#token=<token>`; the UI reads the hash, removes it from the address bar and
@@ -143,6 +157,8 @@ Core behaviors:
   `DesktopApi`, shell IPC and preload.
 - Assume several clients may be connected: server state changes must be published to a
   topic (or emitted as an event), never returned only to the caller.
+- A new agent tool calls an allowlisted router method (`AGENT_METHODS`) with the agent
+  `CallContext`; never call services around the router or widen the allowlist without a cap.
 - A new server event needs a topic in `eventTopics.ts` (or an explicit `broadcast` entry);
   an unmapped channel is broadcast to everyone with a warning.
 - Visible = subscribed: a view holds its topics only while it is shown and the window is
