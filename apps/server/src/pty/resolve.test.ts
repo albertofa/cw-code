@@ -46,11 +46,24 @@ describe("resolveBinary", () => {
 });
 
 describe("toShellTarget", () => {
-  it("wraps .cmd in cmd.exe /k", () => {
-    const { env } = makeBin();
-    expect(toShellTarget("fakecli", [], env)).toEqual({
+  it("wraps .cmd in cmd.exe /k as one prebuilt command line", () => {
+    const { dir, env } = makeBin();
+    expect(toShellTarget("fakecli", [], env)).toEqual({ file: "cmd.exe", args: `/s /k ""${join(dir, "fakecli.cmd")}""` });
+  });
+
+  it("keeps a spaced --plugin-dir path as one argument of a .cmd shim", () => {
+    const { dir, env } = makeBin();
+    expect(toShellTarget("fakecli", ["--plugin-dir", "C:\\Users\\John Smith\\claude-plugin"], env)).toEqual({
       file: "cmd.exe",
-      args: ["/k", expect.stringContaining("fakecli.cmd")]
+      args: `/s /k ""${join(dir, "fakecli.cmd")}" ^^^"--plugin-dir^^^" ^^^"C:\\Users\\John^^^ Smith\\claude-plugin^^^""`
+    });
+  });
+
+  it("escapes & in a .cmd shim argument", () => {
+    const { dir, env } = makeBin();
+    expect(toShellTarget("fakecli", ["--plugin-dir", "C:\\R&D\\claude-plugin"], env)).toEqual({
+      file: "cmd.exe",
+      args: `/s /k ""${join(dir, "fakecli.cmd")}" ^^^"--plugin-dir^^^" ^^^"C:\\R^^^&D\\claude-plugin^^^""`
     });
   });
 

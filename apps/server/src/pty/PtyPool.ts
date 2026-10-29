@@ -4,7 +4,7 @@ import { existsSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { claudePluginArgs } from "../agent/claudePlugin.js";
-import { toShellTarget } from "./resolve.js";
+import { toShellTarget, type ShellTarget } from "./resolve.js";
 import { parseExtraArgs } from "../settings/settingsUtils.js";
 import { traceHarnessCall, truncateError } from "../debug/harnessTrace.js";
 import { shutdownReservedError } from "../shutdown/shutdownReservation.js";
@@ -30,7 +30,7 @@ export interface PtyInstance {
 }
 
 export interface PtyModule {
-  spawn(file: string, args: string[], opts: { name: string; cols: number; rows: number; cwd: string; env?: NodeJS.ProcessEnv }): PtyInstance;
+  spawn(file: string, args: string[] | string, opts: { name: string; cols: number; rows: number; cwd: string; env?: NodeJS.ProcessEnv }): PtyInstance;
 }
 
 export interface PtyListEntry {
@@ -93,6 +93,10 @@ export function buildResumeArgs(kind: PtyKind, cursor: string): string[] {
   if (kind === "opencode") return ["--session", cursor];
   if (kind === "codex") return ["resume", cursor];
   return [];
+}
+
+function argList(args: string[] | string): string[] {
+  return typeof args === "string" ? [args] : args;
 }
 
 function appendReplay(entry: PtyEntry, data: string): void {
@@ -271,7 +275,7 @@ export class PtyPool {
       file = process.platform === "win32" ? "powershell.exe" : process.env["SHELL"] || "/bin/bash";
     }
     const args = [...(attached?.args ?? []), ...buildResumeArgs(kind, resumeCursor), ...extra];
-    let target: { file: string; args: string[] };
+    let target: ShellTarget;
     try {
       target = toShellTarget(file, args);
     } catch (err) {
@@ -302,7 +306,7 @@ export class PtyPool {
         operation,
         cwd,
         binary: target.file,
-        args: target.args,
+        args: argList(target.args),
         durationMs: Date.now() - start,
         ok: false,
         error: truncateError(`PTY spawn failed for '${file}': ${(err as Error).message}`),
@@ -334,7 +338,7 @@ export class PtyPool {
       operation,
       cwd,
       binary: target.file,
-      args: target.args,
+      args: argList(target.args),
       durationMs: Date.now() - start,
       ok: true,
       extra: { kind, ptyId }

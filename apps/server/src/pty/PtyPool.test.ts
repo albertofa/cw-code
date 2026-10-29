@@ -95,16 +95,16 @@ const noData = (): void => {};
 
 describe("PtyPool cw plugin", () => {
   async function spawnedCommandLine(pluginDir: string | null, kind: PtyKind): Promise<string> {
-    const calls: string[][] = [];
+    const calls: string[] = [];
     const module: PtyModule = {
       spawn: (_file, args) => {
-        calls.push(args);
+        calls.push(typeof args === "string" ? args : args.join(" "));
         return new FakePty();
       }
     };
     const pool = new PtyPool(() => SETTINGS, async () => module, () => pluginDir);
     await pool.open("sess_a", ".", kind, "cursor", undefined, noData);
-    return (calls[0] ?? []).join(" ");
+    return calls[0] ?? "";
   }
 
   it("passes --plugin-dir to Claude terminals only when the plugin is available", async () => {
