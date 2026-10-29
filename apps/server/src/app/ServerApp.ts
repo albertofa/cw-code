@@ -266,10 +266,17 @@ export class ServerApp {
         this.pluginDir = dir;
       })
       .catch((err) => {
-        const message = `could not write the Claude plugin to ${dir}; cw tools are unavailable in Claude sessions: ${err instanceof Error ? err.message : String(err)}`;
+        const detail = err instanceof Error ? err.message : String(err);
+        const message = `could not write the Claude plugin to ${dir}; cw tools are unavailable in Claude sessions: ${detail}`;
         console.warn(message);
         appendCrashLog(message);
+        this.noticeShell({ level: "warning", title: "cw-code", message: "cw tools are unavailable in Claude sessions", detail: message });
       });
+  }
+
+  private noticeShell(notice: AppNotice): void {
+    if (this.ws?.clients().some((client) => client.client === "desktop-shell")) this.emit("app.notice", notice);
+    else this.pendingShellNotices.push(notice);
   }
 
   private agentEnv(sessionId: string): Record<string, string> {
