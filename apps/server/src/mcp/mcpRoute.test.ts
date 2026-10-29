@@ -338,6 +338,13 @@ describe("mcp modern era", () => {
     expect(findSession(created).permissionMode).toBe("manual");
   });
 
+  test("rejects session_create with an unsafe model before creating anything", async () => {
+    const result = await client.callTool({ name: "session_create", arguments: { projectId: "p1", driver: "claude", prompt: "go", model: "opus&whoami" } });
+    expect(result.isError).toBe(true);
+    expect(sessions).toHaveLength(3);
+    expect(started).toHaveLength(0);
+  });
+
   test("returns at once when waiting on a session that is not working", async () => {
     const result = await client.callTool({ name: "session_wait", arguments: { sessionId: "target" } });
     expect(JSON.parse(toolText(result))).toEqual({ status: "idle", lastResultText: null, timedOut: false });
@@ -374,6 +381,29 @@ describe("agent call arguments", () => {
       code: "forbidden"
     });
     expect(started).toHaveLength(0);
+  });
+
+  test.each([["model"], ["variant"]])("turns.start rejects an unsafe prefs.%s from an agent", async (field) => {
+    await expect(
+      router.dispatch("turns.start", { sessionId: "target", prompt: "p", prefs: { [field]: "opus&whoami" } }, agent("caller"))
+    ).rejects.toMatchObject({ code: "forbidden" });
+    expect(started).toHaveLength(0);
+  });
+
+  test("turns.start accepts a provider-qualified model id from an agent", async () => {
+    await router.dispatch("turns.start", { sessionId: "target", prompt: "p", prefs: { model: "openai/gpt-5", variant: "high" } }, agent("caller"));
+    expect(started[0]?.input.prefs).toMatchObject({ model: "openai/gpt-5", variant: "high" });
+  });
+
+  test("turns.start leaves owner model ids to the launcher", async () => {
+    const owner: CallContext = { clientId: "ui", client: "desktop-ui", auth: { kind: "owner" } };
+    await router.dispatch("turns.start", { sessionId: "target", prompt: "p", prefs: { model: "custom model" } }, owner);
+    expect(started[0]?.input.prefs?.model).toBe("custom model");
+  });
+
+  test("settings.set rejects an unsafe default model from an agent", async () => {
+    await expect(router.dispatch("settings.set", { codexDefaultModel: "gpt&calc" }, agent("caller"))).rejects.toMatchObject({ code: "forbidden" });
+    expect(settings).not.toHaveProperty("codexDefaultModel");
   });
 
   test("sessions.create rejects options other than useWorktree from an agent", async () => {

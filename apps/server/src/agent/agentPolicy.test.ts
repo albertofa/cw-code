@@ -1,15 +1,18 @@
 import { describe, expect, test } from "bun:test";
-import type { PermissionMode } from "@cw-code/contracts";
+import type { PermissionMode, SettingsPatch } from "@cw-code/contracts";
 import { requireOwner } from "../handlers/shared.js";
 import { Router, type CallContext } from "../transport/Router.js";
 import {
+  AGENT_METHODS,
   AGENT_WRITABLE_SETTINGS,
   agentTurnPermissionMode,
   assertAgentCreateOptions,
+  assertAgentModelId,
   assertAgentOmits,
   assertAgentSettingsPatch,
   callerPermissionCap,
-  capPermissionMode
+  capPermissionMode,
+  isSafeModelId
 } from "./agentPolicy.js";
 
 const agent: CallContext = { clientId: "c", client: "mcp", auth: { kind: "agent", sessionId: "s1" } };
@@ -129,7 +132,72 @@ describe("agent argument guards", () => {
   });
 });
 
+describe("AGENT_METHODS", () => {
+  test("lists exactly the methods the cw tools call", () => {
+    expect([...AGENT_METHODS].sort()).toEqual(
+      ["composer.get", "projects.list", "sessions.create", "sessions.list", "settings.get", "settings.set", "turns.start", "turns.stop", "usage.report"].sort()
+    );
+  });
+});
+
+describe("isSafeModelId", () => {
+  test.each([
+    "opus",
+    "fable",
+    "claude-opus-5-5",
+    "claude-opus-5-5[1m]",
+    "openai/gpt-5",
+    "openai/gpt-5.2",
+    "opencode/big-pickle",
+    "anthropic/claude-sonnet-4-5",
+    "openrouter/qwen/qwen3-coder:free",
+    "gpt-5@high",
+    "high"
+  ])("accepts %s", (id) => {
+    expect(isSafeModelId(id)).toBe(true);
+  });
+
+  test.each(["", "opus&whoami", "opus|calc", "a b", "-p", "--model", "%PATH%", 'a"b', "x^y", "x(y)", "a>b", "a\nb", "a".repeat(129)])(
+    "rejects %j",
+    (id) => {
+      expect(isSafeModelId(id)).toBe(false);
+    }
+  );
+
+  test("rejects non-strings", () => {
+    expect(isSafeModelId(undefined)).toBe(false);
+    expect(isSafeModelId(["opus"])).toBe(false);
+  });
+});
+
+describe("assertAgentModelId", () => {
+  test("allows an absent value and rejects an unsafe one with the forbidden code", () => {
+    expect(() => assertAgentModelId(undefined, "prefs.model")).not.toThrow();
+    expect(() => assertAgentModelId("openai/gpt-5", "prefs.model")).not.toThrow();
+    expect(() => assertAgentModelId("opus&whoami", "prefs.model")).toThrow("prefs.model is not a valid model id");
+    expect(() => assertAgentModelId("", "prefs.model")).toThrow("prefs.model");
+    try {
+      assertAgentModelId("opus&whoami", "prefs.model");
+    } catch (error) {
+      expect((error as { code?: string }).code).toBe("forbidden");
+    }
+  });
+});
+
 describe("assertAgentSettingsPatch", () => {
+  test.each(["claudeDefaultModel", "codexDefaultModel", "opencodeDefaultModel"] as const)("rejects an unsafe %s and allows clearing it", (key) => {
+    expect(() => assertAgentSettingsPatch({ [key]: "opus&whoami" })).toThrow(key);
+    expect(() => assertAgentSettingsPatch({ [key]: 42 } as unknown as SettingsPatch)).toThrow(key);
+    expect(() => assertAgentSettingsPatch({ [key]: "" })).not.toThrow();
+    expect(() => assertAgentSettingsPatch({ [key]: " openai/gpt-5 " })).not.toThrow();
+  });
+
+  test("checks every enabled Claude model id", () => {
+    expect(() => assertAgentSettingsPatch({ claudeEnabledModels: ["claude-opus-5-5[1m]", "fable"] })).not.toThrow();
+    expect(() => assertAgentSettingsPatch({ claudeEnabledModels: ["fable", "opus&whoami"] })).toThrow("claudeEnabledModels");
+    expect(() => assertAgentSettingsPatch({ claudeEnabledModels: "fable" } as unknown as SettingsPatch)).toThrow("claudeEnabledModels");
+  });
+
   test.each([["claudeBinaryPath", "/bin/claude"], ["claudeExtraArgs", "--x"], ["keepServerRunning", true]])("rejects %s", (key, value) => {
     expect(() => assertAgentSettingsPatch({ [key]: value })).toThrow(key);
     try {

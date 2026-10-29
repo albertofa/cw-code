@@ -1,7 +1,7 @@
 import type { ComposerPrefs, PermissionMode, Project, SessionMeta } from "@cw-code/contracts";
 import type { CallToolResult, McpServer, ServerContext } from "@modelcontextprotocol/server";
 import { z } from "zod";
-import { agentTurnPermissionMode } from "../agent/agentPolicy.js";
+import { agentTurnPermissionMode, SAFE_MODEL_ID } from "../agent/agentPolicy.js";
 import type { SessionWatch } from "../agent/SessionWatch.js";
 import type { SessionManager } from "../sessions/SessionManager.js";
 import type { CallContext, Router } from "../transport/Router.js";
@@ -133,7 +133,7 @@ export function registerCwTools(server: McpServer, deps: CwToolsDeps): void {
         projectId: z.string(),
         driver: z.enum(DRIVERS),
         prompt: z.string().min(1),
-        model: z.string().optional(),
+        model: z.string().regex(SAFE_MODEL_ID, "not a valid model id").optional(),
         effort: z.enum(EFFORTS).optional(),
         permissionMode: z.enum(PERMISSION_MODES).optional(),
         useWorktree: z.boolean().optional()

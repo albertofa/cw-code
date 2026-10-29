@@ -7,7 +7,6 @@ export const AGENT_METHODS: ReadonlySet<string> = new Set([
   "turns.start",
   "turns.stop",
   "composer.get",
-  "models.listFor",
   "usage.report",
   "settings.get",
   "settings.set"
@@ -29,6 +28,10 @@ export const AGENT_WRITABLE_SETTINGS: ReadonlySet<keyof AppSettings> = new Set<k
   "sourceControlRefreshIntervalSeconds",
   "prRefreshIntervalSeconds"
 ]);
+
+export const SAFE_MODEL_ID = /^[A-Za-z0-9][A-Za-z0-9._:/@[\]+-]{0,127}$/;
+
+const AGENT_MODEL_SETTINGS = ["claudeDefaultModel", "codexDefaultModel", "opencodeDefaultModel"] as const;
 
 const PERMISSION_RANK: Record<PermissionMode, number> = {
   manual: 0,
@@ -66,9 +69,29 @@ function forbidden(message: string): Error {
   return Object.assign(new Error(message), { code: "forbidden" });
 }
 
+export function isSafeModelId(value: unknown): value is string {
+  return typeof value === "string" && SAFE_MODEL_ID.test(value);
+}
+
+export function assertAgentModelId(value: unknown, field: string): void {
+  if (value !== undefined && !isSafeModelId(value)) throw forbidden(`${field} is not a valid model id`);
+}
+
+function isSafeModelSetting(value: unknown): boolean {
+  return typeof value === "string" && (value.trim() === "" || isSafeModelId(value.trim()));
+}
+
 export function assertAgentSettingsPatch(patch: SettingsPatch): void {
   const denied = Object.keys(patch).find((key) => !AGENT_WRITABLE_SETTINGS.has(key as keyof AppSettings));
   if (denied !== undefined) throw forbidden(`changing ${denied} is not available to agents`);
+  for (const key of AGENT_MODEL_SETTINGS) {
+    const value: unknown = patch[key];
+    if (value !== undefined && !isSafeModelSetting(value)) throw forbidden(`${key} is not a valid model id`);
+  }
+  const enabled: unknown = patch.claudeEnabledModels;
+  if (enabled !== undefined && !(Array.isArray(enabled) && enabled.every(isSafeModelSetting))) {
+    throw forbidden("claudeEnabledModels must be a list of valid model ids");
+  }
 }
 
 export function assertAgentOmits(args: object, fields: readonly string[], method: string): void {

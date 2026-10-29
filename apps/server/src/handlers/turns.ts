@@ -1,6 +1,6 @@
 import type { ApprovalDecision, CommandInvocation, DriverKind, PrRef } from "@cw-code/contracts";
 import { isSkillMentionList } from "@cw-code/shared/skillMentions";
-import { agentTurnPermissionMode, assertAgentOmits } from "../agent/agentPolicy.js";
+import { agentTurnPermissionMode, assertAgentModelId, assertAgentOmits } from "../agent/agentPolicy.js";
 import type { ServerApp } from "../app/ServerApp.js";
 import { assertPrRef } from "../github/PullRequestService.js";
 import type { Router } from "../transport/Router.js";
@@ -35,7 +35,11 @@ export function registerTurnHandlers(router: Router, app: ServerApp): void {
   const sessions = () => app.requireServices().sessions;
   const turns = () => app.requireServices().turns;
   handle<StartTurnArgs>(router, "turns.start", (args, ctx) => {
-    if (ctx.auth.kind === "agent") assertAgentOmits(args, AGENT_FORBIDDEN_TURN_FIELDS, "turns.start");
+    if (ctx.auth.kind === "agent") {
+      assertAgentOmits(args, AGENT_FORBIDDEN_TURN_FIELDS, "turns.start");
+      assertAgentModelId(args.prefs?.model, "turns.start prefs.model");
+      assertAgentModelId(args.prefs?.variant, "turns.start prefs.variant");
+    }
     if (args.skills !== undefined && !isSkillMentionList(args.skills)) throw new Error("invalid skills");
     if (args.prRefs !== undefined && !Array.isArray(args.prRefs)) throw new Error("invalid prRefs");
     if (args.acceptFolderHead !== undefined && typeof args.acceptFolderHead !== "string") throw new Error("invalid acceptFolderHead");
