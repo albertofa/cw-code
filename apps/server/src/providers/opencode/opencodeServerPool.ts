@@ -31,6 +31,11 @@ const STARTUP_TIMEOUT_MS = 90_000;
 const CLI_PROTOCOL_TTL_MS = 5 * 60_000;
 const cliProtocols = new Map<string, { at: number; protocol: OpencodeProtocolVersion }>();
 
+export function clearCliProtocolCache(binary?: string): void {
+  if (binary === undefined) cliProtocols.clear();
+  else cliProtocols.delete(binary);
+}
+
 export async function opencodeCliProtocol(binary: string): Promise<OpencodeProtocolVersion> {
   const cached = cliProtocols.get(binary);
   if (cached && Date.now() - cached.at < CLI_PROTOCOL_TTL_MS) return cached.protocol;
@@ -118,6 +123,7 @@ interface PoolEntry {
   handle: ServerHandle;
   envKey: string;
   lastUsed: number;
+  generation: number;
 }
 
 export interface OpencodeServerPoolDeps {
@@ -143,6 +149,7 @@ export class OpencodeServerPool {
   private draining = 0;
   private pending = new Map<string, { envKey: string; promise: Promise<ServerHandle> }>();
   private inFlight = new Map<string, number>();
+  private generation = 0;
   private disposed = false;
   private idleTimeoutMs: number;
   private maxServers: number;
@@ -353,7 +360,7 @@ export class OpencodeServerPool {
         extra: { reason: "dead", serverPort: existing.handle.port }
       });
       this.stop(rootPath);
-    } else if (existing?.binary === binary && (env === undefined || existing.envKey === envKey)) {
+    } else if (existing?.binary === binary && existing.generation === this.generation && (env === undefined || existing.envKey === envKey)) {
       existing.lastUsed = Date.now();
       traceHarnessCall({
         harness: "opencode",
@@ -374,6 +381,7 @@ export class OpencodeServerPool {
       this.stop(rootPath);
     }
     const spawnEnv = stripSessionEnv(env);
+    const generation = this.generation;
     const started = this.deps?.startServer
       ? await this.deps.startServer(rootPath, binary, spawnEnv)
       : await this.ensureProcess(rootPath, binary, spawnEnv);
@@ -382,7 +390,7 @@ export class OpencodeServerPool {
       throw new Error("opencode server pool disposed");
     }
     this.trackProcess(rootPath, started.proc);
-    this.servers.set(rootPath, { binary, proc: started.proc, handle: started.handle, envKey, lastUsed: Date.now() });
+    this.servers.set(rootPath, { binary, proc: started.proc, handle: started.handle, envKey, lastUsed: Date.now(), generation });
     return started.handle;
   }
 
@@ -431,6 +439,21 @@ export class OpencodeServerPool {
       this.draining -= 1;
       killProcessTree(entry.proc);
     });
+  }
+
+  releaseIdle(): void {
+    this.generation += 1;
+    for (const rootPath of [...this.servers.keys()]) {
+      if ((this.inFlight.get(rootPath) ?? 0) > 0) continue;
+      traceHarnessCall({
+        harness: "opencode",
+        operation: "opencode.serve.evict",
+        cwd: rootPath,
+        ok: true,
+        extra: { reason: "release" }
+      });
+      this.stop(rootPath);
+    }
   }
 
   ownedProcessCount(): number {

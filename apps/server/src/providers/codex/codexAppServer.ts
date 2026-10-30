@@ -38,6 +38,8 @@ export interface CodexAppServerLike {
   setSpawnEnv?(env: Record<string, string> | undefined): void;
   ownedProcessCount?(): number;
   shutdown?(timeoutMs: number): Promise<{ timedOut: boolean }>;
+  /** Stops the running app-server; the next request spawns a fresh one. */
+  restart?(timeoutMs?: number): Promise<void>;
   dispose(): void;
 }
 
@@ -58,6 +60,7 @@ interface Envelope {
 const DEFAULT_CLIENT_INFO = { name: "cw_code", title: "cw-code", version: "0.1.0" };
 const STDERR_TAIL_LINES = 20;
 const DEFAULT_INITIALIZE_TIMEOUT_MS = 30_000;
+const DEFAULT_RESTART_TIMEOUT_MS = 5_000;
 
 export class CodexAppServer implements CodexAppServerLike {
   private proc: ChildProcess | null = null;
@@ -136,6 +139,24 @@ export class CodexAppServer implements CodexAppServerLike {
     return { timedOut: !exited };
   }
 
+  async restart(timeoutMs = DEFAULT_RESTART_TIMEOUT_MS): Promise<void> {
+    this.proc = null;
+    this.rejectAllPending(new CodexAppServerError("codex app-server is restarting"));
+    while (this.starting) await this.starting.catch(() => undefined);
+    const child = this.child;
+    this.proc = null;
+    if (!child) return;
+    if (!hasExited(child)) {
+      try {
+        child.stdin?.end();
+      } catch {
+      }
+      const exited = await waitForExit(child, timeoutMs);
+      if (!exited && !hasExited(child)) killProcessTree(child);
+    }
+    this.forget(child);
+  }
+
   dispose(): void {
     this.disposed = true;
     this.rejectAllPending(new CodexAppServerError("codex app-server disposed"));
@@ -168,10 +189,11 @@ export class CodexAppServer implements CodexAppServerLike {
     if (this.disposed) throw new CodexAppServerError("codex app-server disposed");
     if (this.proc && this.proc.exitCode === null) return this.proc;
     if (this.starting) return this.starting;
-    this.starting = this.spawnAndInitialize().finally(() => {
-      this.starting = null;
+    const own: Promise<ChildProcess> = this.spawnAndInitialize().finally(() => {
+      if (this.starting === own) this.starting = null;
     });
-    return this.starting;
+    this.starting = own;
+    return own;
   }
 
   private async spawnAndInitialize(): Promise<ChildProcess> {

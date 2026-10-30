@@ -357,6 +357,12 @@ export class TracingCliDriver implements CliDriver {
     return () => inner.activity!();
   }
 
+  get releaseBinary(): (() => Promise<void>) | undefined {
+    const inner = this.inner;
+    if (typeof inner.releaseBinary !== "function") return undefined;
+    return () => inner.releaseBinary!();
+  }
+
   get onActivityChanged(): ((listener: () => void) => () => void) | undefined {
     const inner = this.inner;
     if (typeof inner.onActivityChanged !== "function") return undefined;

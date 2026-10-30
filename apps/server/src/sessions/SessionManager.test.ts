@@ -1968,6 +1968,28 @@ describe("SessionManager", () => {
     manager.dispose();
   });
 
+  it("counts a pending title turn as harness activity until it settles", async () => {
+    const { manager, fake } = makeManager();
+    manager.setSettings({ autoTitleEnabled: true, autoTitleDriver: "codex" });
+    const project = manager.addProject("C:\\proj-title-activity");
+    const session = await manager.createSession(project.id, "claude");
+    const turnId = await manager.startTurn(session.id, "Fix the login redirect loop");
+    fake.complete(turnId);
+    expect(manager.harnessActivity("codex").busy).toBe(1);
+    fake.completeTitle("Fix login redirect loop");
+    expect(manager.harnessActivity("codex").busy).toBe(0);
+    manager.dispose();
+  });
+
+  it("refuses to retry a connection while its harness is updating", async () => {
+    const { manager } = makeManager();
+    const project = manager.addProject("C:\\proj-retry-gate");
+    const session = await manager.createSession(project.id, "claude");
+    manager.setTurnGate((kind) => (kind === "claude" ? "Claude is updating. Try again when the update finishes." : null));
+    await expect(manager.retryConnection(session.id)).rejects.toThrow("Claude is updating");
+    manager.dispose();
+  });
+
   it("gives the agent env to codex terminals", async () => {
     const { manager } = makeManager();
     (manager as unknown as { agentEnv: (sessionId: string) => Record<string, string> }).agentEnv = (sessionId) => ({

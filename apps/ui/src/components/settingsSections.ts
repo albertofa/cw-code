@@ -80,6 +80,7 @@ const SETTING_OWNER: Record<DraftSettingKey, SettingsNavId> = {
   opencodeGoUsage: "opencode",
   updateChannel: "updates",
   updateBackgroundDownload: "updates",
+  harnessUpdateChecks: "updates",
   fontFamilySans: "appearance",
   fontFamilyMono: "appearance",
   fontFamilyPrompt: "appearance",

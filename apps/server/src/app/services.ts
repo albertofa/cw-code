@@ -18,6 +18,10 @@ import { PullRequestService } from "../github/PullRequestService.js";
 import { RunsService } from "../github/RunsService.js";
 import { RunWatcher } from "../github/RunWatcher.js";
 import { HarnessMonitor } from "../cli/HarnessMonitor.js";
+import { HarnessUpdateService } from "../cli/harnessUpdates/HarnessUpdateService.js";
+import { planFor } from "../cli/harnessUpdates/installMethod.js";
+import { LatestVersionCache } from "../cli/harnessUpdates/latestVersion.js";
+import { runUpdateCommand } from "../cli/harnessUpdates/runUpdateCommand.js";
 import { PreferencesStore } from "../prefs/PreferencesStore.js";
 import { preferencesFilePath } from "../paths/appPaths.js";
 import { AutoFollowUpEngine } from "../prEngine/AutoFollowUpEngine.js";
@@ -69,6 +73,7 @@ export interface Services {
   appTopic: AppTopic;
   preferences: PreferencesStore;
   harnessMonitor: HarnessMonitor;
+  harnessUpdates: HarnessUpdateService;
   threads: ThreadService;
   turns: TurnService;
   autoFollowUp: AutoFollowUpEngine;
@@ -307,8 +312,27 @@ export function createServices(stores: { sessionStore: SessionStore; settingsSto
       return { claudeBinary: settings.claudeBinaryPath, opencodeBinary: settings.opencodeBinaryPath, codexBinary: settings.codexBinaryPath };
     },
     current: () => appTopic.harnesses,
-    publish: (availability) => appTopic.setHarnesses(availability)
+    publish: (availability) => {
+      appTopic.setHarnesses(availability);
+      harnessUpdates.harnessChecked();
+    }
   });
+  const latestVersions = new LatestVersionCache({ fetch, now: Date.now });
+  const harnessUpdates = new HarnessUpdateService({
+    initial: appTopic.harnessUpdates,
+    checks: () => appTopic.harnesses.checks,
+    enabled: () => sessions.getSettings().harnessUpdateChecks,
+    plan: planFor,
+    latest: (packageName, opts) => latestVersions.get(packageName, opts),
+    run: runUpdateCommand,
+    activity: (kind) => sessions.harnessActivity(kind),
+    onActivity: (listener) => sessions.onHarnessActivity(listener),
+    release: (kind) => sessions.releaseHarnessBinary(kind),
+    recheck: () => harnessMonitor.check("recheck"),
+    publish: (updates) => appTopic.setHarnessUpdates(updates),
+    shutdownReserved: () => sessions.isShutdownReserved()
+  });
+  sessions.setTurnGate((kind) => harnessUpdates.turnGate(kind));
   const threads = new ThreadService({
     hub: hooks.topics,
     history: (sessionId) => sessions.getHistory(sessionId),
@@ -482,6 +506,7 @@ export function createServices(stores: { sessionStore: SessionStore; settingsSto
     appTopic,
     preferences,
     harnessMonitor,
+    harnessUpdates,
     threads,
     turns,
     autoFollowUp,

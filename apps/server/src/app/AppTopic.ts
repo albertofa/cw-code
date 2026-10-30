@@ -1,4 +1,14 @@
-import type { AppSettings, AppTopicData, ComposerDraft, DriverKind, HarnessAvailability, ShutdownAssessment, ShutdownStatus } from "@cw-code/contracts";
+import type {
+  AppSettings,
+  AppTopicData,
+  ComposerDraft,
+  DriverKind,
+  HarnessAvailability,
+  HarnessUpdateInfo,
+  HarnessUpdates,
+  ShutdownAssessment,
+  ShutdownStatus
+} from "@cw-code/contracts";
 import { APP_TOPIC } from "@cw-code/shared/topics";
 import type { TopicHub, TopicProvider } from "../topics/TopicHub.js";
 import type { TopicStore } from "../topics/TopicStore.js";
@@ -22,6 +32,31 @@ export const PENDING_HARNESSES: HarnessAvailability = {
   error: null
 };
 
+function pendingUpdate(binary: DriverKind): HarnessUpdateInfo {
+  return {
+    binary,
+    status: "unknown",
+    currentVersion: null,
+    latestVersion: null,
+    installMethod: "unknown",
+    canUpdate: false,
+    updateCommand: null,
+    message: null,
+    checkedAt: null,
+    phase: "idle",
+    phaseMessage: null,
+    startedAt: null,
+    finishedAt: null,
+    output: null
+  };
+}
+
+export const PENDING_HARNESS_UPDATES: HarnessUpdates = {
+  claude: pendingUpdate("claude"),
+  opencode: pendingUpdate("opencode"),
+  codex: pendingUpdate("codex")
+};
+
 function emptyRecentModels(): Record<DriverKind, string[]> {
   return { claude: [], opencode: [], codex: [] };
 }
@@ -43,6 +78,7 @@ export class AppTopic implements TopicProvider {
       settings: init.settings,
       home: { homeDir: init.homeDir },
       harnesses: PENDING_HARNESSES,
+      harnessUpdates: PENDING_HARNESS_UPDATES,
       attention: { count: 0 },
       shutdown: init.shutdown,
       recentModels: init.recentModels ?? emptyRecentModels()
@@ -75,6 +111,15 @@ export class AppTopic implements TopicProvider {
   setHarnesses(harnesses: HarnessAvailability): void {
     this.data.harnesses = harnesses;
     this.store?.upsert("harnesses", harnesses);
+  }
+
+  get harnessUpdates(): HarnessUpdates {
+    return this.data.harnessUpdates;
+  }
+
+  setHarnessUpdates(updates: HarnessUpdates): void {
+    this.data.harnessUpdates = updates;
+    this.store?.upsert("harnessUpdates", updates);
   }
 
   setAttention(count: number): void {

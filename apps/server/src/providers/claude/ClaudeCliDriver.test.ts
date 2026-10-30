@@ -30,6 +30,7 @@ const SETTINGS: AppSettings = {
   opencodeGoUsage: false,
   updateChannel: null,
   updateBackgroundDownload: true,
+  harnessUpdateChecks: true,
   gitBinaryPath: "git",
   githubCliBinaryPath: "gh",
   sourceControlRefreshIntervalSeconds: 30,
@@ -408,6 +409,34 @@ describe("ClaudeCliDriver persistent process", () => {
     const deltas = events.filter((event) => event.type === "assistant.delta");
     expect(deltas).toHaveLength(1);
     expect(deltas[0]?.turnId).toBe(second.turnId);
+    driver.dispose();
+  });
+
+  it("releaseBinary stops settled processes and never reuses busy ones afterwards", async () => {
+    const { driver, children, spawnCalls, killed } = makeDriver();
+    driver.startTurn({ sessionId: "idle", cwd: "C:\\proj", prompt: "first" });
+    driver.startTurn({ sessionId: "busy", cwd: "C:\\proj", prompt: "first" });
+    await settle();
+    children[0].stdout.write(`${resultLine()}\n`);
+    await settle();
+
+    await driver.releaseBinary();
+    expect(killed).toEqual([children[0]]);
+    expect(driver.activity().busySessionIds).toEqual(["busy"]);
+
+    children[1].stdout.write(`${resultLine()}\n`);
+    await settle();
+    driver.startTurn({ sessionId: "busy", cwd: "C:\\proj", prompt: "second", resumeCursor: "native-1" });
+    driver.startTurn({ sessionId: "idle", cwd: "C:\\proj", prompt: "second", resumeCursor: "native-1" });
+    await settle();
+    expect(spawnCalls).toHaveLength(4);
+    expect(killed).toEqual([children[0], children[1]]);
+
+    children[2].stdout.write(`${resultLine()}\n`);
+    await settle();
+    driver.startTurn({ sessionId: "busy", cwd: "C:\\proj", prompt: "third", resumeCursor: "native-1" });
+    await settle();
+    expect(spawnCalls).toHaveLength(4);
     driver.dispose();
   });
 

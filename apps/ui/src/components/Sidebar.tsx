@@ -6,6 +6,7 @@ import type { DriverName, Session, SessionStatus } from "../cw.js";
 import { useAppStore } from "../stores/appStore.js";
 import { usePrStore } from "../stores/prStore.js";
 import { DriverIcon } from "./DriverIcon.js";
+import { HarnessUpdateIndicator } from "./HarnessUpdateIndicator.js";
 import { UpdateIndicator } from "./UpdateIndicator.js";
 import { useNotifs } from "./Notifications.js";
 import { getLastModel } from "./lastModel.js";
@@ -1192,6 +1193,7 @@ export function Sidebar({ onOpenSkills, skillsOpen = false, hidden = false }: { 
       )}
       {confirmDialog}
       <UpdateIndicator />
+      <HarnessUpdateIndicator />
       <div className="side-footer">
         <button className="side-footer-btn" title="Settings" aria-label="Settings" onClick={() => openSettings()}>
           <Settings size={15} />

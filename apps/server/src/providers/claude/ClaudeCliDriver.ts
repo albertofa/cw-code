@@ -167,6 +167,7 @@ interface ClaudeProcessState {
   compactedPostTokens?: number;
   apiErrorMessage?: string;
   lastWindowTokens?: number;
+  stale?: boolean;
 }
 
 export class ClaudeCliDriver implements CliDriver {
@@ -793,7 +794,7 @@ export class ClaudeCliDriver implements CliDriver {
       throw new Error("Claude is still finishing output for this session");
     }
 
-    if (!request.maxTurns && existing && existing.argsKey === argsKey && this.isProcessAlive(existing)) {
+    if (!request.maxTurns && existing && !existing.stale && existing.argsKey === argsKey && this.isProcessAlive(existing)) {
       existing.activeTurnId = turnId;
       existing.completedTurn = false;
       existing.postCompletionOutputPending = false;
@@ -979,11 +980,23 @@ export class ClaudeCliDriver implements CliDriver {
   activity(): DriverActivity {
     const busySessionIds = new Set<string>();
     for (const state of this.processes.values()) {
-      const settled = state.completedTurn && !state.postCompletionOutputPending && !this.interruptedTurns.has(state.activeTurnId);
-      if (settled && state.tasks.liveCount() === 0) continue;
-      busySessionIds.add(state.sessionId);
+      if (this.isBusy(state)) busySessionIds.add(state.sessionId);
     }
     return { busySessionIds: [...busySessionIds], ownedProcesses: this.processes.size };
+  }
+
+  async releaseBinary(): Promise<void> {
+    const states = [...this.processes.values()];
+    traceHarnessCall({ harness: "claude", operation: "claude.releaseBinary", ok: true, extra: { processes: states.length } });
+    for (const state of states) {
+      if (this.isBusy(state)) state.stale = true;
+      else this.stopSession(state.sessionId);
+    }
+  }
+
+  private isBusy(state: ClaudeProcessState): boolean {
+    const settled = state.completedTurn && !state.postCompletionOutputPending && !this.interruptedTurns.has(state.activeTurnId);
+    return !settled || state.tasks.liveCount() > 0;
   }
 
   async shutdown({ timeoutMs }: { timeoutMs: number }): Promise<{ timedOut: boolean }> {

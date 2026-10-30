@@ -1,4 +1,5 @@
 import type { CliVersionCheck } from "./cli.js";
+import type { HarnessUpdates } from "./harnessUpdates.js";
 import type { DriverKind } from "./session.js";
 import type { AppSettings } from "./settings.js";
 import type { ShutdownAssessment, ShutdownStatus } from "./shutdown.js";
@@ -31,6 +32,7 @@ export type AppTopicData = {
   settings: AppSettings;
   home: { homeDir: string };
   harnesses: HarnessAvailability;
+  harnessUpdates: HarnessUpdates;
   attention: { count: number };
   shutdown: { status: ShutdownStatus; assessment: ShutdownAssessment };
   recentModels: Record<DriverKind, string[]>;

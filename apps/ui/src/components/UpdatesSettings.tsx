@@ -4,6 +4,7 @@ import { channelOfVersion } from "@cw-code/shared/updateChannel";
 import type { AppSettings, UpdateChannel } from "../cw.js";
 import { shellUpdates, useAppStore } from "../stores/appStore.js";
 import { restartToUpdate, runUpdateAction } from "../stores/updateFlow.js";
+import { errorMessage } from "./errorMessage.js";
 import { ipcErrorMessage } from "./ipcError.js";
 import { Md } from "./Markdown.js";
 import { useNotifs } from "./Notifications.js";
@@ -74,6 +75,18 @@ export function UpdatesSettings({
       }
     } catch (err) {
       useNotifs.getState().push({ kind: "error", title: "Could not save the download setting", message: ipcErrorMessage(err) });
+    } finally {
+      setSavingPreference(false);
+    }
+  };
+
+  const changeHarnessChecks = async (next: boolean) => {
+    setSavingPreference(true);
+    try {
+      const saved = await window.cw.setSettings({ harnessUpdateChecks: next });
+      onApplied({ harnessUpdateChecks: saved.harnessUpdateChecks });
+    } catch (err) {
+      useNotifs.getState().push({ kind: "error", title: "Could not save the harness check setting", message: errorMessage(err) });
     } finally {
       setSavingPreference(false);
     }
@@ -172,6 +185,22 @@ export function UpdatesSettings({
             disabled={savingPreference}
             onChange={(next) => void changeBackground(next)}
             label="Download updates in the background"
+          />
+        </SettingsRow>
+      </SettingsGroup>
+
+      <SettingsGroup title="Harnesses">
+        <SettingsRow
+          label="Check harness versions"
+          htmlFor="sp-harness-update-checks"
+          hint="Checks the npm registry hourly for newer Claude Code, Codex and OpenCode releases."
+        >
+          <SettingsSwitch
+            id="sp-harness-update-checks"
+            checked={draft.harnessUpdateChecks}
+            disabled={savingPreference}
+            onChange={(next) => void changeHarnessChecks(next)}
+            label="Check harness versions"
           />
         </SettingsRow>
       </SettingsGroup>

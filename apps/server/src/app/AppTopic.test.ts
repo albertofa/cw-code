@@ -4,7 +4,7 @@ import { APP_TOPIC } from "@cw-code/shared/topics";
 import { DEFAULT_SETTINGS } from "../settings/SettingsStore.js";
 import { TopicHub } from "../topics/TopicHub.js";
 import type { CallContext } from "../transport/Router.js";
-import { AppTopic, PENDING_HARNESSES } from "./AppTopic.js";
+import { AppTopic, PENDING_HARNESSES, PENDING_HARNESS_UPDATES } from "./AppTopic.js";
 
 const ctx: CallContext = { clientId: "a", client: "web", auth: { kind: "owner" } };
 const SHUTDOWN = {
@@ -29,6 +29,7 @@ describe("AppTopic", () => {
       settings: DEFAULT_SETTINGS,
       home: { homeDir: "/home/me" },
       harnesses: PENDING_HARNESSES,
+      harnessUpdates: PENDING_HARNESS_UPDATES,
       attention: { count: 0 },
       shutdown: SHUTDOWN,
       recentModels: { claude: [], opencode: [], codex: [] }

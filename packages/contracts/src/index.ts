@@ -224,6 +224,7 @@ export type {
   SidebarOrderPrefs
 } from "./sidebar.js";
 export type { HarnessIssue, HarnessAvailability, ComposerDraft, AppTopicData, LegacyPreferences } from "./app.js";
+export type { HarnessInstallMethod, HarnessUpdatePhase, HarnessUpdateInfo, HarnessUpdates } from "./harnessUpdates.js";
 export type {
   ResolvedWorkflowHarness,
   HarnessSummaryPart,

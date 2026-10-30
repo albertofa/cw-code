@@ -293,4 +293,45 @@ process.stdin.on("data", (chunk) => {
     } finally {
       slow.dispose();
     }
-  });});
+  });
+
+  it("restarts by stopping the child and spawning a fresh one on the next request", async () => {
+    const restarting = new CodexAppServer({ binary: process.execPath, args: [scriptPath] });
+    try {
+      await expect(restarting.request<{ echo: string }>("first")).resolves.toMatchObject({ echo: "first" });
+      await restarting.restart();
+      expect(restarting.ownedProcessCount()).toBe(0);
+      await expect(restarting.request<{ echo: string }>("second")).resolves.toMatchObject({ echo: "second" });
+      expect(restarting.ownedProcessCount()).toBe(1);
+    } finally {
+      restarting.dispose();
+    }
+  });
+
+  it("stops a child that is still initializing on restart and spawns one fresh child afterwards", async () => {
+    const restarting = new CodexAppServer({ binary: process.execPath, args: [scriptPath] });
+    try {
+      const inFlight = restarting.request("first").catch((err: Error) => err.message);
+      await restarting.restart();
+      expect(await inFlight).toContain("restarting");
+      expect(restarting.ownedProcessCount()).toBe(0);
+      const [a, b] = await Promise.all([restarting.request<{ echo: string }>("a"), restarting.request<{ echo: string }>("b")]);
+      expect([a.echo, b.echo]).toEqual(["a", "b"]);
+      expect(restarting.ownedProcessCount()).toBe(1);
+    } finally {
+      restarting.dispose();
+    }
+  });
+
+  it("rejects pending requests on restart and kills a child that ignores stdin close", async () => {
+    const stubborn = new CodexAppServer({ binary: process.execPath, args: [silentScript], initializeTimeoutMs: 10_000 });
+    try {
+      const request = stubborn.request("greet").catch((err: Error) => err.message);
+      await stubborn.restart(200);
+      expect(await request).toContain("restarting");
+      expect(stubborn.ownedProcessCount()).toBe(0);
+    } finally {
+      stubborn.dispose();
+    }
+  });
+});

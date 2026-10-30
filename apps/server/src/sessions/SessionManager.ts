@@ -257,6 +257,7 @@ export class SessionManager {
   private readonly snapshotListeners = new Set<(sessionId: string) => void>();
   private readonly usageRecordedListeners = new Set<(sessionId: string) => void>();
   private unwatchDriverActivity: () => void = () => {};
+  private turnGate: ((kind: DriverKind) => string | null) | null = null;
   private driverFactory: DriverFactory;
   private driverGeneration = 0;
   private shutdownReserved = false;
@@ -344,6 +345,27 @@ export class SessionManager {
   onDriverActivityChanged(listener: () => void): () => void {
     this.driverActivityListeners.add(listener);
     return () => this.driverActivityListeners.delete(listener);
+  }
+
+  onHarnessActivity(listener: () => void): () => void {
+    return this.onDriverActivityChanged(listener);
+  }
+
+  harnessActivity(kind: DriverKind): { busy: number } {
+    const busy = new Set(this.drivers[kind].activity?.().busySessionIds ?? []);
+    const onKind = (sessionId: string): boolean => this.store.getSession(sessionId)?.driver === kind;
+    for (const sessionId of this.pendingTurns) if (onKind(sessionId)) busy.add(sessionId);
+    for (const { sessionId } of this.activeTurns.values()) if (onKind(sessionId)) busy.add(sessionId);
+    for (const turn of this.titleTurns.values()) if (!turn.settled && turn.driver === this.drivers[kind]) busy.add(`title:${turn.sessionId}`);
+    return { busy: busy.size };
+  }
+
+  async releaseHarnessBinary(kind: DriverKind): Promise<void> {
+    await this.drivers[kind].releaseBinary?.();
+  }
+
+  setTurnGate(gate: ((kind: DriverKind) => string | null) | null): void {
+    this.turnGate = gate;
   }
 
   onCheckoutChanged(listener: (change: CheckoutChange) => void): () => void {
@@ -458,6 +480,7 @@ export class SessionManager {
       if (owner === sessionId) this.settledTurns.delete(settledTurnId);
     }
     this.settledTurns.set(turnId, sessionId);
+    this.notifyDriverActivity();
   }
 
   private handleTitleTurnEvent(event: ThreadEvent): void {
@@ -495,6 +518,7 @@ export class SessionManager {
     turn.settled = true;
     this.titleTurns.delete(turnId);
     clearTimeout(turn.timer);
+    this.notifyDriverActivity();
     const { title, branch } = parseGeneratedMetadata(turn.text, turn.expectBranch);
     if (branch) this.generatedBranches.set(turn.sessionId, branch);
     if (!title || !turn.applyTitle) {
@@ -656,7 +680,7 @@ export class SessionManager {
     if (event.type === "turn.error") {
       const wasActive = this.activeTurns.has(event.turnId);
       if (sessionId) this.settleTurn(event.turnId, sessionId);
-      else this.activeTurns.delete(event.turnId);
+      else if (this.activeTurns.delete(event.turnId)) this.notifyDriverActivity();
       this.dropPendingRequests(this.pendingRequests.clearTurn(event.turnId));
       this.turnPrRefs.delete(event.turnId);
       this.turnFinalReviews.delete(event.turnId);
@@ -1680,6 +1704,7 @@ export class SessionManager {
       turn.settled = true;
       this.titleTurns.delete(turnId);
       clearTimeout(turn.timer);
+      this.notifyDriverActivity();
       turn.resolve(null);
       try {
         turn.driver.interrupt(turnId);
@@ -2268,6 +2293,7 @@ export class SessionManager {
     }
     const project = this.store.getProject(session.projectId);
     if (!project) throw new Error(`unknown project ${session.projectId}`);
+    this.assertTurnGateOpen(session.driver);
     for (const [turnId, entry] of this.activeTurns) {
       if (entry.sessionId === sessionId) throw new SessionBusyError(`turn ${turnId}`);
     }
@@ -2318,6 +2344,7 @@ export class SessionManager {
       const driver = this.drivers[session.driver];
       if (session.driver === "claude") await this.refreshGitHubToken(project);
       this.assertNotReserved();
+      this.assertTurnGateOpen(session.driver);
       const handle = driver.startTurn({
         sessionId,
         prompt,
@@ -2352,6 +2379,7 @@ export class SessionManager {
       throw err;
     } finally {
       this.pendingTurns.delete(sessionId);
+      this.notifyDriverActivity();
     }
   }
 
@@ -2361,6 +2389,11 @@ export class SessionManager {
     const mcpUrl = env[CW_MCP_URL_ENV];
     const token = env[CW_AGENT_TOKEN_ENV];
     return mcpUrl && token ? { agent: { mcpUrl, token } } : {};
+  }
+
+  private assertTurnGateOpen(kind: DriverKind): void {
+    const gated = this.turnGate?.(kind) ?? null;
+    if (gated !== null) throw new SessionBusyError("harness updating", gated);
   }
 
   private revertFailedTurnStart(sessionId: string, previous: SessionStatusSnapshot): void {
@@ -2394,6 +2427,7 @@ export class SessionManager {
     if (!session) throw new Error(`unknown session ${sessionId}`);
     const source = await this.titleSource(session);
     if (!source.trim()) throw new Error("No session message to generate a title from yet");
+    this.assertTurnGateOpen(this.settings.get().autoTitleDriver);
     const title = await this.launchTitleTurn(sessionId, source, session.title);
     if (!title) throw new Error("Title generation failed. Check the configured harness and model.");
     return title;
@@ -2416,6 +2450,7 @@ export class SessionManager {
       if (pending.sessionId === sessionId && !pending.settled) return pending.promise;
     }
     const settings = this.settings.get();
+    if (this.turnGate?.(settings.autoTitleDriver)) return Promise.resolve(null);
     const driver = this.drivers[settings.autoTitleDriver];
     const titleSessionId = `title:${sessionId}`;
     const titleRoot = this.titleGenRoot();
@@ -2447,6 +2482,7 @@ export class SessionManager {
       if (!turn || turn.settled) return;
       turn.settled = true;
       this.titleTurns.delete(handle.turnId);
+      this.notifyDriverActivity();
       turn.resolve(null);
       driver.interrupt(handle.turnId);
     }, AUTO_TITLE_TIMEOUT_MS);
@@ -2463,6 +2499,7 @@ export class SessionManager {
       promise,
       resolve
     });
+    this.notifyDriverActivity();
     return promise;
   }
 
@@ -2640,18 +2677,21 @@ export class SessionManager {
     for (const entry of this.activeTurns.values()) {
       if (entry.sessionId === sessionId) throw new Error("session busy (turn in progress)");
     }
+    this.assertTurnGateOpen(session.driver);
     const driver = this.drivers[session.driver];
     if (typeof driver.retryConnection !== "function") {
       return { status: "done", history: await this.getHistory(sessionId) };
     }
     const cwd = await this.ensureWorktree(sessionId);
     this.assertNotReserved();
+    this.assertTurnGateOpen(session.driver);
     const { permissionMode } = this.getComposer(sessionId);
     const result = await driver.retryConnection({ sessionId, cwd, resumeCursor: session.resumeCursor, permissionMode });
     if (result.status === "running" && result.turnId) {
       this.turnPermissionModes.set(sessionId, resolvePermissionMode(permissionMode));
       const startedAt = Date.now();
       this.activeTurns.set(result.turnId, { sessionId, startedAt });
+      this.notifyDriverActivity();
       this.onEvent(sessionId, { type: "turn.started", turnId: result.turnId, sessionId, startedAt, prompt: "" });
       this.store.updateSession(sessionId, { status: "working" }, "retry-connected");
     } else {
@@ -2965,6 +3005,7 @@ export class SessionManager {
   beginShutdownReservation(): void {
     this.shutdownReserved = true;
     this.interruptedForShutdown.clear();
+    this.notifyDriverActivity();
   }
 
   clearShutdownReservation(): void {
@@ -3010,6 +3051,7 @@ export class SessionManager {
       turn.settled = true;
       this.titleTurns.delete(turnId);
       clearTimeout(turn.timer);
+      this.notifyDriverActivity();
       turn.resolve(null);
       try {
         turn.driver.interrupt(turnId);
