@@ -132,6 +132,7 @@ export interface SessionManagerOptions {
   agentEnv?: (sessionId: string) => Record<string, string>;
   claudePluginDir?: () => string | null;
   codexSkillsRoot?: () => string | null;
+  agentMcpUrl?: () => string | null;
   /** Earlier app data folders whose worktrees may still hold sessions cw-code started. */
   legacyAppRoots?: string[];
 }
@@ -141,17 +142,18 @@ export type DriverFactory = (
   getSettings: () => AppSettings,
   isInWorkingSet: (sessionId: string) => boolean,
   claudePluginDir: () => string | null,
-  codexSkillsRoot: () => string | null
+  codexSkillsRoot: () => string | null,
+  agentMcpUrl: () => string | null
 ) => Record<DriverKind, CliDriver>;
 
 export function defaultDriverFactory(overrides: Partial<Record<DriverKind, CliDriver>> = {}): DriverFactory {
-  return (route, getSettings, isInWorkingSet, claudePluginDir, codexSkillsRoot) => ({
+  return (route, getSettings, isInWorkingSet, claudePluginDir, codexSkillsRoot, agentMcpUrl) => ({
     claude:
       overrides.claude ??
       new TracingCliDriver(new ClaudeCliDriver(route, getSettings, undefined, undefined, isInWorkingSet, claudePluginDir)),
     opencode:
       overrides.opencode ??
-      new TracingCliDriver(new OpencodeDriver(route, getSettings, undefined, { sharedRoot: opencodeServerDir() })),
+      new TracingCliDriver(new OpencodeDriver(route, getSettings, undefined, { sharedRoot: opencodeServerDir(), agentMcpUrl })),
     codex: overrides.codex ?? new TracingCliDriver(new CodexCliDriver(route, getSettings, undefined, codexSkillsRoot))
   });
 }
@@ -306,6 +308,7 @@ export class SessionManager {
   private agentEnv: (sessionId: string) => Record<string, string>;
   private claudePluginDir: () => string | null;
   private codexSkillsRoot: () => string | null;
+  private agentMcpUrl: () => string | null;
 
   constructor(opts: SessionManagerOptions = {}) {
     const dbPath = opts.dbPath ?? sessionDbPath();
@@ -332,6 +335,7 @@ export class SessionManager {
     this.agentEnv = opts.agentEnv ?? (() => ({}));
     this.claudePluginDir = opts.claudePluginDir ?? (() => null);
     this.codexSkillsRoot = opts.codexSkillsRoot ?? (() => null);
+    this.agentMcpUrl = opts.agentMcpUrl ?? (() => null);
     this.driverFactory = opts.driverFactory ?? defaultDriverFactory(opts.drivers);
     this.drivers = this.buildDrivers();
     this.watchDriverActivity();
@@ -399,8 +403,13 @@ export class SessionManager {
         return status !== undefined && isWorkingSetStatus(status);
       },
       () => this.claudePluginDir(),
-      () => this.codexSkillsRoot()
+      () => this.codexSkillsRoot(),
+      () => this.agentMcpUrl()
     );
+  }
+
+  resolveOpencodeAgent(secret: string, opencodeSessionId: string): { sessionId: string } | null {
+    return this.drivers.opencode.resolveAgentSession?.(secret, opencodeSessionId) ?? null;
   }
 
   private uniqueDrivers(): Array<{ kinds: DriverKind[]; driver: CliDriver }> {

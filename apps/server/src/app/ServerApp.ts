@@ -217,6 +217,7 @@ export class ServerApp {
       router: this.router,
       tokens: this.agentTokens,
       version: this.version,
+      resolveOpencode: (secret, opencodeSessionId) => this.services?.sessions.resolveOpencodeAgent(secret, opencodeSessionId) ?? null,
       get watch() {
         return services().sessionWatch;
       },
@@ -297,10 +298,16 @@ export class ServerApp {
     else this.pendingShellNotices.push(notice);
   }
 
+  private agentMcpUrl(): string | null {
+    if (this.listenHost === null || this.listenPort === null) return null;
+    return mcpUrl(connectHost(this.listenHost), this.listenPort);
+  }
+
   private agentEnv(sessionId: string): Record<string, string> {
-    if (this.listenHost === null || this.listenPort === null) return {};
+    const url = this.agentMcpUrl();
+    if (url === null) return {};
     return {
-      [CW_MCP_URL_ENV]: mcpUrl(connectHost(this.listenHost), this.listenPort),
+      [CW_MCP_URL_ENV]: url,
       [CW_AGENT_TOKEN_ENV]: this.agentTokens.tokenFor(sessionId)
     };
   }
@@ -444,7 +451,8 @@ export class ServerApp {
       agentEnv: (sessionId) => this.agentEnv(sessionId),
       revokeAgentToken: (sessionId) => this.agentTokens.revoke(sessionId),
       claudePluginDir: () => this.pluginDir,
-      codexSkillsRoot: () => this.codexSkillsDir
+      codexSkillsRoot: () => this.codexSkillsDir,
+      agentMcpUrl: () => this.agentMcpUrl()
     });
     this.services = services;
     this.servicesDisposed = false;

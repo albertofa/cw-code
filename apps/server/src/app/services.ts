@@ -93,6 +93,7 @@ export interface ServiceHooks {
   revokeAgentToken: (sessionId: string) => void;
   claudePluginDir: () => string | null;
   codexSkillsRoot: () => string | null;
+  agentMcpUrl: () => string | null;
 }
 
 const PR_STATE_REUSE_MS = 60_000;
@@ -249,7 +250,8 @@ export function createServices(stores: { sessionStore: SessionStore; settingsSto
     legacyAppRoots: hooks.legacyAppRoots,
     agentEnv: hooks.agentEnv,
     claudePluginDir: hooks.claudePluginDir,
-    codexSkillsRoot: hooks.codexSkillsRoot
+    codexSkillsRoot: hooks.codexSkillsRoot,
+    agentMcpUrl: hooks.agentMcpUrl
   });
   pullRequests = new PullRequestService(git, () => sessions.getSettings(), (rootPath) => sessions.addProject(rootPath));
   const prStore = new PrStore({
