@@ -29,7 +29,7 @@ Core behaviors:
   `bun build --compile` binary with `node-pty` as a sidecar (`CW_NODE_PTY`).
   The same listener has a small HTTP surface (`transport/httpRoutes.ts`): `GET /api/info`
   (`{ app, version, protocol }`, unauthenticated), `POST /api/stop` (owner token as `Bearer`;
-  rejects a cross-origin `Origin`) and, for every other path, the built UI as static files
+  rejects a cross-origin `Origin`), `/mcp` (agent tools, see Agent tools) and, for every other path, the built UI as static files
   (read-only, no SPA fallback; unknown paths are 404). The UI directory is `--ui-dir`, else
   `ui/` next to the compiled binary, else `apps/ui/dist` when run from source; none found
   means no web UI (`ServerHost.webUi` is false). HTML responses carry a CSP built from the
@@ -97,7 +97,44 @@ Core behaviors:
   `server.setParent`, `shutdown.prepare`/`force`/`quit` and the `serverBindHost`,
   `serverPublicUrl` and `keepServerRunning` settings. That is not a security boundary: a
   device token still grants full remote control (terminals, sessions, files, all other settings). Treat it like a shell login.
-  Per-method scopes are future work.
+  Per-method scopes exist only for agent tokens (see Agent tools).
+- Agent tools: `/mcp` serves the `cw` MCP server (sessions, settings, usage, monitoring) to the
+  harness CLIs cw-code spawns, statelessly: MCP revision 2026-07-28 through
+  `@modelcontextprotocol/server` `createMcpHandler`, with the SDK's stateless fallback for
+  2025-era `initialize` clients (no `Mcp-Session-Id`, GET/DELETE 405). Callers authenticate with
+  a per-session agent token (`AgentTokens`, in memory, revoked on resolve/archive) sent as
+  `Bearer`; any `Origin` is rejected and the idle timeout is raised to 255 s only after the token
+  verifies. Agent calls go through `Router.dispatch` with `auth.kind === "agent"`: only
+  `AGENT_METHODS` are allowed; `settings.set` accepts only `AGENT_WRITABLE_SETTINGS`; `turns.start`
+  rejects `command`, `attachments`, `acceptFolderHead` and `prRefs`; `sessions.create` accepts
+  only the `useWorktree` option; model ids (`turns.start` `model`/`variant`, the default and
+  enabled model settings) must pass `isSafeModelId`; and a turn an agent starts never runs above
+  the lower of the caller's stored mode and the mode its current turn started with
+  (agent-created sessions store that cap). Injection per harness (never worktree scripts or
+  title turns; an inherited `CW_MCP_URL`/`CW_AGENT_TOKEN` pair is stripped):
+  - Claude: turns and terminal tabs get `CW_MCP_URL`/`CW_AGENT_TOKEN` in their env and
+    `--plugin-dir <userdata>/harness/claude-plugin`, a plugin cw-code writes at startup with the
+    `cw` MCP entry and the `cw-code` skill. A changed token respawns the session's Claude process.
+  - Codex: the shared app-server never sees a token in its env. `thread/start`/`thread/resume`
+    carry `config.mcp_servers.cw` with the session's token in `http_headers` (per-thread, never
+    persisted by Codex) and `default_tools_approval_mode: "approve"`; a loaded thread whose token
+    changed is unsubscribed before the resume. After every initialize the driver sets
+    `skills/extraRoots/set` to `<userdata>/harness/skills`. Codex terminal tabs are their own
+    process: env `CW_MCP_URL`/`CW_AGENT_TOKEN` plus `-c mcp_servers.cw.*` flags with
+    `bearer_token_env_var`.
+  - opencode v2: identity comes from the plugin's `context.sessionID`, not a token. The driver
+    writes a per-process bridge secret to a file under `<userdata>/harness`; the plugin reads and
+    deletes it in setup (only the path is a plugin option, since options are visible to children
+    and `GET /api/config`). Plugin tools `cw_<tool>` POST stateless `tools/call` to `/mcp` with
+    `Bearer <secret>` and `X-CW-Opencode-Session`; the driver's `resolveAgentSession` accepts it
+    only for an in-flight turn cw-code started with `agent` or reconnected through a `retry:`
+    turn (child sessions map to their parent), and only while the cw session is neither
+    resolved nor archived; it acts as that cw session. The ask bridge requires the same secret (a v1 turn may omit it).
+    A `shell.hook("create.before")` strips `OPENCODE_CONFIG_CONTENT`, `OPENCODE_PASSWORD` and the
+    `CW_*` pair from the agent shell; terminal tabs, local MCP servers, formatters and LSP still
+    inherit the serve env, so same-host code execution can still impersonate an in-flight
+    session. Not covered: opencode v1 and opencode terminal tabs.
+  Codex and opencode run cw tools without approval prompts; the server-side caps are the guard.
 - Browser entry: a browser opens the server's own address (`/`) and pairs with a device
   token. The owner creates one in Settings (`devices.create`) and gets a link
   `<serverPublicUrl>/#token=<token>`; the UI reads the hash, removes it from the address bar and
@@ -143,6 +180,8 @@ Core behaviors:
   `DesktopApi`, shell IPC and preload.
 - Assume several clients may be connected: server state changes must be published to a
   topic (or emitted as an event), never returned only to the caller.
+- A new agent tool calls an allowlisted router method (`AGENT_METHODS`) with the agent
+  `CallContext`; never call services around the router or widen the allowlist without a cap.
 - A new server event needs a topic in `eventTopics.ts` (or an explicit `broadcast` entry);
   an unmapped channel is broadcast to everyone with a warning.
 - Visible = subscribed: a view holds its topics only while it is shown and the window is

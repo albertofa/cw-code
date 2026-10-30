@@ -18,6 +18,7 @@ class FakeDriver implements CliDriver {
   seen: string[] = [];
   stoppedSessions: string[] = [];
   lastRequest: Record<string, unknown> | null = null;
+  resolveAgentSession?: (secret: string, harnessSessionId: string) => { sessionId: string } | null;
   history: HistoryMessage[] = [];
   private pending = new Map<string, { sessionId: string; prompt: string }>();
   constructor(private emit: (event: ThreadEvent) => void) {}
@@ -1835,6 +1836,187 @@ describe("SessionManager", () => {
     expect(env["CW_WORKTREE_PATH"]).toBe("C:\\somewhere");
     expect(env["CW_PROJECT_ROOT"]).toBe("C:\\somewhere");
     expect(env["CW_SESSION_ID"]).toBe("missing-session");
+    manager.dispose();
+  });
+
+  it("adds the agent env to regular sessions only", async () => {
+    const { manager } = makeManager();
+    (manager as unknown as { agentEnv: (sessionId: string) => Record<string, string> }).agentEnv = (sessionId) => ({
+      CW_MCP_URL: "http://127.0.0.1:1/mcp",
+      CW_AGENT_TOKEN: `token-${sessionId}`
+    });
+    const project = manager.addProject("C:\\proj-agent-env");
+    const session = await manager.createSession(project.id, "claude");
+    expect(manager.turnEnv(session.id, "C:\\proj-agent-env", { agent: true })).toMatchObject({
+      CW_MCP_URL: "http://127.0.0.1:1/mcp",
+      CW_AGENT_TOKEN: `token-${session.id}`
+    });
+    expect(manager.turnEnv(session.id, "C:\\proj-agent-env")["CW_AGENT_TOKEN"]).toBeUndefined();
+    const titleEnv = (
+      manager as unknown as { sessionEnvVars(id: string, session: undefined, project: undefined, cwd: string): Record<string, string> }
+    ).sessionEnvVars(`title:${session.id}`, undefined, undefined, "C:\\title");
+    expect(titleEnv["CW_AGENT_TOKEN"]).toBeUndefined();
+    expect(titleEnv["CW_MCP_URL"]).toBeUndefined();
+    manager.dispose();
+  });
+
+  it("gives the agent env to Claude turns and Claude terminals but not to worktree scripts", async () => {
+    const { manager, fake } = makeManager();
+    (manager as unknown as { agentEnv: (sessionId: string) => Record<string, string> }).agentEnv = (sessionId) => ({
+      CW_MCP_URL: "http://127.0.0.1:1/mcp",
+      CW_AGENT_TOKEN: `token-${sessionId}`
+    });
+    const project = manager.addProject("C:\\proj-agent-script-env");
+    const session = await manager.createSession(project.id, "claude");
+    await manager.startTurn(session.id, "hello");
+    expect((fake.lastRequest?.env as Record<string, string> | undefined)?.["CW_AGENT_TOKEN"]).toBe(`token-${session.id}`);
+    expect((await manager.terminalEnv(session.id, project.rootPath, "claude"))["CW_AGENT_TOKEN"]).toBe(`token-${session.id}`);
+    const scriptEnv = (
+      manager as unknown as { worktreeScriptEnv(id: string, project: Project, path: string, branch: string | undefined): Record<string, string> }
+    ).worktreeScriptEnv(session.id, project, project.rootPath, "cw/branch");
+    expect(scriptEnv["CW_SESSION_ID"]).toBe(session.id);
+    expect(scriptEnv["CW_BRANCH"]).toBe("cw/branch");
+    expect(scriptEnv["CW_AGENT_TOKEN"]).toBeUndefined();
+    expect(scriptEnv["CW_MCP_URL"]).toBeUndefined();
+    fake.completeAll();
+    manager.dispose();
+  });
+
+  it.each(["codex", "opencode"] as const)("keeps the agent env out of %s turns, whose harness process is shared", async (driver) => {
+    const { manager, fake } = makeManager();
+    (manager as unknown as { agentEnv: (sessionId: string) => Record<string, string> }).agentEnv = (sessionId) => ({
+      CW_MCP_URL: "http://127.0.0.1:1/mcp",
+      CW_AGENT_TOKEN: `token-${sessionId}`
+    });
+    const project = manager.addProject(`C:\\proj-agent-${driver}-env`);
+    const session = await manager.createSession(project.id, driver);
+    await manager.startTurn(session.id, "hello");
+    const env = fake.lastRequest?.env as Record<string, string> | undefined;
+    expect(env?.["CW_SESSION_ID"]).toBe(session.id);
+    expect(env?.["CW_AGENT_TOKEN"]).toBeUndefined();
+    expect(env?.["CW_MCP_URL"]).toBeUndefined();
+    fake.completeAll();
+    manager.dispose();
+  });
+
+  it.each(["codex", "opencode"] as const)("passes the agent endpoint and token to %s turns", async (driver) => {
+    const { manager, fake } = makeManager();
+    (manager as unknown as { agentEnv: (sessionId: string) => Record<string, string> }).agentEnv = (sessionId) => ({
+      CW_MCP_URL: "http://127.0.0.1:1/mcp",
+      CW_AGENT_TOKEN: `token-${sessionId}`
+    });
+    const project = manager.addProject(`C:\\proj-agent-${driver}-request`);
+    const session = await manager.createSession(project.id, driver);
+    await manager.startTurn(session.id, "hello");
+    expect(fake.lastRequest?.agent).toEqual({ mcpUrl: "http://127.0.0.1:1/mcp", token: `token-${session.id}` });
+    fake.completeAll();
+    manager.dispose();
+  });
+
+  it.each(["resolved", "archived"] as const)("stops resolving the opencode agent identity once the session is %s", async (status) => {
+    const { manager, fake } = makeManager();
+    const project = manager.addProject(`C:\\proj-opencode-identity-${status}`);
+    const session = await manager.createSession(project.id, "opencode");
+    fake.resolveAgentSession = (secret, opencodeSessionId) =>
+      secret === "secret" && opencodeSessionId === "ses_oc" ? { sessionId: session.id } : null;
+    expect(manager.resolveOpencodeAgent("secret", "ses_oc")).toEqual({ sessionId: session.id });
+    expect(manager.resolveOpencodeAgent("wrong", "ses_oc")).toBeNull();
+    manager.setSessionStatus(session.id, status);
+    expect(manager.resolveOpencodeAgent("secret", "ses_oc")).toBeNull();
+    manager.dispose();
+  });
+
+  it("omits the agent request when the server is not listening yet", async () => {
+    const { manager, fake } = makeManager();
+    const project = manager.addProject("C:\\proj-agent-not-listening");
+    const session = await manager.createSession(project.id, "codex");
+    await manager.startTurn(session.id, "hello");
+    expect(fake.lastRequest?.agent).toBeUndefined();
+    fake.completeAll();
+    manager.dispose();
+  });
+
+  it("gives Claude turns no agent request", async () => {
+    const { manager, fake } = makeManager();
+    manager.setSettings({ autoTitleEnabled: false });
+    (manager as unknown as { agentEnv: (sessionId: string) => Record<string, string> }).agentEnv = (sessionId) => ({
+      CW_MCP_URL: "http://127.0.0.1:1/mcp",
+      CW_AGENT_TOKEN: `token-${sessionId}`
+    });
+    const project = manager.addProject("C:\\proj-agent-claude-request");
+    const session = await manager.createSession(project.id, "claude");
+    await manager.startTurn(session.id, "hello");
+    expect(fake.lastRequest?.sessionId).toBe(session.id);
+    expect(fake.lastRequest?.agent).toBeUndefined();
+    fake.completeAll();
+    manager.dispose();
+  });
+
+  it("gives title turns no agent request", async () => {
+    const { manager, fake } = makeManager();
+    (manager as unknown as { agentEnv: (sessionId: string) => Record<string, string> }).agentEnv = (sessionId) => ({
+      CW_MCP_URL: "http://127.0.0.1:1/mcp",
+      CW_AGENT_TOKEN: `token-${sessionId}`
+    });
+    manager.setSettings({ autoTitleEnabled: true, autoTitleDriver: "codex" });
+    const project = manager.addProject("C:\\proj-agent-title-request");
+    const session = await manager.createSession(project.id, "codex");
+    await manager.startTurn(session.id, "Fix the login redirect loop");
+    expect(String(fake.lastRequest?.sessionId).startsWith("title:")).toBe(true);
+    expect(fake.lastRequest?.agent).toBeUndefined();
+    fake.completeAll();
+    manager.dispose();
+  });
+
+  it("gives the agent env to codex terminals", async () => {
+    const { manager } = makeManager();
+    (manager as unknown as { agentEnv: (sessionId: string) => Record<string, string> }).agentEnv = (sessionId) => ({
+      CW_MCP_URL: "http://127.0.0.1:1/mcp",
+      CW_AGENT_TOKEN: `token-${sessionId}`
+    });
+    const project = manager.addProject("C:\\proj-agent-codex-pty");
+    const session = await manager.createSession(project.id, "codex");
+    const env = await manager.terminalEnv(session.id, project.rootPath, "codex");
+    expect(env["CW_MCP_URL"]).toBe("http://127.0.0.1:1/mcp");
+    expect(env["CW_AGENT_TOKEN"]).toBe(`token-${session.id}`);
+    manager.dispose();
+  });
+
+  it.each(["opencode", "shell"])("keeps the agent env out of %s terminals", async (kind) => {
+    const { manager } = makeManager();
+    (manager as unknown as { agentEnv: (sessionId: string) => Record<string, string> }).agentEnv = (sessionId) => ({
+      CW_MCP_URL: "http://127.0.0.1:1/mcp",
+      CW_AGENT_TOKEN: `token-${sessionId}`
+    });
+    const project = manager.addProject(`C:\\proj-agent-${kind}-pty`);
+    const session = await manager.createSession(project.id, "claude");
+    const env = await manager.terminalEnv(session.id, project.rootPath, kind);
+    expect(env["CW_SESSION_ID"]).toBe(session.id);
+    expect(env["CW_AGENT_TOKEN"]).toBeUndefined();
+    expect(env["CW_MCP_URL"]).toBeUndefined();
+    manager.dispose();
+  });
+
+  it("records the permission mode each turn starts with and keeps it after the turn ends", async () => {
+    const { manager, fake } = makeManager();
+    const project = manager.addProject("C:\\proj-turn-mode");
+    const session = await manager.createSession(project.id, "claude");
+    expect(manager.turnPermissionMode(session.id)).toBeUndefined();
+
+    await manager.startTurn(session.id, "first");
+    expect(manager.turnPermissionMode(session.id)).toBe("auto");
+    fake.completeAll();
+    await waitFor(async () => expect((await manager.listSessions(project.id)).find((s) => s.id === session.id)?.status).not.toBe("working"));
+    expect(manager.turnPermissionMode(session.id)).toBe("auto");
+
+    manager.setComposer(session.id, { permissionMode: "bypassPermissions" });
+    await manager.startTurn(session.id, "second", { prefs: { permissionMode: "manual" } });
+    expect(fake.lastRequest?.permissionMode).toBe("manual");
+    expect(manager.turnPermissionMode(session.id)).toBe("manual");
+    expect(manager.getComposer(session.id).permissionMode).toBe("bypassPermissions");
+    fake.completeAll();
+    manager.forgetTurnPermissionMode(session.id);
+    expect(manager.turnPermissionMode(session.id)).toBeUndefined();
     manager.dispose();
   });
 

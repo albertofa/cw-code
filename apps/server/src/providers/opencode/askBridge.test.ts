@@ -46,11 +46,11 @@ describe("AskBridge", () => {
   let bridge: AskBridge;
   let baseUrl = "";
 
-  const start = async () => {
+  const start = async (authorize: (sessionID: string, bearer: string | null) => boolean = () => true) => {
     received.length = 0;
     bridge = new AskBridge((sessionID, request) => {
       received.push({ sessionID, request });
-    });
+    }, authorize);
     const port = await bridge.start();
     baseUrl = `http://127.0.0.1:${port}`;
     return baseUrl;
@@ -108,6 +108,31 @@ describe("AskBridge", () => {
     const bad = await fetch(`${base}/ask`, { method: "POST", body: "not json" });
     expect(bad.status).toBe(400);
     expect((await fetch(`${base}/other`, { method: "GET" })).status).toBe(404);
+  });
+
+  it("rejects a missing or wrong secret with 401 before routing", async () => {
+    const seen: Array<[string, string | null]> = [];
+    const base = await start((sessionID, bearer) => {
+      seen.push([sessionID, bearer]);
+      return bearer === "right";
+    });
+    const ask = (headers: Record<string, string>) =>
+      fetch(`${base}/ask`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...headers },
+        body: JSON.stringify({ sessionID: "ses_1", questions: [{ question: "q?", options: [{ label: "a" }] }] })
+      });
+    expect((await ask({})).status).toBe(401);
+    expect((await ask({ Authorization: "Bearer wrong" })).status).toBe(401);
+    expect(received).toHaveLength(0);
+    expect(seen).toEqual([
+      ["ses_1", null],
+      ["ses_1", "wrong"]
+    ]);
+    const pending = ask({ Authorization: "Bearer right" });
+    await settle();
+    expect(bridge.abandon(received[0].request.requestId)).toBe(true);
+    expect((await pending).status).toBe(410);
   });
 
   it("abandons a pending ask when the turn dies", async () => {

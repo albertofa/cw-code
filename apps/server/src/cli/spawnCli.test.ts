@@ -16,12 +16,19 @@ describe("cliSpawnTarget", () => {
     });
   });
 
-  it("routes Windows batch shims through cmd.exe with separate argv entries", () => {
+  it("routes Windows batch shims through cmd.exe with a verbatim, escaped command line", () => {
     expect(cliSpawnTarget("C:\\nvm4w\\nodejs\\opencode.cmd", ["serve", "--port", "8080"], "win32")).toEqual({
       file: "cmd.exe",
-      args: ["/d", "/c", "C:\\nvm4w\\nodejs\\opencode.cmd", "serve", "--port", "8080"]
+      args: ["/d", '/s /c ""C:\\nvm4w\\nodejs\\opencode.cmd" ^^^"serve^^^" ^^^"--port^^^" ^^^"8080^^^""'],
+      windowsVerbatimArguments: true
     });
     expect(cliSpawnTarget("C:\\tools\\codex.BAT", ["--version"], "win32").file).toBe("cmd.exe");
+  });
+
+  it("passes a model id with a command separator as one literal batch argument", () => {
+    expect(cliSpawnTarget("C:\\npm\\claude.cmd", ["--model", "opus&whoami"], "win32").args[1]).toBe(
+      '/s /c ""C:\\npm\\claude.cmd" ^^^"--model^^^" ^^^"opus^^^&whoami^^^""'
+    );
   });
 
   it("routes Windows ps1 shims through powershell with single-quoted argv", () => {

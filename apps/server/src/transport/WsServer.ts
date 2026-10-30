@@ -5,6 +5,7 @@ import {
   CLOSE_PROTOCOL_MISMATCH,
   CLOSE_SERVER_STOPPING,
   CLOSE_UNAUTHORIZED,
+  MCP_PATH,
   PROTOCOL_VERSION,
   WS_PATH
 } from "@cw-code/shared/protocol";
@@ -80,9 +81,16 @@ export function sendRaw(ws: FrameSink, data: string): void {
   ws.close(CLOSE_CLIENT_TOO_SLOW, "client too slow");
 }
 
+function urlHost(host: string): string {
+  return host.includes(":") && !host.startsWith("[") ? `[${host}]` : host;
+}
+
 export function wsUrl(host: string, port: number): string {
-  const urlHost = host.includes(":") && !host.startsWith("[") ? `[${host}]` : host;
-  return `ws://${urlHost}:${port}${WS_PATH}`;
+  return `ws://${urlHost(host)}:${port}${WS_PATH}`;
+}
+
+export function mcpUrl(host: string, port: number): string {
+  return `http://${urlHost(host)}:${port}${MCP_PATH}`;
 }
 
 export class WsServer {
@@ -107,7 +115,7 @@ export class WsServer {
         if (!http) {
           if (new URL(req.url).pathname !== WS_PATH) return new Response("not found", { status: 404 });
         } else {
-          const response = handleHttp(req, http);
+          const response = handleHttp(req, http, (seconds) => srv.timeout(req, seconds));
           if (response) return response;
         }
         const origin = req.headers.get("origin");

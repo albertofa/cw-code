@@ -363,6 +363,12 @@ export class TracingCliDriver implements CliDriver {
     return (listener) => inner.onActivityChanged!(listener);
   }
 
+  get resolveAgentSession(): ((secret: string, harnessSessionId: string) => { sessionId: string } | null) | undefined {
+    const inner = this.inner;
+    if (typeof inner.resolveAgentSession !== "function") return undefined;
+    return (secret, harnessSessionId) => inner.resolveAgentSession!(secret, harnessSessionId);
+  }
+
   get terminalLaunch(): ((cwd: string) => Promise<TerminalLaunch | null>) | undefined {
     const inner = this.inner;
     if (typeof inner.terminalLaunch !== "function") return undefined;

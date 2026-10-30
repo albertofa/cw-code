@@ -1,6 +1,6 @@
 import type { TopicPatch } from "./topics.js";
 
-export type ClientKind = "desktop-ui" | "desktop-shell" | "web";
+export type ClientKind = "desktop-ui" | "desktop-shell" | "web" | "mcp";
 
 export interface RpcError {
   message: string;

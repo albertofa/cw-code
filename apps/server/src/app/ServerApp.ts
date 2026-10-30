@@ -1,19 +1,23 @@
 import type { AppNotice, DeviceInfo, ServerReady, ShutdownCommitResult, ShutdownExpiredEvent, ShutdownReason, ShutdownStatus, StartupState } from "@cw-code/contracts";
 import { CLOSE_UNAUTHORIZED, PROTOCOL_VERSION, SERVER_READY_PREFIX } from "@cw-code/shared/protocol";
 import { APP_TOPIC } from "@cw-code/shared/topics";
+import { AgentTokens } from "../agent/AgentTokens.js";
+import { CW_AGENT_TOKEN_ENV, CW_MCP_URL_ENV, writeClaudePlugin } from "../agent/claudePlugin.js";
+import { writeCodexSkill } from "../agent/codexSkill.js";
 import { appendCrashLog, initCrashLog } from "../debug/crashLog.js";
 import { initHarnessTrace } from "../debug/harnessTrace.js";
 import { initServerLog } from "../debug/serverLog.js";
 import { initSessionStatusTrace } from "../debug/sessionStatusTrace.js";
 import { sweepStaleSnapshotIndexes } from "../fs/GitService.js";
 import { registerHandlers } from "../handlers/index.js";
+import { createMcpRoute } from "../mcp/mcpRoute.js";
 import { reapOrphanedServers } from "../orphanServers.js";
-import { claudeCommandsCachePath, logsDir, opencodeModelsCachePath, sessionDbPath, settingsFilePath, userdataDir } from "../paths/appPaths.js";
+import { claudeCommandsCachePath, claudePluginDir, codexSkillsRoot, logsDir, opencodeModelsCachePath, sessionDbPath, settingsFilePath, userdataDir } from "../paths/appPaths.js";
 import { initClaudeCommandsCache } from "../providers/claude/claudeCommands.js";
 import { initOpencodeModelsCache } from "../providers/opencode/opencodeModels.js";
 import { openMetadataStores, type OpenedMetadataStores } from "../storage/metadataStores.js";
 import type { ServerArgs } from "../transport/args.js";
-import { decideBindHost } from "../transport/bindPolicy.js";
+import { connectHost, decideBindHost } from "../transport/bindPolicy.js";
 import { removeEndpoint, writeEndpoint } from "../transport/endpointFile.js";
 import { DeviceTokens } from "../transport/deviceTokens.js";
 import type { HttpRoutesOptions } from "../transport/httpRoutes.js";
@@ -23,7 +27,7 @@ import { loadOrCreateOwnerToken, tokensEqual } from "../transport/ownerToken.js"
 import { Router, type ClientAuth } from "../transport/Router.js";
 import { TopicHub } from "../topics/TopicHub.js";
 import { registerTopicProviders } from "../topics/providers.js";
-import { WsServer } from "../transport/WsServer.js";
+import { mcpUrl, WsServer } from "../transport/WsServer.js";
 import { ClientInputs } from "./clientInputs.js";
 import { eventAudience } from "./eventAudience.js";
 import { eventTopic, isRoutableTopic } from "./eventTopics.js";
@@ -54,6 +58,7 @@ export class ServerApp {
   readonly router = new Router();
   readonly topics = new TopicHub((clientIds, frame) => this.ws?.sendTo(clientIds, frame));
   readonly clientInputs = new ClientInputs();
+  readonly agentTokens = new AgentTokens();
   private deviceTokens: DeviceTokens | null = null;
   private services: Services | null = null;
   private state: StartupState = { mode: "ready" };
@@ -70,6 +75,9 @@ export class ServerApp {
   private pendingShellNotices: AppNotice[] = [];
   readonly uiDir: string | null;
   private listenHost: string | null = null;
+  private listenPort: number | null = null;
+  private pluginDir: string | null = null;
+  private codexSkillsDir: string | null = null;
 
   constructor(
     private readonly args: ServerArgs,
@@ -204,16 +212,33 @@ export class ServerApp {
       console.warn(entry);
       appendCrashLog(entry);
     });
+    const services = (): Services => this.requireServices();
+    const mcp = createMcpRoute({
+      router: this.router,
+      tokens: this.agentTokens,
+      version: this.version,
+      resolveOpencode: (secret, opencodeSessionId) => this.services?.sessions.resolveOpencodeAgent(secret, opencodeSessionId) ?? null,
+      get watch() {
+        return services().sessionWatch;
+      },
+      get sessions() {
+        return services().sessions;
+      }
+    });
     const http = {
       uiDir: this.uiDir,
       info: { app: "cw-code", version: this.version, protocol: PROTOCOL_VERSION },
       ownerToken,
-      stop: () => this.scheduleStop(0)
+      stop: () => this.scheduleStop(0),
+      mcp
     } satisfies HttpRoutesOptions;
     const ws = new WsServer({ host, port: this.args.port, authorize, isOriginAllowed, onOriginRejected, version: this.version, router: this.router, http });
     const { url, port } = this.bind(ws, host);
     this.ws = ws;
     this.listenHost = host;
+    this.listenPort = port;
+    this.prepareClaudePlugin();
+    this.prepareCodexSkill();
     this.applyStores(stores);
     ws.onClientAccepted((ctx) => {
       if (ctx.client === "desktop-shell") this.flushShellNotices(ctx.clientId);
@@ -236,6 +261,55 @@ export class ServerApp {
     process.once("SIGINT", () => void this.stop(0));
     process.once("SIGTERM", () => void this.stop(0));
     return ready;
+  }
+
+  private prepareClaudePlugin(): void {
+    const dir = claudePluginDir();
+    writeClaudePlugin(dir, this.version)
+      .then(() => {
+        this.pluginDir = dir;
+      })
+      .catch((err) => {
+        const detail = err instanceof Error ? err.message : String(err);
+        const message = `could not write the Claude plugin to ${dir}; cw tools are unavailable in Claude sessions: ${detail}`;
+        console.warn(message);
+        appendCrashLog(message);
+        this.noticeShell({ level: "warning", title: "cw-code", message: "cw tools are unavailable in Claude sessions", detail: message });
+      });
+  }
+
+  private prepareCodexSkill(): void {
+    const root = codexSkillsRoot();
+    writeCodexSkill(root)
+      .then(() => {
+        this.codexSkillsDir = root;
+      })
+      .catch((err) => {
+        const detail = err instanceof Error ? err.message : String(err);
+        const message = `could not write the Codex skill to ${root}; the cw-code skill is unavailable in Codex sessions: ${detail}`;
+        console.warn(message);
+        appendCrashLog(message);
+        this.noticeShell({ level: "warning", title: "cw-code", message: "the cw-code skill is unavailable in Codex sessions", detail: message });
+      });
+  }
+
+  private noticeShell(notice: AppNotice): void {
+    if (this.ws?.clients().some((client) => client.client === "desktop-shell")) this.emit("app.notice", notice);
+    else this.pendingShellNotices.push(notice);
+  }
+
+  private agentMcpUrl(): string | null {
+    if (this.listenHost === null || this.listenPort === null) return null;
+    return mcpUrl(connectHost(this.listenHost), this.listenPort);
+  }
+
+  private agentEnv(sessionId: string): Record<string, string> {
+    const url = this.agentMcpUrl();
+    if (url === null) return {};
+    return {
+      [CW_MCP_URL_ENV]: url,
+      [CW_AGENT_TOKEN_ENV]: this.agentTokens.tokenFor(sessionId)
+    };
   }
 
   reboot(): StartupState {
@@ -373,7 +447,12 @@ export class ServerApp {
       assessmentChanged: () => this.shutdownPublisher.schedule(),
       legacyAppRoots: this.args.legacyUserData,
       onShutdownRecovered: (failure) => this.handleShutdownRecovered(failure),
-      onShutdownExpired: (reason) => this.handleShutdownExpired(reason)
+      onShutdownExpired: (reason) => this.handleShutdownExpired(reason),
+      agentEnv: (sessionId) => this.agentEnv(sessionId),
+      revokeAgentToken: (sessionId) => this.agentTokens.revoke(sessionId),
+      claudePluginDir: () => this.pluginDir,
+      codexSkillsRoot: () => this.codexSkillsDir,
+      agentMcpUrl: () => this.agentMcpUrl()
     });
     this.services = services;
     this.servicesDisposed = false;
@@ -489,6 +568,7 @@ export class ServerApp {
       console.warn(`preferences flush before exit failed: ${(err as Error).message}`);
     }
     services.autoFollowUp.dispose();
+    services.sessionWatch.dispose();
     services.prStore.dispose();
     services.threads.dispose();
     void services.sourceControl.dispose();

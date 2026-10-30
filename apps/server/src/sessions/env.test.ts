@@ -25,6 +25,16 @@ describe("buildTurnEnv", () => {
     expect(env).toEqual({ BASE: "1", CW_SESSION_ID: "s1", CW_EXTRA: "x" });
   });
 
+  it("drops an agent token and MCP URL inherited from the process env", () => {
+    const env = buildTurnEnv({ BASE: "1", CW_AGENT_TOKEN: "parent-token", CW_MCP_URL: "http://127.0.0.1:1/mcp", Cw_Agent_Token: "x" }, { CW_SESSION_ID: "s1" });
+    expect(env).toEqual({ BASE: "1", CW_SESSION_ID: "s1" });
+  });
+
+  it("keeps an agent token and MCP URL given as session vars", () => {
+    const env = buildTurnEnv({ CW_AGENT_TOKEN: "parent-token" }, { CW_AGENT_TOKEN: "own-token", CW_MCP_URL: "http://127.0.0.1:2/mcp" });
+    expect(env).toEqual({ CW_AGENT_TOKEN: "own-token", CW_MCP_URL: "http://127.0.0.1:2/mcp" });
+  });
+
   it("handles empty inputs", () => {
     expect(buildTurnEnv({}, {})).toEqual({});
     expect(buildTurnEnv({}, {}, {})).toEqual({});

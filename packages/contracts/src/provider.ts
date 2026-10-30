@@ -78,6 +78,8 @@ export interface CliDriver {
   /** Snapshot of the sessions this driver is busy for (including internal ones) and the processes it currently owns. */
   activity?(): DriverActivity;
   onActivityChanged?(listener: () => void): () => void;
+  /** Maps a harness-side session that presented the driver's agent secret to the cw-code session whose in-flight turn owns it. */
+  resolveAgentSession?(secret: string, harnessSessionId: string): { sessionId: string } | null;
   /**
    * Asks every owned process to exit and waits up to `timeoutMs`. Processes still alive at the deadline are
    * left for `dispose()` to force-stop, and the result reports `timedOut`. Never touches processes it did not spawn.

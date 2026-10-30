@@ -1,5 +1,12 @@
 import type { PermissionMode, PermissionOption } from "@cw-code/contracts";
 
+// Ordered from least to most permissive; capping and fallback rank modes by index.
+export const PERMISSION_MODES =["manual", "acceptEdits", "auto", "bypassPermissions"] as const satisfies readonly PermissionMode[];
+
+export function isPermissionMode(value: unknown): value is PermissionMode {
+  return PERMISSION_MODES.some((mode) => mode === value);
+}
+
 export const PERMISSION_DETAILS: Record<PermissionMode, { label: string; description: string }> = {
   manual: { label: "Supervised", description: "Ask before commands and file changes." },
   acceptEdits: { label: "Auto-accept edits", description: "Auto-approve edits, ask before other actions." },

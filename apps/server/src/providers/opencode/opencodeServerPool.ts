@@ -127,6 +127,8 @@ export interface OpencodeServerPoolDeps {
   onServerGone?: (rootPath: string, port: number) => void;
   /** Extra spawn env for a CLI protocol, kept out of the pool key (v2 plugin injection). */
   spawnEnv?: (protocol: OpencodeProtocolVersion) => Promise<Record<string, string>>;
+  /** Called with the object `spawnEnv` returned when the serve process failed to start. */
+  spawnFailed?: (protocolEnv: Record<string, string>) => void;
   /**
    * When set, every working directory shares a single server spawned at this
    * root. Callers must scope each request to its own directory (the opencode
@@ -243,12 +245,18 @@ export class OpencodeServerPool {
     const args = stdio
       ? ["serve", "--stdio", "--port", "0", "--hostname", "127.0.0.1"]
       : ["serve", "--port", String(fixedPort), "--hostname", "127.0.0.1"];
-    const proc = spawnCli(binary, args, {
-      cwd: rootPath,
-      windowsHide: true,
-      stdio: ["pipe", "pipe", "pipe"],
-      env: withOwnerPid({ ...process.env, ...env, ...protocolEnv, ...serverAuthEnv(password, cliProtocol) })
-    });
+    let proc: ChildProcess;
+    try {
+      proc = spawnCli(binary, args, {
+        cwd: rootPath,
+        windowsHide: true,
+        stdio: ["pipe", "pipe", "pipe"],
+        env: withOwnerPid({ ...process.env, ...env, ...protocolEnv, ...serverAuthEnv(password, cliProtocol) })
+      });
+    } catch (err) {
+      this.deps?.spawnFailed?.(protocolEnv);
+      throw err;
+    }
     proc.stderr?.resume();
     if (!stdio) proc.stdout?.resume();
     let handle: ServerHandle = { port: fixedPort, authHeader, password };
@@ -275,6 +283,7 @@ export class OpencodeServerPool {
         error: truncateError((err as Error).message)
       });
       killProcessTree(proc);
+      this.deps?.spawnFailed?.(protocolEnv);
       throw err;
     }
     traceHarnessCall({

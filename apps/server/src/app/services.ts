@@ -2,6 +2,7 @@ import { homedir } from "node:os";
 import type { ShutdownReason } from "@cw-code/contracts";
 import { prKey } from "@cw-code/shared/prRef";
 import { ptyTopic } from "@cw-code/shared/topics";
+import { SessionWatch } from "../agent/SessionWatch.js";
 import { FileService } from "../fs/FileService.js";
 import { FilesTopic } from "../fs/FilesTopic.js";
 import { FileWatcher } from "../fs/FileWatcher.js";
@@ -76,6 +77,7 @@ export interface Services {
   sidebar: SidebarService;
   workflowPreview: WorkflowPreviewService;
   workflowRunner: WorkflowRunner;
+  sessionWatch: SessionWatch;
 }
 
 export interface ServiceHooks {
@@ -87,6 +89,11 @@ export interface ServiceHooks {
   legacyAppRoots: string[];
   onShutdownRecovered: (failure: string | null) => void;
   onShutdownExpired: (reason: ShutdownReason) => void;
+  agentEnv: (sessionId: string) => Record<string, string>;
+  revokeAgentToken: (sessionId: string) => void;
+  claudePluginDir: () => string | null;
+  codexSkillsRoot: () => string | null;
+  agentMcpUrl: () => string | null;
 }
 
 const PR_STATE_REUSE_MS = 60_000;
@@ -99,6 +106,10 @@ function wireAutoFollowUp({ autoFollowUp, prStore, threads, turns }: Services): 
   turns.onTurnStarted((sessionId, auto) => autoFollowUp.turnStarted(sessionId, auto));
   turns.onTurnStopped((sessionId) => autoFollowUp.turnStopped(sessionId));
   autoFollowUp.setEnabled(true);
+}
+
+function wireSessionWatch({ sessionWatch, threads }: Services): void {
+  threads.onTurnSettled((sessionId, _turnId, event) => sessionWatch.turnSettled(sessionId, event));
 }
 
 function wireUsage({ sessions, threads, usageTopic }: Services): void {
@@ -149,8 +160,22 @@ function wireGitHubViews({ githubViews, prStore }: Services): void {
 }
 
 function wireServiceEvents(
-  { sessions, sourceControl, gitTopic, filesTopic, prTracker, prStore, ptys, runWatcher, githubViews, threads, autoFollowUp, sidebar }: Services,
-  { emit, dropTopic, assessmentChanged }: ServiceHooks
+  {
+    sessions,
+    sourceControl,
+    gitTopic,
+    filesTopic,
+    prTracker,
+    prStore,
+    ptys,
+    runWatcher,
+    githubViews,
+    threads,
+    autoFollowUp,
+    sidebar,
+    sessionWatch
+  }: Services,
+  { emit, dropTopic, assessmentChanged, revokeAgentToken }: ServiceHooks
 ): void {
   sessions.setEmitter((sessionId, event) => {
     if (event.type === "task.updated") assessmentChanged();
@@ -167,10 +192,14 @@ function wireServiceEvents(
     sidebar.invalidate();
   });
   sessions.setSessionEmitter((session) => {
+    sessionWatch.sessionChanged(session);
     assessmentChanged();
     prTracker.setTracked(sessions.trackedPrRefs());
     prStore.onSessionsChanged();
     if (session.status === "archived" || session.status === "resolved") {
+      revokeAgentToken(session.id);
+      sessionWatch.forget(session.id);
+      sessions.forgetTurnPermissionMode(session.id);
       gitTopic.forgetKeptHead(session.id);
       filesTopic.forget(session.id);
       threads.forget(session.id);
@@ -218,7 +247,11 @@ export function createServices(stores: { sessionStore: SessionStore; settingsSto
       ptys.killSession(sessionId);
       void fileWatcher.unwatch(sessionId);
     },
-    legacyAppRoots: hooks.legacyAppRoots
+    legacyAppRoots: hooks.legacyAppRoots,
+    agentEnv: hooks.agentEnv,
+    claudePluginDir: hooks.claudePluginDir,
+    codexSkillsRoot: hooks.codexSkillsRoot,
+    agentMcpUrl: hooks.agentMcpUrl
   });
   pullRequests = new PullRequestService(git, () => sessions.getSettings(), (rootPath) => sessions.addProject(rootPath));
   const prStore = new PrStore({
@@ -251,7 +284,7 @@ export function createServices(stores: { sessionStore: SessionStore; settingsSto
     session: (sessionId) => sessions.findSession(sessionId),
     setWatched: (sessionIds) => sourceControl.setWatched(sessionIds)
   });
-  const ptys = new PtyPool(() => sessions.getSettings());
+  const ptys = new PtyPool(() => sessions.getSettings(), undefined, hooks.claudePluginDir);
   const shutdown = new ShutdownCoordinator({ sessions, ptys, onRecovered: hooks.onShutdownRecovered, onExpired: hooks.onShutdownExpired });
   const preferences = new PreferencesStore(preferencesFilePath());
   const appTopic = new AppTopic(hooks.topics, {
@@ -456,10 +489,12 @@ export function createServices(stores: { sessionStore: SessionStore; settingsSto
     turnChanges,
     sidebar,
     workflowPreview,
-    workflowRunner
+    workflowRunner,
+    sessionWatch: new SessionWatch({ getSession: (sessionId) => sessions.findSession(sessionId) })
   };
   wireServiceEvents(services, hooks);
   wireAutoFollowUp(services);
+  wireSessionWatch(services);
   wireUsage(services);
   wireSessionPrs(services);
   wireTurnChanges(services);

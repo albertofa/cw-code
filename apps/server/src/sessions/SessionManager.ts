@@ -19,6 +19,7 @@ import type {
   IssueRef,
   ModelOption,
   NativeSession,
+  PermissionMode,
   PermissionOption,
   PrLinkSnapshot,
   PrRef,
@@ -43,9 +44,11 @@ import type {
   ThreadEvent,
   TurnChanges,
   TurnHandle,
+  TurnRequest,
   TurnSnapshot,
   WorktreePruneSummary
 } from "@cw-code/contracts";
+import { CW_AGENT_TOKEN_ENV, CW_MCP_URL_ENV } from "../agent/claudePlugin.js";
 import { type SessionStatusReason } from "../debug/sessionStatusTrace.js";
 import { isWorkingSetStatus } from "@cw-code/shared/workingSet";
 import { expiredHoldingIds } from "../sidebar/workingSet.js";
@@ -84,7 +87,7 @@ import { defaultGitHubAccounts } from "../github/GitHubAccounts.js";
 import { changedWorktreeBranch, comparableRoot, isWorktreeOrphaned, looksLikeWorktree, pinsWorktree, rootsOverlap, sameWorktreePath } from "./worktreeCleanup.js";
 import { SettingsStore } from "../settings/SettingsStore.js";
 import { resolveClaudeModels } from "../settings/settingsUtils.js";
-import { permissionOption, withSyntheticFullAccess } from "../providers/permissions.js";
+import { isPermissionMode, permissionOption, withSyntheticFullAccess } from "../providers/permissions.js";
 import { TracingCliDriver } from "../debug/tracingDriver.js";
 import { CLAUDE_CURATED_MODELS, ClaudeCliDriver } from "../providers/claude/ClaudeCliDriver.js";
 import { OpencodeDriver } from "../providers/opencode/OpencodeDriver.js";
@@ -126,6 +129,10 @@ export interface SessionManagerOptions {
   prUpdatedAt?: (ref: PrRef) => number | null;
   usageLedger?: UsageLedger;
   driverFactory?: DriverFactory;
+  agentEnv?: (sessionId: string) => Record<string, string>;
+  claudePluginDir?: () => string | null;
+  codexSkillsRoot?: () => string | null;
+  agentMcpUrl?: () => string | null;
   /** Earlier app data folders whose worktrees may still hold sessions cw-code started. */
   legacyAppRoots?: string[];
 }
@@ -133,16 +140,21 @@ export interface SessionManagerOptions {
 export type DriverFactory = (
   route: (event: ThreadEvent) => void,
   getSettings: () => AppSettings,
-  isInWorkingSet: (sessionId: string) => boolean
+  isInWorkingSet: (sessionId: string) => boolean,
+  claudePluginDir: () => string | null,
+  codexSkillsRoot: () => string | null,
+  agentMcpUrl: () => string | null
 ) => Record<DriverKind, CliDriver>;
 
 export function defaultDriverFactory(overrides: Partial<Record<DriverKind, CliDriver>> = {}): DriverFactory {
-  return (route, getSettings, isInWorkingSet) => ({
-    claude: overrides.claude ?? new TracingCliDriver(new ClaudeCliDriver(route, getSettings, undefined, undefined, isInWorkingSet)),
+  return (route, getSettings, isInWorkingSet, claudePluginDir, codexSkillsRoot, agentMcpUrl) => ({
+    claude:
+      overrides.claude ??
+      new TracingCliDriver(new ClaudeCliDriver(route, getSettings, undefined, undefined, isInWorkingSet, claudePluginDir)),
     opencode:
       overrides.opencode ??
-      new TracingCliDriver(new OpencodeDriver(route, getSettings, undefined, { sharedRoot: opencodeServerDir() })),
-    codex: overrides.codex ?? new TracingCliDriver(new CodexCliDriver(route, getSettings))
+      new TracingCliDriver(new OpencodeDriver(route, getSettings, undefined, { sharedRoot: opencodeServerDir(), agentMcpUrl })),
+    codex: overrides.codex ?? new TracingCliDriver(new CodexCliDriver(route, getSettings, undefined, codexSkillsRoot))
   });
 }
 
@@ -231,6 +243,11 @@ function autoFinishedTarget(value: AppSettings["prFinishedSessionStatus"]): valu
   return value !== "none";
 }
 
+function resolvePermissionMode(mode: string | undefined): PermissionMode {
+  const resolved = mode ?? "auto";
+  return isPermissionMode(resolved) ? resolved : "manual";
+}
+
 export class SessionManager {
   private store: SessionStore;
   private settings: SettingsStore;
@@ -282,11 +299,16 @@ export class SessionManager {
   private prUpdatedAt: (ref: PrRef) => number | null;
   private turnPrRefs = new Map<string, PrRef[]>();
   private turnFinalReviews = new Map<string, { ref: PrRef; sha: string }>();
+  private turnPermissionModes = new Map<string, PermissionMode>();
   private usageLedger: UsageLedger;
   private titleGenPath: string;
   private nativeSessions = new Map<string, NativeSession>();
   private remoteSlugs = new Map<string, string | null>();
   private legacyAppRoots: string[];
+  private agentEnv: (sessionId: string) => Record<string, string>;
+  private claudePluginDir: () => string | null;
+  private codexSkillsRoot: () => string | null;
+  private agentMcpUrl: () => string | null;
 
   constructor(opts: SessionManagerOptions = {}) {
     const dbPath = opts.dbPath ?? sessionDbPath();
@@ -310,6 +332,10 @@ export class SessionManager {
     this.usageLedger = opts.usageLedger ?? new UsageLedger(dataDir ? join(dataDir, "usage") : usageDir());
     this.titleGenPath = dataDir ? join(dataDir, "title-gen") : titleGenDir();
     this.legacyAppRoots = opts.legacyAppRoots ?? [];
+    this.agentEnv = opts.agentEnv ?? (() => ({}));
+    this.claudePluginDir = opts.claudePluginDir ?? (() => null);
+    this.codexSkillsRoot = opts.codexSkillsRoot ?? (() => null);
+    this.agentMcpUrl = opts.agentMcpUrl ?? (() => null);
     this.driverFactory = opts.driverFactory ?? defaultDriverFactory(opts.drivers);
     this.drivers = this.buildDrivers();
     this.watchDriverActivity();
@@ -375,8 +401,18 @@ export class SessionManager {
       (sessionId) => {
         const status = this.store.getSession(sessionId)?.status;
         return status !== undefined && isWorkingSetStatus(status);
-      }
+      },
+      () => this.claudePluginDir(),
+      () => this.codexSkillsRoot(),
+      () => this.agentMcpUrl()
     );
+  }
+
+  resolveOpencodeAgent(secret: string, opencodeSessionId: string): { sessionId: string } | null {
+    const resolved = this.drivers.opencode.resolveAgentSession?.(secret, opencodeSessionId) ?? null;
+    if (!resolved) return null;
+    const status = this.store.getSession(resolved.sessionId)?.status;
+    return status === undefined || status === "resolved" || status === "archived" ? null : resolved;
   }
 
   private uniqueDrivers(): Array<{ kinds: DriverKind[]; driver: CliDriver }> {
@@ -1772,20 +1808,20 @@ export class SessionManager {
   getComposer(sessionId: string): ComposerPrefs {
     const session = this.store.getSession(sessionId);
     if (!session) throw new Error(`unknown session ${sessionId}`);
-    const model = session.model;
-    const permissionMode = session.permissionMode ?? "auto";
     return {
-      model,
+      model: session.model,
       effort: session.effort ?? "medium",
       variant: session.variant,
-      permissionMode:
-        permissionMode === "auto" ||
-        permissionMode === "acceptEdits" ||
-        permissionMode === "bypassPermissions" ||
-        permissionMode === "manual"
-          ? permissionMode
-          : "manual"
+      permissionMode: resolvePermissionMode(session.permissionMode)
     };
+  }
+
+  turnPermissionMode(sessionId: string): PermissionMode | undefined {
+    return this.turnPermissionModes.get(sessionId);
+  }
+
+  forgetTurnPermissionMode(sessionId: string): void {
+    this.turnPermissionModes.delete(sessionId);
   }
 
   setComposer(sessionId: string, prefs: ComposerPrefs): ComposerPrefs {
@@ -1940,13 +1976,14 @@ export class SessionManager {
     session: SessionMeta | undefined,
     project: Project | undefined,
     cwd: string,
-    withGitHubAccount = false
+    include: { githubAccount?: boolean; agent?: boolean } = {}
   ): Record<string, string> {
     return {
       CW_WORKTREE_PATH: cwd,
       CW_PROJECT_ROOT: project?.rootPath ?? cwd,
       CW_SESSION_ID: session?.id ?? sessionId,
-      ...(withGitHubAccount ? this.githubAccountVars(session?.id ?? sessionId, project) : {})
+      ...(include.githubAccount ? this.githubAccountVars(session?.id ?? sessionId, project) : {}),
+      ...(include.agent && session ? this.agentEnv(session.id) : {})
     };
   }
 
@@ -1971,17 +2008,17 @@ export class SessionManager {
     }
   }
 
-  async terminalEnv(sessionId: string, cwd: string): Promise<Record<string, string>> {
+  async terminalEnv(sessionId: string, cwd: string, kind: string): Promise<Record<string, string>> {
     const session = this.store.getSession(sessionId);
     const project = session ? this.store.getProject(session.projectId) : undefined;
     if (project) await this.refreshGitHubToken(project);
-    return this.turnEnv(sessionId, cwd);
+    return this.turnEnv(sessionId, cwd, { agent: kind === "claude" || kind === "codex" });
   }
 
-  turnEnv(sessionId: string, cwd: string): Record<string, string> {
+  turnEnv(sessionId: string, cwd: string, include: { agent?: boolean } = {}): Record<string, string> {
     const session = this.store.getSession(sessionId);
     const project = session ? this.store.getProject(session.projectId) : undefined;
-    return buildTurnEnv(process.env, this.sessionEnvVars(sessionId, session, project, cwd, true));
+    return buildTurnEnv(process.env, this.sessionEnvVars(sessionId, session, project, cwd, { githubAccount: true, agent: include.agent }));
   }
 
   private async captureTurnSnapshot(sessionId: string, cwd: string): Promise<Omit<TurnSnapshot, "turnId"> | null> {
@@ -2293,8 +2330,10 @@ export class SessionManager {
         attachments: resolveAttachments(project.rootPath, cwd, opts?.attachments ?? []),
         ...(opts?.command ? { command: opts.command } : {}),
         ...(!opts?.command && opts?.skills?.length ? { skills: opts.skills } : {}),
-        env: buildTurnEnv(process.env, this.sessionEnvVars(session.id, session, project, cwd, session.driver === "claude"))
+        ...this.agentRequest(session.id, session.driver),
+        env: buildTurnEnv(process.env, this.sessionEnvVars(session.id, session, project, cwd, { githubAccount: session.driver === "claude", agent: session.driver === "claude" }))
       });
+      this.turnPermissionModes.set(sessionId, resolvePermissionMode(prefs.permissionMode));
       const startedAt = Date.now();
       this.activeTurns.set(handle.turnId, { sessionId, startedAt });
       const restoreWorking = this.store.getSession(sessionId)?.status !== "working";
@@ -2314,6 +2353,14 @@ export class SessionManager {
     } finally {
       this.pendingTurns.delete(sessionId);
     }
+  }
+
+  private agentRequest(sessionId: string, driver: DriverKind): Pick<TurnRequest, "agent"> {
+    if (driver !== "codex" && driver !== "opencode") return {};
+    const env = this.agentEnv(sessionId);
+    const mcpUrl = env[CW_MCP_URL_ENV];
+    const token = env[CW_AGENT_TOKEN_ENV];
+    return mcpUrl && token ? { agent: { mcpUrl, token } } : {};
   }
 
   private revertFailedTurnStart(sessionId: string, previous: SessionStatusSnapshot): void {
@@ -2599,13 +2646,10 @@ export class SessionManager {
     }
     const cwd = await this.ensureWorktree(sessionId);
     this.assertNotReserved();
-    const result = await driver.retryConnection({
-      sessionId,
-      cwd,
-      resumeCursor: session.resumeCursor,
-      permissionMode: this.getComposer(sessionId).permissionMode
-    });
+    const { permissionMode } = this.getComposer(sessionId);
+    const result = await driver.retryConnection({ sessionId, cwd, resumeCursor: session.resumeCursor, permissionMode });
     if (result.status === "running" && result.turnId) {
+      this.turnPermissionModes.set(sessionId, resolvePermissionMode(permissionMode));
       const startedAt = Date.now();
       this.activeTurns.set(result.turnId, { sessionId, startedAt });
       this.onEvent(sessionId, { type: "turn.started", turnId: result.turnId, sessionId, startedAt, prompt: "" });

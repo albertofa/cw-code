@@ -1,6 +1,7 @@
 import type { ClientKind, RpcError } from "@cw-code/contracts";
+import { AGENT_METHODS } from "../agent/agentPolicy.js";
 
-export type ClientAuth = { kind: "owner" } | { kind: "device"; deviceId: string };
+export type ClientAuth = { kind: "owner" } | { kind: "device"; deviceId: string } | { kind: "agent"; sessionId: string };
 
 export interface CallContext {
   clientId: string;
@@ -25,6 +26,9 @@ export class Router {
   async dispatch(method: string, params: unknown, ctx: CallContext): Promise<unknown> {
     const handler = this.handlers.get(method);
     if (!handler) throw Object.assign(new Error(`unknown method '${method}'`), { code: "unknown-method" });
+    if (ctx.auth.kind === "agent" && !AGENT_METHODS.has(method)) {
+      throw Object.assign(new Error(`'${method}' is not available to agents`), { code: "forbidden" });
+    }
     return handler(params, ctx);
   }
 }

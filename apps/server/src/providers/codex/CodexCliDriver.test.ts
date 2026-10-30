@@ -3,7 +3,7 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AppSettings, ThreadEvent } from "@cw-code/contracts";
-import type { CodexAppServerLike } from "./codexAppServer.js";
+import type { CodexAppServerLike, CodexRequestFn } from "./codexAppServer.js";
 import { CodexCliDriver } from "./CodexCliDriver.js";
 
 const SETTINGS: AppSettings = {
@@ -74,12 +74,14 @@ class FakeClient implements CodexAppServerLike {
   private pendingEnv: Record<string, string> | undefined;
   private notificationHandler: ((method: string, params: unknown) => void) | null = null;
   private serverRequestHandler: ((method: string, params: unknown, id: string | number) => void) | null = null;
+  private initializedHandler: ((request: CodexRequestFn) => Promise<void>) | null = null;
   private requestCount = 0;
 
   async request<T>(method: string, params?: unknown): Promise<T> {
     if (!this.running) {
       this.running = true;
       this.spawnEnvs.push(this.pendingEnv);
+      await this.initializedHandler?.((initMethod, initParams) => this.request(initMethod, initParams));
     }
     this.requests.push({ method, params });
     this.requestCount++;
@@ -204,6 +206,10 @@ class FakeClient implements CodexAppServerLike {
     this.serverRequestHandler = handler;
   }
 
+  onInitialized(handler: (request: CodexRequestFn) => Promise<void>): void {
+    this.initializedHandler = handler;
+  }
+
   dispose(): void {}
 
   notify(method: string, params: unknown): void {
@@ -252,12 +258,13 @@ class AccountUsageClient extends FakeClient {
   }
 }
 
-function makeDriver(client: FakeClient) {
+function makeDriver(client: FakeClient, codexSkillsRoot: () => string | null = () => null) {
   const events: ThreadEvent[] = [];
   const driver = new CodexCliDriver(
     (e) => events.push(e),
     () => SETTINGS,
-    client
+    client,
+    codexSkillsRoot
   );
   return { driver, events };
 }
@@ -1226,6 +1233,196 @@ describe("CodexCliDriver stopSession", () => {
 
     expect(archivedClient.requests.map((r) => r.method)).toEqual(["thread/unarchive", "thread/resume", "turn/start"]);
     expect(archivedClient.requests[0].params).toEqual({ threadId: "thr_x" });
+    driver.dispose();
+  });
+});
+
+describe("CodexCliDriver cw agent wiring", () => {
+  const AGENT = { mcpUrl: "http://127.0.0.1:4100/mcp", token: "token-a" };
+  const CW_CONFIG = {
+    mcp_servers: {
+      cw: {
+        url: "http://127.0.0.1:4100/mcp",
+        http_headers: { Authorization: "Bearer token-a" },
+        default_tools_approval_mode: "approve"
+      }
+    }
+  };
+
+  beforeEach(() => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+  });
+
+  function paramsOf(client: FakeClient, method: string): Array<Record<string, unknown>> {
+    return client.requests.filter((r) => r.method === method).map((r) => r.params as Record<string, unknown>);
+  }
+
+  it("passes the cw MCP server config to thread/start and thread/resume only for agent turns", async () => {
+    const client = new FakeClient();
+    const { driver } = makeDriver(client);
+    driver.startTurn({ sessionId: "s1", prompt: "a", cwd: "C:\\proj", agent: AGENT });
+    driver.startTurn({ sessionId: "s2", prompt: "b", cwd: "C:\\proj" });
+    driver.startTurn({ sessionId: "s3", prompt: "c", cwd: "C:\\proj", resumeCursor: "thr_x", agent: AGENT });
+    driver.startTurn({ sessionId: "s4", prompt: "d", cwd: "C:\\proj", resumeCursor: "thr_y" });
+    await settle();
+
+    const [withAgent, withoutAgent] = paramsOf(client, "thread/start");
+    expect(withAgent?.["config"]).toEqual(CW_CONFIG);
+    expect(withoutAgent).not.toHaveProperty("config");
+    const resumes = paramsOf(client, "thread/resume");
+    expect(resumes.find((p) => p["threadId"] === "thr_x")?.["config"]).toEqual(CW_CONFIG);
+    expect(resumes.find((p) => p["threadId"] === "thr_y")).not.toHaveProperty("config");
+    driver.dispose();
+  });
+
+  it("keeps the config on the unarchive retry", async () => {
+    class ArchivedResumeClient extends FakeClient {
+      private archived = true;
+      override async request<T>(method: string, params?: unknown): Promise<T> {
+        if (method === "thread/resume" && this.archived) {
+          this.archived = false;
+          throw new Error("session thr_x is archived");
+        }
+        return super.request<T>(method, params);
+      }
+    }
+    const client = new ArchivedResumeClient();
+    const { driver } = makeDriver(client);
+    driver.startTurn({ sessionId: "s1", prompt: "a", cwd: "C:\\proj", resumeCursor: "thr_x", agent: AGENT });
+    await settle();
+    expect(paramsOf(client, "thread/resume")[0]?.["config"]).toEqual(CW_CONFIG);
+    driver.dispose();
+  });
+
+  it("unsubscribes a loaded thread before resuming it with a rotated token", async () => {
+    const client = new FakeClient();
+    const { driver } = makeDriver(client);
+    driver.startTurn({ sessionId: "s1", prompt: "a", cwd: "C:\\proj", resumeCursor: "thr_resume", agent: AGENT });
+    await settle();
+    driver.startTurn({ sessionId: "s1", prompt: "b", cwd: "C:\\proj", resumeCursor: "thr_resume", agent: { ...AGENT, token: "token-b" } });
+    await settle();
+
+    const methods = client.requests.map((r) => r.method).filter((m) => m.startsWith("thread/"));
+    expect(methods).toEqual(["thread/resume", "thread/unsubscribe", "thread/resume"]);
+    expect(paramsOf(client, "thread/unsubscribe")).toEqual([{ threadId: "thr_resume" }]);
+    driver.dispose();
+  });
+
+  it("does not unsubscribe when the loaded thread already has the same token", async () => {
+    const client = new FakeClient();
+    const { driver } = makeDriver(client);
+    driver.startTurn({ sessionId: "s1", prompt: "a", cwd: "C:\\proj", agent: AGENT });
+    await settle();
+    driver.startTurn({ sessionId: "s1", prompt: "b", cwd: "C:\\proj", resumeCursor: "thr_1", agent: AGENT });
+    await settle();
+    expect(paramsOf(client, "thread/unsubscribe")).toEqual([]);
+    expect(paramsOf(client, "thread/resume")).toHaveLength(1);
+    driver.dispose();
+  });
+
+  it("still resumes when thread/unsubscribe fails", async () => {
+    class FailingUnsubscribeClient extends FakeClient {
+      override async request<T>(method: string, params?: unknown): Promise<T> {
+        if (method === "thread/unsubscribe") throw new Error("unsubscribe boom");
+        return super.request<T>(method, params);
+      }
+    }
+    const client = new FailingUnsubscribeClient();
+    const { driver, events } = makeDriver(client);
+    driver.startTurn({ sessionId: "s1", prompt: "a", cwd: "C:\\proj", resumeCursor: "thr_resume", agent: AGENT });
+    await settle();
+    driver.startTurn({ sessionId: "s1", prompt: "b", cwd: "C:\\proj", resumeCursor: "thr_resume", agent: { ...AGENT, token: "token-b" } });
+    await settle();
+    expect(paramsOf(client, "thread/resume")).toHaveLength(2);
+    expect(paramsOf(client, "turn/start")).toHaveLength(2);
+    expect(events.some((e) => e.type === "turn.error")).toBe(false);
+    expect(console.warn).toHaveBeenCalledWith(expect.stringContaining("unsubscribe boom"));
+    driver.dispose();
+  });
+
+  it("retries the unsubscribe on the next turn when it failed before a resume with a rotated token", async () => {
+    class FlakyUnsubscribeClient extends FakeClient {
+      failUnsubscribe = true;
+      override async request<T>(method: string, params?: unknown): Promise<T> {
+        if (method === "thread/unsubscribe" && this.failUnsubscribe) {
+          this.requests.push({ method, params });
+          throw new Error("unsubscribe boom");
+        }
+        return super.request<T>(method, params);
+      }
+    }
+    const client = new FlakyUnsubscribeClient();
+    const { driver } = makeDriver(client);
+    const rotated = { ...AGENT, token: "token-b" };
+    driver.startTurn({ sessionId: "s1", prompt: "a", cwd: "C:\\proj", resumeCursor: "thr_resume", agent: AGENT });
+    await settle();
+    driver.startTurn({ sessionId: "s1", prompt: "b", cwd: "C:\\proj", resumeCursor: "thr_resume", agent: rotated });
+    await settle();
+    expect(paramsOf(client, "thread/unsubscribe")).toHaveLength(1);
+    client.failUnsubscribe = false;
+    driver.startTurn({ sessionId: "s1", prompt: "c", cwd: "C:\\proj", resumeCursor: "thr_resume", agent: rotated });
+    await settle();
+    expect(paramsOf(client, "thread/unsubscribe")).toHaveLength(2);
+    driver.startTurn({ sessionId: "s1", prompt: "d", cwd: "C:\\proj", resumeCursor: "thr_resume", agent: rotated });
+    await settle();
+    expect(paramsOf(client, "thread/unsubscribe")).toHaveLength(2);
+    driver.dispose();
+  });
+
+  it("sets the skills root after every app-server initialize, before the first thread request", async () => {
+    const client = new FakeClient();
+    const { driver } = makeDriver(client, () => "C:\\cw\\skills");
+    driver.startTurn({ sessionId: "s1", prompt: "a", cwd: "C:\\proj" });
+    await settle();
+    client.running = false;
+    driver.startTurn({ sessionId: "s1", prompt: "b", cwd: "C:\\proj", resumeCursor: "thr_1" });
+    await settle();
+    expect(client.requests.map((r) => r.method)).toEqual([
+      "skills/extraRoots/set",
+      "thread/start",
+      "turn/start",
+      "skills/extraRoots/set",
+      "thread/resume",
+      "turn/start"
+    ]);
+    expect(paramsOf(client, "skills/extraRoots/set")[0]).toEqual({ extraRoots: ["C:\\cw\\skills"] });
+    driver.dispose();
+  });
+
+  it("skips the skills root while it is unavailable and sets it before the next turn once it appears", async () => {
+    const client = new FakeClient();
+    let root: string | null = null;
+    const { driver } = makeDriver(client, () => root);
+    driver.startTurn({ sessionId: "s1", prompt: "a", cwd: "C:\\proj" });
+    await settle();
+    expect(paramsOf(client, "skills/extraRoots/set")).toEqual([]);
+    root = "C:\\cw\\skills";
+    driver.startTurn({ sessionId: "s1", prompt: "b", cwd: "C:\\proj", resumeCursor: "thr_1" });
+    await settle();
+    driver.startTurn({ sessionId: "s1", prompt: "c", cwd: "C:\\proj", resumeCursor: "thr_1" });
+    await settle();
+    expect(paramsOf(client, "skills/extraRoots/set")).toEqual([{ extraRoots: ["C:\\cw\\skills"] }]);
+    expect(client.requests.map((r) => r.method).slice(2, 4)).toEqual(["skills/extraRoots/set", "thread/resume"]);
+    driver.dispose();
+  });
+
+  it("does not fail the turn when skills/extraRoots/set fails", async () => {
+    class FailingRootsClient extends FakeClient {
+      override async request<T>(method: string, params?: unknown): Promise<T> {
+        if (method === "skills/extraRoots/set") {
+          this.requests.push({ method, params });
+          throw new Error("roots boom");
+        }
+        return super.request<T>(method, params);
+      }
+    }
+    const client = new FailingRootsClient();
+    const { driver, events } = makeDriver(client, () => "C:\\cw\\skills");
+    driver.startTurn({ sessionId: "s1", prompt: "a", cwd: "C:\\proj" });
+    await settle();
+    expect(paramsOf(client, "turn/start")).toHaveLength(1);
+    expect(events.some((e) => e.type === "turn.error")).toBe(false);
+    expect(console.warn).toHaveBeenCalledWith(expect.stringContaining("roots boom"));
     driver.dispose();
   });
 });

@@ -10,10 +10,12 @@ import {
 import type { Readable, Writable } from "node:stream";
 import { detachProcessGroup } from "../processTree.js";
 import { sanitizedChildEnv } from "../shellEnvironment.js";
+import { cmdSwitchLine } from "./cmdLine.js";
 
 export interface CliSpawnTarget {
   file: string;
   args: string[];
+  windowsVerbatimArguments?: true;
 }
 
 function quotePowerShell(value: string): string {
@@ -28,7 +30,7 @@ export function cliSpawnTarget(
   if (platform === "win32") {
     const lower = binary.toLowerCase();
     if (lower.endsWith(".cmd") || lower.endsWith(".bat")) {
-      return { file: "cmd.exe", args: ["/d", "/c", binary, ...args] };
+      return { file: "cmd.exe", args: ["/d", cmdSwitchLine("/c", binary, args)], windowsVerbatimArguments: true };
     }
     if (lower.endsWith(".ps1")) {
       const command = [`& ${quotePowerShell(binary)}`, ...args.map(quotePowerShell)].join(" ");
@@ -39,6 +41,10 @@ export function cliSpawnTarget(
     }
   }
   return { file: binary, args };
+}
+
+function verbatim(target: CliSpawnTarget): { windowsVerbatimArguments?: true } {
+  return target.windowsVerbatimArguments ? { windowsVerbatimArguments: true } : {};
 }
 
 function childEnv(env: NodeJS.ProcessEnv | undefined): NodeJS.ProcessEnv {
@@ -53,7 +59,13 @@ export function spawnCli(
 export function spawnCli(binary: string, args: string[], opts?: SpawnOptions): ChildProcess;
 export function spawnCli(binary: string, args: string[], opts: SpawnOptions = {}): ChildProcess {
   const target = cliSpawnTarget(binary, args);
-  return spawn(target.file, target.args, { detached: detachProcessGroup, windowsHide: true, ...opts, env: childEnv(opts.env) });
+  return spawn(target.file, target.args, {
+    detached: detachProcessGroup,
+    windowsHide: true,
+    ...opts,
+    ...verbatim(target),
+    env: childEnv(opts.env)
+  });
 }
 
 export function execCliFile(
@@ -64,7 +76,7 @@ export function execCliFile(
   const target = cliSpawnTarget(binary, args);
   return new Promise((resolve, reject) => {
     try {
-      execFile(target.file, target.args, { windowsHide: true, ...opts, env: childEnv(opts.env) }, (error, stdout, stderr) => {
+      execFile(target.file, target.args, { windowsHide: true, ...opts, ...verbatim(target), env: childEnv(opts.env) }, (error, stdout, stderr) => {
         if (error) {
           reject(error);
           return;

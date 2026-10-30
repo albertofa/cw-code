@@ -1,9 +1,10 @@
 import { existsSync } from "node:fs";
 import { delimiter, join } from "node:path";
+import { cmdSwitchLine } from "../cli/cmdLine.js";
 
 export interface ShellTarget {
   file: string;
-  args: string[];
+  args: string[] | string;
 }
 
 export interface ResolveEnv {
@@ -63,9 +64,6 @@ export function toShellTarget(file: string, args: string[], env: ResolveEnv = cu
     const inner = [resolved, ...args].map(quoteWindows).join(" ");
     return { file: "powershell.exe", args: ["-NoLogo", "-NoExit", "-Command", `& ${inner}`] };
   }
-  if (ext === "cmd" || ext === "bat") {
-    const inner = [resolved, ...args].map(quoteWindows).join(" ");
-    return { file: "cmd.exe", args: ["/k", inner] };
-  }
+  if (ext === "cmd" || ext === "bat") return { file: "cmd.exe", args: cmdSwitchLine("/k", resolved, args) };
   return { file: resolved, args };
 }

@@ -3,7 +3,9 @@ import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
-import { toShellTarget } from "./resolve.js";
+import { claudePluginArgs, CW_AGENT_TOKEN_ENV, CW_MCP_URL_ENV } from "../agent/claudePlugin.js";
+import { codexTerminalMcpArgs } from "../agent/codexMcp.js";
+import { toShellTarget, type ShellTarget } from "./resolve.js";
 import { parseExtraArgs } from "../settings/settingsUtils.js";
 import { traceHarnessCall, truncateError } from "../debug/harnessTrace.js";
 import { shutdownReservedError } from "../shutdown/shutdownReservation.js";
@@ -29,7 +31,7 @@ export interface PtyInstance {
 }
 
 export interface PtyModule {
-  spawn(file: string, args: string[], opts: { name: string; cols: number; rows: number; cwd: string; env?: NodeJS.ProcessEnv }): PtyInstance;
+  spawn(file: string, args: string[] | string, opts: { name: string; cols: number; rows: number; cwd: string; env?: NodeJS.ProcessEnv }): PtyInstance;
 }
 
 export interface PtyListEntry {
@@ -94,6 +96,10 @@ export function buildResumeArgs(kind: PtyKind, cursor: string): string[] {
   return [];
 }
 
+function argList(args: string[] | string): string[] {
+  return typeof args === "string" ? [args] : args;
+}
+
 function appendReplay(entry: PtyEntry, data: string): void {
   entry.replay += data;
   const over = entry.replay.length - REPLAY_LIMIT_CHARS;
@@ -114,7 +120,8 @@ export class PtyPool {
 
   constructor(
     private getSettings: () => AppSettings,
-    private loadModule: () => Promise<PtyModule> = loadPty
+    private loadModule: () => Promise<PtyModule> = loadPty,
+    private claudePluginDir: () => string | null = () => null
   ) {}
 
   setExitEmitter(onExit: (ptyId: string, token: string, exitCode: number) => void): void {
@@ -256,7 +263,7 @@ export class PtyPool {
     if (kind === "claude") {
       const s = this.getSettings();
       file = s.claudeBinaryPath;
-      extra = parseExtraArgs(s.claudeExtraArgs);
+      extra = [...claudePluginArgs(this.claudePluginDir()), ...parseExtraArgs(s.claudeExtraArgs)];
     } else if (kind === "opencode") {
       const s = this.getSettings();
       file = s.opencodeBinaryPath;
@@ -264,12 +271,14 @@ export class PtyPool {
     } else if (kind === "codex") {
       const s = this.getSettings();
       file = s.codexBinaryPath;
-      extra = parseExtraArgs(s.codexExtraArgs);
+      const mcpUrl = env?.[CW_MCP_URL_ENV];
+      const agentArgs = mcpUrl && env?.[CW_AGENT_TOKEN_ENV] ? codexTerminalMcpArgs(mcpUrl) : [];
+      extra = [...agentArgs, ...parseExtraArgs(s.codexExtraArgs)];
     } else {
       file = process.platform === "win32" ? "powershell.exe" : process.env["SHELL"] || "/bin/bash";
     }
     const args = [...(attached?.args ?? []), ...buildResumeArgs(kind, resumeCursor), ...extra];
-    let target: { file: string; args: string[] };
+    let target: ShellTarget;
     try {
       target = toShellTarget(file, args);
     } catch (err) {
@@ -300,7 +309,7 @@ export class PtyPool {
         operation,
         cwd,
         binary: target.file,
-        args: target.args,
+        args: argList(target.args),
         durationMs: Date.now() - start,
         ok: false,
         error: truncateError(`PTY spawn failed for '${file}': ${(err as Error).message}`),
@@ -332,7 +341,7 @@ export class PtyPool {
       operation,
       cwd,
       binary: target.file,
-      args: target.args,
+      args: argList(target.args),
       durationMs: Date.now() - start,
       ok: true,
       extra: { kind, ptyId }

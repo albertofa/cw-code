@@ -14,6 +14,8 @@ export const SERVER_RUNNING_PREFIX = "CW_SERVER_RUNNING ";
 export const WS_PATH = "/ws";
 export const INFO_PATH = "/api/info";
 export const STOP_PATH = "/api/stop";
+export const MCP_PATH = "/mcp";
+export const OPENCODE_SESSION_HEADER = "x-cw-opencode-session";
 export const EXIT_ALREADY_RUNNING = 3;
 export const PASTE_IMAGE_MAX_BYTES = 32 * 1024 * 1024;
 

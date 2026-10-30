@@ -10,6 +10,7 @@ import type {
   ResolvedWorkflowHarness
 } from "@cw-code/contracts";
 import { harnessLabel } from "@cw-code/shared/harnessLabels";
+import { PERMISSION_MODES } from "../providers/permissions.js";
 
 export interface EffortOption {
   id: EffortLevel;
@@ -60,8 +61,6 @@ export const PERMISSION_LABELS: Record<PermissionMode, string> = {
   auto: "Auto",
   bypassPermissions: "Full Access"
 };
-
-export const PERMISSION_MODES: PermissionMode[] = ["manual", "acceptEdits", "auto", "bypassPermissions"];
 
 export interface WorkflowHarnessContext {
   composerDriver: DriverKind;

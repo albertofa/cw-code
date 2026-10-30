@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import type { AppSettings } from "@cw-code/contracts";
-import { buildResumeArgs, PtyPool, type PtyInstance, type PtyModule } from "./PtyPool.js";
+import { buildResumeArgs, PtyPool, type PtyInstance, type PtyKind, type PtyModule } from "./PtyPool.js";
 import { SHUTDOWN_RESERVED_MESSAGE } from "../shutdown/shutdownReservation.js";
 
 describe("buildResumeArgs", () => {
@@ -92,6 +92,73 @@ function makePool() {
 }
 
 const noData = (): void => {};
+
+describe("PtyPool cw plugin", () => {
+  async function spawnedCommandLine(pluginDir: string | null, kind: PtyKind): Promise<string> {
+    const calls: string[] = [];
+    const module: PtyModule = {
+      spawn: (_file, args) => {
+        calls.push(typeof args === "string" ? args : args.join(" "));
+        return new FakePty();
+      }
+    };
+    const pool = new PtyPool(() => SETTINGS, async () => module, () => pluginDir);
+    await pool.open("sess_a", ".", kind, "cursor", undefined, noData);
+    return calls[0] ?? "";
+  }
+
+  it("passes --plugin-dir to Claude terminals only when the plugin is available", async () => {
+    expect(await spawnedCommandLine("C:\\plugin", "claude")).toContain("--plugin-dir C:\\plugin");
+    expect(await spawnedCommandLine(null, "claude")).not.toContain("--plugin-dir");
+  });
+
+  it("never passes --plugin-dir to other terminals", async () => {
+    expect(await spawnedCommandLine("C:\\plugin", "codex")).not.toContain("--plugin-dir");
+  });
+});
+
+describe("PtyPool cw MCP server for codex", () => {
+  const AGENT_ENV = { PATH: process.env["PATH"] ?? "", CW_MCP_URL: "http://127.0.0.1:4100/mcp", CW_AGENT_TOKEN: "secret-token" };
+
+  async function spawned(kind: PtyKind, env: Record<string, string> | undefined): Promise<{ args: string[]; env: NodeJS.ProcessEnv | undefined }> {
+    const calls: Array<{ args: string[]; env: NodeJS.ProcessEnv | undefined }> = [];
+    const module: PtyModule = {
+      spawn: (_file, args, opts) => {
+        calls.push({ args: typeof args === "string" ? [args] : args, env: opts.env });
+        return new FakePty();
+      }
+    };
+    const pool = new PtyPool(() => SETTINGS, async () => module);
+    await pool.open("sess_a", ".", kind, "thread-1", env, noData);
+    const call = calls[0];
+    if (!call) throw new Error("nothing spawned");
+    return call;
+  }
+
+  it("points codex terminals at the cw MCP server with the token only in the env", async () => {
+    const { args, env } = await spawned("codex", AGENT_ENV);
+    expect(args).toEqual([
+      "resume",
+      "thread-1",
+      "-c",
+      'mcp_servers.cw.url="http://127.0.0.1:4100/mcp"',
+      "-c",
+      'mcp_servers.cw.bearer_token_env_var="CW_AGENT_TOKEN"',
+      "-c",
+      'mcp_servers.cw.default_tools_approval_mode="approve"'
+    ]);
+    expect(args.join(" ")).not.toContain("secret-token");
+    expect(env?.["CW_AGENT_TOKEN"]).toBe("secret-token");
+  });
+
+  it("adds no MCP flags to codex terminals without the agent env", async () => {
+    expect((await spawned("codex", { PATH: AGENT_ENV.PATH })).args).toEqual(["resume", "thread-1"]);
+  });
+
+  it.each(["claude", "opencode", "shell"] as const)("adds no codex MCP flags to %s terminals", async (kind) => {
+    expect((await spawned(kind, AGENT_ENV)).args.join(" ")).not.toContain("mcp_servers");
+  });
+});
 
 describe("PtyPool shutdown support", () => {
   it("lists open terminals with their session and kind", async () => {

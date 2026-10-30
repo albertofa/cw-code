@@ -1,11 +1,11 @@
-import type { DriverKind, EffortLevel, PermissionMode, ProjectSettings } from "@cw-code/contracts";
+import type { DriverKind, EffortLevel, ProjectSettings } from "@cw-code/contracts";
+import { PERMISSION_MODES } from "../providers/permissions.js";
 
 export const MAX_PROJECT_SCRIPT_CHARS = 20_000;
 export const MAX_PROJECT_INSTRUCTION_CHARS = 4_000;
 
 const DRIVERS: readonly DriverKind[] = ["claude", "opencode", "codex"];
 const EFFORTS: readonly EffortLevel[] = ["minimal", "low", "medium", "high", "xhigh", "max"];
-const PERMISSION_MODES: readonly PermissionMode[] = ["auto", "acceptEdits", "bypassPermissions", "manual"];
 
 function oneOf<T extends string>(value: unknown, allowed: readonly T[]): T | undefined {
   return allowed.find((item) => item === value);

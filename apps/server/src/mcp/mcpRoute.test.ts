@@ -1,0 +1,603 @@
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import type { ComposerPrefs, CreateSessionOptions, DriverKind, PermissionMode, Project, SessionMeta, SettingsPatch } from "@cw-code/contracts";
+import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
+import { AgentTokens } from "../agent/AgentTokens.js";
+import { SessionWatch } from "../agent/SessionWatch.js";
+import type { ServerApp } from "../app/ServerApp.js";
+import { registerSessionHandlers } from "../handlers/sessions.js";
+import { registerSettingsHandlers } from "../handlers/settings.js";
+import { registerTurnHandlers } from "../handlers/turns.js";
+import type { StartTurnInput } from "../threads/TurnService.js";
+import { Router, type CallContext } from "../transport/Router.js";
+import { OPENCODE_SESSION_HEADER } from "@cw-code/shared/protocol";
+import { cwToolDefinitions, WAIT_MAX_MS } from "./cwTools.js";
+import { createMcpRoute, MCP_IDLE_TIMEOUT_SECONDS, MCP_SERVER_NAME } from "./mcpRoute.js";
+
+const URL_MCP = "http://127.0.0.1:4100/mcp";
+const TOOL_NAMES = [
+  "projects_list",
+  "sessions_list",
+  "session_get",
+  "session_create",
+  "session_send",
+  "session_stop",
+  "session_wait",
+  "usage_report",
+  "settings_get",
+  "settings_set"
+];
+const PROJECTS: Project[] = [{ id: "p1", rootPath: "/repo", name: "repo" }];
+
+interface StartedTurn {
+  sessionId: string;
+  prompt: string;
+  input: StartTurnInput;
+}
+
+function meta(id: string, status: SessionMeta["status"], permissionMode?: PermissionMode): SessionMeta {
+  return {
+    id,
+    projectId: "p1",
+    driver: "claude",
+    title: id,
+    status,
+    resumeCursor: "",
+    createdAt: 1,
+    updatedAt: 2,
+    ...(permissionMode ? { permissionMode } : {})
+  };
+}
+
+let tokens: AgentTokens;
+let callerToken: string;
+let sessions: SessionMeta[];
+let started: StartedTurn[];
+let turnModes: Map<string, PermissionMode>;
+let emitted: Array<{ channel: string; payload: unknown }>;
+let settings: Record<string, unknown>;
+let router: Router;
+let extended: number[];
+let route: ReturnType<typeof createMcpRoute>;
+let watch: SessionWatch;
+
+function findSession(id: string): SessionMeta {
+  const session = sessions.find((candidate) => candidate.id === id);
+  if (!session) throw new Error(`unknown session ${id}`);
+  return session;
+}
+
+const fakeSessions = {
+  listProjects: () => PROJECTS,
+  listSessions: async (projectId: string) => sessions.filter((session) => session.projectId === projectId),
+  createSession: async (projectId: string, driver: DriverKind, _options?: CreateSessionOptions) => {
+    const created = { ...meta(`s${sessions.length + 1}`, "idle"), projectId, driver };
+    sessions.push(created);
+    return { ...created };
+  },
+  getComposer: (id: string): ComposerPrefs => ({ permissionMode: findSession(id).permissionMode ?? "auto" }),
+  setComposer: (id: string, prefs: ComposerPrefs): ComposerPrefs => {
+    findSession(id).permissionMode = prefs.permissionMode;
+    return fakeSessions.getComposer(id);
+  },
+  turnPermissionMode: (id: string) => turnModes.get(id),
+  hasSession: (id: string) => sessions.some((session) => session.id === id),
+  getSettings: () => settings,
+  setSettings: (patch: SettingsPatch) => Object.assign(settings, patch)
+};
+
+function setStatus(id: string, status: SessionMeta["status"]): void {
+  const session = findSession(id);
+  session.status = status;
+  watch.sessionChanged({ ...session });
+}
+
+function completeTurn(id: string, resultText: string): void {
+  watch.turnSettled(id, {
+    type: "turn.done",
+    turnId: "t",
+    sessionId: id,
+    resumeCursor: "",
+    resultText,
+    usage: [],
+    numTurns: 1,
+    isError: false,
+    backgroundTasks: 0
+  });
+  setStatus(id, "idle");
+}
+
+const noop = (): void => {};
+
+function buildRouter(): Router {
+  const built = new Router();
+  const turns = {
+    start: async (sessionId: string, prompt: string, input: StartTurnInput) => {
+      setStatus(sessionId, "working");
+      started.push({ sessionId, prompt, input });
+      turnModes.set(sessionId, input.prefs?.permissionMode ?? fakeSessions.getComposer(sessionId).permissionMode ?? "auto");
+      return `turn-${started.length}`;
+    },
+    stop: () => ({ stopped: true })
+  };
+  const services = {
+    sessions: fakeSessions,
+    turns,
+    appTopic: { setSettings: noop },
+    prStore: { onSettingsChanged: noop },
+    autoFollowUp: { reevaluate: noop },
+    sidebar: { invalidate: noop },
+    githubViews: { onSettingsChanged: noop },
+    accountUsage: { invalidate: noop },
+    harnessMonitor: { check: async () => {} }
+  };
+  const app = {
+    requireServices: () => services,
+    emit: (channel: string, payload?: unknown) => emitted.push({ channel, payload })
+  } as unknown as ServerApp;
+  registerSessionHandlers(built, app);
+  registerTurnHandlers(built, app);
+  registerSettingsHandlers(built, app);
+  built.handle("usage.report", (query) => ({ query }));
+  return built;
+}
+
+function post(body: unknown, headers: Record<string, string> = {}): Request {
+  return new Request(URL_MCP, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${callerToken}`,
+      "Content-Type": "application/json",
+      Accept: "application/json, text/event-stream",
+      ...headers
+    },
+    body: JSON.stringify(body)
+  });
+}
+
+function callRoute(req: Request): Promise<Response> {
+  return route(req, (seconds) => extended.push(seconds));
+}
+
+async function readRpc(response: Response): Promise<{ result?: Record<string, unknown>; error?: { message: string } }> {
+  const text = await response.text();
+  if (!(response.headers.get("content-type") ?? "").includes("text/event-stream")) return JSON.parse(text);
+  const data = text
+    .split("\n")
+    .filter((line) => line.startsWith("data: "))
+    .map((line) => line.slice("data: ".length))
+    .at(-1);
+  if (data === undefined) throw new Error(`no SSE data in ${text}`);
+  return JSON.parse(data);
+}
+
+async function modernClient(seen: Response[], token = callerToken): Promise<Client> {
+  const client = new Client({ name: "test-agent", version: "1.0.0" }, { versionNegotiation: { mode: { pin: "2026-07-28" } } });
+  const transport = new StreamableHTTPClientTransport(new URL(URL_MCP), {
+    requestInit: { headers: { Authorization: `Bearer ${token}` } },
+    fetch: async (url, init) => {
+      const response = await callRoute(new Request(url, init));
+      seen.push(response);
+      return response;
+    }
+  });
+  await client.connect(transport);
+  return client;
+}
+
+function toolText(result: { content?: unknown }): string {
+  const [first] = result.content as Array<{ type: string; text: string }>;
+  return first.text;
+}
+
+function agent(sessionId: string): CallContext {
+  return { clientId: `mcp:${sessionId}`, client: "mcp", auth: { kind: "agent", sessionId } };
+}
+
+beforeEach(() => {
+  tokens = new AgentTokens();
+  callerToken = tokens.tokenFor("caller");
+  sessions = [meta("caller", "working", "manual"), meta("target", "idle", "bypassPermissions"), meta("old", "resolved", "auto")];
+  started = [];
+  turnModes = new Map();
+  emitted = [];
+  settings = { claudeDefaultModel: "opus" };
+  extended = [];
+  router = buildRouter();
+  watch = new SessionWatch({ getSession: (id) => sessions.find((session) => session.id === id) });
+  route = createMcpRoute({ router, tokens, watch, sessions: fakeSessions, version: "9.9.9" });
+});
+
+describe("mcp route gate", () => {
+  test("rejects a request without a bearer token and keeps the default idle timeout", async () => {
+    const response = await callRoute(new Request(URL_MCP, { method: "POST", body: "{}" }));
+    expect(response.status).toBe(401);
+    expect(response.headers.get("www-authenticate")).toBe("Bearer");
+    expect(response.headers.get("x-content-type-options")).toBe("nosniff");
+    expect(extended).toEqual([]);
+  });
+
+  test("rejects an unknown bearer token", async () => {
+    const response = await callRoute(post({}, { Authorization: "Bearer not-a-token" }));
+    expect(response.status).toBe(401);
+    expect(extended).toEqual([]);
+  });
+
+  test("rejects a revoked token", async () => {
+    tokens.revoke("caller");
+    expect((await callRoute(post({}))).status).toBe(401);
+  });
+
+  test("rejects any Origin header", async () => {
+    const response = await callRoute(post({}, { Origin: "http://evil.example" }));
+    expect(response.status).toBe(403);
+    expect(response.headers.get("x-frame-options")).toBe("DENY");
+    expect(extended).toEqual([]);
+  });
+
+  test("answers GET with 405", async () => {
+    const response = await callRoute(new Request(URL_MCP, { headers: { Authorization: `Bearer ${callerToken}`, Accept: "text/event-stream" } }));
+    expect(response.status).toBe(405);
+  });
+
+  test("extends the idle timeout to a finite value beyond the longest wait once the bearer verifies", async () => {
+    await callRoute(post({ jsonrpc: "2.0", id: 1, method: "tools/list", params: {} }, { "MCP-Protocol-Version": "2025-11-25" }));
+    expect(extended).toEqual([MCP_IDLE_TIMEOUT_SECONDS]);
+    expect(MCP_IDLE_TIMEOUT_SECONDS).toBe(255);
+    expect(WAIT_MAX_MS / 1000).toBeLessThan(MCP_IDLE_TIMEOUT_SECONDS);
+  });
+});
+
+describe("mcp modern era", () => {
+  let client: Client;
+  let seen: Response[];
+  const others: Client[] = [];
+
+  beforeEach(async () => {
+    seen = [];
+    client = await modernClient(seen);
+  });
+
+  afterEach(async () => {
+    await client.close();
+    await Promise.all(others.splice(0).map((other) => other.close()));
+  });
+
+  async function clientFor(sessionId: string): Promise<Client> {
+    const other = await modernClient([], tokens.tokenFor(sessionId));
+    others.push(other);
+    return other;
+  }
+
+  test("discovers the server and lists the cw tools without a session id", async () => {
+    expect(client.getServerVersion()).toMatchObject({ name: MCP_SERVER_NAME, version: "9.9.9" });
+    const { tools } = await client.listTools();
+    expect(tools.map((tool) => tool.name).sort()).toEqual([...TOOL_NAMES].sort());
+    expect(seen.length).toBeGreaterThan(0);
+    for (const response of seen) expect(response.headers.get("mcp-session-id")).toBeNull();
+  });
+
+  test("lists active sessions and hides resolved ones by default", async () => {
+    const result = await client.callTool({ name: "sessions_list", arguments: {} });
+    expect(JSON.parse(toolText(result)).map((row: { id: string }) => row.id)).toEqual(["caller", "target"]);
+    const all = await client.callTool({ name: "sessions_list", arguments: { includeResolved: true } });
+    expect(JSON.parse(toolText(all))).toHaveLength(3);
+  });
+
+  test("refuses to stop the caller's own session", async () => {
+    const result = await client.callTool({ name: "session_stop", arguments: { sessionId: "caller" } });
+    expect(result.isError).toBe(true);
+    expect(toolText(result)).toContain("own session");
+  });
+
+  test("refuses to send a prompt to the caller's own session", async () => {
+    const result = await client.callTool({ name: "session_send", arguments: { sessionId: "caller", prompt: "hi" } });
+    expect(result.isError).toBe(true);
+    expect(started).toHaveLength(0);
+  });
+
+  test("refuses to wait on the caller's own session", async () => {
+    const result = await client.callTool({ name: "session_wait", arguments: { sessionId: "caller" } });
+    expect(result.isError).toBe(true);
+    expect(toolText(result)).toBe("an agent cannot wait on its own session");
+  });
+
+  test("reports an unknown session as an error result", async () => {
+    const result = await client.callTool({ name: "session_get", arguments: { sessionId: "missing" } });
+    expect(result.isError).toBe(true);
+    expect(toolText(result)).toBe("unknown session missing");
+  });
+
+  test("reports the effective permission mode of a session with no stored mode", async () => {
+    sessions.push(meta("plain", "idle"));
+    const result = await client.callTool({ name: "session_get", arguments: { sessionId: "plain" } });
+    expect(JSON.parse(toolText(result))).toMatchObject({ id: "plain", permissionMode: "auto" });
+  });
+
+  test("caps a requested bypassPermissions at the caller's manual mode", async () => {
+    const result = await client.callTool({
+      name: "session_create",
+      arguments: { projectId: "p1", driver: "claude", prompt: "do it", permissionMode: "bypassPermissions" }
+    });
+    expect(result.isError).toBeUndefined();
+    expect(JSON.parse(toolText(result))).toEqual({ sessionId: "s4", turnId: "turn-1", permissionMode: "manual" });
+    expect(started[0]).toMatchObject({ sessionId: "s4", prompt: "do it" });
+    expect(started[0]?.input.prefs?.permissionMode).toBe("manual");
+  });
+
+  test("persists the caller cap as the stored mode of a session it creates", async () => {
+    sessions.push(meta("editor", "working", "acceptEdits"));
+    const editor = await clientFor("editor");
+    const result = await editor.callTool({ name: "session_create", arguments: { projectId: "p1", driver: "codex", prompt: "go" } });
+    const { sessionId, permissionMode } = JSON.parse(toolText(result)) as { sessionId: string; permissionMode: PermissionMode };
+    expect(permissionMode).toBe("acceptEdits");
+    expect(findSession(sessionId).permissionMode).toBe("acceptEdits");
+    expect(fakeSessions.getComposer(sessionId).permissionMode).toBe("acceptEdits");
+    expect(emitted).toContainEqual({ channel: "composer.changed", payload: { sessionId, prefs: { permissionMode: "acceptEdits" } } });
+
+    const child = await clientFor(sessionId);
+    const grandchild = await child.callTool({
+      name: "session_create",
+      arguments: { projectId: "p1", driver: "claude", prompt: "deeper", permissionMode: "bypassPermissions" }
+    });
+    expect(JSON.parse(toolText(grandchild))).toMatchObject({ permissionMode: "acceptEdits" });
+    expect(started.at(-1)?.input.prefs?.permissionMode).toBe("acceptEdits");
+  });
+
+  test("caps the target session's stored mode when none is requested", async () => {
+    await client.callTool({ name: "session_send", arguments: { sessionId: "target", prompt: "next" } });
+    expect(started[0]?.input.prefs?.permissionMode).toBe("manual");
+  });
+
+  test("caps a session's own children at the mode its running turn was started with", async () => {
+    await client.callTool({ name: "session_send", arguments: { sessionId: "target", prompt: "next" } });
+    expect(turnModes.get("target")).toBe("manual");
+    const target = await clientFor("target");
+    const result = await target.callTool({
+      name: "session_create",
+      arguments: { projectId: "p1", driver: "claude", prompt: "escalate", permissionMode: "bypassPermissions" }
+    });
+    expect(JSON.parse(toolText(result))).toMatchObject({ permissionMode: "manual" });
+    expect(started.at(-1)?.input.prefs?.permissionMode).toBe("manual");
+    const created = (JSON.parse(toolText(result)) as { sessionId: string }).sessionId;
+    expect(findSession(created).permissionMode).toBe("manual");
+  });
+
+  test("rejects session_create with an unsafe model before creating anything", async () => {
+    const result = await client.callTool({ name: "session_create", arguments: { projectId: "p1", driver: "claude", prompt: "go", model: "opus&whoami" } });
+    expect(result.isError).toBe(true);
+    expect(sessions).toHaveLength(3);
+    expect(started).toHaveLength(0);
+  });
+
+  test("returns at once when waiting on a session that is not working", async () => {
+    const result = await client.callTool({ name: "session_wait", arguments: { sessionId: "target" } });
+    expect(JSON.parse(toolText(result))).toEqual({ status: "idle", lastResultText: null, timedOut: false });
+  });
+
+  test("waits on a sent turn while it works and resolves when it completes", async () => {
+    await client.callTool({ name: "session_send", arguments: { sessionId: "target", prompt: "next" } });
+    expect(findSession("target").status).toBe("working");
+    const waiting = client.callTool({ name: "session_wait", arguments: { sessionId: "target", timeoutMs: 5_000 } });
+    const pending = Symbol("pending");
+    expect(await Promise.race([waiting, new Promise((resolve) => setTimeout(() => resolve(pending), 50))])).toBe(pending);
+    completeTurn("target", "finished");
+    expect(JSON.parse(toolText(await waiting))).toEqual({ status: "idle", lastResultText: "finished", timedOut: false });
+  });
+
+  test("times out waiting on a session that keeps working", async () => {
+    sessions.push(meta("busy", "working", "auto"));
+    const result = await client.callTool({ name: "session_wait", arguments: { sessionId: "busy", timeoutMs: 1 } });
+    expect(JSON.parse(toolText(result))).toEqual({ status: "working", lastResultText: null, timedOut: true });
+  });
+
+  test("reports a forbidden settings key as an error result", async () => {
+    const result = await client.callTool({ name: "settings_set", arguments: { patch: { claudeBinaryPath: "/tmp/evil" } } });
+    expect(result.isError).toBe(true);
+    expect(toolText(result)).toContain("claudeBinaryPath");
+    expect(settings).not.toHaveProperty("claudeBinaryPath");
+  });
+
+  test("applies an allowlisted settings key", async () => {
+    const result = await client.callTool({ name: "settings_set", arguments: { patch: { claudeDefaultModel: "sonnet" } } });
+    expect(result.isError).toBeUndefined();
+    expect(settings.claudeDefaultModel).toBe("sonnet");
+  });
+});
+
+describe("agent call arguments", () => {
+  test.each([
+    ["command", { name: "review" }],
+    ["attachments", ["/etc/passwd"]],
+    ["acceptFolderHead", "main"],
+    ["prRefs", [{ owner: "o", repo: "r", number: 1 }]]
+  ])("turns.start rejects %s from an agent", async (field, value) => {
+    await expect(router.dispatch("turns.start", { sessionId: "target", prompt: "p", [field]: value }, agent("caller"))).rejects.toMatchObject({
+      code: "forbidden"
+    });
+    expect(started).toHaveLength(0);
+  });
+
+  test.each([["model"], ["variant"]])("turns.start rejects an unsafe prefs.%s from an agent", async (field) => {
+    await expect(
+      router.dispatch("turns.start", { sessionId: "target", prompt: "p", prefs: { [field]: "opus&whoami" } }, agent("caller"))
+    ).rejects.toMatchObject({ code: "forbidden" });
+    expect(started).toHaveLength(0);
+  });
+
+  test("turns.start accepts a provider-qualified model id from an agent", async () => {
+    await router.dispatch("turns.start", { sessionId: "target", prompt: "p", prefs: { model: "openai/gpt-5", variant: "high" } }, agent("caller"));
+    expect(started[0]?.input.prefs).toMatchObject({ model: "openai/gpt-5", variant: "high" });
+  });
+
+  test("turns.start leaves owner model ids to the launcher", async () => {
+    const owner: CallContext = { clientId: "ui", client: "desktop-ui", auth: { kind: "owner" } };
+    await router.dispatch("turns.start", { sessionId: "target", prompt: "p", prefs: { model: "custom model" } }, owner);
+    expect(started[0]?.input.prefs?.model).toBe("custom model");
+  });
+
+  test("settings.set rejects an unsafe default model from an agent", async () => {
+    await expect(router.dispatch("settings.set", { codexDefaultModel: "gpt&calc" }, agent("caller"))).rejects.toMatchObject({ code: "forbidden" });
+    expect(settings).not.toHaveProperty("codexDefaultModel");
+  });
+
+  test("sessions.create rejects options other than useWorktree from an agent", async () => {
+    await expect(
+      router.dispatch("sessions.create", { projectId: "p1", driver: "claude", options: { useWorktree: true, reuseWorktreePath: "/x" } }, agent("caller"))
+    ).rejects.toMatchObject({ code: "forbidden" });
+    expect(sessions).toHaveLength(3);
+  });
+
+  test("sessions.create leaves the stored mode alone for the owner", async () => {
+    const owner: CallContext = { clientId: "ui", client: "desktop-ui", auth: { kind: "owner" } };
+    const created = (await router.dispatch("sessions.create", { projectId: "p1", driver: "claude", options: { baseBranch: "main" } }, owner)) as SessionMeta;
+    expect(findSession(created.id).permissionMode).toBeUndefined();
+    expect(emitted).toEqual([]);
+  });
+});
+
+describe("cw tool definitions", () => {
+  test("describe the same ten tools the server registers, with object input schemas", async () => {
+    const definitions = cwToolDefinitions();
+    expect(definitions.map((definition) => definition.name)).toEqual(TOOL_NAMES);
+    const client = await modernClient([]);
+    const { tools } = await client.listTools();
+    await client.close();
+    for (const definition of definitions) {
+      expect(definition.description.length).toBeGreaterThan(0);
+      expect(definition.inputSchema.type).toBe("object");
+      expect(definition.inputSchema).not.toHaveProperty("$schema");
+      expect(tools.find((tool) => tool.name === definition.name)?.description).toBe(definition.description);
+    }
+  });
+
+  test("use only patterns that strict regex engines accept", () => {
+    const patterns = JSON.stringify(cwToolDefinitions()).match(/"pattern":"(?:[^"\\]|\\.)*"/g) ?? [];
+    expect(patterns.length).toBeGreaterThan(0);
+    for (const entry of patterns) {
+      const pattern = (JSON.parse(`{${entry}}`) as { pattern: string }).pattern;
+      expect(() => new RegExp(pattern, "v")).not.toThrow();
+    }
+  });
+});
+
+describe("mcp opencode principal", () => {
+  const SECRET = "opencode-secret";
+  let inFlight: Map<string, string>;
+  let resolved: Array<[string, string]>;
+
+  beforeEach(() => {
+    inFlight = new Map([["ses_oc", "caller"]]);
+    resolved = [];
+    route = createMcpRoute({
+      router,
+      tokens,
+      watch,
+      sessions: fakeSessions,
+      version: "9.9.9",
+      resolveOpencode: (secret, opencodeSessionId) => {
+        resolved.push([secret, opencodeSessionId]);
+        const sessionId = secret === SECRET ? inFlight.get(opencodeSessionId) : undefined;
+        return sessionId ? { sessionId } : null;
+      }
+    });
+  });
+
+  function opencodeCall(name: string, args: Record<string, unknown>, secret: string, opencodeSession: string): Request {
+    return post(
+      { jsonrpc: "2.0", id: 7, method: "tools/call", params: { name, arguments: args } },
+      { Authorization: `Bearer ${secret}`, [OPENCODE_SESSION_HEADER]: opencodeSession, "MCP-Protocol-Version": "2025-11-25" }
+    );
+  }
+
+  test("accepts the opencode secret for an in-flight session and acts as that cw-code session", async () => {
+    const response = await callRoute(opencodeCall("session_stop", { sessionId: "caller" }, SECRET, "ses_oc"));
+    expect(response.status).toBe(200);
+    expect(extended).toEqual([MCP_IDLE_TIMEOUT_SECONDS]);
+    const called = await readRpc(response);
+    expect(called.result?.isError).toBe(true);
+    expect((called.result?.content as Array<{ text: string }>)[0]?.text).toBe("an agent cannot stop its own session");
+    expect(resolved).toEqual([[SECRET, "ses_oc"]]);
+  });
+
+  test("applies the caller's permission cap to sessions it creates", async () => {
+    const response = await callRoute(
+      opencodeCall("session_create", { projectId: "p1", driver: "claude", prompt: "go", permissionMode: "bypassPermissions" }, SECRET, "ses_oc")
+    );
+    const created = await readRpc(response);
+    expect(JSON.parse((created.result?.content as Array<{ text: string }>)[0]?.text ?? "null")).toMatchObject({ permissionMode: "manual" });
+  });
+
+  test.each([
+    ["a wrong secret", "not-the-secret", "ses_oc"],
+    ["an unknown opencode session", SECRET, "ses_other"],
+    ["an empty opencode session", SECRET, ""]
+  ])("rejects %s", async (_label, secret, opencodeSession) => {
+    const response = await callRoute(opencodeCall("projects_list", {}, secret, opencodeSession));
+    expect(response.status).toBe(401);
+    expect(extended).toEqual([]);
+  });
+
+  test("rejects a session whose turn has finished", async () => {
+    expect((await callRoute(opencodeCall("projects_list", {}, SECRET, "ses_oc"))).status).toBe(200);
+    inFlight.delete("ses_oc");
+    expect((await callRoute(opencodeCall("projects_list", {}, SECRET, "ses_oc"))).status).toBe(401);
+  });
+
+  test("does not accept an agent token with the opencode header", async () => {
+    const response = await callRoute(opencodeCall("projects_list", {}, callerToken, "ses_oc"));
+    expect(response.status).toBe(401);
+    expect(resolved).toEqual([[callerToken, "ses_oc"]]);
+  });
+
+  test("never asks the opencode resolver about requests without the header", async () => {
+    expect((await callRoute(post({ jsonrpc: "2.0", id: 1, method: "tools/list", params: {} }, { Authorization: `Bearer ${SECRET}` }))).status).toBe(401);
+    expect((await callRoute(post({ jsonrpc: "2.0", id: 2, method: "tools/list", params: {} }, { "MCP-Protocol-Version": "2025-11-25" }))).status).toBe(200);
+    expect(resolved).toEqual([]);
+  });
+
+  test("rejects the header when no opencode resolver is wired", async () => {
+    route = createMcpRoute({ router, tokens, watch, sessions: fakeSessions, version: "9.9.9" });
+    expect((await callRoute(opencodeCall("projects_list", {}, SECRET, "ses_oc"))).status).toBe(401);
+  });
+
+  test("rejects any Origin before checking the opencode secret", async () => {
+    const request = opencodeCall("projects_list", {}, SECRET, "ses_oc");
+    request.headers.set("Origin", "http://evil.example");
+    expect((await callRoute(request)).status).toBe(403);
+    expect(resolved).toEqual([]);
+  });
+});
+
+describe("mcp legacy era", () => {
+  test("serves initialize and a following tools/list statelessly", async () => {
+    const initialize = await callRoute(
+      post({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "initialize",
+        params: { protocolVersion: "2025-11-25", capabilities: {}, clientInfo: { name: "legacy", version: "1.0.0" } }
+      })
+    );
+    expect(initialize.status).toBe(200);
+    expect(initialize.headers.get("mcp-session-id")).toBeNull();
+    const initialized = await readRpc(initialize);
+    expect(initialized.result?.serverInfo).toMatchObject({ name: MCP_SERVER_NAME, version: "9.9.9" });
+
+    const list = await callRoute(post({ jsonrpc: "2.0", id: 2, method: "tools/list", params: {} }, { "MCP-Protocol-Version": "2025-11-25" }));
+    expect(list.status).toBe(200);
+    expect(list.headers.get("mcp-session-id")).toBeNull();
+    const listed = await readRpc(list);
+    expect((listed.result?.tools as Array<{ name: string }>).map((tool) => tool.name).sort()).toEqual([...TOOL_NAMES].sort());
+  });
+
+  test("serves a tools/call without a prior initialize", async () => {
+    const response = await callRoute(
+      post({ jsonrpc: "2.0", id: 3, method: "tools/call", params: { name: "projects_list", arguments: {} } }, { "MCP-Protocol-Version": "2025-11-25" })
+    );
+    expect(response.status).toBe(200);
+    expect(response.headers.get("mcp-session-id")).toBeNull();
+    const called = await readRpc(response);
+    const content = called.result?.content as Array<{ text: string }>;
+    expect(JSON.parse(content[0]?.text ?? "null")).toEqual(PROJECTS);
+  });
+});
