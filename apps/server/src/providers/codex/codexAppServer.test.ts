@@ -83,13 +83,34 @@ describe("CodexAppServer", () => {
   it("runs the initialized hook before requests queued during startup", async () => {
     const server = new CodexAppServer({ binary: process.execPath, args: [scriptPath] });
     const order: string[] = [];
-    server.onInitialized(async () => {
-      const res = await server.request<{ echo: string }>("skills/extraRoots/set", { extraRoots: ["/r"] });
+    server.onInitialized(async (request) => {
+      const res = await request<{ echo: string }>("skills/extraRoots/set", { extraRoots: ["/r"] });
       order.push(res.echo);
     });
     try {
       const res = await server.request<{ echo: string }>("thread/start", {});
       order.push(res.echo);
+      expect(order).toEqual(["skills/extraRoots/set", "thread/start"]);
+    } finally {
+      server.dispose();
+    }
+  });
+
+  it("holds a request sent while the initialized hook runs until the hook's own request is done", async () => {
+    const server = new CodexAppServer({ binary: process.execPath, args: [scriptPath] });
+    const order: string[] = [];
+    let concurrent: Promise<void> | undefined;
+    server.onInitialized(async (request) => {
+      concurrent = server.request("thread/start", {}).then(() => {
+        order.push("thread/start");
+      });
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      await request("skills/extraRoots/set", { extraRoots: ["/r"] });
+      order.push("skills/extraRoots/set");
+    });
+    try {
+      await server.request("first");
+      await concurrent;
       expect(order).toEqual(["skills/extraRoots/set", "thread/start"]);
     } finally {
       server.dispose();

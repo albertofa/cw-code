@@ -28,7 +28,7 @@ import { parseExtraArgs } from "../../settings/settingsUtils.js";
 import { previewText, traceHarnessCall, truncateError } from "../../debug/harnessTrace.js";
 import { codexAgentFingerprint, codexThreadConfig } from "../../agent/codexMcp.js";
 import { ActivityNotifier } from "../ActivityNotifier.js";
-import { CodexAppServer, type CodexAppServerLike } from "./codexAppServer.js";
+import { CodexAppServer, type CodexAppServerLike, type CodexRequestFn } from "./codexAppServer.js";
 import { mapCodexAccountGate, mapCodexUsage } from "./codexAccountUsage.js";
 import {
   accumulateCodexTurnUsage,
@@ -155,23 +155,23 @@ export class CodexCliDriver implements CliDriver {
     this.ownsClient = client === undefined;
     this.client.onNotification((method, params) => this.handleNotification(method, params));
     this.client.onServerRequest((method, params, id) => this.handleServerRequest(method, params, id));
-    this.client.onInitialized?.(() => this.appServerInitialized());
+    this.client.onInitialized?.((request) => this.appServerInitialized(request));
   }
 
-  private appServerInitialized(): Promise<void> {
+  private appServerInitialized(request: CodexRequestFn): Promise<void> {
     this.loadedThreadAgents.clear();
     this.appServerReady = true;
     this.skillsRootAttempted = null;
-    return this.applySkillsRoot();
+    return this.applySkillsRoot(request);
   }
 
-  private async applySkillsRoot(): Promise<void> {
+  private async applySkillsRoot(request: CodexRequestFn = (method, params, timeoutMs) => this.client.request(method, params, timeoutMs)): Promise<void> {
     const root = this.codexSkillsRoot();
     if (!root || root === this.skillsRootAttempted) return;
     this.skillsRootAttempted = root;
     const start = Date.now();
     try {
-      await this.client.request<unknown>("skills/extraRoots/set", { extraRoots: [root] }, 10_000);
+      await request<unknown>("skills/extraRoots/set", { extraRoots: [root] }, 10_000);
       traceHarnessCall({ harness: "codex", operation: "codex.skillsRoot", cwd: root, durationMs: Date.now() - start, ok: true });
     } catch (err) {
       const message = truncateError((err as Error).message);
@@ -595,7 +595,8 @@ export class CodexCliDriver implements CliDriver {
     const threadId = request.resumeCursor as string;
     const fingerprint = codexAgentFingerprint(request.agent);
     const loadedWith = this.loadedThreadAgents.get(threadId);
-    if (loadedWith !== undefined && loadedWith !== fingerprint) await this.unloadThread(threadId, request.sessionId);
+    const stale = loadedWith !== undefined && loadedWith !== fingerprint;
+    const unloaded = !stale || (await this.unloadThread(threadId, request.sessionId));
     const params = {
       threadId,
       cwd: request.cwd,
@@ -615,19 +616,21 @@ export class CodexCliDriver implements CliDriver {
       const res = await this.client.request<{ thread: { id: string } }>("thread/resume", params);
       resumed = res.thread.id || threadId;
     }
-    this.loadedThreadAgents.set(resumed, fingerprint);
+    if (unloaded) this.loadedThreadAgents.set(resumed, fingerprint);
     return resumed;
   }
 
-  private async unloadThread(threadId: string, sessionId: string): Promise<void> {
+  private async unloadThread(threadId: string, sessionId: string): Promise<boolean> {
     try {
       await this.client.request<unknown>("thread/unsubscribe", { threadId }, 15_000);
       this.loadedThreadAgents.delete(threadId);
       traceHarnessCall({ harness: "codex", operation: "codex.unsubscribeThread", sessionId, resumeCursor: threadId, ok: true });
+      return true;
     } catch (err) {
       const message = truncateError((err as Error).message);
       console.warn(`codex thread/unsubscribe failed for ${threadId}; the resumed thread may keep its previous cw MCP token: ${message}`);
       traceHarnessCall({ harness: "codex", operation: "codex.unsubscribeThread", sessionId, resumeCursor: threadId, ok: false, error: message });
+      return false;
     }
   }
 

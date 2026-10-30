@@ -22,13 +22,18 @@ export interface CodexAppServerOptions {
   initializeTimeoutMs?: number;
 }
 
+export type CodexRequestFn = <T>(method: string, params?: unknown, timeoutMs?: number) => Promise<T>;
+
 export interface CodexAppServerLike {
   request<T>(method: string, params?: unknown, timeoutMs?: number): Promise<T>;
   respond(id: string | number, result: unknown): void;
   onNotification(handler: (method: string, params: unknown) => void): void;
   onServerRequest(handler: (method: string, params: unknown, id: string | number) => void): void;
-  /** Runs after every app-server initialize handshake, before queued requests are sent. */
-  onInitialized?(handler: () => Promise<void>): void;
+  /**
+   * Runs after every app-server initialize handshake. Every other request waits until it settles;
+   * the hook sends its own requests through the function it receives.
+   */
+  onInitialized?(handler: (request: CodexRequestFn) => Promise<void>): void;
   /** Applies the spawn env for the next app-server launch; no effect on an already-running process. */
   setSpawnEnv?(env: Record<string, string> | undefined): void;
   ownedProcessCount?(): number;
@@ -63,7 +68,8 @@ export class CodexAppServer implements CodexAppServerLike {
   private pending = new Map<string | number, PendingRequest>();
   private notificationHandler: ((method: string, params: unknown) => void) | null = null;
   private serverRequestHandler: ((method: string, params: unknown, id: string | number) => void) | null = null;
-  private initializedHandler: (() => Promise<void>) | null = null;
+  private initializedHandler: ((request: CodexRequestFn) => Promise<void>) | null = null;
+  private initializing: ChildProcess | null = null;
   private stderrTail: string[] = [];
   private disposed = false;
 
@@ -77,7 +83,7 @@ export class CodexAppServer implements CodexAppServerLike {
     this.serverRequestHandler = handler;
   }
 
-  onInitialized(handler: () => Promise<void>): void {
+  onInitialized(handler: (request: CodexRequestFn) => Promise<void>): void {
     this.initializedHandler = handler;
   }
 
@@ -86,23 +92,26 @@ export class CodexAppServer implements CodexAppServerLike {
   }
 
   request<T>(method: string, params?: unknown, timeoutMs = 60_000): Promise<T> {
-    return this.withProcess(async (proc) => {
-      const id = this.nextId++;
-      const promise = new Promise<T>((resolve, reject) => {
-        const timer = setTimeout(() => {
-          this.pending.delete(id);
-          reject(new CodexAppServerError(`codex app-server request '${method}' timed out`));
-        }, timeoutMs);
-        this.pending.set(id, { resolve: resolve as (v: unknown) => void, reject, timer });
-      });
-      this.writeLine(proc, { method, id, params });
-      return promise;
+    return this.withProcess((proc) => this.send<T>(proc, method, params, timeoutMs));
+  }
+
+  private send<T>(proc: ChildProcess, method: string, params: unknown, timeoutMs: number): Promise<T> {
+    const id = this.nextId++;
+    const promise = new Promise<T>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this.pending.delete(id);
+        reject(new CodexAppServerError(`codex app-server request '${method}' timed out`));
+      }, timeoutMs);
+      this.pending.set(id, { resolve: resolve as (v: unknown) => void, reject, timer });
     });
+    this.writeLine(proc, { method, id, params });
+    return promise;
   }
 
   respond(id: string | number, result: unknown): void {
-    if (!this.proc || !this.proc.stdin || this.proc.stdin.destroyed) return;
-    this.writeLine(this.proc, { id, result });
+    const proc = this.proc ?? this.initializing;
+    if (!proc || !proc.stdin || proc.stdin.destroyed) return;
+    this.writeLine(proc, { id, result });
   }
 
   ownedProcessCount(): number {
@@ -234,13 +243,17 @@ export class CodexAppServer implements CodexAppServerLike {
     }
     if (this.disposed) throw new CodexAppServerError("codex app-server disposed");
     this.writeLine(proc, { method: "initialized" });
-    this.proc = proc;
+    this.initializing = proc;
     try {
-      await this.initializedHandler?.();
+      await this.initializedHandler?.((method, params, timeoutMs = 60_000) => this.send(proc, method, params, timeoutMs));
     } catch (err) {
       console.warn(`codex app-server initialized hook failed: ${(err as Error).message}`);
+    } finally {
+      this.initializing = null;
     }
     if (this.disposed) throw new CodexAppServerError("codex app-server disposed");
+    if (hasExited(proc)) throw new CodexAppServerError("codex app-server exited during startup");
+    this.proc = proc;
     return proc;
   }
 

@@ -3,7 +3,7 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AppSettings, ThreadEvent } from "@cw-code/contracts";
-import type { CodexAppServerLike } from "./codexAppServer.js";
+import type { CodexAppServerLike, CodexRequestFn } from "./codexAppServer.js";
 import { CodexCliDriver } from "./CodexCliDriver.js";
 
 const SETTINGS: AppSettings = {
@@ -74,14 +74,14 @@ class FakeClient implements CodexAppServerLike {
   private pendingEnv: Record<string, string> | undefined;
   private notificationHandler: ((method: string, params: unknown) => void) | null = null;
   private serverRequestHandler: ((method: string, params: unknown, id: string | number) => void) | null = null;
-  private initializedHandler: (() => Promise<void>) | null = null;
+  private initializedHandler: ((request: CodexRequestFn) => Promise<void>) | null = null;
   private requestCount = 0;
 
   async request<T>(method: string, params?: unknown): Promise<T> {
     if (!this.running) {
       this.running = true;
       this.spawnEnvs.push(this.pendingEnv);
-      await this.initializedHandler?.();
+      await this.initializedHandler?.((initMethod, initParams) => this.request(initMethod, initParams));
     }
     this.requests.push({ method, params });
     this.requestCount++;
@@ -206,7 +206,7 @@ class FakeClient implements CodexAppServerLike {
     this.serverRequestHandler = handler;
   }
 
-  onInitialized(handler: () => Promise<void>): void {
+  onInitialized(handler: (request: CodexRequestFn) => Promise<void>): void {
     this.initializedHandler = handler;
   }
 
@@ -1337,6 +1337,35 @@ describe("CodexCliDriver cw agent wiring", () => {
     expect(paramsOf(client, "turn/start")).toHaveLength(2);
     expect(events.some((e) => e.type === "turn.error")).toBe(false);
     expect(console.warn).toHaveBeenCalledWith(expect.stringContaining("unsubscribe boom"));
+    driver.dispose();
+  });
+
+  it("retries the unsubscribe on the next turn when it failed before a resume with a rotated token", async () => {
+    class FlakyUnsubscribeClient extends FakeClient {
+      failUnsubscribe = true;
+      override async request<T>(method: string, params?: unknown): Promise<T> {
+        if (method === "thread/unsubscribe" && this.failUnsubscribe) {
+          this.requests.push({ method, params });
+          throw new Error("unsubscribe boom");
+        }
+        return super.request<T>(method, params);
+      }
+    }
+    const client = new FlakyUnsubscribeClient();
+    const { driver } = makeDriver(client);
+    const rotated = { ...AGENT, token: "token-b" };
+    driver.startTurn({ sessionId: "s1", prompt: "a", cwd: "C:\\proj", resumeCursor: "thr_resume", agent: AGENT });
+    await settle();
+    driver.startTurn({ sessionId: "s1", prompt: "b", cwd: "C:\\proj", resumeCursor: "thr_resume", agent: rotated });
+    await settle();
+    expect(paramsOf(client, "thread/unsubscribe")).toHaveLength(1);
+    client.failUnsubscribe = false;
+    driver.startTurn({ sessionId: "s1", prompt: "c", cwd: "C:\\proj", resumeCursor: "thr_resume", agent: rotated });
+    await settle();
+    expect(paramsOf(client, "thread/unsubscribe")).toHaveLength(2);
+    driver.startTurn({ sessionId: "s1", prompt: "d", cwd: "C:\\proj", resumeCursor: "thr_resume", agent: rotated });
+    await settle();
+    expect(paramsOf(client, "thread/unsubscribe")).toHaveLength(2);
     driver.dispose();
   });
 
