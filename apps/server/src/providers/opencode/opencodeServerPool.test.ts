@@ -296,6 +296,33 @@ describe("OpencodeServerPool ensure", () => {
     pool.dispose();
   });
 
+  it("releaseIdle stops idle servers and replaces busy ones once their turn ends", async () => {
+    let port = 40000;
+    const startServer = vi.fn(
+      (): Promise<{ proc: ChildProcess; handle: ServerHandle }> =>
+        Promise.resolve({ proc: fakeProc(), handle: { port: ++port, authHeader: "x" } })
+    );
+    const pool = makePool(startServer);
+
+    const idle = await pool.ensure("C:\\fake\\idle");
+    const busy = await pool.ensure("C:\\fake\\busy");
+    pool.beginTurn("C:\\fake\\busy");
+    pool.releaseIdle();
+    expect(pool.ownedProcessCount()).toBe(1);
+
+    expect((await pool.ensure("C:\\fake\\busy")).port).toBe(busy.port);
+    expect(startServer).toHaveBeenCalledTimes(2);
+
+    pool.endTurn("C:\\fake\\busy");
+    expect((await pool.ensure("C:\\fake\\busy")).port).not.toBe(busy.port);
+    expect((await pool.ensure("C:\\fake\\idle")).port).not.toBe(idle.port);
+    expect(startServer).toHaveBeenCalledTimes(4);
+
+    await pool.ensure("C:\\fake\\busy");
+    expect(startServer).toHaveBeenCalledTimes(4);
+    pool.dispose();
+  });
+
   it("evicts idle servers on a timer without waiting for the next ensure", async () => {
     const gone: Array<{ rootPath: string; port: number }> = [];
     const startServer = vi.fn(

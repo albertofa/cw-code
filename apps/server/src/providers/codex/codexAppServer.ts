@@ -38,6 +38,8 @@ export interface CodexAppServerLike {
   setSpawnEnv?(env: Record<string, string> | undefined): void;
   ownedProcessCount?(): number;
   shutdown?(timeoutMs: number): Promise<{ timedOut: boolean }>;
+  /** Stops the running app-server; the next request spawns a fresh one. */
+  restart?(timeoutMs?: number): Promise<void>;
   dispose(): void;
 }
 
@@ -58,6 +60,7 @@ interface Envelope {
 const DEFAULT_CLIENT_INFO = { name: "cw_code", title: "cw-code", version: "0.1.0" };
 const STDERR_TAIL_LINES = 20;
 const DEFAULT_INITIALIZE_TIMEOUT_MS = 30_000;
+const DEFAULT_RESTART_TIMEOUT_MS = 5_000;
 
 export class CodexAppServer implements CodexAppServerLike {
   private proc: ChildProcess | null = null;
@@ -134,6 +137,23 @@ export class CodexAppServer implements CodexAppServerLike {
     const exited = await waitForExit(child, timeoutMs);
     if (exited) this.forget(child);
     return { timedOut: !exited };
+  }
+
+  async restart(timeoutMs = DEFAULT_RESTART_TIMEOUT_MS): Promise<void> {
+    const child = this.child;
+    this.proc = null;
+    this.starting = null;
+    this.rejectAllPending(new CodexAppServerError("codex app-server is restarting"));
+    if (!child) return;
+    if (!hasExited(child)) {
+      try {
+        child.stdin?.end();
+      } catch {
+      }
+      const exited = await waitForExit(child, timeoutMs);
+      if (!exited && !hasExited(child)) killProcessTree(child);
+    }
+    this.forget(child);
   }
 
   dispose(): void {

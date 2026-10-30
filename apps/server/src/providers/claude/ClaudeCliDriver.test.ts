@@ -412,6 +412,34 @@ describe("ClaudeCliDriver persistent process", () => {
     driver.dispose();
   });
 
+  it("releaseBinary stops settled processes and never reuses busy ones afterwards", async () => {
+    const { driver, children, spawnCalls, killed } = makeDriver();
+    driver.startTurn({ sessionId: "idle", cwd: "C:\\proj", prompt: "first" });
+    driver.startTurn({ sessionId: "busy", cwd: "C:\\proj", prompt: "first" });
+    await settle();
+    children[0].stdout.write(`${resultLine()}\n`);
+    await settle();
+
+    await driver.releaseBinary();
+    expect(killed).toEqual([children[0]]);
+    expect(driver.activity().busySessionIds).toEqual(["busy"]);
+
+    children[1].stdout.write(`${resultLine()}\n`);
+    await settle();
+    driver.startTurn({ sessionId: "busy", cwd: "C:\\proj", prompt: "second", resumeCursor: "native-1" });
+    driver.startTurn({ sessionId: "idle", cwd: "C:\\proj", prompt: "second", resumeCursor: "native-1" });
+    await settle();
+    expect(spawnCalls).toHaveLength(4);
+    expect(killed).toEqual([children[0], children[1]]);
+
+    children[2].stdout.write(`${resultLine()}\n`);
+    await settle();
+    driver.startTurn({ sessionId: "busy", cwd: "C:\\proj", prompt: "third", resumeCursor: "native-1" });
+    await settle();
+    expect(spawnCalls).toHaveLength(4);
+    driver.dispose();
+  });
+
   it("launches with --chrome only while Claude in Chrome is enabled, respawning when it changes", async () => {
     let settings: AppSettings = { ...SETTINGS, claudeChromeEnabled: true };
     const { driver, children, spawnCalls } = makeDriver(() => false, () => settings);

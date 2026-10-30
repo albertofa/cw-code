@@ -132,6 +132,8 @@ export class CodexCliDriver implements CliDriver {
   private client: CodexAppServerLike;
   private ownsClient: boolean;
   private turns = new Map<string, ActiveTurn>();
+  private startingTurns = 0;
+  private releasePending = false;
   private readonly activityNotifier = new ActivityNotifier();
   private turnByCodexId = new Map<string, string>();
   private threadLastTotal = new Map<string, number>();
@@ -433,6 +435,7 @@ export class CodexCliDriver implements CliDriver {
       ok: true
     });
     if (request.env) this.client.setSpawnEnv?.(request.env);
+    this.startingTurns++;
     void this.runTurn(turnId, request);
     return { turnId, events: (async function* () {})() };
   }
@@ -441,6 +444,12 @@ export class CodexCliDriver implements CliDriver {
     const start = Date.now();
     const perms = mapPermissionMode(request.permissionMode);
     const effort = mapCodexEffort(request.effort);
+    let starting = true;
+    const started = (): void => {
+      if (!starting) return;
+      starting = false;
+      this.startingTurns--;
+    };
     try {
       if (this.appServerReady) await this.applySkillsRoot();
       const threadId = request.resumeCursor
@@ -461,6 +470,7 @@ export class CodexCliDriver implements CliDriver {
         ...(request.command ? { command: request.command.name } : {})
       };
       this.turns.set(turnId, active);
+      started();
       const collaborationMode: CodexCollaborationMode = perms.planMode
         ? {
             mode: "plan" as const,
@@ -524,6 +534,7 @@ export class CodexCliDriver implements CliDriver {
         extra: { threadId, codexTurnId: res.turn.id, planMode: perms.planMode }
       });
     } catch (err) {
+      started();
       this.turns.delete(turnId);
       this.reasoningKinds.delete(turnId);
       this.activityNotifier.notify();
@@ -1225,6 +1236,30 @@ export class CodexCliDriver implements CliDriver {
 
   onActivityChanged(listener: () => void): () => void {
     return this.activityNotifier.subscribe(listener);
+  }
+
+  async releaseBinary(): Promise<void> {
+    if (!this.ownsClient) return;
+    traceHarnessCall({ harness: "codex", operation: "codex.releaseBinary", ok: true, extra: { turns: this.turns.size } });
+    if (this.idle()) return this.restartClient();
+    if (this.releasePending) return;
+    this.releasePending = true;
+    const unsubscribe = this.activityNotifier.subscribe(() => {
+      if (!this.idle()) return;
+      unsubscribe();
+      this.releasePending = false;
+      this.restartClient().catch((err: unknown) => {
+        console.warn(`codex app-server restart failed: ${err instanceof Error ? err.message : String(err)}`);
+      });
+    });
+  }
+
+  private idle(): boolean {
+    return this.turns.size === 0 && this.startingTurns === 0;
+  }
+
+  private async restartClient(): Promise<void> {
+    await this.client.restart?.();
   }
 
   dispose(): void {

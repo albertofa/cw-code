@@ -29,7 +29,7 @@ import { mapOpencodeCommands, opencodeBuiltinCommandOf, type OpencodeBuiltinComm
 import { assertInside } from "../../fs/FileService.js";
 import { listOpencodeModels, loadOpencodeModels, peekOpencodeModels, resolveOpencodeVariant } from "./opencodeModels.js";
 import { fetchOpencodeGoUsage } from "./opencodeAccountUsage.js";
-import { OpencodeServerPool, opencodeCliProtocol, type ServerHandle } from "./opencodeServerPool.js";
+import { OpencodeServerPool, clearCliProtocolCache, opencodeCliProtocol, type ServerHandle } from "./opencodeServerPool.js";
 import {
   OPENCODE_LIST_TIMEOUT_MS,
   OPENCODE_REQUEST_TIMEOUT_MS,
@@ -2168,6 +2168,12 @@ export class OpencodeDriver implements CliDriver {
 
   onActivityChanged(listener: () => void): () => void {
     return this.activityNotifier.subscribe(listener);
+  }
+
+  async releaseBinary(): Promise<void> {
+    traceHarnessCall({ harness: "opencode", operation: "opencode.releaseBinary", ok: true, extra: { servers: this.pool.ownedProcessCount() } });
+    clearCliProtocolCache();
+    this.pool.releaseIdle();
   }
 
   dispose(): void {

@@ -257,6 +257,7 @@ export class SessionManager {
   private readonly snapshotListeners = new Set<(sessionId: string) => void>();
   private readonly usageRecordedListeners = new Set<(sessionId: string) => void>();
   private unwatchDriverActivity: () => void = () => {};
+  private turnGate: ((kind: DriverKind) => string | null) | null = null;
   private driverFactory: DriverFactory;
   private driverGeneration = 0;
   private shutdownReserved = false;
@@ -344,6 +345,22 @@ export class SessionManager {
   onDriverActivityChanged(listener: () => void): () => void {
     this.driverActivityListeners.add(listener);
     return () => this.driverActivityListeners.delete(listener);
+  }
+
+  onHarnessActivity(listener: () => void): () => void {
+    return this.onDriverActivityChanged(listener);
+  }
+
+  harnessActivity(kind: DriverKind): { busy: number } {
+    return { busy: this.drivers[kind].activity?.().busySessionIds.length ?? 0 };
+  }
+
+  async releaseHarnessBinary(kind: DriverKind): Promise<void> {
+    await this.drivers[kind].releaseBinary?.();
+  }
+
+  setTurnGate(gate: ((kind: DriverKind) => string | null) | null): void {
+    this.turnGate = gate;
   }
 
   onCheckoutChanged(listener: (change: CheckoutChange) => void): () => void {
@@ -2268,6 +2285,8 @@ export class SessionManager {
     }
     const project = this.store.getProject(session.projectId);
     if (!project) throw new Error(`unknown project ${session.projectId}`);
+    const gated = this.turnGate?.(session.driver) ?? null;
+    if (gated !== null) throw new Error(gated);
     for (const [turnId, entry] of this.activeTurns) {
       if (entry.sessionId === sessionId) throw new SessionBusyError(`turn ${turnId}`);
     }
