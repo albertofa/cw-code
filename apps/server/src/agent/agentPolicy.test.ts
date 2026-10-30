@@ -12,7 +12,8 @@ import {
   assertAgentSettingsPatch,
   callerPermissionCap,
   capPermissionMode,
-  isSafeModelId
+  isSafeModelId,
+  SAFE_MODEL_ID
 } from "./agentPolicy.js";
 
 const agent: CallContext = { clientId: "c", client: "mcp", auth: { kind: "agent", sessionId: "s1" } };
@@ -167,6 +168,12 @@ describe("isSafeModelId", () => {
   test("rejects non-strings", () => {
     expect(isSafeModelId(undefined)).toBe(false);
     expect(isSafeModelId(["opus"])).toBe(false);
+  });
+
+  test("has a pattern that strict regex engines accept, since tool schemas publish it", () => {
+    const strict = new RegExp(SAFE_MODEL_ID.source, "v");
+    for (const id of ["opus", "openai/gpt-5", "claude-opus-4[1m]", "a@b:c+d", "x_y.z"]) expect(strict.test(id)).toBe(true);
+    for (const id of ["a b", "opus&whoami", "a\\b"]) expect(strict.test(id)).toBe(false);
   });
 });
 

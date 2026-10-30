@@ -30,7 +30,7 @@ export const AGENT_WRITABLE_SETTINGS: ReadonlySet<keyof AppSettings> = new Set<k
   "prRefreshIntervalSeconds"
 ]);
 
-export const SAFE_MODEL_ID = /^[A-Za-z0-9][A-Za-z0-9._:/@[\]+-]{0,127}$/;
+export const SAFE_MODEL_ID = /^[A-Za-z0-9][A-Za-z0-9._:\/@\[\]+\-]{0,127}$/;
 
 const AGENT_MODEL_SETTINGS = ["claudeDefaultModel", "codexDefaultModel", "opencodeDefaultModel"] as const;
 
