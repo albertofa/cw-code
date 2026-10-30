@@ -356,6 +356,7 @@ export class SessionManager {
     const onKind = (sessionId: string): boolean => this.store.getSession(sessionId)?.driver === kind;
     for (const sessionId of this.pendingTurns) if (onKind(sessionId)) busy.add(sessionId);
     for (const { sessionId } of this.activeTurns.values()) if (onKind(sessionId)) busy.add(sessionId);
+    for (const turn of this.titleTurns.values()) if (!turn.settled && turn.driver === this.drivers[kind]) busy.add(`title:${turn.sessionId}`);
     return { busy: busy.size };
   }
 
@@ -517,6 +518,7 @@ export class SessionManager {
     turn.settled = true;
     this.titleTurns.delete(turnId);
     clearTimeout(turn.timer);
+    this.notifyDriverActivity();
     const { title, branch } = parseGeneratedMetadata(turn.text, turn.expectBranch);
     if (branch) this.generatedBranches.set(turn.sessionId, branch);
     if (!title || !turn.applyTitle) {
@@ -1702,6 +1704,7 @@ export class SessionManager {
       turn.settled = true;
       this.titleTurns.delete(turnId);
       clearTimeout(turn.timer);
+      this.notifyDriverActivity();
       turn.resolve(null);
       try {
         turn.driver.interrupt(turnId);
@@ -2479,6 +2482,7 @@ export class SessionManager {
       if (!turn || turn.settled) return;
       turn.settled = true;
       this.titleTurns.delete(handle.turnId);
+      this.notifyDriverActivity();
       turn.resolve(null);
       driver.interrupt(handle.turnId);
     }, AUTO_TITLE_TIMEOUT_MS);
@@ -2495,6 +2499,7 @@ export class SessionManager {
       promise,
       resolve
     });
+    this.notifyDriverActivity();
     return promise;
   }
 
@@ -2672,18 +2677,21 @@ export class SessionManager {
     for (const entry of this.activeTurns.values()) {
       if (entry.sessionId === sessionId) throw new Error("session busy (turn in progress)");
     }
+    this.assertTurnGateOpen(session.driver);
     const driver = this.drivers[session.driver];
     if (typeof driver.retryConnection !== "function") {
       return { status: "done", history: await this.getHistory(sessionId) };
     }
     const cwd = await this.ensureWorktree(sessionId);
     this.assertNotReserved();
+    this.assertTurnGateOpen(session.driver);
     const { permissionMode } = this.getComposer(sessionId);
     const result = await driver.retryConnection({ sessionId, cwd, resumeCursor: session.resumeCursor, permissionMode });
     if (result.status === "running" && result.turnId) {
       this.turnPermissionModes.set(sessionId, resolvePermissionMode(permissionMode));
       const startedAt = Date.now();
       this.activeTurns.set(result.turnId, { sessionId, startedAt });
+      this.notifyDriverActivity();
       this.onEvent(sessionId, { type: "turn.started", turnId: result.turnId, sessionId, startedAt, prompt: "" });
       this.store.updateSession(sessionId, { status: "working" }, "retry-connected");
     } else {
@@ -3043,6 +3051,7 @@ export class SessionManager {
       turn.settled = true;
       this.titleTurns.delete(turnId);
       clearTimeout(turn.timer);
+      this.notifyDriverActivity();
       turn.resolve(null);
       try {
         turn.driver.interrupt(turnId);

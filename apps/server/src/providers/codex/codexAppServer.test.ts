@@ -308,6 +308,21 @@ process.stdin.on("data", (chunk) => {
     }
   });
 
+  it("stops a child that is still initializing on restart and spawns one fresh child afterwards", async () => {
+    const restarting = new CodexAppServer({ binary: process.execPath, args: [scriptPath] });
+    try {
+      const inFlight = restarting.request("first").catch((err: Error) => err.message);
+      await restarting.restart();
+      expect(await inFlight).toContain("restarting");
+      expect(restarting.ownedProcessCount()).toBe(0);
+      const [a, b] = await Promise.all([restarting.request<{ echo: string }>("a"), restarting.request<{ echo: string }>("b")]);
+      expect([a.echo, b.echo]).toEqual(["a", "b"]);
+      expect(restarting.ownedProcessCount()).toBe(1);
+    } finally {
+      restarting.dispose();
+    }
+  });
+
   it("rejects pending requests on restart and kills a child that ignores stdin close", async () => {
     const stubborn = new CodexAppServer({ binary: process.execPath, args: [silentScript], initializeTimeoutMs: 10_000 });
     try {

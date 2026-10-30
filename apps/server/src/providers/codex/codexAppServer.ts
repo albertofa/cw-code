@@ -140,10 +140,11 @@ export class CodexAppServer implements CodexAppServerLike {
   }
 
   async restart(timeoutMs = DEFAULT_RESTART_TIMEOUT_MS): Promise<void> {
+    this.proc = null;
+    this.rejectAllPending(new CodexAppServerError("codex app-server is restarting"));
+    while (this.starting) await this.starting.catch(() => undefined);
     const child = this.child;
     this.proc = null;
-    this.starting = null;
-    this.rejectAllPending(new CodexAppServerError("codex app-server is restarting"));
     if (!child) return;
     if (!hasExited(child)) {
       try {
@@ -188,10 +189,11 @@ export class CodexAppServer implements CodexAppServerLike {
     if (this.disposed) throw new CodexAppServerError("codex app-server disposed");
     if (this.proc && this.proc.exitCode === null) return this.proc;
     if (this.starting) return this.starting;
-    this.starting = this.spawnAndInitialize().finally(() => {
-      this.starting = null;
+    const own: Promise<ChildProcess> = this.spawnAndInitialize().finally(() => {
+      if (this.starting === own) this.starting = null;
     });
-    return this.starting;
+    this.starting = own;
+    return own;
   }
 
   private async spawnAndInitialize(): Promise<ChildProcess> {
