@@ -127,8 +127,9 @@ Core behaviors:
     deletes it in setup (only the path is a plugin option, since options are visible to children
     and `GET /api/config`). Plugin tools `cw_<tool>` POST stateless `tools/call` to `/mcp` with
     `Bearer <secret>` and `X-CW-Opencode-Session`; the driver's `resolveAgentSession` accepts it
-    only for an in-flight turn cw-code started with `agent` (child sessions map to their parent)
-    and acts as that cw session. The ask bridge requires the same secret (a v1 turn may omit it).
+    only for an in-flight turn cw-code started with `agent` or reconnected through a `retry:`
+    turn (child sessions map to their parent), and only while the cw session is neither
+    resolved nor archived; it acts as that cw session. The ask bridge requires the same secret (a v1 turn may omit it).
     A `shell.hook("create.before")` strips `OPENCODE_CONFIG_CONTENT`, `OPENCODE_PASSWORD` and the
     `CW_*` pair from the agent shell; terminal tabs, local MCP servers, formatters and LSP still
     inherit the serve env, so same-host code execution can still impersonate an in-flight

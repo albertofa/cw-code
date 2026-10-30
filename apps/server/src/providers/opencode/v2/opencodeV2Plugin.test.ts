@@ -1,8 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "bun:test";
 import { stubGlobal, unstubAllGlobals } from "../../../../tests/testing.js";
-import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { OPENCODE_SESSION_HEADER } from "@cw-code/shared/protocol";
 import { cwSkillMarkdown } from "../../../agent/cwSkill.js";
 import { cwToolDefinitions } from "../../../mcp/cwTools.js";
 import {
@@ -11,6 +12,7 @@ import {
   opencodeV2PluginEnv,
   opencodeV2PluginSource,
   SHELL_STRIPPED_ENV,
+  sweepStaleOpencodeSecretFiles,
   writeOpencodeSecretFile
 } from "./opencodeV2Plugin.js";
 
@@ -58,7 +60,11 @@ function secretFile(secret = "s3cret"): string {
   return file;
 }
 
-async function loadPlugin(options: Record<string, unknown>, parentOf: (sessionID: string) => string | undefined = () => undefined) {
+async function loadPlugin(
+  options: Record<string, unknown>,
+  parentOf: (sessionID: string) => string | undefined = () => undefined,
+  withShell = true
+) {
   const plugin = new Function(opencodeV2PluginSource(PLUGIN_DIR).replace("export default", "return"))() as {
     id: string;
     setup: (ctx: unknown) => Promise<void>;
@@ -71,7 +77,7 @@ async function loadPlugin(options: Record<string, unknown>, parentOf: (sessionID
     options,
     tool: { transform: async (edit: (editor: { add: (tool: ToolDef) => void }) => void) => edit({ add: (tool) => tools.push(tool) }) },
     skill: { transform: async (edit: (editor: { add: (skill: SkillDef) => void }) => void) => edit({ add: (skill) => skills.push(skill) }) },
-    shell: { hook: async (name: string, fn: ShellHook) => shellHooks.set(name, fn) },
+    ...(withShell ? { shell: { hook: async (name: string, fn: ShellHook) => shellHooks.set(name, fn) } } : {}),
     session: {
       hook: async (name: string, fn: (event: ContextEvent) => Promise<void>) => {
         if (name === "context") hook = fn;
@@ -91,7 +97,7 @@ describe("cw-code v2 plugin source", () => {
   it("embeds the cw tools, the session header, the secret file handling, the shell hook keys and the skill", () => {
     const source = opencodeV2PluginSource(PLUGIN_DIR);
     for (const definition of cwToolDefinitions()) expect(source).toContain(`"name":"cw_${definition.name}"`);
-    expect(source).toContain('"X-CW-Opencode-Session"');
+    expect(source).toContain(`const SESSION_HEADER = ${JSON.stringify(OPENCODE_SESSION_HEADER)};`);
     expect(source).toContain("fs.readFile(file");
     expect(source).toContain("fs.rm(file");
     expect(source).toContain('ctx.shell.hook("create.before"');
@@ -154,6 +160,14 @@ describe("cw-code v2 plugin", () => {
     expect(() => shellHooks.get("create.before")!({})).not.toThrow();
   });
 
+  it("logs an error when this opencode has no shell hook API", async () => {
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    const { tools } = await loadPlugin({}, () => undefined, false);
+    expect(tools.map((t) => t.name)).toEqual(["todo"]);
+    expect(errors.mock.calls.some((call) => String(call[0]).includes("no shell hook API"))).toBe(true);
+    errors.mockRestore();
+  });
+
   it("offers cw_ask only on root sessions where the native question tool is missing", async () => {
     const { hook } = await loadPlugin({ askBridge: "http://127.0.0.1:9/ask", secretFile: secretFile() }, (sid) => (sid === "ses_child" ? "ses_root" : undefined));
     const withNative: ContextEvent = { sessionID: "ses_root", tools: { question: {}, cw_ask: {} } };
@@ -195,7 +209,7 @@ describe("cw-code v2 plugin", () => {
     const [url, init] = fetchMock.mock.calls[0];
     expect(url).toBe(MCP_URL);
     expect(init.signal).toBe(signal);
-    expect(init.headers).toMatchObject({ Authorization: "Bearer abc", "X-CW-Opencode-Session": "ses_1", Accept: "application/json, text/event-stream" });
+    expect(init.headers).toMatchObject({ Authorization: "Bearer abc", [OPENCODE_SESSION_HEADER]: "ses_1", Accept: "application/json, text/event-stream" });
     expect(JSON.parse(init.body)).toMatchObject({ jsonrpc: "2.0", method: "tools/call", params: { name: "projects_list", arguments: {} } });
   });
 
@@ -203,7 +217,9 @@ describe("cw-code v2 plugin", () => {
     ["a tool error result", rpcReply({ jsonrpc: "2.0", id: 1, result: { content: [{ type: "text", text: "unknown session x" }], isError: true } }), "Error: unknown session x"],
     ["a JSON-RPC error", rpcReply({ jsonrpc: "2.0", id: 1, error: { code: -32602, message: "bad input" } }), "Error: bad input"],
     ["an HTTP error", new Response("unauthorized", { status: 401 }), "Error: cw-code answered HTTP 401: unauthorized"],
-    ["an unreadable body", new Response("<html>", { status: 200, headers: { "Content-Type": "text/html" } }), "Error: cw-code sent an unreadable reply"]
+    ["an unreadable body", new Response("<html>", { status: 200, headers: { "Content-Type": "text/html" } }), "Error: cw-code sent an unreadable reply"],
+    ["a null JSON-RPC body", rpcReply(null), "Error: cw-code sent an unreadable reply"],
+    ["a non-object JSON-RPC body", rpcReply("ok"), "Error: cw-code sent an unreadable reply"]
   ])("turns %s into text starting with Error:", async (_label, response, expected) => {
     stubGlobal("fetch", vi.fn().mockResolvedValue(response));
     const { tools } = await loadPlugin({ cwMcpUrl: MCP_URL, secretFile: secretFile() });
@@ -242,6 +258,23 @@ describe("OPENCODE_CONFIG_CONTENT", () => {
     expect(readFileSync(join(dir, "index.js"), "utf8")).toBe(opencodeV2PluginSource(dir));
     expect(JSON.parse(env["OPENCODE_CONFIG_CONTENT"])).toEqual({ plugins: [{ package: dir, options }] });
     expect(env).not.toHaveProperty("OPENCODE_CONFIG_DIR");
+  });
+
+  it("sweeps only secret files modified before the cutoff", async () => {
+    const dir = scratchDir();
+    const stale = await writeOpencodeSecretFile(dir, "old");
+    const fresh = await writeOpencodeSecretFile(dir, "new");
+    const unrelated = join(dir, "index.js");
+    writeFileSync(unrelated, "x");
+    const longAgo = new Date(Date.now() - 60_000);
+    utimesSync(stale, longAgo, longAgo);
+    utimesSync(unrelated, longAgo, longAgo);
+    const removed = await sweepStaleOpencodeSecretFiles(dir, Date.now() - 30_000);
+    expect(removed).toEqual([stale]);
+    expect(existsSync(stale)).toBe(false);
+    expect(existsSync(fresh)).toBe(true);
+    expect(existsSync(unrelated)).toBe(true);
+    await expect(sweepStaleOpencodeSecretFiles(join(dir, "missing"), Date.now())).resolves.toEqual([]);
   });
 
   it("writes each secret to a new owner-only file", async () => {

@@ -1,6 +1,7 @@
 import { randomBytes } from "node:crypto";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { OPENCODE_SESSION_HEADER } from "@cw-code/shared/protocol";
 import { CW_SKILL_NAME, cwSkillMarkdown, cwToolName, SKILL_DESCRIPTION } from "../../../agent/cwSkill.js";
 import { traceHarnessCall, truncateError } from "../../../debug/harnessTrace.js";
 import { cwToolDefinitions } from "../../../mcp/cwTools.js";
@@ -110,7 +111,7 @@ const ASK_INPUT = ${JSON.stringify(ASK_INPUT)};
 const CW_TOOLS = ${JSON.stringify(cwTools())};
 const CW_SKILL = ${JSON.stringify(skill)};
 const SHELL_STRIPPED_ENV = ${JSON.stringify(SHELL_STRIPPED_ENV)};
-const SESSION_HEADER = "X-CW-Opencode-Session";
+const SESSION_HEADER = ${JSON.stringify(OPENCODE_SESSION_HEADER)};
 const MCP_PROTOCOL_VERSION = ${JSON.stringify(MCP_LEGACY_PROTOCOL_VERSION)};
 const UNDELIVERED = "Could not deliver the question to the user. Continue with your best judgment.";
 
@@ -218,6 +219,7 @@ async function callCwTool(endpoint, secret, tool, input, context) {
   } catch (err) {
     return "Error: cw-code sent an unreadable reply: " + errorText(err);
   }
+  if (message === null || typeof message !== "object") return "Error: cw-code sent an unreadable reply: expected a JSON-RPC object";
   if (message.error) return "Error: " + (message.error.message || "cw-code rejected the call");
   const result = message.result || {};
   const body = (Array.isArray(result.content) ? result.content : [])
@@ -236,7 +238,7 @@ export default {
         if (!event || !event.env) return;
         for (const key of SHELL_STRIPPED_ENV) delete event.env[key];
       });
-    }
+    } else console.error("[cw-code] this opencode has no shell hook API; agent shells keep the server secrets in their env");
     const bridge = stringOption(ctx.options, "askBridge");
     const endpoint = stringOption(ctx.options, "cwMcpUrl");
     const secret = await loadSecret(stringOption(ctx.options, "secretFile"));
@@ -317,6 +319,25 @@ export async function writeOpencodeSecretFile(dir: string, secret: string): Prom
   const file = join(dir, `opencode-secret-${randomBytes(8).toString("hex")}`);
   await writeFile(file, secret, { encoding: "utf8", mode: 0o600, flag: "wx" });
   return file;
+}
+
+const SECRET_FILE_PATTERN = /^opencode-secret-[0-9a-f]{16}$/;
+
+export async function sweepStaleOpencodeSecretFiles(dir: string, modifiedBefore: number): Promise<string[]> {
+  const entries = await readdir(dir).catch((err: NodeJS.ErrnoException) => {
+    if (err.code === "ENOENT") return [];
+    throw err;
+  });
+  const removed: string[] = [];
+  for (const name of entries) {
+    if (!SECRET_FILE_PATTERN.test(name)) continue;
+    const file = join(dir, name);
+    const info = await stat(file).catch(() => null);
+    if (!info?.isFile() || info.mtimeMs >= modifiedBefore) continue;
+    await rm(file, { force: true });
+    removed.push(file);
+  }
+  return removed;
 }
 
 export async function opencodeV2PluginEnv(

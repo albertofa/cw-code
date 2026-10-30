@@ -409,7 +409,10 @@ export class SessionManager {
   }
 
   resolveOpencodeAgent(secret: string, opencodeSessionId: string): { sessionId: string } | null {
-    return this.drivers.opencode.resolveAgentSession?.(secret, opencodeSessionId) ?? null;
+    const resolved = this.drivers.opencode.resolveAgentSession?.(secret, opencodeSessionId) ?? null;
+    if (!resolved) return null;
+    const status = this.store.getSession(resolved.sessionId)?.status;
+    return status === undefined || status === "resolved" || status === "archived" ? null : resolved;
   }
 
   private uniqueDrivers(): Array<{ kinds: DriverKind[]; driver: CliDriver }> {

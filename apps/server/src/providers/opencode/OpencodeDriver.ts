@@ -53,7 +53,7 @@ import {
 import { ActivityNotifier } from "../ActivityNotifier.js";
 import { opencodeV1Protocol } from "./v1/opencodeV1Protocol.js";
 import { opencodeV2Protocol } from "./v2/opencodeV2Protocol.js";
-import { opencodeV2PluginEnv, writeOpencodeSecretFile } from "./v2/opencodeV2Plugin.js";
+import { opencodeV2PluginEnv, sweepStaleOpencodeSecretFiles, writeOpencodeSecretFile } from "./v2/opencodeV2Plugin.js";
 
 export { sameDirectory } from "./opencodePaths.js";
 
@@ -151,6 +151,8 @@ export class OpencodeDriver implements CliDriver {
   private readonly agentSecret = randomBytes(32).toString("base64url");
   private readonly agentMcpUrl: () => string | null;
   private secretFiles = new Set<string>();
+  private secretFileOfEnv = new WeakMap<Record<string, string>, string>();
+  private staleSecretsSwept: Promise<void> | null = null;
 
   constructor(
     emit: (event: ThreadEvent) => void,
@@ -164,7 +166,8 @@ export class OpencodeDriver implements CliDriver {
     this.pool = pool ?? new OpencodeServerPool(() => this.configuredBinary(), {
       ...(opts?.sharedRoot ? { sharedRoot: opts.sharedRoot } : {}),
       onServerGone: (rootPath, port) => this.handleServerGone(rootPath, port),
-      spawnEnv: (protocol) => this.spawnEnvFor(protocol)
+      spawnEnv: (protocol) => this.spawnEnvFor(protocol),
+      spawnFailed: (protocolEnv) => this.discardSecretFileOf(protocolEnv)
     });
   }
 
@@ -291,14 +294,46 @@ export class OpencodeDriver implements CliDriver {
     const secretFile = await this.writeSecretFile();
     const cwMcpUrl = this.agentMcpUrl();
     if (cwMcpUrl === null) console.warn("opencode starts without cw tools: the cw-code MCP endpoint is not listening yet");
-    return opencodeV2PluginEnv(
-      opencodePluginDir(),
-      { askBridge, ...(secretFile ? { secretFile } : {}), ...(cwMcpUrl ? { cwMcpUrl } : {}) },
-      process.env["OPENCODE_CONFIG_CONTENT"]
+    try {
+      const env = await opencodeV2PluginEnv(
+        opencodePluginDir(),
+        { askBridge, ...(secretFile ? { secretFile } : {}), ...(cwMcpUrl ? { cwMcpUrl } : {}) },
+        process.env["OPENCODE_CONFIG_CONTENT"]
+      );
+      if (secretFile) this.secretFileOfEnv.set(env, secretFile);
+      return env;
+    } catch (err) {
+      if (secretFile) this.discardSecretFile(secretFile);
+      throw err;
+    }
+  }
+
+  private discardSecretFileOf(protocolEnv: Record<string, string>): void {
+    const file = this.secretFileOfEnv.get(protocolEnv);
+    if (file) this.discardSecretFile(file);
+  }
+
+  private discardSecretFile(file: string): void {
+    this.secretFiles.delete(file);
+    rm(file, { force: true }).catch((err: Error) => console.warn(`could not remove the opencode plugin secret ${file}: ${err.message}`));
+  }
+
+  private sweepStaleSecretFiles(): Promise<void> {
+    this.staleSecretsSwept ??= sweepStaleOpencodeSecretFiles(harnessDir(), Date.now() - process.uptime() * 1000).then(
+      (removed) => {
+        if (removed.length > 0) traceHarnessCall({ harness: "opencode", operation: "opencode.v2.secretSweep", ok: true, extra: { removed: removed.length } });
+      },
+      (err: Error) => {
+        const message = truncateError(err.message);
+        console.warn(`could not sweep stale opencode plugin secrets: ${message}`);
+        traceHarnessCall({ harness: "opencode", operation: "opencode.v2.secretSweep", ok: false, error: message });
+      }
     );
+    return this.staleSecretsSwept;
   }
 
   private async writeSecretFile(): Promise<string | null> {
+    await this.sweepStaleSecretFiles();
     try {
       const file = await writeOpencodeSecretFile(harnessDir(), this.agentSecret);
       this.secretFiles.add(file);
@@ -312,10 +347,7 @@ export class OpencodeDriver implements CliDriver {
   }
 
   private removeSecretFiles(): void {
-    for (const file of this.secretFiles) {
-      rm(file, { force: true }).catch((err: Error) => console.warn(`could not remove the opencode plugin secret ${file}: ${err.message}`));
-    }
-    this.secretFiles.clear();
+    for (const file of [...this.secretFiles]) this.discardSecretFile(file);
   }
 
   private async bridgeEnvVars(): Promise<Record<string, string>> {

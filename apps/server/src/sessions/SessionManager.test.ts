@@ -18,6 +18,7 @@ class FakeDriver implements CliDriver {
   seen: string[] = [];
   stoppedSessions: string[] = [];
   lastRequest: Record<string, unknown> | null = null;
+  resolveAgentSession?: (secret: string, harnessSessionId: string) => { sessionId: string } | null;
   history: HistoryMessage[] = [];
   private pending = new Map<string, { sessionId: string; prompt: string }>();
   constructor(private emit: (event: ThreadEvent) => void) {}
@@ -1909,6 +1910,19 @@ describe("SessionManager", () => {
     await manager.startTurn(session.id, "hello");
     expect(fake.lastRequest?.agent).toEqual({ mcpUrl: "http://127.0.0.1:1/mcp", token: `token-${session.id}` });
     fake.completeAll();
+    manager.dispose();
+  });
+
+  it.each(["resolved", "archived"] as const)("stops resolving the opencode agent identity once the session is %s", async (status) => {
+    const { manager, fake } = makeManager();
+    const project = manager.addProject(`C:\\proj-opencode-identity-${status}`);
+    const session = await manager.createSession(project.id, "opencode");
+    fake.resolveAgentSession = (secret, opencodeSessionId) =>
+      secret === "secret" && opencodeSessionId === "ses_oc" ? { sessionId: session.id } : null;
+    expect(manager.resolveOpencodeAgent("secret", "ses_oc")).toEqual({ sessionId: session.id });
+    expect(manager.resolveOpencodeAgent("wrong", "ses_oc")).toBeNull();
+    manager.setSessionStatus(session.id, status);
+    expect(manager.resolveOpencodeAgent("secret", "ses_oc")).toBeNull();
     manager.dispose();
   });
 

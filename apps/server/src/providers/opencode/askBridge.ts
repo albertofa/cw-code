@@ -120,6 +120,12 @@ export class AskBridge {
     }
     const sessionID = typeof parsed.sessionID === "string" ? parsed.sessionID : "";
     if (!this.authorize(sessionID, bearerOf(req.headers.authorization))) {
+      traceHarnessCall({
+        harness: "opencode",
+        operation: "askBridge.unauthorized",
+        ok: false,
+        error: truncateError(`bridge request rejected for opencode session ${sessionID || "(none)"}`)
+      });
       res.writeHead(401, { "WWW-Authenticate": "Bearer" }).end();
       return;
     }
