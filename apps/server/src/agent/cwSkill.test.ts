@@ -23,4 +23,10 @@ describe("cwSkillMarkdown", () => {
     expect(cwSkillMarkdown("opencode")).not.toContain("mcp__");
     expect(cwSkillMarkdown("claude")).not.toContain("`cw_session_create`");
   });
+
+  it("points only Claude at CW_SESSION_ID, which shared harness processes do not carry", () => {
+    expect(cwSkillMarkdown("claude")).toContain("CW_SESSION_ID");
+    expect(cwSkillMarkdown("codex")).not.toContain("CW_SESSION_ID");
+    expect(cwSkillMarkdown("opencode")).not.toContain("CW_SESSION_ID");
+  });
 });
