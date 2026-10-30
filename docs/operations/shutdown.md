@@ -21,6 +21,7 @@ Every child process cw-code creates, and how it is stopped.
 | PTY terminals (`shell`, `claude`, `opencode`, `codex`) | `PtyPool.ptys` | Until the tab kills it or it exits | none (a terminal is treated as possibly busy); closed only after the drivers stopped, or on force | node-pty `kill()` on the owned handle; an open that was in flight across a dispose is refused and its PTY killed by handle |
 | `git` / `gh` calls | `GitService`, `PullRequestService` | Short-lived, every call has an execFile timeout (10 s default) | not tracked | execFile timeout |
 | `--version` checks | `cliVersions.ts`, `binaryDiscovery.ts` | Short-lived, 15 s timeout | not tracked | execFile timeout |
+| Harness update commands (`claude update`, `npm install -g …`, …) | `harnessUpdates/runUpdateCommand.ts` | One per install lock, 5 min timeout | not tracked; left to finish, since stopping an install halfway can leave a broken CLI | tree kill on timeout |
 | PowerShell / `ps` process listing | `orphanServers.ts` at startup | Short-lived, 20 s timeout | not tracked | execFile timeout |
 
 The in-process OpenCode ask bridge is an HTTP server, not a child process; it is

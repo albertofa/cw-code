@@ -170,6 +170,12 @@ Core behaviors:
 
 ## Guidelines
 
+- Harness updates live in `apps/server/src/cli/harnessUpdates/`: latest versions come from the npm
+  registry, the install method is resolved from the binary's real path (manual methods only show a
+  command), and progress is published on the `app` topic entry `harnessUpdates`. An update waits until
+  that harness has no running turns, refuses new turns while it runs, and calls `CliDriver.releaseBinary`
+  before and after, so every later turn spawns the updated binary; new drivers must implement it if they
+  keep processes alive between turns.
 - Follow the `CliDriver` seam for anything CLI-related. Supporting a new CLI
   means adding a driver, never changing UI or orchestration code.
 - New behavior goes in the server; the UI renders server state and sends intents. The
