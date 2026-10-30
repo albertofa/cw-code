@@ -52,8 +52,12 @@ function isReadMethod(method: string): boolean {
   return method === "GET" || method === "HEAD";
 }
 
+export function bearerOf(authorization: string | null | undefined): string | null {
+  return BEARER_PATTERN.exec(authorization ?? "")?.[1] ?? null;
+}
+
 export function bearerToken(req: Request): string | null {
-  return BEARER_PATTERN.exec(req.headers.get("authorization") ?? "")?.[1] ?? null;
+  return bearerOf(req.headers.get("authorization"));
 }
 
 function handleInfo(req: Request, opts: HttpRoutesOptions): Response {

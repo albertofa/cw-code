@@ -1,8 +1,10 @@
-﻿import { randomUUID } from "node:crypto";
+﻿import { randomBytes, randomUUID } from "node:crypto";
+import { rm } from "node:fs/promises";
 import { homedir } from "node:os";
 import type { AccountUsageState, AppSettings, ApprovalDecision, CliDriver, CommandOption, ContextUsage, DriverActivity, HistoryMessage, ModelOption, NativeSession, PermissionMode, PermissionOption, QuestionInfo, QuestionRequest, RetryConnectionRequest, RetryConnectionResult, SessionMeta, TaskEndReason, TaskSnapshot, TerminalLaunch, ThreadEvent, TurnHandle, TurnModelUsage, TurnRequest } from "@cw-code/contracts";
 import { isAbsolute, join } from "node:path";
-import { opencodeConfigDir, opencodePluginDir } from "../../paths/appPaths.js";
+import { harnessDir, opencodeConfigDir, opencodePluginDir } from "../../paths/appPaths.js";
+import { tokensEqual } from "../../transport/ownerToken.js";
 import { questionRequestOf, opencodeSseEvent, type ParsedOpencodeQuestion } from "./opencodeQuestions.js";
 import {
   isEditLikePermission,
@@ -51,7 +53,7 @@ import {
 import { ActivityNotifier } from "../ActivityNotifier.js";
 import { opencodeV1Protocol } from "./v1/opencodeV1Protocol.js";
 import { opencodeV2Protocol } from "./v2/opencodeV2Protocol.js";
-import { opencodeV2PluginEnv } from "./v2/opencodeV2Plugin.js";
+import { opencodeV2PluginEnv, writeOpencodeSecretFile } from "./v2/opencodeV2Plugin.js";
 
 export { sameDirectory } from "./opencodePaths.js";
 
@@ -128,6 +130,7 @@ export class OpencodeDriver implements CliDriver {
       compactionTrigger?: "manual" | "auto";
       holding?: boolean;
       input: TurnInput;
+      agent: boolean;
     }
   >();
   private handledForms = new Set<string>();
@@ -145,13 +148,17 @@ export class OpencodeDriver implements CliDriver {
   private readonly toolTasks = new ToolTaskTracker();
   private readonly emitRaw: (event: ThreadEvent) => void;
   private readonly emit: (event: ThreadEvent) => void;
+  private readonly agentSecret = randomBytes(32).toString("base64url");
+  private readonly agentMcpUrl: () => string | null;
+  private secretFiles = new Set<string>();
 
   constructor(
     emit: (event: ThreadEvent) => void,
     private getSettings: () => AppSettings,
     pool?: OpencodeServerPool,
-    opts?: { sharedRoot?: string }
+    opts?: { sharedRoot?: string; agentMcpUrl?: () => string | null }
   ) {
+    this.agentMcpUrl = opts?.agentMcpUrl ?? (() => null);
     this.emitRaw = emit;
     this.emit = (event) => this.emitTracked(this.sessionFor(event), event);
     this.pool = pool ?? new OpencodeServerPool(() => this.configuredBinary(), {
@@ -205,7 +212,10 @@ export class OpencodeDriver implements CliDriver {
   private ensureBridge(): Promise<void> {
     if (this.bridgeStarting) return this.bridgeStarting;
     this.bridgeStarting = (async () => {
-      const bridge = new AskBridge((sessionID, request) => this.routeBridgeQuestion(sessionID, request));
+      const bridge = new AskBridge(
+        (sessionID, request) => this.routeBridgeQuestion(sessionID, request),
+        (sessionID, bearer) => this.authorizeBridge(sessionID, bearer)
+      );
       const port = await bridge.start();
       this.bridge = bridge;
       this.bridgeEndpoint = `http://127.0.0.1:${port}/ask`;
@@ -229,6 +239,19 @@ export class OpencodeDriver implements CliDriver {
     await this.ensureBridge();
     if (!this.bridgeEndpoint) throw new Error("opencode ask bridge failed to start");
     return this.bridgeEndpoint;
+  }
+
+  private authorizeBridge(sessionID: string, bearer: string | null): boolean {
+    if (bearer !== null) return tokensEqual(this.agentSecret, bearer);
+    const owner = this.ownerTurnOf(sessionID);
+    return owner !== undefined && this.protocolForTurn(owner).version === "v1";
+  }
+
+  resolveAgentSession(secret: string, opencodeSessionId: string): { sessionId: string } | null {
+    if (!tokensEqual(this.agentSecret, secret)) return null;
+    const turnId = this.ownerTurnOf(opencodeSessionId);
+    const meta = turnId === undefined ? undefined : this.turnMeta.get(turnId);
+    return meta?.agent ? { sessionId: meta.localSessionId } : null;
   }
 
   private routeBridgeQuestion(sessionID: string, request: QuestionRequest): void {
@@ -264,7 +287,35 @@ export class OpencodeDriver implements CliDriver {
 
   private async spawnEnvFor(protocol: OpencodeProtocolVersion): Promise<Record<string, string>> {
     if (protocol !== "v2") return {};
-    return opencodeV2PluginEnv(opencodePluginDir(), await this.bridgeUrl(), process.env["OPENCODE_CONFIG_CONTENT"]);
+    const askBridge = await this.bridgeUrl();
+    const secretFile = await this.writeSecretFile();
+    const cwMcpUrl = this.agentMcpUrl();
+    if (cwMcpUrl === null) console.warn("opencode starts without cw tools: the cw-code MCP endpoint is not listening yet");
+    return opencodeV2PluginEnv(
+      opencodePluginDir(),
+      { askBridge, ...(secretFile ? { secretFile } : {}), ...(cwMcpUrl ? { cwMcpUrl } : {}) },
+      process.env["OPENCODE_CONFIG_CONTENT"]
+    );
+  }
+
+  private async writeSecretFile(): Promise<string | null> {
+    try {
+      const file = await writeOpencodeSecretFile(harnessDir(), this.agentSecret);
+      this.secretFiles.add(file);
+      return file;
+    } catch (err) {
+      const message = truncateError((err as Error).message);
+      console.warn(`opencode starts without cw tools or cw_ask: could not write the plugin secret: ${message}`);
+      traceHarnessCall({ harness: "opencode", operation: "opencode.v2.secret", ok: false, error: message });
+      return null;
+    }
+  }
+
+  private removeSecretFiles(): void {
+    for (const file of this.secretFiles) {
+      rm(file, { force: true }).catch((err: Error) => console.warn(`could not remove the opencode plugin secret ${file}: ${err.message}`));
+    }
+    this.secretFiles.clear();
   }
 
   private async bridgeEnvVars(): Promise<Record<string, string>> {
@@ -392,6 +443,7 @@ export class OpencodeDriver implements CliDriver {
     startedAt: number;
     permissionMode?: PermissionMode;
     inputDelivered?: boolean;
+    agent: boolean;
   }): void {
     this.sessionIds.set(params.turnId, params.serverSessionId);
     this.turnMeta.set(params.turnId, {
@@ -400,7 +452,8 @@ export class OpencodeDriver implements CliDriver {
       startedAt: params.startedAt,
       pollWarned: false,
       startedPort: params.port,
-      input: { delivered: params.inputDelivered === true, seen: null }
+      input: { delivered: params.inputDelivered === true, seen: null },
+      agent: params.agent
     });
     this.watchInfo.set(params.turnId, {
       port: params.port,
@@ -669,7 +722,8 @@ export class OpencodeDriver implements CliDriver {
       beforeIds,
       startedAt: Date.now(),
       permissionMode,
-      inputDelivered: true
+      inputDelivered: true,
+      agent: true
     });
     this.startPolling(turnId);
     traceHarnessCall({
@@ -1115,7 +1169,8 @@ export class OpencodeDriver implements CliDriver {
       ...(handle.protocol ? { protocol: handle.protocol } : {}),
       beforeIds: null,
       startedAt: start,
-      permissionMode: request.permissionMode
+      permissionMode: request.permissionMode,
+      agent: request.agent !== undefined
     });
     const preview = previewText(request.prompt);
     const model = splitOpencodeModel(request.model);
@@ -2118,6 +2173,7 @@ export class OpencodeDriver implements CliDriver {
     this.childModels.clear();
     this.bridgeNeed.clear();
     this.pool.dispose();
+    this.removeSecretFiles();
     this.activityNotifier.notify();
   }
 }

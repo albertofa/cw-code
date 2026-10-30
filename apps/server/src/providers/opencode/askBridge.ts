@@ -2,6 +2,7 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { randomUUID } from "node:crypto";
 import type { QuestionInfo, QuestionOption, QuestionRequest } from "@cw-code/contracts";
 import { traceHarnessCall, truncateError } from "../../debug/harnessTrace.js";
+import { bearerOf } from "../../transport/httpRoutes.js";
 
 export interface BridgeAskBody {
   sessionID?: unknown;
@@ -66,7 +67,10 @@ export class AskBridge {
   private portValue = 0;
   private pending = new Map<string, PendingAsk>();
 
-  constructor(private onQuestion: (sessionID: string, request: QuestionRequest) => void) {}
+  constructor(
+    private onQuestion: (sessionID: string, request: QuestionRequest) => void,
+    private authorize: (sessionID: string, bearer: string | null) => boolean
+  ) {}
 
   async start(): Promise<number> {
     if (this.server) return this.portValue;
@@ -115,6 +119,10 @@ export class AskBridge {
       return;
     }
     const sessionID = typeof parsed.sessionID === "string" ? parsed.sessionID : "";
+    if (!this.authorize(sessionID, bearerOf(req.headers.authorization))) {
+      res.writeHead(401, { "WWW-Authenticate": "Bearer" }).end();
+      return;
+    }
     const questions = normalizeBridgeQuestions(parsed.questions).map((q) => ({
       ...q,
       options: q.options.map((o) => ({

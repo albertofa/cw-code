@@ -13,7 +13,9 @@ const CW_TOOLS = [
   "settings_set"
 ] as const;
 
-const SKILL_DESCRIPTION =
+export const CW_SKILL_NAME = "cw-code";
+
+export const SKILL_DESCRIPTION =
   "Use when the user asks to run work in parallel or in other cw-code sessions, delegate a task to another harness, check or monitor cw-code sessions, or look at usage or settings.";
 
 export function cwToolName(harness: AgentHarness, tool: string): string {
@@ -38,5 +40,5 @@ The tools are ${CW_TOOLS.map(name).join(", ")}.
 - Child sessions never run with more permissions than this one.
 - ${name("settings_set")} only accepts model, worktree, session lifecycle and refresh preferences.
 `;
-  return `---\nname: cw-code\ndescription: ${JSON.stringify(SKILL_DESCRIPTION)}\n---\n\n${body}`;
+  return `---\nname: ${CW_SKILL_NAME}\ndescription: ${JSON.stringify(SKILL_DESCRIPTION)}\n---\n\n${body}`;
 }

@@ -48,12 +48,16 @@ export function opencodePluginDir(home?: string, env?: NodeJS.ProcessEnv): strin
   return join(userdataDir(home, env), "cw-opencode-plugin");
 }
 
+export function harnessDir(home?: string, env?: NodeJS.ProcessEnv): string {
+  return join(userdataDir(home, env), "harness");
+}
+
 export function claudePluginDir(home?: string, env?: NodeJS.ProcessEnv): string {
-  return join(userdataDir(home, env), "harness", "claude-plugin");
+  return join(harnessDir(home, env), "claude-plugin");
 }
 
 export function codexSkillsRoot(home?: string, env?: NodeJS.ProcessEnv): string {
-  return join(userdataDir(home, env), "harness", "skills");
+  return join(harnessDir(home, env), "skills");
 }
 
 export function opencodeServerDir(home?: string, env?: NodeJS.ProcessEnv): string {
