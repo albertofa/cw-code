@@ -70,6 +70,7 @@ function settingsFixture(overrides: Partial<AppSettings> = {}): AppSettings {
     opencodeGoUsage: false,
     updateChannel: null,
     updateBackgroundDownload: true,
+    harnessUpdateChecks: true,
     fontFamilySans: "",
     fontFamilyMono: "",
     fontFamilyPrompt: "",

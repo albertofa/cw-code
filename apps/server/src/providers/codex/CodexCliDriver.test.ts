@@ -25,6 +25,7 @@ const SETTINGS: AppSettings = {
   opencodeGoUsage: false,
   updateChannel: null,
   updateBackgroundDownload: true,
+  harnessUpdateChecks: true,
   gitBinaryPath: "git",
   githubCliBinaryPath: "gh",
   sourceControlRefreshIntervalSeconds: 30,

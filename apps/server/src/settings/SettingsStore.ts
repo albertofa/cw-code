@@ -274,6 +274,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   opencodeGoUsage: false,
   updateChannel: null,
   updateBackgroundDownload: true,
+  harnessUpdateChecks: true,
   fontFamilySans: "",
   fontFamilyMono: "",
   fontFamilyPrompt: "",
@@ -462,6 +463,9 @@ function sanitize(patch: SettingsPatch): SettingsPatch {
   if (patch.updateBackgroundDownload !== undefined) {
     out.updateBackgroundDownload =
       typeof patch.updateBackgroundDownload === "boolean" ? patch.updateBackgroundDownload : DEFAULT_SETTINGS.updateBackgroundDownload;
+  }
+  if (patch.harnessUpdateChecks !== undefined) {
+    out.harnessUpdateChecks = typeof patch.harnessUpdateChecks === "boolean" ? patch.harnessUpdateChecks : DEFAULT_SETTINGS.harnessUpdateChecks;
   }
   if (patch.fontFamilySans !== undefined) out.fontFamilySans = fontFamilyOr(patch.fontFamilySans, DEFAULT_SETTINGS.fontFamilySans);
   if (patch.fontFamilyMono !== undefined) out.fontFamilyMono = fontFamilyOr(patch.fontFamilyMono, DEFAULT_SETTINGS.fontFamilyMono);

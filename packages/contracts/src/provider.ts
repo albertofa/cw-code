@@ -80,6 +80,8 @@ export interface CliDriver {
   onActivityChanged?(listener: () => void): () => void;
   /** Maps a harness-side session that presented the driver's agent secret to the cw-code session whose in-flight turn owns it. */
   resolveAgentSession?(secret: string, harnessSessionId: string): { sessionId: string } | null;
+  /** Stops owned processes that are not running a turn so the next turn spawns the configured binary again; busy ones are replaced after their turn. */
+  releaseBinary?(): Promise<void>;
   /**
    * Asks every owned process to exit and waits up to `timeoutMs`. Processes still alive at the deadline are
    * left for `dispose()` to force-stop, and the result reports `timedOut`. Never touches processes it did not spawn.

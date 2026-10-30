@@ -506,6 +506,7 @@ export interface AppSettings {
   opencodeGoUsage: boolean;
   updateChannel: UpdateChannel | null;
   updateBackgroundDownload: boolean;
+  harnessUpdateChecks: boolean;
   fontFamilySans: string;
   fontFamilyMono: string;
   fontFamilyPrompt: string;
