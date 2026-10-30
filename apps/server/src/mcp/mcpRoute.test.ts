@@ -9,7 +9,8 @@ import { registerSettingsHandlers } from "../handlers/settings.js";
 import { registerTurnHandlers } from "../handlers/turns.js";
 import type { StartTurnInput } from "../threads/TurnService.js";
 import { Router, type CallContext } from "../transport/Router.js";
-import { WAIT_MAX_MS } from "./cwTools.js";
+import { OPENCODE_SESSION_HEADER } from "@cw-code/shared/protocol";
+import { cwToolDefinitions, WAIT_MAX_MS } from "./cwTools.js";
 import { createMcpRoute, MCP_IDLE_TIMEOUT_SECONDS, MCP_SERVER_NAME } from "./mcpRoute.js";
 
 const URL_MCP = "http://127.0.0.1:4100/mcp";
@@ -451,6 +452,119 @@ describe("agent call arguments", () => {
     const created = (await router.dispatch("sessions.create", { projectId: "p1", driver: "claude", options: { baseBranch: "main" } }, owner)) as SessionMeta;
     expect(findSession(created.id).permissionMode).toBeUndefined();
     expect(emitted).toEqual([]);
+  });
+});
+
+describe("cw tool definitions", () => {
+  test("describe the same ten tools the server registers, with object input schemas", async () => {
+    const definitions = cwToolDefinitions();
+    expect(definitions.map((definition) => definition.name)).toEqual(TOOL_NAMES);
+    const client = await modernClient([]);
+    const { tools } = await client.listTools();
+    await client.close();
+    for (const definition of definitions) {
+      expect(definition.description.length).toBeGreaterThan(0);
+      expect(definition.inputSchema.type).toBe("object");
+      expect(definition.inputSchema).not.toHaveProperty("$schema");
+      expect(tools.find((tool) => tool.name === definition.name)?.description).toBe(definition.description);
+    }
+  });
+
+  test("use only patterns that strict regex engines accept", () => {
+    const patterns = JSON.stringify(cwToolDefinitions()).match(/"pattern":"(?:[^"\\]|\\.)*"/g) ?? [];
+    expect(patterns.length).toBeGreaterThan(0);
+    for (const entry of patterns) {
+      const pattern = (JSON.parse(`{${entry}}`) as { pattern: string }).pattern;
+      expect(() => new RegExp(pattern, "v")).not.toThrow();
+    }
+  });
+});
+
+describe("mcp opencode principal", () => {
+  const SECRET = "opencode-secret";
+  let inFlight: Map<string, string>;
+  let resolved: Array<[string, string]>;
+
+  beforeEach(() => {
+    inFlight = new Map([["ses_oc", "caller"]]);
+    resolved = [];
+    route = createMcpRoute({
+      router,
+      tokens,
+      watch,
+      sessions: fakeSessions,
+      version: "9.9.9",
+      resolveOpencode: (secret, opencodeSessionId) => {
+        resolved.push([secret, opencodeSessionId]);
+        const sessionId = secret === SECRET ? inFlight.get(opencodeSessionId) : undefined;
+        return sessionId ? { sessionId } : null;
+      }
+    });
+  });
+
+  function opencodeCall(name: string, args: Record<string, unknown>, secret: string, opencodeSession: string): Request {
+    return post(
+      { jsonrpc: "2.0", id: 7, method: "tools/call", params: { name, arguments: args } },
+      { Authorization: `Bearer ${secret}`, [OPENCODE_SESSION_HEADER]: opencodeSession, "MCP-Protocol-Version": "2025-11-25" }
+    );
+  }
+
+  test("accepts the opencode secret for an in-flight session and acts as that cw-code session", async () => {
+    const response = await callRoute(opencodeCall("session_stop", { sessionId: "caller" }, SECRET, "ses_oc"));
+    expect(response.status).toBe(200);
+    expect(extended).toEqual([MCP_IDLE_TIMEOUT_SECONDS]);
+    const called = await readRpc(response);
+    expect(called.result?.isError).toBe(true);
+    expect((called.result?.content as Array<{ text: string }>)[0]?.text).toBe("an agent cannot stop its own session");
+    expect(resolved).toEqual([[SECRET, "ses_oc"]]);
+  });
+
+  test("applies the caller's permission cap to sessions it creates", async () => {
+    const response = await callRoute(
+      opencodeCall("session_create", { projectId: "p1", driver: "claude", prompt: "go", permissionMode: "bypassPermissions" }, SECRET, "ses_oc")
+    );
+    const created = await readRpc(response);
+    expect(JSON.parse((created.result?.content as Array<{ text: string }>)[0]?.text ?? "null")).toMatchObject({ permissionMode: "manual" });
+  });
+
+  test.each([
+    ["a wrong secret", "not-the-secret", "ses_oc"],
+    ["an unknown opencode session", SECRET, "ses_other"],
+    ["an empty opencode session", SECRET, ""]
+  ])("rejects %s", async (_label, secret, opencodeSession) => {
+    const response = await callRoute(opencodeCall("projects_list", {}, secret, opencodeSession));
+    expect(response.status).toBe(401);
+    expect(extended).toEqual([]);
+  });
+
+  test("rejects a session whose turn has finished", async () => {
+    expect((await callRoute(opencodeCall("projects_list", {}, SECRET, "ses_oc"))).status).toBe(200);
+    inFlight.delete("ses_oc");
+    expect((await callRoute(opencodeCall("projects_list", {}, SECRET, "ses_oc"))).status).toBe(401);
+  });
+
+  test("does not accept an agent token with the opencode header", async () => {
+    const response = await callRoute(opencodeCall("projects_list", {}, callerToken, "ses_oc"));
+    expect(response.status).toBe(401);
+    expect(resolved).toEqual([[callerToken, "ses_oc"]]);
+  });
+
+  test("never asks the opencode resolver about requests without the header", async () => {
+    expect((await callRoute(post({ jsonrpc: "2.0", id: 1, method: "tools/list", params: {} }, { Authorization: `Bearer ${SECRET}` }))).status).toBe(401);
+    expect((await callRoute(post({ jsonrpc: "2.0", id: 2, method: "tools/list", params: {} }, { "MCP-Protocol-Version": "2025-11-25" }))).status).toBe(200);
+    expect(resolved).toEqual([]);
+  });
+
+  test("rejects the header when no opencode resolver is wired", async () => {
+    route = createMcpRoute({ router, tokens, watch, sessions: fakeSessions, version: "9.9.9" });
+    expect((await callRoute(opencodeCall("projects_list", {}, SECRET, "ses_oc"))).status).toBe(401);
+  });
+
+  test("rejects any Origin before checking the opencode secret", async () => {
+    const request = opencodeCall("projects_list", {}, SECRET, "ses_oc");
+    request.headers.set("Origin", "http://evil.example");
+    expect((await callRoute(request)).status).toBe(403);
+    expect(resolved).toEqual([]);
   });
 });
 

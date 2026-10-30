@@ -1,4 +1,5 @@
 import { createMcpHandler, McpServer, type AuthInfo } from "@modelcontextprotocol/server";
+import { OPENCODE_SESSION_HEADER } from "@cw-code/shared/protocol";
 import type { AgentTokens } from "../agent/AgentTokens.js";
 import type { SessionWatch } from "../agent/SessionWatch.js";
 import type { SessionManager } from "../sessions/SessionManager.js";
@@ -8,12 +9,15 @@ import { registerCwTools, WAIT_MAX_MS } from "./cwTools.js";
 
 export const MCP_SERVER_NAME = "cw";
 
+export type ResolveOpencodeAgent = (secret: string, opencodeSessionId: string) => { sessionId: string } | null;
+
 export interface McpRouteDeps {
   router: Router;
   tokens: AgentTokens;
   watch: SessionWatch;
   sessions: Pick<SessionManager, "getComposer" | "turnPermissionMode">;
   version: string;
+  resolveOpencode?: ResolveOpencodeAgent;
 }
 
 function callerSessionId(authInfo: AuthInfo | undefined): string {
@@ -24,6 +28,13 @@ function callerSessionId(authInfo: AuthInfo | undefined): string {
 
 const BUN_MAX_IDLE_TIMEOUT_SECONDS = 255;
 export const MCP_IDLE_TIMEOUT_SECONDS = Math.min(BUN_MAX_IDLE_TIMEOUT_SECONDS, Math.ceil(WAIT_MAX_MS / 1000) + 15);
+
+function agentSessionOf(req: Request, token: string, deps: McpRouteDeps): string | null {
+  const opencodeSessionId = req.headers.get(OPENCODE_SESSION_HEADER);
+  if (opencodeSessionId === null) return deps.tokens.verify(token)?.sessionId ?? null;
+  if (!opencodeSessionId || !deps.resolveOpencode) return null;
+  return deps.resolveOpencode(token, opencodeSessionId)?.sessionId ?? null;
+}
 
 export function createMcpRoute(deps: McpRouteDeps): (req: Request, extendTimeout: (seconds: number) => void) => Promise<Response> {
   const handler = createMcpHandler(
@@ -37,10 +48,10 @@ export function createMcpRoute(deps: McpRouteDeps): (req: Request, extendTimeout
   return async (req, extendTimeout) => {
     if (req.headers.get("origin") !== null) return reply("forbidden", 403);
     const token = bearerToken(req);
-    const agent = token === null ? null : deps.tokens.verify(token);
-    if (token === null || agent === null) return reply("unauthorized", 401, { "WWW-Authenticate": "Bearer" });
+    const sessionId = token === null ? null : agentSessionOf(req, token, deps);
+    if (token === null || sessionId === null) return reply("unauthorized", 401, { "WWW-Authenticate": "Bearer" });
     extendTimeout(MCP_IDLE_TIMEOUT_SECONDS);
-    const authInfo: AuthInfo = { token, clientId: `mcp:${agent.sessionId}`, scopes: [], extra: { sessionId: agent.sessionId } };
+    const authInfo: AuthInfo = { token, clientId: `mcp:${sessionId}`, scopes: [], extra: { sessionId } };
     return handler.fetch(req, { authInfo });
   };
 }
