@@ -98,6 +98,16 @@ describe("harnessUpdateView", () => {
     expect(harnessUpdateView(state, NOW + 2000)).toBeNull();
   });
 
+  it("treats a future finish time as now", () => {
+    const state = updates({ claude: { phase: "succeeded", finishedAt: NOW + 60_000, currentVersion: "2.0.0" } });
+    expect(harnessUpdateView(state, NOW)).toMatchObject({ tone: "success", autoHideMs: 3000 });
+  });
+
+  it("offers to cancel queued harnesses only", () => {
+    const view = harnessUpdateView(updates({ claude: { phase: "queued" }, codex: { phase: "running" } }), NOW);
+    expect(view?.cancelTargets).toEqual(["claude"]);
+  });
+
   it("uses a plural success title", () => {
     const done = { phase: "succeeded", finishedAt: NOW - 500 } as const;
     expect(harnessUpdateView(updates({ claude: done, codex: done }), NOW)?.title).toBe("2 harnesses updated");

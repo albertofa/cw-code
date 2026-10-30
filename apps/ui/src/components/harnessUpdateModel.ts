@@ -13,9 +13,10 @@ export interface HarnessUpdateView {
   busy: boolean;
   autoHideMs: number | null;
   targets: DriverKind[];
+  cancelTargets: DriverKind[];
 }
 
-const IDLE_VIEW = { action: null, actionLabel: null, busy: false, autoHideMs: null, targets: [] as DriverKind[] };
+const IDLE_VIEW = { action: null, actionLabel: null, busy: false, autoHideMs: null, targets: [] as DriverKind[], cancelTargets: [] as DriverKind[] };
 
 function viewKey(items: HarnessUpdateInfo[]): string {
   return items
@@ -53,7 +54,8 @@ export function harnessUpdateView(updates: HarnessUpdates | undefined, now: numb
       tone: "info",
       title: active.length === 1 ? `Updating ${names(active)}…` : `Updating ${active.length} harnesses…`,
       lines: phaseLines(active),
-      busy: true
+      busy: true,
+      cancelTargets: active.filter((item) => item.phase === "queued").map((item) => item.binary)
     };
   }
 
@@ -72,9 +74,10 @@ export function harnessUpdateView(updates: HarnessUpdates | undefined, now: numb
     };
   }
 
-  const fresh = items.filter((item) => item.phase === "succeeded" && item.finishedAt !== null && now - item.finishedAt < SUCCESS_VISIBLE_MS);
+  const age = (item: HarnessUpdateInfo): number => now - Math.min(item.finishedAt ?? now, now);
+  const fresh = items.filter((item) => item.phase === "succeeded" && item.finishedAt !== null && age(item) < SUCCESS_VISIBLE_MS);
   if (fresh.length > 0) {
-    const remaining = Math.max(...fresh.map((item) => SUCCESS_VISIBLE_MS - (now - (item.finishedAt ?? now))));
+    const remaining = Math.max(...fresh.map((item) => SUCCESS_VISIBLE_MS - age(item)));
     return {
       ...IDLE_VIEW,
       key,

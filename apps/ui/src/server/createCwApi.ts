@@ -188,6 +188,7 @@ export function createCwApi(
     recheckClis: () => call<HarnessAvailability>("cli.recheck", {}),
     checkHarnessUpdates: () => call<HarnessUpdates>("cli.checkUpdates", {}),
     updateHarnesses: (binaries: DriverKind[]) => call<HarnessUpdates>("cli.update", { binaries }),
+    cancelHarnessUpdates: (binaries: DriverKind[]) => call<HarnessUpdates>("cli.cancelUpdate", { binaries }),
     importLegacyPrefs: (legacy: LegacyPreferences) => callVoid("prefs.importLegacy", legacy),
     reorderSidebar: (request: SidebarReorderRequest) => callVoid("sidebar.reorder", request),
     pushRecentModel: (driver, model) => callVoid("prefs.pushRecentModel", { driver, model }),

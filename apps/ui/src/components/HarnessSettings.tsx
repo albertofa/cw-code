@@ -304,6 +304,12 @@ function StatusCard({ driver, check, onOpenUsage }: { driver: DriverName; check:
     });
   };
 
+  const cancelUpdate = () => {
+    window.cw.cancelHarnessUpdates([driver]).catch((err: unknown) => {
+      useNotifs.getState().push({ kind: "error", title: "Could not cancel the harness update", message: errorMessage(err) });
+    });
+  };
+
   const copyCommand = (command: string) => {
     navigator.clipboard.writeText(command).then(
       () => useNotifs.getState().push({ kind: "success", title: "Update command copied" }),
@@ -377,6 +383,11 @@ function StatusCard({ driver, check, onOpenUsage }: { driver: DriverName; check:
           <button type="button" className="btn btn-primary sp-btn-sm" disabled={updating} onClick={runUpdate}>
             <RefreshCw size={12} className={updating ? "spin" : undefined} aria-hidden="true" />{" "}
             {updating ? "Updating…" : `Update${latest.latestVersion ? ` to ${latest.latestVersion}` : ""}`}
+          </button>
+        )}
+        {latest?.phase === "queued" && (
+          <button type="button" className="btn sp-btn-sm" onClick={cancelUpdate}>
+            Cancel
           </button>
         )}
         <button type="button" className="btn sp-btn-sm" disabled={rechecking} onClick={recheck.trigger} aria-live="polite">

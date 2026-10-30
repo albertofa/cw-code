@@ -568,6 +568,7 @@ export interface CwApi {
   recheckClis(): Promise<HarnessAvailability>;
   checkHarnessUpdates(): Promise<HarnessUpdates>;
   updateHarnesses(binaries: DriverKind[]): Promise<HarnessUpdates>;
+  cancelHarnessUpdates(binaries: DriverKind[]): Promise<HarnessUpdates>;
   importLegacyPrefs(legacy: LegacyPreferences): Promise<void>;
   reorderSidebar(request: SidebarReorderRequest): Promise<void>;
   pushRecentModel(driver: DriverName, model: string): Promise<void>;
