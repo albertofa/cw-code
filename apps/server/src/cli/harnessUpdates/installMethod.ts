@@ -1,7 +1,7 @@
-import { existsSync } from "node:fs";
-import { realpath } from "node:fs/promises";
+import { constants, existsSync } from "node:fs";
+import { access, realpath } from "node:fs/promises";
 import { homedir } from "node:os";
-import { win32 } from "node:path";
+import { dirname, win32 } from "node:path";
 import type { DriverKind, HarnessInstallMethod } from "@cw-code/contracts";
 import { currentEnv, resolveBinary } from "../../pty/resolve.js";
 
@@ -74,7 +74,9 @@ export function resolveInstallPlan(input: InstallPlanInput): InstallPlan {
     return manual("mise", "mise upgrade");
   }
 
-  if (isNative(binary, candidates, home)) {
+  const npmPrefix = findNpmPrefix(input);
+  const claudeViaNpm = binary === "claude" && npmPrefix !== null;
+  if (!claudeViaNpm && isNative(binary, candidates, home)) {
     const args = binary === "opencode" ? ["upgrade"] : ["update"];
     return runnable("native", execPath, args, `${binary}-native`);
   }
@@ -96,7 +98,6 @@ export function resolveInstallPlan(input: InstallPlanInput): InstallPlan {
     return runnable("pnpm", "pnpm", ["add", "-g", `${packageName}@latest`], "pnpm-global");
   }
 
-  const npmPrefix = findNpmPrefix(input, realPath, norm(packageName));
   if (npmPrefix) {
     const lockPrefix = win ? npmPrefix.toLowerCase() : npmPrefix;
     return runnable("npm", "npm", ["install", "-g", "--prefix", npmPrefix, `${packageName}@latest`], `npm-global:${lockPrefix}`);
@@ -129,8 +130,10 @@ function isNative(binary: DriverKind, candidates: string[], home: string): boole
   return candidates.some((path) => path.includes("/packages/standalone/"));
 }
 
-function findNpmPrefix(input: InstallPlanInput, realPath: string, normalizedPackage: string): string | null {
+function findNpmPrefix(input: InstallPlanInput): string | null {
+  const { realPath, packageName } = input;
   const win = input.platform === "win32";
+  const normalizedPackage = win ? packageName.toLowerCase() : packageName;
   const slashed = realPath.replace(/\\/g, "/");
   const haystack = win ? slashed.toLowerCase() : slashed;
   const marker = `/lib/node_modules/${normalizedPackage}/`;
@@ -150,7 +153,7 @@ export async function planFor(binary: DriverKind, binaryPath: string, packageNam
   const execPath = resolveBinary(binaryPath, currentEnv());
   if (!execPath) return manualFallback(binary);
   const realPath = await realpath(execPath).catch(() => execPath);
-  return resolveInstallPlan({
+  const input: InstallPlanInput = {
     binary,
     execPath,
     realPath,
@@ -159,5 +162,25 @@ export async function planFor(binary: DriverKind, binaryPath: string, packageNam
     env: process.env,
     packageName,
     exists: existsSync
-  });
+  };
+  const plan = resolveInstallPlan(input);
+  const target = installDir(plan, input);
+  if (target === null || (await writable(target))) return plan;
+  return manual(plan.method, plan.display);
+}
+
+function installDir(plan: InstallPlan, input: InstallPlanInput): string | null {
+  if (!plan.command) return null;
+  if (plan.method === "npm") return findNpmPrefix(input);
+  if (plan.method === "pnpm" || plan.method === "bun") return dirname(input.realPath);
+  return null;
+}
+
+async function writable(dir: string): Promise<boolean> {
+  try {
+    await access(dir, constants.W_OK);
+    return true;
+  } catch {
+    return false;
+  }
 }

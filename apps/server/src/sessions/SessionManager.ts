@@ -352,7 +352,11 @@ export class SessionManager {
   }
 
   harnessActivity(kind: DriverKind): { busy: number } {
-    return { busy: this.drivers[kind].activity?.().busySessionIds.length ?? 0 };
+    const busy = new Set(this.drivers[kind].activity?.().busySessionIds ?? []);
+    const onKind = (sessionId: string): boolean => this.store.getSession(sessionId)?.driver === kind;
+    for (const sessionId of this.pendingTurns) if (onKind(sessionId)) busy.add(sessionId);
+    for (const { sessionId } of this.activeTurns.values()) if (onKind(sessionId)) busy.add(sessionId);
+    return { busy: busy.size };
   }
 
   async releaseHarnessBinary(kind: DriverKind): Promise<void> {
@@ -475,6 +479,7 @@ export class SessionManager {
       if (owner === sessionId) this.settledTurns.delete(settledTurnId);
     }
     this.settledTurns.set(turnId, sessionId);
+    this.notifyDriverActivity();
   }
 
   private handleTitleTurnEvent(event: ThreadEvent): void {
@@ -673,7 +678,7 @@ export class SessionManager {
     if (event.type === "turn.error") {
       const wasActive = this.activeTurns.has(event.turnId);
       if (sessionId) this.settleTurn(event.turnId, sessionId);
-      else this.activeTurns.delete(event.turnId);
+      else if (this.activeTurns.delete(event.turnId)) this.notifyDriverActivity();
       this.dropPendingRequests(this.pendingRequests.clearTurn(event.turnId));
       this.turnPrRefs.delete(event.turnId);
       this.turnFinalReviews.delete(event.turnId);
@@ -2285,8 +2290,7 @@ export class SessionManager {
     }
     const project = this.store.getProject(session.projectId);
     if (!project) throw new Error(`unknown project ${session.projectId}`);
-    const gated = this.turnGate?.(session.driver) ?? null;
-    if (gated !== null) throw new Error(gated);
+    this.assertTurnGateOpen(session.driver);
     for (const [turnId, entry] of this.activeTurns) {
       if (entry.sessionId === sessionId) throw new SessionBusyError(`turn ${turnId}`);
     }
@@ -2337,6 +2341,7 @@ export class SessionManager {
       const driver = this.drivers[session.driver];
       if (session.driver === "claude") await this.refreshGitHubToken(project);
       this.assertNotReserved();
+      this.assertTurnGateOpen(session.driver);
       const handle = driver.startTurn({
         sessionId,
         prompt,
@@ -2371,6 +2376,7 @@ export class SessionManager {
       throw err;
     } finally {
       this.pendingTurns.delete(sessionId);
+      this.notifyDriverActivity();
     }
   }
 
@@ -2380,6 +2386,11 @@ export class SessionManager {
     const mcpUrl = env[CW_MCP_URL_ENV];
     const token = env[CW_AGENT_TOKEN_ENV];
     return mcpUrl && token ? { agent: { mcpUrl, token } } : {};
+  }
+
+  private assertTurnGateOpen(kind: DriverKind): void {
+    const gated = this.turnGate?.(kind) ?? null;
+    if (gated !== null) throw new SessionBusyError("harness updating", gated);
   }
 
   private revertFailedTurnStart(sessionId: string, previous: SessionStatusSnapshot): void {
@@ -2413,6 +2424,7 @@ export class SessionManager {
     if (!session) throw new Error(`unknown session ${sessionId}`);
     const source = await this.titleSource(session);
     if (!source.trim()) throw new Error("No session message to generate a title from yet");
+    this.assertTurnGateOpen(this.settings.get().autoTitleDriver);
     const title = await this.launchTitleTurn(sessionId, source, session.title);
     if (!title) throw new Error("Title generation failed. Check the configured harness and model.");
     return title;
@@ -2435,6 +2447,7 @@ export class SessionManager {
       if (pending.sessionId === sessionId && !pending.settled) return pending.promise;
     }
     const settings = this.settings.get();
+    if (this.turnGate?.(settings.autoTitleDriver)) return Promise.resolve(null);
     const driver = this.drivers[settings.autoTitleDriver];
     const titleSessionId = `title:${sessionId}`;
     const titleRoot = this.titleGenRoot();
@@ -2984,6 +2997,7 @@ export class SessionManager {
   beginShutdownReservation(): void {
     this.shutdownReserved = true;
     this.interruptedForShutdown.clear();
+    this.notifyDriverActivity();
   }
 
   clearShutdownReservation(): void {

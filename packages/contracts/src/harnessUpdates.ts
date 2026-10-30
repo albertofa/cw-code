@@ -11,7 +11,7 @@ export interface HarnessUpdateInfo {
   latestVersion: string | null;
   installMethod: HarnessInstallMethod;
   canUpdate: boolean;
-  /** Command shown for manual updates; null when there is none to suggest. */
+  /** Command that updates this install: shown for manual installs and as detail for one-click ones; null when there is none to suggest. */
   updateCommand: string | null;
   message: string | null;
   checkedAt: number | null;

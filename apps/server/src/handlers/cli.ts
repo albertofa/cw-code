@@ -21,6 +21,10 @@ export function registerCliHandlers(router: Router, app: ServerApp): void {
     if (!isDriverKindList(args?.binaries)) throw new Error("cli.update requires { binaries }");
     return app.requireServices().harnessUpdates.update(args.binaries);
   });
+  handle<{ binaries?: unknown } | undefined>(router, "cli.cancelUpdate", (args) => {
+    if (!isDriverKindList(args?.binaries)) throw new Error("cli.cancelUpdate requires { binaries }");
+    return app.requireServices().harnessUpdates.cancel(args.binaries);
+  });
   handle<{ binaries?: CliBinary[] } | undefined>(router, "cli.discover", (args) => discoverBinaries(args?.binaries));
   handle<{ binary: CliBinary; path: string } | undefined>(router, "cli.verifyPath", (args) => {
     if (!args || typeof args.binary !== "string" || typeof args.path !== "string") {

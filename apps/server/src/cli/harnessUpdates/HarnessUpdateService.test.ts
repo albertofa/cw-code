@@ -46,13 +46,14 @@ interface Setup {
   versions: Partial<Record<DriverKind, string | null>>;
   plans?: Partial<Record<DriverKind, InstallPlan>>;
   latest?: string | null;
+  platform?: NodeJS.Platform;
   run?(command: UpdateCommand, binary: DriverKind): Promise<UpdateRunResult>;
 }
 
 function setup(options: Setup) {
   const versions = { ...options.versions };
   const plans: Partial<Record<DriverKind, InstallPlan>> = { ...options.plans };
-  const state = { enabled: true, latest: options.latest === undefined ? "2.0.0" : options.latest };
+  const state = { enabled: true, reserved: false, latest: options.latest === undefined ? "2.0.0" : options.latest };
   const busy: Record<DriverKind, number> = { claude: 0, codex: 0, opencode: 0 };
   const listeners = new Set<() => void>();
   const events: string[] = [];
@@ -84,7 +85,9 @@ function setup(options: Setup) {
       events.push("recheck");
     },
     publish: () => {},
-    now: () => 1000
+    shutdownReserved: () => state.reserved,
+    now: () => 1000,
+    platform: options.platform ?? "linux"
   });
   return {
     service,
@@ -313,6 +316,107 @@ describe("HarnessUpdateService", () => {
     const refreshed = await service.refresh({ fresh: true });
     expect(pick(refreshed.claude, ["phase", "phaseMessage", "startedAt", "finishedAt", "output"])).toEqual(before);
     expect(before.phase).toBe("failed");
+  });
+
+  it("cancels an update that is still queued", async () => {
+    const { service, busy, runs, fireActivity } = setup({ versions: { claude: "1.0.0" } });
+    busy.claude = 1;
+    await service.refresh({ fresh: true });
+    await service.update(["claude"]);
+    const cancelled = service.cancel(["claude"]);
+    expect(pick(cancelled.claude, ["phase", "phaseMessage", "finishedAt"])).toEqual({
+      phase: "idle",
+      phaseMessage: "Update cancelled.",
+      finishedAt: 1000
+    });
+    busy.claude = 0;
+    fireActivity();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(runs).toEqual([]);
+    await service.update(["claude"]);
+    await until(() => settled(service.updates.claude.phase));
+    expect(runs).toEqual(["claude"]);
+  });
+
+  it("does not cancel an update that is already running", async () => {
+    const gate = deferred<void>();
+    const { service, versions } = setup({
+      versions: { claude: "1.0.0" },
+      run: async () => {
+        await gate.promise;
+        versions.claude = "2.0.0";
+        return { code: 0, output: "", error: null };
+      }
+    });
+    await service.refresh({ fresh: true });
+    await service.update(["claude"]);
+    await until(() => service.updates.claude.phase === "running");
+    expect(service.cancel(["claude"]).claude.phase).toBe("running");
+    gate.resolve();
+    await until(() => settled(service.updates.claude.phase));
+    expect(service.updates.claude.phase).toBe("succeeded");
+  });
+
+  it("cancels queued updates on dispose and never starts them", async () => {
+    const { service, busy, runs, fireActivity } = setup({ versions: { claude: "1.0.0" } });
+    busy.claude = 1;
+    await service.refresh({ fresh: true });
+    await service.update(["claude"]);
+    service.dispose();
+    expect(pick(service.updates.claude, ["phase", "phaseMessage"])).toEqual({ phase: "idle", phaseMessage: "Update cancelled." });
+    busy.claude = 0;
+    fireActivity();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await service.update(["claude"]);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(runs).toEqual([]);
+    expect(service.updates.claude.phase).toBe("idle");
+  });
+
+  it("cancels queued updates once shutdown is reserved", async () => {
+    const { service, busy, state, runs, fireActivity } = setup({ versions: { claude: "1.0.0" } });
+    busy.claude = 1;
+    await service.refresh({ fresh: true });
+    await service.update(["claude"]);
+    state.reserved = true;
+    fireActivity();
+    expect(pick(service.updates.claude, ["phase", "phaseMessage"])).toEqual({ phase: "idle", phaseMessage: "Update cancelled." });
+    busy.claude = 0;
+    fireActivity();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(runs).toEqual([]);
+  });
+
+  it("waits for idle before taking the lock so a busy harness does not block another", async () => {
+    const { service, busy, runs, fireActivity } = setup({ versions: { claude: "1.0.0", codex: "1.0.0" } });
+    busy.claude = 1;
+    await service.refresh({ fresh: true });
+    await service.update(["claude", "codex"]);
+    await until(() => settled(service.updates.codex.phase));
+    expect(runs).toEqual(["codex"]);
+    expect(pick(service.updates.claude, ["phase", "phaseMessage"])).toEqual({
+      phase: "queued",
+      phaseMessage: "Waiting for 1 running turn(s) to finish"
+    });
+    busy.claude = 0;
+    fireActivity();
+    await until(() => settled(service.updates.claude.phase));
+    expect(runs).toEqual(["codex", "claude"]);
+    expect(service.updates.claude.phase).toBe("succeeded");
+  });
+
+  it("suggests closing the harness when Windows reports the binary is locked", async () => {
+    const { service } = setup({
+      versions: { claude: "1.0.0" },
+      platform: "win32",
+      run: async () => ({ code: 1, output: "npm error code EBUSY\nnpm error resource busy or locked\n", error: null })
+    });
+    await service.refresh({ fresh: true });
+    await service.update(["claude"]);
+    await until(() => settled(service.updates.claude.phase));
+    expect(service.updates.claude.phaseMessage).toBe(
+      "Update command exited with code 1: npm error resource busy or locked Close any Claude terminals or windows using it and try again."
+    );
   });
 
   it("lets the newest refresh win", async () => {

@@ -7,6 +7,7 @@ import { lastOutputLine, type UpdateCommand, type UpdateRunner } from "./runUpda
 import { isBehind } from "./versionCompare.js";
 
 const REFRESH_INTERVAL_MS = 60 * 60 * 1000;
+const FILE_LOCKED_RE = /EBUSY|EPERM|resource busy or locked/i;
 
 export type HarnessCheck = CliVersionCheck & { skipped: boolean };
 
@@ -22,13 +23,27 @@ export interface HarnessUpdateDeps {
   release(kind: DriverKind): Promise<void>;
   recheck(): Promise<unknown>;
   publish(updates: HarnessUpdates): void;
+  shutdownReserved(): boolean;
   now?(): number;
+  platform?: NodeJS.Platform;
 }
 
 interface KnownPlan {
   plan: InstallPlan;
   binaryPath: string;
   packageName: string;
+}
+
+interface Evaluated {
+  info: HarnessUpdateInfo;
+  plan: KnownPlan | null;
+}
+
+interface QueueTicket {
+  cancelled: boolean;
+  signal: Promise<void>;
+  cancel(): void;
+  close(): void;
 }
 
 type PhaseFields = Pick<HarnessUpdateInfo, "phase" | "phaseMessage" | "startedAt" | "finishedAt" | "output">;
@@ -46,11 +61,13 @@ export class HarnessUpdateService {
   private readonly plans = new Map<DriverKind, KnownPlan>();
   private readonly active = new Set<DriverKind>();
   private readonly running = new Set<DriverKind>();
+  private readonly queued = new Map<DriverKind, QueueTicket>();
   private readonly locks = new Map<string, Promise<void>>();
   private latestRefresh = 0;
   private newestRefresh: Promise<HarnessUpdates> | null = null;
   private timer: ReturnType<typeof setInterval> | null = null;
   private started = false;
+  private disposed = false;
 
   constructor(private readonly deps: HarnessUpdateDeps) {
     this.state = deps.initial;
@@ -73,12 +90,14 @@ export class HarnessUpdateService {
   }
 
   resume(): void {
+    this.disposed = false;
     if (this.started) this.startTimer();
   }
 
   dispose(): void {
-    if (this.timer) clearInterval(this.timer);
-    this.timer = null;
+    this.disposed = true;
+    this.stopTimer();
+    for (const ticket of [...this.queued.values()]) ticket.cancel();
   }
 
   async refresh(opts: { fresh: boolean }): Promise<HarnessUpdates> {
@@ -95,6 +114,7 @@ export class HarnessUpdateService {
   }
 
   async update(binaries: readonly DriverKind[]): Promise<HarnessUpdates> {
+    if (this.halted()) return this.state;
     const targets = [...new Set(binaries)].filter((binary) => {
       const info = this.state[binary];
       return info.canUpdate && info.latestVersion !== null && !this.active.has(binary) && this.plans.get(binary)?.plan.command;
@@ -104,10 +124,24 @@ export class HarnessUpdateService {
     return this.state;
   }
 
+  cancel(binaries: readonly DriverKind[]): HarnessUpdates {
+    for (const binary of new Set(binaries)) this.queued.get(binary)?.cancel();
+    return this.state;
+  }
+
   private startTimer(): void {
-    this.dispose();
+    this.stopTimer();
     this.timer = setInterval(() => void this.refresh({ fresh: true }), REFRESH_INTERVAL_MS);
     this.timer.unref?.();
+  }
+
+  private stopTimer(): void {
+    if (this.timer) clearInterval(this.timer);
+    this.timer = null;
+  }
+
+  private halted(): boolean {
+    return this.disposed || this.deps.shutdownReserved();
   }
 
   private now(): number {
@@ -124,13 +158,17 @@ export class HarnessUpdateService {
     const evaluated = await Promise.all(this.deps.checks().map((check) => this.evaluate(check, enabled, fresh)));
     if (run !== this.latestRefresh) return this.state;
     let next = this.state;
-    for (const info of evaluated) next = { ...next, [info.binary]: { ...info, ...phaseFields(this.state[info.binary]) } };
+    for (const { info, plan } of evaluated) {
+      if (plan) this.plans.set(info.binary, plan);
+      else this.plans.delete(info.binary);
+      next = { ...next, [info.binary]: { ...info, ...phaseFields(this.state[info.binary]) } };
+    }
     this.state = next;
     this.deps.publish(next);
     return next;
   }
 
-  private async evaluate(check: HarnessCheck, enabled: boolean, fresh: boolean): Promise<HarnessUpdateInfo> {
+  private async evaluate(check: HarnessCheck, enabled: boolean, fresh: boolean): Promise<Evaluated> {
     const { binary, actual, binaryPath } = check;
     const base: HarnessUpdateInfo = {
       ...this.state[binary],
@@ -143,28 +181,24 @@ export class HarnessUpdateService {
       message: null,
       checkedAt: this.now()
     };
-    if (check.skipped || actual === null) {
-      this.plans.delete(binary);
-      return base;
-    }
+    if (check.skipped || actual === null) return { info: base, plan: null };
     const packageName = packageFor(binary, actual);
     let plan: InstallPlan;
     try {
       plan = await this.deps.plan(binary, binaryPath, packageName);
     } catch (error) {
       console.warn(`[harness-updates] could not resolve how ${binary} was installed: ${errorMessage(error)}`);
-      this.plans.delete(binary);
-      return base;
+      return { info: base, plan: null };
     }
-    this.plans.set(binary, { plan, binaryPath, packageName });
+    const known: KnownPlan = { plan, binaryPath, packageName };
     const withPlan: HarnessUpdateInfo = { ...base, installMethod: plan.method };
-    if (!enabled) return withPlan;
+    if (!enabled) return { info: withPlan, plan: known };
     const latest = await this.deps.latest(packageName, { fresh });
-    if (latest === null) return withPlan;
-    if (!isBehind(actual, latest)) return { ...withPlan, status: "current", latestVersion: latest };
+    if (latest === null) return { info: withPlan, plan: known };
+    if (!isBehind(actual, latest)) return { info: { ...withPlan, status: "current", latestVersion: latest }, plan: known };
     const behind: HarnessUpdateInfo = { ...withPlan, status: "behind", latestVersion: latest, updateCommand: plan.display };
-    if (plan.command) return { ...behind, canUpdate: true };
-    return { ...behind, message: `Version ${latest} is out. Update it with the tool that installed ${binaryPath}.` };
+    if (plan.command) return { info: { ...behind, canUpdate: true }, plan: known };
+    return { info: { ...behind, message: `Version ${latest} is out. Update it with the tool that installed ${binaryPath}.` }, plan: known };
   }
 
   private async start(binary: DriverKind): Promise<void> {
@@ -193,17 +227,23 @@ export class HarnessUpdateService {
 
   private async execute(binary: DriverKind, command: UpdateCommand, lockKey: string, latest: string, previousVersion: string | null): Promise<void> {
     const startedAt = this.now();
-    const previous = this.locks.get(lockKey);
-    let unlock: () => void = () => {};
-    const mine = new Promise<void>((resolve) => {
-      unlock = resolve;
-    });
-    const chain = (previous ?? Promise.resolve()).then(() => mine);
-    this.locks.set(lockKey, chain);
+    this.patch(binary, { phase: "queued", phaseMessage: null, startedAt, finishedAt: null, output: null });
+    const ticket = this.enqueue(binary);
+    let unlock: (() => void) | null = null;
     try {
-      this.patch(binary, { phase: "queued", phaseMessage: previous ? "Waiting for another update to finish" : null, startedAt, finishedAt: null, output: null });
-      if (previous) await previous;
-      await this.waitForIdle(binary);
+      while (unlock === null) {
+        if (!this.idle(binary, ticket)) await this.waitForIdle(binary, ticket);
+        if (ticket.cancelled) return;
+        const release = await this.acquire(lockKey, binary, ticket);
+        if (this.halted()) ticket.cancel();
+        if (ticket.cancelled) {
+          release();
+          return;
+        }
+        if (this.idle(binary, ticket)) unlock = release;
+        else release();
+      }
+      ticket.close();
       this.running.add(binary);
       await this.deps.release(binary);
       this.patch(binary, { phase: "running", phaseMessage: `Updating to ${latest}`, startedAt: this.now() });
@@ -212,7 +252,7 @@ export class HarnessUpdateService {
       const output = result.output || null;
       if (result.error !== null || result.code !== 0) {
         const message = result.error ?? `Update command exited with code ${result.code}: ${lastOutputLine(result.output) ?? ""}`.trimEnd();
-        this.fail(binary, command, startedAt, message, output, result.code);
+        this.fail(binary, command, startedAt, this.withLockedHint(binary, message, result.output), output, result.code);
         return;
       }
       await this.deps.recheck();
@@ -221,29 +261,83 @@ export class HarnessUpdateService {
     } catch (error) {
       this.fail(binary, command, startedAt, errorMessage(error), null, null);
     } finally {
+      ticket.close();
       this.running.delete(binary);
       this.active.delete(binary);
-      unlock();
-      if (this.locks.get(lockKey) === chain) this.locks.delete(lockKey);
+      unlock?.();
     }
   }
 
-  private waitForIdle(binary: DriverKind): Promise<void> {
-    if (this.deps.activity(binary).busy === 0) return Promise.resolve();
+  private enqueue(binary: DriverKind): QueueTicket {
+    let wake: () => void = () => {};
+    const signal = new Promise<void>((resolve) => {
+      wake = resolve;
+    });
+    const stopWatching = this.deps.onActivity(() => {
+      if (this.halted()) ticket.cancel();
+    });
+    const ticket: QueueTicket = {
+      cancelled: false,
+      signal,
+      cancel: () => {
+        if (ticket.cancelled || this.queued.get(binary) !== ticket) return;
+        ticket.cancelled = true;
+        this.patch(binary, { phase: "idle", phaseMessage: "Update cancelled.", finishedAt: this.now() });
+        ticket.close();
+        wake();
+      },
+      close: () => {
+        stopWatching();
+        if (this.queued.get(binary) === ticket) this.queued.delete(binary);
+      }
+    };
+    this.queued.set(binary, ticket);
+    if (this.halted()) ticket.cancel();
+    return ticket;
+  }
+
+  private idle(binary: DriverKind, ticket: QueueTicket): boolean {
+    return ticket.cancelled || this.deps.activity(binary).busy === 0;
+  }
+
+  private async acquire(lockKey: string, binary: DriverKind, ticket: QueueTicket): Promise<() => void> {
+    const previous = this.locks.get(lockKey);
+    let release: () => void = () => {};
+    const mine = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const chain = (previous ?? Promise.resolve()).then(() => mine);
+    this.locks.set(lockKey, chain);
+    void chain.then(() => {
+      if (this.locks.get(lockKey) === chain) this.locks.delete(lockKey);
+    });
+    if (previous) {
+      this.patch(binary, { phase: "queued", phaseMessage: "Waiting for another update to finish" });
+      await Promise.race([previous, ticket.signal]);
+    }
+    return release;
+  }
+
+  private waitForIdle(binary: DriverKind, ticket: QueueTicket): Promise<void> {
     return new Promise((resolve) => {
       const check = (): void => {
-        const { busy } = this.deps.activity(binary);
-        if (busy === 0) {
+        if (this.idle(binary, ticket)) {
           unsubscribe();
           resolve();
           return;
         }
-        const phaseMessage = `Waiting for ${busy} running turn(s) to finish`;
+        const phaseMessage = `Waiting for ${this.deps.activity(binary).busy} running turn(s) to finish`;
         if (this.state[binary].phaseMessage !== phaseMessage) this.patch(binary, { phase: "queued", phaseMessage });
       };
       const unsubscribe = this.deps.onActivity(check);
+      void ticket.signal.then(check);
       check();
     });
+  }
+
+  private withLockedHint(binary: DriverKind, message: string, output: string): string {
+    if ((this.deps.platform ?? process.platform) !== "win32" || !FILE_LOCKED_RE.test(`${message}\n${output}`)) return message;
+    return `${message} Close any ${harnessLabel(binary)} terminals or windows using it and try again.`;
   }
 
   private finish(binary: DriverKind, command: UpdateCommand, startedAt: number, latest: string, previousVersion: string | null, output: string | null): void {

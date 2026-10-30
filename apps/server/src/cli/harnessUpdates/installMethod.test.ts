@@ -77,6 +77,20 @@ describe("resolveInstallPlan native", () => {
     expect(plan.command).toEqual({ file: "/home/dev/.local/bin/claude", args: ["update"] });
   });
 
+  it("prefers npm over native when ~/.local/bin/claude links into an npm prefix", () => {
+    const plan = resolveInstallPlan(
+      posix("claude", "/home/dev/.local/bin/claude", {
+        realPath: "/home/dev/.local/lib/node_modules/@anthropic-ai/claude-code/cli.js"
+      })
+    );
+    expect(plan).toEqual({
+      method: "npm",
+      command: { file: "npm", args: ["install", "-g", "--prefix", "/home/dev/.local", "@anthropic-ai/claude-code@latest"] },
+      display: "npm install -g --prefix /home/dev/.local @anthropic-ai/claude-code@latest",
+      lockKey: "npm-global:/home/dev/.local"
+    });
+  });
+
   it("detects opencode native and uses upgrade", () => {
     const plan = resolveInstallPlan(posix("opencode", "/home/dev/.opencode/bin/opencode"));
     expect(plan.command).toEqual({ file: "/home/dev/.opencode/bin/opencode", args: ["upgrade"] });

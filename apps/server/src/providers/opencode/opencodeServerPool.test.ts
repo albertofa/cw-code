@@ -323,6 +323,29 @@ describe("OpencodeServerPool ensure", () => {
     pool.dispose();
   });
 
+  it("replaces a server whose spawn was pending during releaseIdle on the next idle ensure", async () => {
+    let port = 40000;
+    const startServer = vi.fn(
+      (): Promise<{ proc: ChildProcess; handle: ServerHandle }> =>
+        new Promise((resolve) => {
+          const handle = { port: ++port, authHeader: "x" };
+          setTimeout(() => resolve({ proc: fakeProc(), handle }), 10);
+        })
+    );
+    const pool = makePool(startServer);
+
+    const pending = pool.ensure(ROOT);
+    pool.releaseIdle();
+    const old = await pending;
+
+    const next = await pool.ensure(ROOT);
+    expect(next.port).not.toBe(old.port);
+    expect(startServer).toHaveBeenCalledTimes(2);
+    await pool.ensure(ROOT);
+    expect(startServer).toHaveBeenCalledTimes(2);
+    pool.dispose();
+  });
+
   it("evicts idle servers on a timer without waiting for the next ensure", async () => {
     const gone: Array<{ rootPath: string; port: number }> = [];
     const startServer = vi.fn(

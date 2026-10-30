@@ -329,7 +329,8 @@ export function createServices(stores: { sessionStore: SessionStore; settingsSto
     onActivity: (listener) => sessions.onHarnessActivity(listener),
     release: (kind) => sessions.releaseHarnessBinary(kind),
     recheck: () => harnessMonitor.check("recheck"),
-    publish: (updates) => appTopic.setHarnessUpdates(updates)
+    publish: (updates) => appTopic.setHarnessUpdates(updates),
+    shutdownReserved: () => sessions.isShutdownReserved()
   });
   sessions.setTurnGate((kind) => harnessUpdates.turnGate(kind));
   const threads = new ThreadService({

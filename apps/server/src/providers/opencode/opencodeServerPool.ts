@@ -123,7 +123,7 @@ interface PoolEntry {
   handle: ServerHandle;
   envKey: string;
   lastUsed: number;
-  stale?: boolean;
+  generation: number;
 }
 
 export interface OpencodeServerPoolDeps {
@@ -149,6 +149,7 @@ export class OpencodeServerPool {
   private draining = 0;
   private pending = new Map<string, { envKey: string; promise: Promise<ServerHandle> }>();
   private inFlight = new Map<string, number>();
+  private generation = 0;
   private disposed = false;
   private idleTimeoutMs: number;
   private maxServers: number;
@@ -359,7 +360,7 @@ export class OpencodeServerPool {
         extra: { reason: "dead", serverPort: existing.handle.port }
       });
       this.stop(rootPath);
-    } else if (existing?.binary === binary && !existing.stale && (env === undefined || existing.envKey === envKey)) {
+    } else if (existing?.binary === binary && existing.generation === this.generation && (env === undefined || existing.envKey === envKey)) {
       existing.lastUsed = Date.now();
       traceHarnessCall({
         harness: "opencode",
@@ -380,6 +381,7 @@ export class OpencodeServerPool {
       this.stop(rootPath);
     }
     const spawnEnv = stripSessionEnv(env);
+    const generation = this.generation;
     const started = this.deps?.startServer
       ? await this.deps.startServer(rootPath, binary, spawnEnv)
       : await this.ensureProcess(rootPath, binary, spawnEnv);
@@ -388,7 +390,7 @@ export class OpencodeServerPool {
       throw new Error("opencode server pool disposed");
     }
     this.trackProcess(rootPath, started.proc);
-    this.servers.set(rootPath, { binary, proc: started.proc, handle: started.handle, envKey, lastUsed: Date.now() });
+    this.servers.set(rootPath, { binary, proc: started.proc, handle: started.handle, envKey, lastUsed: Date.now(), generation });
     return started.handle;
   }
 
@@ -440,11 +442,9 @@ export class OpencodeServerPool {
   }
 
   releaseIdle(): void {
-    for (const [rootPath, entry] of [...this.servers]) {
-      if ((this.inFlight.get(rootPath) ?? 0) > 0) {
-        entry.stale = true;
-        continue;
-      }
+    this.generation += 1;
+    for (const rootPath of [...this.servers.keys()]) {
+      if ((this.inFlight.get(rootPath) ?? 0) > 0) continue;
       traceHarnessCall({
         harness: "opencode",
         operation: "opencode.serve.evict",

@@ -132,7 +132,7 @@ export class CodexCliDriver implements CliDriver {
   private client: CodexAppServerLike;
   private ownsClient: boolean;
   private turns = new Map<string, ActiveTurn>();
-  private startingTurns = 0;
+  private readonly startingTurns = new Map<string, string>();
   private releasePending = false;
   private readonly activityNotifier = new ActivityNotifier();
   private turnByCodexId = new Map<string, string>();
@@ -435,7 +435,6 @@ export class CodexCliDriver implements CliDriver {
       ok: true
     });
     if (request.env) this.client.setSpawnEnv?.(request.env);
-    this.startingTurns++;
     void this.runTurn(turnId, request);
     return { turnId, events: (async function* () {})() };
   }
@@ -444,12 +443,10 @@ export class CodexCliDriver implements CliDriver {
     const start = Date.now();
     const perms = mapPermissionMode(request.permissionMode);
     const effort = mapCodexEffort(request.effort);
-    let starting = true;
     const started = (): void => {
-      if (!starting) return;
-      starting = false;
-      this.startingTurns--;
+      this.startingTurns.delete(turnId);
     };
+    this.startingTurns.set(turnId, request.sessionId);
     try {
       if (this.appServerReady) await this.applySkillsRoot();
       const threadId = request.resumeCursor
@@ -1219,7 +1216,7 @@ export class CodexCliDriver implements CliDriver {
 
   activity(): DriverActivity {
     return {
-      busySessionIds: [...new Set([...this.turns.values()].map((turn) => turn.localSessionId))],
+      busySessionIds: [...new Set([...[...this.turns.values()].map((turn) => turn.localSessionId), ...this.startingTurns.values()])],
       ownedProcesses: this.ownsClient ? (this.client.ownedProcessCount?.() ?? 0) : 0
     };
   }
@@ -1255,7 +1252,7 @@ export class CodexCliDriver implements CliDriver {
   }
 
   private idle(): boolean {
-    return this.turns.size === 0 && this.startingTurns === 0;
+    return this.turns.size === 0 && this.startingTurns.size === 0;
   }
 
   private async restartClient(): Promise<void> {
