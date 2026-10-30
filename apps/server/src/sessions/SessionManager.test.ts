@@ -1954,7 +1954,21 @@ describe("SessionManager", () => {
     manager.dispose();
   });
 
-  it.each(["codex", "opencode", "shell"])("keeps the agent env out of %s terminals", async (kind) => {
+  it("gives the agent env to codex terminals", async () => {
+    const { manager } = makeManager();
+    (manager as unknown as { agentEnv: (sessionId: string) => Record<string, string> }).agentEnv = (sessionId) => ({
+      CW_MCP_URL: "http://127.0.0.1:1/mcp",
+      CW_AGENT_TOKEN: `token-${sessionId}`
+    });
+    const project = manager.addProject("C:\\proj-agent-codex-pty");
+    const session = await manager.createSession(project.id, "codex");
+    const env = await manager.terminalEnv(session.id, project.rootPath, "codex");
+    expect(env["CW_MCP_URL"]).toBe("http://127.0.0.1:1/mcp");
+    expect(env["CW_AGENT_TOKEN"]).toBe(`token-${session.id}`);
+    manager.dispose();
+  });
+
+  it.each(["opencode", "shell"])("keeps the agent env out of %s terminals", async (kind) => {
     const { manager } = makeManager();
     (manager as unknown as { agentEnv: (sessionId: string) => Record<string, string> }).agentEnv = (sessionId) => ({
       CW_MCP_URL: "http://127.0.0.1:1/mcp",

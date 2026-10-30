@@ -2000,7 +2000,7 @@ export class SessionManager {
     const session = this.store.getSession(sessionId);
     const project = session ? this.store.getProject(session.projectId) : undefined;
     if (project) await this.refreshGitHubToken(project);
-    return this.turnEnv(sessionId, cwd, { agent: kind === "claude" });
+    return this.turnEnv(sessionId, cwd, { agent: kind === "claude" || kind === "codex" });
   }
 
   turnEnv(sessionId: string, cwd: string, include: { agent?: boolean } = {}): Record<string, string> {

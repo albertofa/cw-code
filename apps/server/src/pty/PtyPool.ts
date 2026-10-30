@@ -3,7 +3,8 @@ import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
-import { claudePluginArgs } from "../agent/claudePlugin.js";
+import { claudePluginArgs, CW_AGENT_TOKEN_ENV, CW_MCP_URL_ENV } from "../agent/claudePlugin.js";
+import { codexTerminalMcpArgs } from "../agent/codexMcp.js";
 import { toShellTarget, type ShellTarget } from "./resolve.js";
 import { parseExtraArgs } from "../settings/settingsUtils.js";
 import { traceHarnessCall, truncateError } from "../debug/harnessTrace.js";
@@ -270,7 +271,9 @@ export class PtyPool {
     } else if (kind === "codex") {
       const s = this.getSettings();
       file = s.codexBinaryPath;
-      extra = parseExtraArgs(s.codexExtraArgs);
+      const mcpUrl = env?.[CW_MCP_URL_ENV];
+      const agentArgs = mcpUrl && env?.[CW_AGENT_TOKEN_ENV] ? codexTerminalMcpArgs(mcpUrl) : [];
+      extra = [...agentArgs, ...parseExtraArgs(s.codexExtraArgs)];
     } else {
       file = process.platform === "win32" ? "powershell.exe" : process.env["SHELL"] || "/bin/bash";
     }

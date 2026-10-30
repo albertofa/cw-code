@@ -27,6 +27,8 @@ export interface CodexAppServerLike {
   respond(id: string | number, result: unknown): void;
   onNotification(handler: (method: string, params: unknown) => void): void;
   onServerRequest(handler: (method: string, params: unknown, id: string | number) => void): void;
+  /** Runs after every app-server initialize handshake, before queued requests are sent. */
+  onInitialized?(handler: () => Promise<void>): void;
   /** Applies the spawn env for the next app-server launch; no effect on an already-running process. */
   setSpawnEnv?(env: Record<string, string> | undefined): void;
   ownedProcessCount?(): number;
@@ -61,6 +63,7 @@ export class CodexAppServer implements CodexAppServerLike {
   private pending = new Map<string | number, PendingRequest>();
   private notificationHandler: ((method: string, params: unknown) => void) | null = null;
   private serverRequestHandler: ((method: string, params: unknown, id: string | number) => void) | null = null;
+  private initializedHandler: (() => Promise<void>) | null = null;
   private stderrTail: string[] = [];
   private disposed = false;
 
@@ -72,6 +75,10 @@ export class CodexAppServer implements CodexAppServerLike {
 
   onServerRequest(handler: (method: string, params: unknown, id: string | number) => void): void {
     this.serverRequestHandler = handler;
+  }
+
+  onInitialized(handler: () => Promise<void>): void {
+    this.initializedHandler = handler;
   }
 
   setSpawnEnv(env: Record<string, string> | undefined): void {
@@ -228,6 +235,12 @@ export class CodexAppServer implements CodexAppServerLike {
     if (this.disposed) throw new CodexAppServerError("codex app-server disposed");
     this.writeLine(proc, { method: "initialized" });
     this.proc = proc;
+    try {
+      await this.initializedHandler?.();
+    } catch (err) {
+      console.warn(`codex app-server initialized hook failed: ${(err as Error).message}`);
+    }
+    if (this.disposed) throw new CodexAppServerError("codex app-server disposed");
     return proc;
   }
 

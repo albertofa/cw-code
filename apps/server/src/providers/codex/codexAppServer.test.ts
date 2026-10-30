@@ -80,6 +80,22 @@ describe("CodexAppServer", () => {
     expect(notifications.some((n) => n.method === "ready")).toBe(true);
   });
 
+  it("runs the initialized hook before requests queued during startup", async () => {
+    const server = new CodexAppServer({ binary: process.execPath, args: [scriptPath] });
+    const order: string[] = [];
+    server.onInitialized(async () => {
+      const res = await server.request<{ echo: string }>("skills/extraRoots/set", { extraRoots: ["/r"] });
+      order.push(res.echo);
+    });
+    try {
+      const res = await server.request<{ echo: string }>("thread/start", {});
+      order.push(res.echo);
+      expect(order).toEqual(["skills/extraRoots/set", "thread/start"]);
+    } finally {
+      server.dispose();
+    }
+  });
+
   it("rejects requests that answer with an error envelope", async () => {
     client = client ?? new CodexAppServer({ binary: process.execPath, args: [scriptPath] });
     await expect(client.request("boom", {})).rejects.toMatchObject({ message: "kaboom", code: 777 });
