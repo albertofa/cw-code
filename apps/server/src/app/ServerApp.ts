@@ -536,6 +536,7 @@ export class ServerApp {
     this.services?.githubViews.resume();
     this.services?.usageTopic.resume();
     this.services?.filesTopic.resume();
+    this.services?.harnessUpdates.resume();
     this.services?.autoFollowUp.reactivate();
     this.services?.sourceControl.start();
   }
@@ -576,6 +577,7 @@ export class ServerApp {
     services.usageTopic.dispose();
     services.runWatcher.dispose();
     services.filesTopic.dispose();
+    services.harnessUpdates.dispose();
     void services.fileWatcher.dispose();
     services.sessions.dispose();
     services.ptys.dispose();

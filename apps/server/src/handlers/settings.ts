@@ -44,7 +44,7 @@ export function registerSettingsHandlers(router: Router, app: ServerApp): void {
       if (patch[key] !== undefined) requireOwner(ctx, `changing ${key}`);
     }
     if (patch.serverBindHost !== undefined) assertBindHostAllowed(app, patch.serverBindHost);
-    const { sessions, accountUsage, harnessMonitor } = services();
+    const { sessions, accountUsage, harnessMonitor, harnessUpdates } = services();
     const current = sessions.getSettings();
     const normalized = { ...patch };
     const checks: Array<Promise<CliVersionCheck>> = [];
@@ -81,6 +81,7 @@ export function registerSettingsHandlers(router: Router, app: ServerApp): void {
     if (patch.opencodeGoUsage !== undefined) accountUsage.invalidate("opencode");
     const saved = commitSettings(app, normalized);
     if (checks.length > 0) void harnessMonitor.check("settings");
+    if (saved.harnessUpdateChecks !== current.harnessUpdateChecks) void harnessUpdates.refresh({ fresh: true });
     return saved;
   });
 }
