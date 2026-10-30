@@ -1898,6 +1898,62 @@ describe("SessionManager", () => {
     manager.dispose();
   });
 
+  it.each(["codex", "opencode"] as const)("passes the agent endpoint and token to %s turns", async (driver) => {
+    const { manager, fake } = makeManager();
+    (manager as unknown as { agentEnv: (sessionId: string) => Record<string, string> }).agentEnv = (sessionId) => ({
+      CW_MCP_URL: "http://127.0.0.1:1/mcp",
+      CW_AGENT_TOKEN: `token-${sessionId}`
+    });
+    const project = manager.addProject(`C:\\proj-agent-${driver}-request`);
+    const session = await manager.createSession(project.id, driver);
+    await manager.startTurn(session.id, "hello");
+    expect(fake.lastRequest?.agent).toEqual({ mcpUrl: "http://127.0.0.1:1/mcp", token: `token-${session.id}` });
+    fake.completeAll();
+    manager.dispose();
+  });
+
+  it("omits the agent request when the server is not listening yet", async () => {
+    const { manager, fake } = makeManager();
+    const project = manager.addProject("C:\\proj-agent-not-listening");
+    const session = await manager.createSession(project.id, "codex");
+    await manager.startTurn(session.id, "hello");
+    expect(fake.lastRequest?.agent).toBeUndefined();
+    fake.completeAll();
+    manager.dispose();
+  });
+
+  it("gives Claude turns no agent request", async () => {
+    const { manager, fake } = makeManager();
+    manager.setSettings({ autoTitleEnabled: false });
+    (manager as unknown as { agentEnv: (sessionId: string) => Record<string, string> }).agentEnv = (sessionId) => ({
+      CW_MCP_URL: "http://127.0.0.1:1/mcp",
+      CW_AGENT_TOKEN: `token-${sessionId}`
+    });
+    const project = manager.addProject("C:\\proj-agent-claude-request");
+    const session = await manager.createSession(project.id, "claude");
+    await manager.startTurn(session.id, "hello");
+    expect(fake.lastRequest?.sessionId).toBe(session.id);
+    expect(fake.lastRequest?.agent).toBeUndefined();
+    fake.completeAll();
+    manager.dispose();
+  });
+
+  it("gives title turns no agent request", async () => {
+    const { manager, fake } = makeManager();
+    (manager as unknown as { agentEnv: (sessionId: string) => Record<string, string> }).agentEnv = (sessionId) => ({
+      CW_MCP_URL: "http://127.0.0.1:1/mcp",
+      CW_AGENT_TOKEN: `token-${sessionId}`
+    });
+    manager.setSettings({ autoTitleEnabled: true, autoTitleDriver: "codex" });
+    const project = manager.addProject("C:\\proj-agent-title-request");
+    const session = await manager.createSession(project.id, "codex");
+    await manager.startTurn(session.id, "Fix the login redirect loop");
+    expect(String(fake.lastRequest?.sessionId).startsWith("title:")).toBe(true);
+    expect(fake.lastRequest?.agent).toBeUndefined();
+    fake.completeAll();
+    manager.dispose();
+  });
+
   it.each(["codex", "opencode", "shell"])("keeps the agent env out of %s terminals", async (kind) => {
     const { manager } = makeManager();
     (manager as unknown as { agentEnv: (sessionId: string) => Record<string, string> }).agentEnv = (sessionId) => ({

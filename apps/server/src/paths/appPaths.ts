@@ -52,6 +52,10 @@ export function claudePluginDir(home?: string, env?: NodeJS.ProcessEnv): string 
   return join(userdataDir(home, env), "harness", "claude-plugin");
 }
 
+export function codexSkillsRoot(home?: string, env?: NodeJS.ProcessEnv): string {
+  return join(userdataDir(home, env), "harness", "skills");
+}
+
 export function opencodeServerDir(home?: string, env?: NodeJS.ProcessEnv): string {
   return join(userdataDir(home, env), "cw-opencode-server");
 }

@@ -148,6 +148,8 @@ export interface TurnRequest {
   skills?: string[];
   /** Complete spawn environment (process env plus cw-code injections). When omitted, the child inherits the parent env. */
   env?: Record<string, string>;
+  /** cw agent MCP endpoint and this session's token, for harnesses whose process is shared across sessions. */
+  agent?: { mcpUrl: string; token: string };
 }
 
 export type PermissionMode = "auto" | "acceptEdits" | "bypassPermissions" | "manual";

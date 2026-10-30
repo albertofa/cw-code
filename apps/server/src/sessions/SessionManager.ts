@@ -44,9 +44,11 @@ import type {
   ThreadEvent,
   TurnChanges,
   TurnHandle,
+  TurnRequest,
   TurnSnapshot,
   WorktreePruneSummary
 } from "@cw-code/contracts";
+import { CW_AGENT_TOKEN_ENV, CW_MCP_URL_ENV } from "../agent/claudePlugin.js";
 import { type SessionStatusReason } from "../debug/sessionStatusTrace.js";
 import { isWorkingSetStatus } from "@cw-code/shared/workingSet";
 import { expiredHoldingIds } from "../sidebar/workingSet.js";
@@ -129,6 +131,7 @@ export interface SessionManagerOptions {
   driverFactory?: DriverFactory;
   agentEnv?: (sessionId: string) => Record<string, string>;
   claudePluginDir?: () => string | null;
+  codexSkillsRoot?: () => string | null;
   /** Earlier app data folders whose worktrees may still hold sessions cw-code started. */
   legacyAppRoots?: string[];
 }
@@ -137,18 +140,19 @@ export type DriverFactory = (
   route: (event: ThreadEvent) => void,
   getSettings: () => AppSettings,
   isInWorkingSet: (sessionId: string) => boolean,
-  claudePluginDir: () => string | null
+  claudePluginDir: () => string | null,
+  codexSkillsRoot: () => string | null
 ) => Record<DriverKind, CliDriver>;
 
 export function defaultDriverFactory(overrides: Partial<Record<DriverKind, CliDriver>> = {}): DriverFactory {
-  return (route, getSettings, isInWorkingSet, claudePluginDir) => ({
+  return (route, getSettings, isInWorkingSet, claudePluginDir, codexSkillsRoot) => ({
     claude:
       overrides.claude ??
       new TracingCliDriver(new ClaudeCliDriver(route, getSettings, undefined, undefined, isInWorkingSet, claudePluginDir)),
     opencode:
       overrides.opencode ??
       new TracingCliDriver(new OpencodeDriver(route, getSettings, undefined, { sharedRoot: opencodeServerDir() })),
-    codex: overrides.codex ?? new TracingCliDriver(new CodexCliDriver(route, getSettings))
+    codex: overrides.codex ?? new TracingCliDriver(new CodexCliDriver(route, getSettings, undefined, codexSkillsRoot))
   });
 }
 
@@ -301,6 +305,7 @@ export class SessionManager {
   private legacyAppRoots: string[];
   private agentEnv: (sessionId: string) => Record<string, string>;
   private claudePluginDir: () => string | null;
+  private codexSkillsRoot: () => string | null;
 
   constructor(opts: SessionManagerOptions = {}) {
     const dbPath = opts.dbPath ?? sessionDbPath();
@@ -326,6 +331,7 @@ export class SessionManager {
     this.legacyAppRoots = opts.legacyAppRoots ?? [];
     this.agentEnv = opts.agentEnv ?? (() => ({}));
     this.claudePluginDir = opts.claudePluginDir ?? (() => null);
+    this.codexSkillsRoot = opts.codexSkillsRoot ?? (() => null);
     this.driverFactory = opts.driverFactory ?? defaultDriverFactory(opts.drivers);
     this.drivers = this.buildDrivers();
     this.watchDriverActivity();
@@ -392,7 +398,8 @@ export class SessionManager {
         const status = this.store.getSession(sessionId)?.status;
         return status !== undefined && isWorkingSetStatus(status);
       },
-      () => this.claudePluginDir()
+      () => this.claudePluginDir(),
+      () => this.codexSkillsRoot()
     );
   }
 
@@ -2311,6 +2318,7 @@ export class SessionManager {
         attachments: resolveAttachments(project.rootPath, cwd, opts?.attachments ?? []),
         ...(opts?.command ? { command: opts.command } : {}),
         ...(!opts?.command && opts?.skills?.length ? { skills: opts.skills } : {}),
+        ...this.agentRequest(session.id, session.driver),
         env: buildTurnEnv(process.env, this.sessionEnvVars(session.id, session, project, cwd, { githubAccount: session.driver === "claude", agent: session.driver === "claude" }))
       });
       this.turnPermissionModes.set(sessionId, resolvePermissionMode(prefs.permissionMode));
@@ -2333,6 +2341,14 @@ export class SessionManager {
     } finally {
       this.pendingTurns.delete(sessionId);
     }
+  }
+
+  private agentRequest(sessionId: string, driver: DriverKind): Pick<TurnRequest, "agent"> {
+    if (driver !== "codex" && driver !== "opencode") return {};
+    const env = this.agentEnv(sessionId);
+    const mcpUrl = env[CW_MCP_URL_ENV];
+    const token = env[CW_AGENT_TOKEN_ENV];
+    return mcpUrl && token ? { agent: { mcpUrl, token } } : {};
   }
 
   private revertFailedTurnStart(sessionId: string, previous: SessionStatusSnapshot): void {

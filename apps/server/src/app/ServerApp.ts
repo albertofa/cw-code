@@ -3,6 +3,7 @@ import { CLOSE_UNAUTHORIZED, PROTOCOL_VERSION, SERVER_READY_PREFIX } from "@cw-c
 import { APP_TOPIC } from "@cw-code/shared/topics";
 import { AgentTokens } from "../agent/AgentTokens.js";
 import { CW_AGENT_TOKEN_ENV, CW_MCP_URL_ENV, writeClaudePlugin } from "../agent/claudePlugin.js";
+import { writeCodexSkill } from "../agent/codexSkill.js";
 import { appendCrashLog, initCrashLog } from "../debug/crashLog.js";
 import { initHarnessTrace } from "../debug/harnessTrace.js";
 import { initServerLog } from "../debug/serverLog.js";
@@ -11,7 +12,7 @@ import { sweepStaleSnapshotIndexes } from "../fs/GitService.js";
 import { registerHandlers } from "../handlers/index.js";
 import { createMcpRoute } from "../mcp/mcpRoute.js";
 import { reapOrphanedServers } from "../orphanServers.js";
-import { claudeCommandsCachePath, claudePluginDir, logsDir, opencodeModelsCachePath, sessionDbPath, settingsFilePath, userdataDir } from "../paths/appPaths.js";
+import { claudeCommandsCachePath, claudePluginDir, codexSkillsRoot, logsDir, opencodeModelsCachePath, sessionDbPath, settingsFilePath, userdataDir } from "../paths/appPaths.js";
 import { initClaudeCommandsCache } from "../providers/claude/claudeCommands.js";
 import { initOpencodeModelsCache } from "../providers/opencode/opencodeModels.js";
 import { openMetadataStores, type OpenedMetadataStores } from "../storage/metadataStores.js";
@@ -76,6 +77,7 @@ export class ServerApp {
   private listenHost: string | null = null;
   private listenPort: number | null = null;
   private pluginDir: string | null = null;
+  private codexSkillsDir: string | null = null;
 
   constructor(
     private readonly args: ServerArgs,
@@ -235,6 +237,7 @@ export class ServerApp {
     this.listenHost = host;
     this.listenPort = port;
     this.prepareClaudePlugin();
+    this.prepareCodexSkill();
     this.applyStores(stores);
     ws.onClientAccepted((ctx) => {
       if (ctx.client === "desktop-shell") this.flushShellNotices(ctx.clientId);
@@ -271,6 +274,21 @@ export class ServerApp {
         console.warn(message);
         appendCrashLog(message);
         this.noticeShell({ level: "warning", title: "cw-code", message: "cw tools are unavailable in Claude sessions", detail: message });
+      });
+  }
+
+  private prepareCodexSkill(): void {
+    const root = codexSkillsRoot();
+    writeCodexSkill(root)
+      .then(() => {
+        this.codexSkillsDir = root;
+      })
+      .catch((err) => {
+        const detail = err instanceof Error ? err.message : String(err);
+        const message = `could not write the Codex skill to ${root}; the cw-code skill is unavailable in Codex sessions: ${detail}`;
+        console.warn(message);
+        appendCrashLog(message);
+        this.noticeShell({ level: "warning", title: "cw-code", message: "the cw-code skill is unavailable in Codex sessions", detail: message });
       });
   }
 
@@ -425,7 +443,8 @@ export class ServerApp {
       onShutdownExpired: (reason) => this.handleShutdownExpired(reason),
       agentEnv: (sessionId) => this.agentEnv(sessionId),
       revokeAgentToken: (sessionId) => this.agentTokens.revoke(sessionId),
-      claudePluginDir: () => this.pluginDir
+      claudePluginDir: () => this.pluginDir,
+      codexSkillsRoot: () => this.codexSkillsDir
     });
     this.services = services;
     this.servicesDisposed = false;

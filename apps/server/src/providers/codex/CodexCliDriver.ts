@@ -144,7 +144,8 @@ export class CodexCliDriver implements CliDriver {
   constructor(
     private emit: (event: ThreadEvent) => void,
     private getSettings: () => AppSettings,
-    client?: CodexAppServerLike
+    client?: CodexAppServerLike,
+    private codexSkillsRoot: () => string | null = () => null
   ) {
     this.client = client ?? new CodexAppServer({ binary: this.configuredBinary(), args: this.extraArgs() });
     this.ownsClient = client === undefined;
