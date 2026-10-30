@@ -1,6 +1,10 @@
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { AlertTriangle, ChartColumn, Check, CheckCircle2, RefreshCw, Search, Star, XCircle } from "lucide-react";
+import type { HarnessUpdates } from "@cw-code/contracts";
+import { APP_TOPIC } from "@cw-code/shared/topics";
 import type { AccountUsageSnapshot, AppSettings, DriverName, ModelOption } from "../cw.js";
+import { useTopicEntry } from "../server/topics.js";
+import { useNotifs } from "./Notifications.js";
 import { useSettingsDraftStore, type HarnessCheck } from "../stores/settingsDraftStore.js";
 import { BinaryPicker } from "./BinaryPicker.js";
 import { DriverIcon } from "./DriverIcon.js";
@@ -289,9 +293,26 @@ function StatusCard({ driver, check, onOpenUsage }: { driver: DriverName; check:
   const recheckHarnesses = useSettingsDraftStore((s) => s.recheckHarnesses);
   const { snapshot: currentSnapshot, loading: accountLoading, error: accountError } = useAccountUsage(driver);
   const snapshot = currentSnapshot ?? undefined;
+  const harnessUpdates = useTopicEntry<HarnessUpdates>(APP_TOPIC, "harnessUpdates");
+  const latest = harnessUpdates?.[driver];
+  const behind = latest?.status === "behind";
+  const updating = latest?.phase === "queued" || latest?.phase === "running";
+
+  const runUpdate = () => {
+    window.cw.updateHarnesses([driver]).catch((err: unknown) => {
+      useNotifs.getState().push({ kind: "error", title: "Could not start the harness update", message: errorMessage(err) });
+    });
+  };
+
+  const copyCommand = (command: string) => {
+    navigator.clipboard.writeText(command).then(
+      () => useNotifs.getState().push({ kind: "success", title: "Update command copied" }),
+      (err: unknown) => useNotifs.getState().push({ kind: "error", title: "Could not copy the update command", message: errorMessage(err) })
+    );
+  };
 
   const runRecheck = useCallback(async () => {
-    await Promise.all([recheckHarnesses(), window.cw.refreshAccountUsage(true, [driver])]);
+    await Promise.all([recheckHarnesses(), window.cw.refreshAccountUsage(true, [driver]), window.cw.checkHarnessUpdates()]);
     if (accountRefreshFailed(driver) || useSettingsDraftStore.getState().harnessChecksError) throw new Error("Recheck failed");
   }, [recheckHarnesses, driver]);
   const recheck = useRefreshFeedback(runRecheck);
@@ -327,7 +348,9 @@ function StatusCard({ driver, check, onOpenUsage }: { driver: DriverName; check:
       )}
       <dl className="sp-kv">
         <dt>Version</dt>
-        <dd className={check && check.actual !== null && !check.ok ? "warn" : undefined}>{check?.actual ?? "—"}</dd>
+        <dd className={behind || (check && check.actual !== null && !check.ok) ? "warn" : undefined}>{check?.actual ?? "—"}</dd>
+        <dt>Latest</dt>
+        <dd>{latest?.latestVersion ?? "—"}</dd>
         <dt>Minimum</dt>
         <dd>{check?.minimum ?? "—"}</dd>
         <dt>Account</dt>
@@ -335,7 +358,27 @@ function StatusCard({ driver, check, onOpenUsage }: { driver: DriverName; check:
         <dt>Plan use</dt>
         <dd className="sans">{account.plan}</dd>
       </dl>
+      {latest?.phaseMessage && <p className={latest.phase === "failed" ? "sp-aside-error sp-aside-after" : "sp-aside-faint sp-aside-after"}>{latest.phaseMessage}</p>}
+      {behind && latest && !latest.canUpdate && (
+        <>
+          {latest.message && <p className="sp-aside-faint sp-aside-after">{latest.message}</p>}
+          {latest.updateCommand && (
+            <div className="sp-cmd">
+              <code>{latest.updateCommand}</code>
+              <button type="button" className="btn sp-btn-sm" onClick={() => copyCommand(latest.updateCommand ?? "")}>
+                Copy
+              </button>
+            </div>
+          )}
+        </>
+      )}
       <div className="sp-aside-actions">
+        {behind && latest?.canUpdate && (
+          <button type="button" className="btn btn-primary sp-btn-sm" disabled={updating} onClick={runUpdate}>
+            <RefreshCw size={12} className={updating ? "spin" : undefined} aria-hidden="true" />{" "}
+            {updating ? "Updating…" : `Update${latest.latestVersion ? ` to ${latest.latestVersion}` : ""}`}
+          </button>
+        )}
         <button type="button" className="btn sp-btn-sm" disabled={rechecking} onClick={recheck.trigger} aria-live="polite">
           {recheck.phase === "done" ? (
             <>

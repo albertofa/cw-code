@@ -9,6 +9,8 @@ import type {
   BranchMismatch,
   CliBinary,
   HarnessAvailability,
+  HarnessUpdates,
+  DriverKind,
   LegacyPreferences,
   SidebarReorderRequest,
   CliDiscoveredCandidate,
@@ -564,6 +566,8 @@ export interface CwApi {
     onExpired(cb: (event: ShutdownExpiredEvent) => void): () => void;
   };
   recheckClis(): Promise<HarnessAvailability>;
+  checkHarnessUpdates(): Promise<HarnessUpdates>;
+  updateHarnesses(binaries: DriverKind[]): Promise<HarnessUpdates>;
   importLegacyPrefs(legacy: LegacyPreferences): Promise<void>;
   reorderSidebar(request: SidebarReorderRequest): Promise<void>;
   pushRecentModel(driver: DriverName, model: string): Promise<void>;
