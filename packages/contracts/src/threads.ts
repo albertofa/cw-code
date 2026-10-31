@@ -1,6 +1,6 @@
 import type { ApprovalRequest, HistoryMessage, QuestionRequest, TodoItem } from "./events.js";
 import type { BabysitState, PrDockEntry, SessionPrItem } from "./pullRequests.js";
-import type { TurnChanges } from "./session.js";
+import type { SubagentSummary, TurnChanges } from "./session.js";
 import type { ContextUsage, TokenCounts, UsageTotals } from "./usage.js";
 
 export interface ThreadItem extends HistoryMessage {
@@ -67,4 +67,5 @@ export type ThreadTopicData = {
   prItems: SessionPrItem[];
   prDock: PrDockEntry[];
   turnChanges: ThreadTurnChanges | null;
+  subagents: SubagentSummary[];
 } & { [key: `item/${string}`]: ThreadItem };
