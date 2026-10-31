@@ -1,9 +1,9 @@
-import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { applyAppearance } from "./appearanceFonts.js";
 import { ThemeSync } from "./components/ThemeSync.js";
 import { HarnessNotices } from "./components/HarnessNotices.js";
 import { collectSubagents } from "./components/subagents.js";
-import { useHoldRecentThreads, useThreadItemsSelect } from "./components/useThread.js";
+import { useHoldRecentThreads, useThreadEntry, useThreadItemsSelect } from "./components/useThread.js";
 import { Sidebar } from "./components/Sidebar.js";
 import { WindowControls } from "./components/WindowControls.js";
 import { SkillsModal } from "./components/SkillsModal.js";
@@ -189,7 +189,15 @@ export function App() {
     return () => window.removeEventListener("cw:open-agents", onOpenAgents);
   }, [activeSessionId, activateOrOpen, setRightVisible]);
 
-  const subagentStats = useThreadItemsSelect(activeSessionId, subagentStatsOf, sameSubagentStats);
+  const nativeSubagentStats = useThreadItemsSelect(activeSessionId, subagentStatsOf, sameSubagentStats);
+  const cwSubagents = useThreadEntry(activeSessionId, "subagents");
+  const subagentStats = useMemo<SubagentStats>(
+    () => ({
+      total: nativeSubagentStats.total + (cwSubagents?.length ?? 0),
+      running: nativeSubagentStats.running + (cwSubagents?.filter((child) => child.status === "working").length ?? 0)
+    }),
+    [nativeSubagentStats, cwSubagents]
+  );
 
   const { driver, hasPr, hasPreview, isToolAvailable, rightTop: topTool } = useToolAvailability(activeSessionId ?? undefined);
 

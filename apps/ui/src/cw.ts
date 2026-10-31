@@ -255,7 +255,7 @@ export interface Project {
   settings?: ProjectSettings;
 }
 
-import type { ResolvedCheckout, SessionOpenReason, SessionStatusReason } from "@cw-code/contracts";
+import type { ResolvedCheckout, SessionOpenReason, SessionStatusReason, SubagentLink } from "@cw-code/contracts";
 
 export type DriverName = "claude" | "opencode" | "codex";
 
@@ -284,6 +284,7 @@ export interface Session {
   effectivePermissionMode?: string;
   lastTurnSnapshot?: TurnSnapshot;
   createNotice?: string;
+  subagent?: SubagentLink;
 }
 
 export type CreateWorkspaceMode = "current" | "new" | "previous";

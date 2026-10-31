@@ -195,7 +195,11 @@ export function WorkflowRunModal({ request }: { request: RunModalState }) {
   const pickable = (preview?.pickableWorkflowIds ?? [workflowId]).flatMap((id) => workflows.find((w) => w.id === id) ?? []);
   const noun = SUBJECT_NOUN[subject.kind];
   const repo = repoOf(subject);
-  const sessionsFor = (ids: string[] | undefined): Session[] => (ids ?? []).flatMap((id) => findSession(sessionsByProject, id) ?? []);
+  const sessionsFor = (ids: string[] | undefined): Session[] =>
+    (ids ?? []).flatMap((id) => {
+      const session = findSession(sessionsByProject, id);
+      return session && !session.subagent ? [session] : [];
+    });
   const linkedOptions = sessionsFor(preview?.linkedSessionIds);
   const otherSessions = sessionsFor(preview?.otherSessionIds);
   const { ensureOpen, dialog: restoreDialog } = useRestoreBeforeSend();

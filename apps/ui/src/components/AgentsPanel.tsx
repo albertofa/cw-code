@@ -3,25 +3,38 @@ import { Bot, Check, ChevronLeft, ChevronRight, Copy } from "lucide-react";
 import type { SubagentGroup, SubagentInfo } from "./subagents.js";
 import { SUBAGENT_STATE_ORDER, formatSubagentCount, formatTokensShort, groupSubagents, subagentActivity, subagentStateLabel } from "./subagents.js";
 import type { SubagentToolActivity } from "../cw.js";
+import type { SubagentSummary } from "@cw-code/contracts";
 import { formatDuration, orderToolsForDisplay } from "./toolSummaries.js";
 import { Md } from "./Markdown.js";
 import { ToolCard } from "./ToolCard.js";
 import { useAppStore, type ChatMessage } from "../stores/appStore.js";
 import { usePanelStore } from "../stores/panelStore.js";
 import { SubagentToolList, subagentAnchorId } from "./SubagentCard.js";
+import { SubagentThread } from "./SubagentThread.js";
+import { summaryState } from "./cwSubagents.js";
+import { HarnessTag, PendingBadge, StateDot, cwSubagentStateLabel, isActiveState } from "./CwSubagentParts.js";
 import { useElapsed } from "./useElapsed.js";
 import { useThreadEntry, useThreadItems } from "./useThread.js";
 
 export interface AgentsTarget {
   groupId?: string;
   agentId?: string;
+  cwSubagentId?: string;
 }
 
 let pendingTarget: AgentsTarget | null = null;
 
+function openTarget(target: AgentsTarget): void {
+  pendingTarget = target;
+  window.dispatchEvent(new CustomEvent("cw:open-agents", { detail: target }));
+}
+
 export function openAgentsPanel(groupId?: string, agentId?: string): void {
-  pendingTarget = { groupId, agentId };
-  window.dispatchEvent(new CustomEvent("cw:open-agents", { detail: pendingTarget }));
+  openTarget({ groupId, agentId });
+}
+
+export function openCwSubagent(subagentId: string): void {
+  openTarget({ cwSubagentId: subagentId });
 }
 
 export function jumpToSubagentGroup(groupId: string, agentId?: string): void {
@@ -250,15 +263,80 @@ function AgentDetail({
   );
 }
 
+function cwRowMeta(child: SubagentSummary): string {
+  const parts: string[] = [];
+  if (child.model) parts.push(child.model);
+  parts.push(child.isolation === "worktree" ? "own worktree" : "shared checkout");
+  return parts.join(" · ");
+}
+
+function CwSubagentRow({ child, onSelect }: { child: SubagentSummary; onSelect: () => void }) {
+  const state = summaryState(child);
+  const excerpt = child.result?.text?.trim().split("\n")[0] ?? cwSubagentStateLabel(state);
+  return (
+    <button id={`agents-row-cw-${child.id}`} type="button" className="agents-row" onClick={onSelect}>
+      <StateDot state={state} />
+      <span className="agents-row-main">
+        <span className="agents-row-nameline">
+          <span className="agents-row-name" title={child.title}>
+            {child.title}
+          </span>
+          <HarnessTag driver={child.driver} />
+          <PendingBadge summary={child} />
+        </span>
+        <span className="agents-row-excerpt" title={excerpt}>
+          {excerpt}
+        </span>
+        <span className="agents-row-meta">{cwRowMeta(child)}</span>
+      </span>
+      <span className="agents-row-chev">
+        <ChevronRight aria-hidden="true" size={14} />
+      </span>
+    </button>
+  );
+}
+
+function CwSubagentSection({ list, onSelect }: { list: SubagentSummary[]; onSelect: (id: string) => void }) {
+  const active = list.filter((child) => isActiveState(summaryState(child))).length;
+  return (
+    <>
+      <div className="agents-head">
+        <span className="agents-head-title">cw subagents</span>
+        <span className="agents-head-count">{formatSubagentCount(list.length)}</span>
+        {active > 0 && (
+          <span className="agents-counts">
+            <span className="agents-count running">
+              <span className="suba-dot running" aria-hidden="true" />
+              {active} active
+            </span>
+          </span>
+        )}
+      </div>
+      {list.map((child) => (
+        <CwSubagentRow key={child.id} child={child} onSelect={() => onSelect(child.id)} />
+      ))}
+    </>
+  );
+}
+
+const NO_CW_SUBAGENTS: SubagentSummary[] = [];
+
 export function AgentsPanel({ sessionId }: { sessionId: string }) {
   const messages = useThreadItems(sessionId);
   const live = useThreadEntry(sessionId, "turn") != null;
+  const cwSubagents = useThreadEntry(sessionId, "subagents") ?? NO_CW_SUBAGENTS;
   const subagentToolsByKey = useAppStore((s) => s.subagentToolsByKey);
   const loadSubagentTools = useAppStore((s) => s.loadSubagentTools);
   const { basePath, openPreview } = useSessionWorkspace(sessionId);
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [view, setView] = useState<"list" | "detail">("list");
+  const [cwSelectedId, setCwSelectedId] = useState<string | null>(null);
+  const [view, setView] = useState<"list" | "detail" | "cw">("list");
+  const cwSelected = view === "cw" ? cwSubagents.find((child) => child.id === cwSelectedId) : undefined;
+  const openCw = (id: string) => {
+    setCwSelectedId(id);
+    setView("cw");
+  };
   const bodyRef = useRef<HTMLDivElement>(null);
 
   const ordered = orderToolsForDisplay(messages);
@@ -291,6 +369,11 @@ export function AgentsPanel({ sessionId }: { sessionId: string }) {
 
   useEffect(() => {
     const applyTarget = (detail: AgentsTarget | undefined) => {
+      if (detail?.cwSubagentId) {
+        setCwSelectedId(detail.cwSubagentId);
+        setView("cw");
+        return;
+      }
       const target = detail?.agentId
         ? entriesRef.current.find(({ item }) => item.id === detail.agentId)
         : detail?.groupId
@@ -321,23 +404,28 @@ export function AgentsPanel({ sessionId }: { sessionId: string }) {
 
   return (
     <div className="agents-panel">
-      {view === "list" || !selected ? (
+      {cwSelected ? (
+        <SubagentThread key={cwSelected.id} summary={cwSelected} onBack={() => setView("list")} />
+      ) : view !== "detail" || !selected ? (
         <div ref={bodyRef} className="agents-list">
-          <div className="agents-head">
-            <span className="agents-head-title">Subagents</span>
-            <span className="agents-head-count">{total === 0 ? "none" : formatSubagentCount(total)}</span>
-            {stateCounts.length > 0 && (
-              <span className="agents-counts">
-                {stateCounts.map(({ state, count }) => (
-                  <span key={state} className={`agents-count ${state}`} title={subagentStateLabel(state)}>
-                    {state === "running" && <span className="suba-dot running" aria-hidden="true" />}
-                    {count} {subagentStateLabel(state, undefined, "compact").toLowerCase()}
-                  </span>
-                ))}
-              </span>
-            )}
-          </div>
-          {total === 0 && (
+          {cwSubagents.length > 0 && <CwSubagentSection list={cwSubagents} onSelect={openCw} />}
+          {(total > 0 || cwSubagents.length === 0) && (
+            <div className="agents-head">
+              <span className="agents-head-title">Subagents</span>
+              <span className="agents-head-count">{total === 0 ? "none" : formatSubagentCount(total)}</span>
+              {stateCounts.length > 0 && (
+                <span className="agents-counts">
+                  {stateCounts.map(({ state, count }) => (
+                    <span key={state} className={`agents-count ${state}`} title={subagentStateLabel(state)}>
+                      {state === "running" && <span className="suba-dot running" aria-hidden="true" />}
+                      {count} {subagentStateLabel(state, undefined, "compact").toLowerCase()}
+                    </span>
+                  ))}
+                </span>
+              )}
+            </div>
+          )}
+          {total === 0 && cwSubagents.length === 0 && (
             <div className="agents-empty">
               <div className="empty-mark">
                 <Bot aria-hidden="true" size={22} />

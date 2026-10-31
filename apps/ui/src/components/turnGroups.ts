@@ -1,6 +1,7 @@
 import type { ChatMessage } from "../stores/appStore.js";
 import { describeSubagent, isSubagentMessage, type SubagentGroup } from "./subagents.js";
 import { isRunningTool, orderToolsForDisplay } from "./toolSummaries.js";
+import { cwSubagentCardTool } from "./cwSubagents.js";
 
 export interface TurnSlice {
   turnId: string;
@@ -75,7 +76,7 @@ export function buildThreadNodes(messages: ChatMessage[], nestedIds: Set<string>
     } else if (m.parentToolCallId && nestedIds.has(m.parentToolCallId)) continue;
     else if (m.role === "tool") {
       flushSubs();
-      if (isRunningTool(m) || isSkillTool(m)) {
+      if (isRunningTool(m) || isSkillTool(m) || cwSubagentCardTool(m.toolName) !== null) {
         flushTools();
         out.push({ kind: "msg", msg: m });
       } else {

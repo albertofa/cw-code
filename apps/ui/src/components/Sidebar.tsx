@@ -382,7 +382,7 @@ export function Sidebar({ onOpenSkills, skillsOpen = false, hidden = false }: { 
   const trimmedQuery = query.trim();
   const projectNameById = useMemo<Record<string, string>>(() => Object.fromEntries(projects.map((p) => [p.id, p.name])), [projects]);
   const rowById = useMemo(() => new Map(rows.map((row) => [row.session.id, row])), [rows]);
-  const source = useMemo<Session[]>(() => rows.map((row) => row.session), [rows]);
+  const source = useMemo<Session[]>(() => rows.flatMap((row) => (row.session.subagent ? [] : [row.session])), [rows]);
   const branchOf = useCallback((s: Session): string | undefined => rowById.get(s.id)?.branch ?? undefined, [rowById]);
   const babysitOf = useCallback((s: Session) => rowById.get(s.id)?.babysit ?? null, [rowById]);
   const needsYouAll = useMemo<NeedsYouRow[]>(
@@ -867,7 +867,7 @@ export function Sidebar({ onOpenSkills, skillsOpen = false, hidden = false }: { 
         maybeOpenResolved(ev.clientX, ev.clientY);
         const freshIds = Object.values(useAppStore.getState().sessionsByProject)
           .flat()
-          .map((x) => x.id)
+          .flatMap((x) => (x.subagent ? [] : [x.id]))
           .sort()
           .join(",");
         const snapIds = (slotSnap.current?.rows ?? []).map((r) => r.id).sort().join(",");

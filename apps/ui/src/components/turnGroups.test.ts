@@ -85,6 +85,16 @@ describe("buildThreadNodes", () => {
     expect(nodes.map((n) => (n.kind === "msg" ? n.msg.id : n.kind))).toEqual(["tools", "sk", "t3"]);
   });
 
+  it("keeps cw subagent cards out of tool groups", () => {
+    const done = (id: string, toolName: string): ChatMessage =>
+      msg({ id, role: "tool", turnId: "x", toolName, toolDone: true, toolOutput: "out" });
+    const nodes = buildThreadNodes(
+      [done("t1", "read"), done("t2", "read"), done("run", "mcp__cw__subagent_run"), done("l1", "mcp__cw__subagents_list"), done("l2", "read")],
+      new Set()
+    );
+    expect(nodes.map((n) => (n.kind === "msg" ? n.msg.id : n.kind))).toEqual(["tools", "run", "tools"]);
+  });
+
   it("clusters consecutive subagent calls into one group", () => {
     const nodes = buildThreadNodes(
       [

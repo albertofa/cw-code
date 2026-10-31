@@ -7,7 +7,7 @@ import { useNotifs } from "./Notifications.js";
 import { shortenHome } from "./pathDisplay.js";
 import { useThreadEntry } from "./useThread.js";
 
-function ApprovalPanel({ request, position, total }: { request: ApprovalRequest; position: number; total: number }) {
+function ApprovalPanel({ request, position, total, origin }: { request: ApprovalRequest; position: number; total: number; origin?: string }) {
   const respond = useAppStore((s) => s.respondApproval);
   const homeDir = useAppStore((s) => s.homeDir);
   const shortCwd = request.cwd ? shortenHome(request.cwd, homeDir ?? undefined) : "";
@@ -31,6 +31,11 @@ function ApprovalPanel({ request, position, total }: { request: ApprovalRequest;
         <ShieldAlert size={15} className="approval-panel-icon" />
         <span className="approval-panel-title">Approval needed</span>
         <span className="approval-kind chip">{request.kind}</span>
+        {origin && (
+          <span className="dock-origin" title={origin}>
+            {origin}
+          </span>
+        )}
         <span className="approval-panel-count">
           {total > 1 ? `${position} of ${total} approvals` : "1 approval"}
         </span>
@@ -108,13 +113,13 @@ function ApprovalPanel({ request, position, total }: { request: ApprovalRequest;
 
 const NO_REQUESTS: ApprovalRequest[] = [];
 
-export function ApprovalDock({ sessionId }: { sessionId: string }) {
+export function ApprovalDock({ sessionId, origin }: { sessionId: string; origin?: string }) {
   const requests = useThreadEntry(sessionId, "approvals") ?? NO_REQUESTS;
   const current = requests[0];
   if (!current) return null;
   return (
     <div className="approval-dock">
-      <ApprovalPanel key={current.requestId} request={current} position={1} total={requests.length} />
+      <ApprovalPanel key={current.requestId} request={current} position={1} total={requests.length} origin={origin} />
     </div>
   );
 }

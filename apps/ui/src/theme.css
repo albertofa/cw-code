@@ -5174,6 +5174,134 @@ body.resizing .side-resizer:active::after,
   text-overflow: ellipsis;
 }
 
+.suba-dot.waiting {
+  background: var(--warning);
+}
+
+:is(.suba-panel-state, .agents-hero-state).waiting {
+  color: var(--warning);
+}
+
+.suba-excerpt-text.is-open {
+  display: block;
+  overflow: visible;
+  -webkit-line-clamp: unset;
+}
+
+.cw-suba-harness {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 4px;
+  color: var(--muted);
+  font-size: var(--t-xs);
+}
+
+.cw-suba-pending {
+  color: var(--warning);
+  border-color: color-mix(in srgb, var(--warning) 45%, transparent);
+}
+
+.suba-results {
+  align-self: stretch;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+  margin-bottom: 12px;
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--violet-ink) 25%, transparent);
+  border-radius: var(--r-lg);
+  background: color-mix(in srgb, var(--violet-ink) 5%, transparent);
+}
+
+.suba-results-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--violet-ink);
+  font-size: var(--t-sm);
+  font-weight: 600;
+}
+
+.suba-results-count {
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: var(--t-2xs);
+  font-weight: 400;
+}
+
+.suba-results-head time {
+  margin-left: auto;
+  color: var(--faint);
+  font-size: var(--t-xs);
+  font-weight: 400;
+}
+
+.suba-results-row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  padding-top: 8px;
+  border-top: 1px solid var(--border-soft);
+}
+
+.suba-results-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.suba-results-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text);
+  font-size: var(--t-sm);
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.suba-results-line .suba-panel-state {
+  font-size: var(--t-xs);
+}
+
+.dock-origin {
+  min-width: 0;
+  max-width: 40ch;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: var(--t-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cw-suba-docks {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 0 14px 12px;
+}
+
+.cw-suba-docks:empty {
+  display: none;
+}
+
+.cw-suba-thread {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+
+.cw-suba-thread .msg-user-wrap {
+  max-width: 92%;
+  margin-bottom: 0;
+}
+
 /* Subagents panel: flat drill-in, the selected agent replaces the roster. */
 .agents-panel {
   --rail-surface: var(--panel);

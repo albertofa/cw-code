@@ -9,10 +9,13 @@ import {
   MessageCircleQuestion,
   Pencil,
   Search,
+  Square,
   Terminal,
   Trash2,
   type LucideIcon
 } from "lucide-react";
+import type { SubagentToolName } from "@cw-code/shared/subagents";
+import { cwToolOf } from "./cwSubagents.js";
 
 export interface DiffStat {
   added: number;
@@ -277,7 +280,44 @@ export function extractFileDiffFromText(toolName: string, text: string): FileDif
   ];
 }
 
+const CW_TOOL_VERBS: Record<SubagentToolName, string> = {
+  subagent_run: "Run subagent",
+  subagent_send: "Message subagent",
+  subagent_wait: "Wait for subagent",
+  subagent_stop: "Stop subagent",
+  subagents_list: "List subagents",
+  subagent_targets: "Subagent targets"
+};
+
+function cwToolSubject(tool: SubagentToolName, args: Record<string, unknown>): string {
+  switch (tool) {
+    case "subagent_run":
+      return truncate(oneLine(pick(args, "title", "task") ?? "new subagent"), 90);
+    case "subagent_send":
+      return truncate(oneLine(pick(args, "prompt", "subagentId") ?? "subagent"), 90);
+    case "subagents_list":
+      return "your subagents";
+    case "subagent_targets": {
+      const scope = [pick(args, "driver"), pick(args, "query")].filter(Boolean).join(" · ");
+      return scope || "all harnesses";
+    }
+    default:
+      return pick(args, "subagentId") ?? "subagent";
+  }
+}
+
+function describeCwTool(tool: SubagentToolName, input: unknown): ToolSummary {
+  return {
+    verb: CW_TOOL_VERBS[tool],
+    Icon: tool === "subagent_stop" ? Square : Bot,
+    subject: cwToolSubject(tool, unwrapArgs(input) ?? {}),
+    subjectKind: "text"
+  };
+}
+
 export function describeToolCall(toolName: string, input: unknown): ToolSummary | null {
+  const cwTool = cwToolOf(toolName);
+  if (cwTool) return describeCwTool(cwTool, input);
   const lower = toolName.toLowerCase();
   const collab = lower.startsWith("collab:");
   const kind = TOOL_KINDS[collab ? "agent" : lower];
@@ -601,7 +641,7 @@ export function summarizeToolGroup(messages: GroupableMessage[]): ToolGroupSumma
     if (!order.includes(key)) order.push(key);
   };
   for (const m of messages) {
-    const name = (m.toolName ?? "tool").toLowerCase();
+    const name = cwToolOf(m.toolName) ? "subagent tool" : (m.toolName ?? "tool").toLowerCase();
     if (name === "bash" || name === "shell") {
       commands++;
       pushOrder("commands");

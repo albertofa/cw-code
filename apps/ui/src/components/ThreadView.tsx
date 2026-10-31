@@ -16,6 +16,10 @@ import { ToolCard } from "./ToolCard.js";
 import { ToolGroupCard } from "./ToolGroupCard.js";
 import { ReasoningBlock } from "./ReasoningBlock.js";
 import { SubagentCard } from "./SubagentCard.js";
+import { CwSubagentCard } from "./CwSubagentCard.js";
+import { SubagentResultsCard } from "./SubagentResultsCard.js";
+import { SubagentRequestDocks } from "./SubagentRequestDocks.js";
+import { cwSubagentCardTool, wakeEntriesOf } from "./cwSubagents.js";
 import { CompactionNote } from "./CompactionNote.js";
 import { NewThread } from "./NewThread.js";
 import { ApprovalDock } from "./ApprovalDock.js";
@@ -263,7 +267,7 @@ export function ThreadView({ hidden = false }: { hidden?: boolean }) {
   const [atBottom, setAtBottom] = useState(true);
 
   const promptMarks = useMemo<PromptMark[]>(
-    () => messages.filter((m) => m.role === "user").map((m) => ({ id: m.id, text: m.text })),
+    () => messages.filter((m) => m.role === "user").map((m) => ({ id: m.id, text: wakeEntriesOf(m) ? "Subagent results" : m.text })),
     [messages]
   );
 
@@ -501,7 +505,12 @@ export function ThreadView({ hidden = false }: { hidden?: boolean }) {
     }
     const m = n.msg;
     if (m.role === "user") {
+      const wake = wakeEntriesOf(m);
+      if (wake) return <SubagentResultsCard key={m.id} message={m} entries={wake} />;
       return <UserMessage key={m.id} message={m} sessionId={session.id} projectId={project?.id} skills={skillNames} />;
+    }
+    if (m.role === "tool" && cwSubagentCardTool(m.toolName)) {
+      return <CwSubagentCard key={m.id} message={m} sessionId={session.id} />;
     }
     if (m.role === "tool") {
       return (
@@ -681,6 +690,7 @@ export function ThreadView({ hidden = false }: { hidden?: boolean }) {
               <PrUpdateDock key={`pr-dock:${session.id}`} sessionId={session.id} />
               <ApprovalDock sessionId={session.id} />
               <QuestionDock sessionId={session.id} />
+              {!threadHidden && <SubagentRequestDocks sessionId={session.id} />}
               <WorkingDock key={`working-dock:${session.id}`} sessionId={session.id} basePath={basePath} />
             </>
           }
