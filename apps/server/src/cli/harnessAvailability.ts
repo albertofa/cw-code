@@ -1,4 +1,4 @@
-import type { CliVersionCheck, DriverKind, HarnessIssue } from "@cw-code/contracts";
+import type { CliVersionCheck, DriverKind, HarnessAvailability, HarnessIssue } from "@cw-code/contracts";
 
 export interface HarnessPresence {
   binary: DriverKind;
@@ -15,6 +15,23 @@ export function isHarnessSkipped(check: HarnessPresence): boolean {
 export function installedHarnesses(checks: HarnessPresence[]): DriverKind[] {
   const skipped = new Set(checks.filter(isHarnessSkipped).map((check) => check.binary));
   return HARNESS_IDS.filter((id) => !skipped.has(id));
+}
+
+function detail(error: string | null | undefined): string {
+  return error ? ` (${error})` : "";
+}
+
+function couldNotRun(check: Pick<CliVersionCheck, "binary" | "binaryPath">, error?: string | null): string {
+  return `${check.binary}: could not run '${check.binaryPath}'${detail(error)}. Change its executable in Settings.`;
+}
+
+export function harnessUnavailableReason(availability: Pick<HarnessAvailability, "installed" | "checks">, driver: DriverKind): string | null {
+  if (availability.installed.length === 0) return null;
+  const check = availability.checks.find((candidate) => candidate.binary === driver);
+  if (check && !check.available && !isHarnessSkipped(check)) return couldNotRun(check, check.error);
+  if (availability.installed.includes(driver)) return null;
+  const missing = check ? `${driver}: '${check.binaryPath}' was not found${detail(check.error)}` : `${driver} is not installed`;
+  return `${missing}. Install it or set its executable in Settings, then recheck the harnesses.`;
 }
 
 export function harnessIssues(checks: CliVersionCheck[]): HarnessIssue[] {
@@ -37,7 +54,7 @@ export function harnessIssues(checks: CliVersionCheck[]): HarnessIssue[] {
       id: "cli-binaries",
       level: "error",
       title: "CLI binary unavailable",
-      message: missing.map((c) => `${c.binary}: could not run '${c.binaryPath}'. Change its executable in Settings.`).join("\n"),
+      message: missing.map((c) => couldNotRun(c)).join("\n"),
       binaries: missing.map((c) => c.binary)
     });
   }

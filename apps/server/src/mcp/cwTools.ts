@@ -91,7 +91,7 @@ const CW_TOOL_SPECS = {
     inputSchema: z.object({ patch: z.record(z.string(), z.unknown()) })
   },
   subagent_run: {
-    description: `Dispatch a subagent: a hidden cw-code session on driver (claude, codex or opencode) that runs task and reports back only to you. Use it for work on another harness or, with isolation 'worktree', in its own checkout ('shared', the default, works in your checkout). If the user named a model in plain text, call subagent_targets with that text first and pass the returned id as model. permissionMode is capped at your own. With wait (default true) blocks until the subagent finishes, needs the user, or timeoutMs passes (${WAIT_RANGE}); for long tasks pass wait: false and end your turn. ${SUBAGENT_RETURN}`,
+    description: `Dispatch a subagent: a hidden cw-code session on driver (claude, codex or opencode) that runs task and reports back only to you. Use it for work on another harness or, with isolation 'worktree', in its own checkout ('shared', the default, works in your checkout). If the user named a model in plain text, call subagent_targets with that text first and pass the returned id as model. permissionMode is capped at your own. With wait (default true) blocks until the subagent finishes, needs the user, or timeoutMs passes (${WAIT_RANGE}); for long tasks pass wait: false and end your turn. Fails without creating anything when driver cannot run on this machine; report that error to the user. ${SUBAGENT_RETURN}`,
     inputSchema: z.object({
       driver: z.enum(DRIVER_KINDS),
       task: z.string().min(1),
@@ -129,7 +129,7 @@ const CW_TOOL_SPECS = {
   },
   subagent_targets: {
     description:
-      "List the harnesses a subagent can run on, with their models: [{driver, installed, defaultModel, models: [{id, label, variants, efforts}], effort, error}]. When the user names a model in plain text (e.g. 'opus 4.5', 'gpt 5 codex high', 'kimi'), pass that text as query: matching ids come first, a harness name in the query narrows the harnesses and an effort word comes back as effort. Use the returned id as subagent_run's model.",
+      "List the harnesses a subagent can run on, with their models: [{driver, installed, defaultModel, models: [{id, label, variants, efforts}], effort, error}]. When the user names a model in plain text (e.g. 'opus 4.5', 'gpt 5 codex high', 'kimi'), pass that text as query: matching ids come first, a harness name in the query narrows the harnesses and an effort word comes back as effort. Use the returned id as subagent_run's model. An entry without models carries an error: when it says the harness could not run or was not found, tell the user that error instead of dispatching to that harness or guessing a model.",
     inputSchema: z.object({ driver: z.enum(DRIVER_KINDS).optional(), query: z.string().optional() }),
     annotations: READ_ONLY
   }

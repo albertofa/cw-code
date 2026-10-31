@@ -401,6 +401,22 @@ describe("AutoFollowUpEngine pause rules", () => {
     h.engine.turnStopped(h.sessionId);
     expect(new SessionStore(h.dbPath).getSession(h.sessionId)?.autoFollowUp).toEqual({ turns: 3, paused: "interrupted" });
   });
+
+  it("never writes auto follow-up meta on a subagent session", async () => {
+    const h = harness({ enabled: false });
+    const project = h.store.listProjects()[0];
+    const childId = h.store.createSession(project?.id ?? "", "codex", "child", { subagent: { parentSessionId: h.sessionId, isolation: "shared" } }).id;
+    const child = () => h.store.getSession(childId)?.autoFollowUp;
+
+    h.engine.turnStarted(childId, true, { turnId: "c1" });
+    h.engine.turnSettled(childId, { ...done(true), turnId: "c1" });
+    h.engine.turnSettled(childId, { type: "turn.error", turnId: "c2", sessionId: childId, message: "opencode serve failed" } as SettledTurnEvent);
+    h.engine.turnInterrupted(childId, undefined, "c3");
+    h.engine.turnStopped(childId);
+
+    expect(child()).toBeUndefined();
+    expect(h.autoFollowUp()).toBeUndefined();
+  });
 });
 
 describe("AutoFollowUpEngine interruption", () => {

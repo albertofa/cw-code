@@ -103,6 +103,7 @@ export class AutoFollowUpEngine {
   }
 
   turnStarted(sessionId: string, auto: boolean, turn?: { turnId: string; origin?: TurnOrigin }): void {
+    if (this.isSubagent(sessionId)) return;
     if (turn?.origin === "subagent-wake") {
       this.wakeTurns.set(sessionId, turn.turnId);
       this.reevaluate();
@@ -117,17 +118,18 @@ export class AutoFollowUpEngine {
   }
 
   turnStopped(sessionId: string): void {
-    if (this.wakeTurns.has(sessionId)) return;
+    if (this.wakeTurns.has(sessionId) || this.isSubagent(sessionId)) return;
     this.pause(sessionId, "interrupted");
   }
 
   turnInterrupted(sessionId: string, reason: "shutdown" | undefined, turnId?: string): void {
-    if (reason === "shutdown") return;
+    if (reason === "shutdown" || this.isSubagent(sessionId)) return;
     if (turnId !== undefined && this.wakeTurns.get(sessionId) === turnId) return;
     this.pause(sessionId, "interrupted");
   }
 
   turnSettled(sessionId: string, event: SettledTurnEvent): void {
+    if (this.isSubagent(sessionId)) return;
     if (this.wakeTurns.get(sessionId) === event.turnId) {
       this.wakeTurns.delete(sessionId);
       this.reevaluate();
@@ -158,6 +160,10 @@ export class AutoFollowUpEngine {
   reactivate(): void {
     this.disposed = false;
     this.reevaluate();
+  }
+
+  private isSubagent(sessionId: string): boolean {
+    return this.deps.sessions().some((session) => session.id === sessionId && session.subagent !== undefined);
   }
 
   private watchable(session: SessionMeta): boolean {

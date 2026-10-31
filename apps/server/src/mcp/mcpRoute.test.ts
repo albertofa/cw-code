@@ -3,6 +3,7 @@ import type {
   ComposerPrefs,
   CreateSessionOptions,
   DriverKind,
+  HarnessAvailability,
   ModelOption,
   PermissionMode,
   Project,
@@ -76,6 +77,10 @@ function meta(id: string, status: SessionMeta["status"], permissionMode?: Permis
   };
 }
 
+function harnessCheck(binary: DriverKind, overrides: Partial<HarnessAvailability["checks"][number]> = {}): HarnessAvailability["checks"][number] {
+  return { binary, binaryPath: binary, minimum: "1.0.0", actual: null, configured: false, found: true, available: true, error: null, ok: false, skipped: false, ...overrides };
+}
+
 let tokens: AgentTokens;
 let callerToken: string;
 let sessions: SessionMeta[];
@@ -91,6 +96,7 @@ let lastTurns: Map<string, string>;
 let pendingCounts: Map<string, number>;
 let delivered: Array<[string, string]>;
 let installed: DriverKind[];
+let harnessChecks: HarnessAvailability["checks"];
 let failingHarnesses: Set<DriverKind>;
 let failNextStart: boolean;
 let resolvedSessions: Array<[string, SessionMeta["status"], { removeWorktree?: boolean }]>;
@@ -209,7 +215,7 @@ function buildRouter(): Router {
     appTopic: {
       setSettings: noop,
       get harnesses() {
-        return { installed };
+        return { installed, checks: harnessChecks };
       }
     },
     prStore: { onSettingsChanged: noop },
@@ -295,6 +301,7 @@ beforeEach(() => {
   pendingCounts = new Map();
   delivered = [];
   installed = ["claude", "codex", "opencode"];
+  harnessChecks = [];
   failingHarnesses = new Set();
   failNextStart = false;
   resolvedSessions = [];
@@ -692,8 +699,51 @@ describe("mcp modern era", () => {
     expect(JSON.parse(toolText(result)) as SubagentTarget[]).toEqual([
       { driver: "claude", installed: true, defaultModel: "opus", effort: "high", models: [{ id: "claude-opus-4-5", label: "Opus 4.5" }] },
       { driver: "opencode", installed: true, defaultModel: null, effort: "high", models: [], error: "opencode model list failed" },
-      { driver: "codex", installed: false, defaultModel: "gpt-5-codex", effort: "high", models: [] }
+      {
+        driver: "codex",
+        installed: false,
+        defaultModel: "gpt-5-codex",
+        effort: "high",
+        models: [],
+        error: "codex is not installed. Install it or set its executable in Settings, then recheck the harnesses."
+      }
     ]);
+  });
+
+  test("subagent_targets explains why a harness cannot run instead of listing no models", async () => {
+    Object.assign(settings, { codexDefaultModel: "", opencodeDefaultModel: "" });
+    installed = ["claude", "codex"];
+    harnessChecks = [
+      harnessCheck("opencode", { found: false, available: false, skipped: true, error: 'Executable not found in $PATH: "opencode.exe"' }),
+      harnessCheck("codex", { binaryPath: "C:/tools/codex.exe", configured: true, available: false, error: "spawn EACCES" })
+    ];
+    const opencode = JSON.parse(
+      toolText(await client.callTool({ name: "subagent_targets", arguments: { query: "deepseek v4.1 flash max", driver: "opencode" } }))
+    ) as SubagentTarget[];
+    expect(opencode).toEqual([
+      {
+        driver: "opencode",
+        installed: false,
+        defaultModel: null,
+        effort: "max",
+        models: [],
+        error: `opencode: 'opencode' was not found (Executable not found in $PATH: "opencode.exe"). Install it or set its executable in Settings, then recheck the harnesses.`
+      }
+    ]);
+
+    const all = JSON.parse(toolText(await client.callTool({ name: "subagent_targets", arguments: {} }))) as SubagentTarget[];
+    expect(all.find((target) => target.driver === "codex")).toMatchObject({
+      installed: true,
+      models: [],
+      error: "codex: could not run 'C:/tools/codex.exe' (spawn EACCES). Change its executable in Settings."
+    });
+    expect(all.find((target) => target.driver === "claude")?.models.length).toBeGreaterThan(0);
+  });
+
+  test("subagent_targets reports a query that matches no model of an available harness", async () => {
+    Object.assign(settings, { codexDefaultModel: "" });
+    const targets = JSON.parse(toolText(await client.callTool({ name: "subagent_targets", arguments: { driver: "codex", query: "kimi" } }))) as SubagentTarget[];
+    expect(targets).toEqual([{ driver: "codex", installed: true, defaultModel: null, models: [], error: "no codex model matches 'kimi'" }]);
   });
 
   test("subagent_targets narrows to the harness named in the query and lists opencode efforts", async () => {
@@ -743,6 +793,23 @@ describe("subagent router methods", () => {
     const start = router.dispatch("subagents.create", { driver: "claude", task: "go", model: "opus&whoami" }, agent("caller"));
     await expect(start).rejects.toMatchObject({ code: "forbidden" });
     expect(sessions).toHaveLength(3);
+  });
+
+  test("refuses a subagent on a harness that cannot run before creating anything", async () => {
+    harnessChecks = [harnessCheck("opencode", { found: false, available: false, skipped: true, error: "not found" })];
+    installed = ["claude", "codex"];
+    const start = router.dispatch("subagents.create", { driver: "opencode", task: "go" }, agent("caller"));
+    await expect(start).rejects.toThrow("opencode: 'opencode' was not found (not found). Install it or set its executable in Settings");
+    expect(sessions).toHaveLength(3);
+    expect(started).toHaveLength(0);
+  });
+
+  test("refuses a follow-up to a subagent whose harness stopped running", async () => {
+    child("kid", "caller");
+    harnessChecks = [harnessCheck("codex", { configured: true, available: false, error: null })];
+    const send = router.dispatch("subagents.send", { subagentId: "kid", prompt: "again" }, agent("caller"));
+    await expect(send).rejects.toThrow("codex: could not run 'codex'. Change its executable in Settings.");
+    expect(started).toHaveLength(0);
   });
 
   test("archives a created subagent whose first turn did not start and reports it", async () => {

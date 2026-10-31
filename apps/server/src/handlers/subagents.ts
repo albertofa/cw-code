@@ -11,6 +11,7 @@ import {
 } from "../agent/agentPolicy.js";
 import { EFFORT_LEVELS, parseModelQuery, rankModelMatches } from "../agent/modelSearch.js";
 import { subagentSummary } from "../agent/subagentSummary.js";
+import { harnessUnavailableReason } from "../cli/harnessAvailability.js";
 import type { ServerApp } from "../app/ServerApp.js";
 import type { Services } from "../app/services.js";
 import { effortOptionsFor } from "../prEngine/workflowHarness.js";
@@ -89,6 +90,15 @@ async function harnessModels(sessions: Services["sessions"], projectId: string, 
   return models.length > 0 ? models : sessions.listModelsForHarness(driver);
 }
 
+function noModelsError(driver: DriverKind, query: string | undefined): string {
+  return query ? `no ${driver} model matches '${query}'` : `${driver} listed no models`;
+}
+
+function assertHarnessAvailable(services: Services, driver: DriverKind): void {
+  const reason = harnessUnavailableReason(services.appTopic.harnesses, driver);
+  if (reason !== null) throw new Error(reason);
+}
+
 async function listTargets(
   services: Services,
   caller: SessionMeta,
@@ -96,7 +106,7 @@ async function listTargets(
   query: string | undefined,
   effort: EffortLevel | undefined
 ): Promise<SubagentTarget[]> {
-  const { installed } = services.appTopic.harnesses;
+  const availability = services.appTopic.harnesses;
   const settings = services.sessions.getSettings();
   const defaults: Record<DriverKind, string> = {
     claude: settings.claudeDefaultModel,
@@ -107,14 +117,16 @@ async function listTargets(
     drivers.map(async (kind): Promise<SubagentTarget> => {
       const base = {
         driver: kind,
-        installed: installed.length === 0 || installed.includes(kind),
+        installed: availability.installed.length === 0 || availability.installed.includes(kind),
         defaultModel: defaults[kind].trim() || null,
         ...(effort !== undefined ? { effort } : {})
       };
-      if (!base.installed) return { ...base, models: [] };
+      const unavailable = harnessUnavailableReason(availability, kind);
+      if (unavailable !== null) return { ...base, models: [], error: unavailable };
       try {
         const models = await harnessModels(services.sessions, caller.projectId, kind);
         const matched = query ? rankModelMatches(models, query) : models;
+        if (matched.length === 0) return { ...base, models: [], error: noModelsError(kind, query) };
         return { ...base, models: matched.map((model) => targetModel(kind, model)) };
       } catch (error) {
         return { ...base, models: [], error: errorText(error) };
@@ -157,6 +169,7 @@ export function registerSubagentHandlers(router: Router, app: ServerApp): void {
     const effort = parseOneOf(args.effort, EFFORT_LEVELS, "effort");
     const requested = parseOneOf(args.permissionMode, PERMISSION_MODES, "permissionMode");
     const isolation = parseOneOf(args.isolation, ISOLATIONS, "isolation") ?? "shared";
+    assertHarnessAvailable(services(), driver);
     const stored = capPermissionMode(requested, callerPermissionCap(sessions, callerId));
     const child = await sessions.createSubagentSession(callerId, driver, { title, isolation });
     setComposer(app, child.id, { ...(model ? { model } : {}), ...(effort ? { effort } : {}), permissionMode: stored });
@@ -179,6 +192,7 @@ export function registerSubagentHandlers(router: Router, app: ServerApp): void {
     const subagentId = parseString(args.subagentId, "subagentId");
     const prompt = parseText(args.prompt, "prompt");
     const child = ownedSubagent(sessions.findSession(subagentId), subagentId, callerId);
+    assertHarnessAvailable(services(), child.driver);
     const permissionMode = agentTurnPermissionMode(sessions, child.id, callerId, undefined);
     return { turnId: await turns.start(child.id, prompt, { prefs: { permissionMode } }) };
   });
