@@ -4,13 +4,14 @@ export const SUBAGENT_TOOL_NAMES = ["subagent_run", "subagent_wait", "subagent_s
 
 export type SubagentToolName = (typeof SUBAGENT_TOOL_NAMES)[number];
 
-const CW_TOOL_PREFIXES = ["mcp__plugin_cw-code_cw__", "mcp__cw__", "cw_"] as const;
+const CW_TOOL_PREFIXES = ["mcp__plugin_cw-code_cw__", "mcp__cw__", "cw_", ""] as const;
 
 export function cwSubagentToolOf(toolName: string): SubagentToolName | null {
   for (const prefix of CW_TOOL_PREFIXES) {
     if (!toolName.startsWith(prefix)) continue;
     const tool = toolName.slice(prefix.length);
-    return SUBAGENT_TOOL_NAMES.find((name) => name === tool) ?? null;
+    const match = SUBAGENT_TOOL_NAMES.find((name) => name === tool);
+    if (match) return match;
   }
   return null;
 }

@@ -67,7 +67,7 @@ describe("cwSubagentToolOf", () => {
     expect(cwSubagentToolOf("mcp__cw__session_create")).toBeNull();
     expect(cwSubagentToolOf("cw_session_send")).toBeNull();
     expect(cwSubagentToolOf("mcp__other__subagent_run")).toBeNull();
-    expect(cwSubagentToolOf("subagent_run")).toBeNull();
+    expect(cwSubagentToolOf("subagent_run")).toBe("subagent_run");
     expect(cwSubagentToolOf("cw_subagent_run_extra")).toBeNull();
   });
 });

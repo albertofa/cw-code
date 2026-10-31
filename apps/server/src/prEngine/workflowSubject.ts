@@ -1,4 +1,4 @@
-import type { IssueDetail, IssueRef, PrRef, PrWorkflow, RepoRef, RunRef, WorkflowBase, WorkflowRunSummary, WorkflowSubject } from "@cw-code/contracts";
+import type { IssueDetail, IssueRef, PrRef, PrWorkflow, RepoRef, RunRef, SubagentLink, WorkflowBase, WorkflowRunSummary, WorkflowSubject } from "@cw-code/contracts";
 import { prKey } from "@cw-code/shared/prRef";
 import { issueKey, runKey } from "../github/prLinks.js";
 
@@ -13,6 +13,7 @@ interface CandidateSession extends SessionWithLinks {
   projectId: string;
   status: string;
   updatedAt: number;
+  subagent?: SubagentLink;
 }
 
 export const OTHER_SESSIONS_LIMIT = 8;
@@ -59,7 +60,7 @@ export function otherSessionCandidates<S extends CandidateSession>(
   pinnedId?: string,
   limit = OTHER_SESSIONS_LIMIT
 ): S[] {
-  const eligible = sessions.filter((s) => s.status !== "archived" && !isLinkedTo(s, subject));
+  const eligible = sessions.filter((s) => s.status !== "archived" && s.subagent === undefined && !isLinkedTo(s, subject));
   const inProject =
     projectId === null
       ? []

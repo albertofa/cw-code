@@ -1,5 +1,5 @@
 import type { DriverKind, SessionStatus, SubagentResult, SubagentSummary, TaskState } from "@cw-code/contracts";
-import { SUBAGENT_TOOL_NAMES, cwSubagentToolOf, parseWakePrompt, type SubagentToolName, type WakeEntry } from "@cw-code/shared/subagents";
+import { cwSubagentToolOf, parseWakePrompt, type SubagentToolName, type WakeEntry } from "@cw-code/shared/subagents";
 
 export type CwSubagentCardTool = Extract<SubagentToolName, "subagent_run" | "subagent_send" | "subagent_wait">;
 
@@ -8,7 +8,7 @@ const DRIVERS: readonly string[] = ["claude", "opencode", "codex"] satisfies Dri
 
 export function cwToolOf(toolName: string | undefined): SubagentToolName | null {
   if (!toolName) return null;
-  return cwSubagentToolOf(toolName) ?? SUBAGENT_TOOL_NAMES.find((name) => name === toolName) ?? null;
+  return cwSubagentToolOf(toolName);
 }
 
 export function cwSubagentCardTool(toolName: string | undefined): CwSubagentCardTool | null {
