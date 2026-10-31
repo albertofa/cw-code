@@ -5,6 +5,7 @@ import type { FileHandle } from "node:fs/promises";
 import { dirname, extname, isAbsolute, join, normalize, relative, resolve, sep } from "node:path";
 import type { DirEntry, FileReadResult, FileStatInfo } from "@cw-code/contracts";
 import { attachmentsDir } from "../paths/appPaths.js";
+import { expandLeadingPathVariable, type PathExpansionContext } from "./pathExpansion.js";
 
 const UNC_OR_DEVICE_PREFIX = /^[\\/]{2}/;
 
@@ -20,9 +21,10 @@ function assertInside(root: string, target: string): string {
   return abs;
 }
 
-function resolveFileTarget(root: string, target: string): string {
-  if (UNC_OR_DEVICE_PREFIX.test(target) || !isAbsolute(target)) return assertInside(root, target);
-  return resolve(target);
+function resolveFileTarget(root: string, target: string, expansion?: PathExpansionContext): string {
+  const expanded = expandLeadingPathVariable(target, expansion);
+  if (UNC_OR_DEVICE_PREFIX.test(expanded) || !isAbsolute(expanded)) return assertInside(root, expanded);
+  return resolve(expanded);
 }
 
 const PREVIEW_MAX_BYTES = 2 * 1024 * 1024;

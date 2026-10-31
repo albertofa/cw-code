@@ -299,6 +299,7 @@ export function createCwApi(
     renamePath: (sessionId, from, to) => callVoid("fs.renamePath", { sessionId, from, to }),
     trashPath: (sessionId, path) => callVoid("fs.trashPath", { sessionId, path }),
     workspaceRoot: (sessionId) => call<string>("fs.workspaceRoot", { sessionId }),
+    resolveFilePath: (sessionId, path) => call<string>("fs.resolvePath", { sessionId, path }),
     listWorkspaceFiles: (sessionId) => call<string[]>("fs.listWorkspaceFiles", { sessionId }),
     gitBaseline: (sessionId, path) => call<GitBaseline>("fs.gitBaseline", { sessionId, path }),
     searchText: (sessionId, query) => call<TextSearchResult>("fs.searchText", { sessionId, query }),

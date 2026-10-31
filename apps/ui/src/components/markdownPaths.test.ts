@@ -18,6 +18,17 @@ describe("parseFilePath", () => {
     expect(parseFilePath("apps/x.ts:3-9")).toEqual({ path: "apps/x.ts", line: 3, endLine: 9 });
   });
 
+  it.each([
+    "%TEMP%\\agents-scratchpad\\plan.md",
+    "$env:TEMP\\agents-scratchpad\\plan.md",
+    "$TMPDIR/agents-scratchpad/plan.md",
+    "${TMPDIR:-/tmp}/agents-scratchpad/plan.md",
+    "~/agents-scratchpad/plan.md"
+  ])("keeps the variable in %s for the server to expand", (path) => {
+    expect(parseFilePath(path)).toEqual({ path });
+    expect(parseFilePath(`${path}:12`)).toEqual({ path, line: 12 });
+  });
+
   it("accepts a windows path and keeps the drive colon", () => {
     expect(parseFilePath("C:\\dir\\file.cs")).toEqual({ path: "C:\\dir\\file.cs" });
     expect(parseFilePath("C:\\dir\\file.cs:7")).toEqual({ path: "C:\\dir\\file.cs", line: 7 });
