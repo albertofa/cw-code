@@ -27,6 +27,10 @@ function errorCode(error: unknown): unknown {
   return (error as { code?: unknown } | null)?.code;
 }
 
+function isClosed(session: SessionMeta): boolean {
+  return session.status === "resolved" || session.status === "archived";
+}
+
 function wakeEntry({ child, result }: PendingResult): WakeEntry {
   return { subagentId: child.id, driver: child.driver, title: child.title, outcome: result.outcome, text: result.text };
 }
@@ -87,7 +91,7 @@ export class SubagentDelivery {
     const byParent = new Map<string, PendingResult[]>();
     for (const child of sessions) {
       const link = child.subagent;
-      if (!link?.result || link.delivered === true) continue;
+      if (!link?.result || link.delivered === true || isClosed(child)) continue;
       if (scope && !scope.has(link.parentSessionId)) continue;
       const pending = byParent.get(link.parentSessionId) ?? [];
       pending.push({ child, result: link.result });
@@ -98,7 +102,7 @@ export class SubagentDelivery {
   }
 
   private canWake(parent: SessionMeta): boolean {
-    if (parent.subagent || parent.status === "resolved" || parent.status === "archived") return false;
+    if (parent.subagent || isClosed(parent)) return false;
     const runtime = this.deps.runtime(parent.id);
     return !runtime.busy && runtime.approvals.length === 0 && runtime.questions.length === 0;
   }

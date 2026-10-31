@@ -338,6 +338,42 @@ describe("AutoFollowUpEngine pause rules", () => {
     expect(h.engine.pause("sess_missing")).toBe(false);
   });
 
+  it("ignores a subagent wake turn on start: no counter, no meta, no pause reset", async () => {
+    const h = harness({ enabled: false });
+    const wake = { turnId: "w1", origin: "subagent-wake" } as const;
+    h.engine.turnStarted(h.sessionId, true, wake);
+    expect(h.autoFollowUp()).toBeUndefined();
+
+    h.store.updateAutoFollowUp(h.sessionId, () => ({ turns: 2, paused: "user" }));
+    h.engine.turnStarted(h.sessionId, true, { turnId: "w2", origin: "subagent-wake" });
+    expect(h.autoFollowUp()).toEqual({ turns: 2, paused: "user" });
+
+    h.store.updateAutoFollowUp(h.sessionId, () => ({ turns: 3, paused: "interrupted" }));
+    h.engine.turnStarted(h.sessionId, true, { turnId: "w3", origin: "subagent-wake" });
+    expect(h.autoFollowUp()).toEqual({ turns: 3, paused: "interrupted" });
+    h.engine.turnStarted(h.sessionId, false, { turnId: "w4", origin: "subagent-wake" });
+    expect(h.autoFollowUp()).toEqual({ turns: 3, paused: "interrupted" });
+  });
+
+  it("does not pause when a subagent wake turn settles with an error", async () => {
+    const h = harness({ enabled: false });
+    h.engine.turnStarted(h.sessionId, true, { turnId: "w1", origin: "subagent-wake" });
+    h.engine.turnSettled(h.sessionId, { ...done(true), turnId: "w1" });
+    expect(h.autoFollowUp()).toBeUndefined();
+
+    h.engine.turnStarted(h.sessionId, true, { turnId: "w2", origin: "subagent-wake" });
+    h.engine.turnSettled(h.sessionId, { type: "turn.error", turnId: "w2", sessionId: "s", message: "boom" } as SettledTurnEvent);
+    expect(h.autoFollowUp()).toBeUndefined();
+  });
+
+  it("still pauses on the next real error after a wake turn settled", async () => {
+    const h = harness({ enabled: false });
+    h.engine.turnStarted(h.sessionId, true, { turnId: "w1", origin: "subagent-wake" });
+    h.engine.turnSettled(h.sessionId, { ...done(false), turnId: "w1" });
+    h.engine.turnSettled(h.sessionId, { ...done(true), turnId: "w1" });
+    expect(h.autoFollowUp()).toEqual({ turns: 0, paused: "error" });
+  });
+
   it("persists counters and pauses across a store reload", async () => {
     const h = harness({ enabled: false });
     h.engine.turnStarted(h.sessionId, true);
@@ -493,9 +529,10 @@ describe("AutoFollowUpEngine with the real thread and turn services", () => {
     });
     threads.onRuntimeChanged(() => engine.reevaluate());
     threads.onTurnSettled((id, _turnId, event) => engine.turnSettled(id, event));
-    turns.onTurnStarted((id, auto) => engine.turnStarted(id, auto));
+    turns.onTurnStarted((id, auto, turn) => engine.turnStarted(id, auto, turn));
     return {
       threads,
+      turns,
       driverStarts,
       store,
       sessionId,
@@ -516,6 +553,23 @@ describe("AutoFollowUpEngine with the real thread and turn services", () => {
     await flush();
     await flush();
     expect(ctx.driverStarts).toHaveLength(1);
+  });
+
+  it("keeps a subagent wake turn out of the counter and the error pause", async () => {
+    const ctx = wired();
+    await flush();
+    await flush();
+    ctx.threads.onDriverEvent(ctx.sessionId, { ...done(false), turnId: "turn-1", sessionId: ctx.sessionId });
+    await flush();
+    expect(ctx.store.getSession(ctx.sessionId)?.autoFollowUp).toEqual({ turns: 1 });
+
+    await ctx.turns.start(ctx.sessionId, "wake", { auto: true, origin: "subagent-wake" });
+    expect(ctx.threads.runtime(ctx.sessionId).turn).toMatchObject({ auto: true });
+    expect(ctx.store.getSession(ctx.sessionId)?.autoFollowUp).toEqual({ turns: 1 });
+
+    ctx.threads.onDriverEvent(ctx.sessionId, { ...done(true), turnId: "turn-2", sessionId: ctx.sessionId });
+    await flush();
+    expect(ctx.store.getSession(ctx.sessionId)?.autoFollowUp).toEqual({ turns: 1 });
   });
 
   it("neither pauses nor loses the follow-up when a user turn wins the race and then aborts", async () => {

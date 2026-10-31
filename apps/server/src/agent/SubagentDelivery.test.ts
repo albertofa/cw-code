@@ -178,6 +178,24 @@ describe("SubagentDelivery wakes", () => {
     expect(h.started).toHaveLength(0);
   });
 
+  it("leaves out children that were resolved or archived", async () => {
+    const archived = { ...child("a", "parent", DONE), status: "archived" as const };
+    const resolved = { ...child("b", "parent", result("t2", "done", 200)), status: "resolved" as const };
+    const h = harness([meta("parent"), archived, resolved, child("c", "parent", result("t3", "done", 300))]);
+    h.delivery.reevaluate();
+    await flush();
+
+    expect(h.started).toHaveLength(1);
+    expect(parseWakePrompt(h.started[0].prompt)?.map((entry) => entry.subagentId)).toEqual(["c"]);
+  });
+
+  it("does not wake when the only undelivered children are closed", async () => {
+    const h = harness([meta("parent"), { ...child("a", "parent", DONE), status: "archived" }]);
+    h.delivery.reevaluate();
+    await flush();
+    expect(h.started).toHaveLength(0);
+  });
+
   it("does not wake a parent that is itself a child", async () => {
     const h = harness([meta("root"), child("mid", "root"), child("leaf", "mid", DONE)]);
     h.delivery.reevaluate();

@@ -85,6 +85,37 @@ describe("TurnService", () => {
     expect(started).toEqual([["s1", true]]);
   });
 
+  test("origin reaches the started listeners with the turn id, keeps the turn automatic and never reaches the session manager", async () => {
+    const options: unknown[] = [];
+    const ctx = setup(async (_sessionId, prompt, opts) => {
+      options.push(opts);
+      ctx.markStarted("turn-1", prompt);
+      return "turn-1";
+    });
+    const started: unknown[] = [];
+    ctx.turns.onTurnStarted((sessionId, auto, turn) => started.push([sessionId, auto, turn]));
+
+    await ctx.turns.start("s1", "wake", { auto: true, origin: "subagent-wake" });
+
+    expect(started).toEqual([["s1", true, { turnId: "turn-1", origin: "subagent-wake" }]]);
+    expect(ctx.snapshot().turn).toMatchObject({ auto: true });
+    expect(options[0]).not.toHaveProperty("origin");
+    expect(options[0]).not.toHaveProperty("auto");
+  });
+
+  test("a turn without an origin is reported without one", async () => {
+    const ctx = setup(async (_sessionId, prompt) => {
+      ctx.markStarted("turn-1", prompt);
+      return "turn-1";
+    });
+    const started: unknown[] = [];
+    ctx.turns.onTurnStarted((_sessionId, _auto, turn) => started.push(turn));
+
+    await ctx.turns.start("s1", "hello", {});
+
+    expect(started).toEqual([{ turnId: "turn-1" }]);
+  });
+
   test("a failed start removes the echo, restores the todos and rethrows", async () => {
     const ctx = setup(async () => {
       throw new Error("no worktree");

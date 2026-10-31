@@ -110,7 +110,7 @@ function wireAutoFollowUp({ autoFollowUp, prStore, threads, turns }: Services): 
   prStore.onChanged(() => autoFollowUp.reevaluate());
   threads.onRuntimeChanged(() => autoFollowUp.reevaluate());
   threads.onTurnSettled((sessionId, _turnId, event) => autoFollowUp.turnSettled(sessionId, event));
-  turns.onTurnStarted((sessionId, auto) => autoFollowUp.turnStarted(sessionId, auto));
+  turns.onTurnStarted((sessionId, auto, turn) => autoFollowUp.turnStarted(sessionId, auto, turn));
   turns.onTurnStopped((sessionId) => autoFollowUp.turnStopped(sessionId));
   autoFollowUp.setEnabled(true);
 }
@@ -530,7 +530,7 @@ export function createServices(stores: { sessionStore: SessionStore; settingsSto
     subagentDelivery: new SubagentDelivery({
       sessions: () => sessions.listAllSessions(),
       runtime: (sessionId) => threads.runtime(sessionId),
-      startTurn: (sessionId, prompt) => turns.start(sessionId, prompt, { auto: true }),
+      startTurn: (sessionId, prompt) => turns.start(sessionId, prompt, { auto: true, origin: "subagent-wake" }),
       markDelivered: (childId, turnId) => sessions.markSubagentDelivered(childId, turnId),
       postNotice: (sessionId, notice) => sessions.emitNotice(sessionId, notice.noticeId, notice.text, notice.severity),
       shutdownReserved: () => sessions.isShutdownReserved()

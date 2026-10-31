@@ -921,6 +921,13 @@ export class SessionManager {
     this.emitSession(childId);
   }
 
+  private clearSubagentResult(sessionId: string): boolean {
+    const link = this.store.getSession(sessionId)?.subagent;
+    if (!link || (link.result === undefined && link.delivered === undefined)) return false;
+    this.store.updateSession(sessionId, { subagent: { parentSessionId: link.parentSessionId, isolation: link.isolation } });
+    return true;
+  }
+
   private recordSubagentResult(sessionId: string, result: Omit<SubagentResult, "at">): void {
     const link = this.store.getSession(sessionId)?.subagent;
     if (!link) return;
@@ -2502,7 +2509,8 @@ export class SessionManager {
       const lastTurnSnapshot = snapshot ? { turnId: handle.turnId, ...snapshot } : undefined;
       const snapshotChanged = lastTurnSnapshot !== undefined || session.lastTurnSnapshot !== undefined;
       if (snapshotChanged) this.store.updateSession(sessionId, { lastTurnSnapshot });
-      if (restoreWorking || snapshotChanged) this.emitSession(sessionId);
+      const resultCleared = this.clearSubagentResult(sessionId);
+      if (restoreWorking || snapshotChanged || resultCleared) this.emitSession(sessionId);
       if (firstMessage) this.maybeAutoTitle(sessionId, prompt, placeholder);
       return handle.turnId;
     } catch (err) {

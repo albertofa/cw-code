@@ -565,6 +565,28 @@ describe("subagent results", () => {
     expect(afterThird?.delivered).toBe(false);
   });
 
+  it("clears the previous result and delivery flag when the child starts another turn", async () => {
+    const { manager, fake, project } = makeSandbox();
+    const parent = await manager.createSession(project.id, "claude", { mode: "current" });
+    const child = await manager.createSubagentSession(parent.id, "claude", { title: "Child", isolation: "shared" });
+    const emitted: Array<SessionMeta["subagent"]> = [];
+    manager.setSessionEmitter((session) => {
+      if (session.id === child.id) emitted.push(session.subagent);
+    });
+
+    const first = await manager.startTurn(child.id, "one");
+    fake.complete(first, "first answer");
+    expect(manager.listSubagents(parent.id)[0]?.subagent?.result?.turnId).toBe(first);
+
+    const second = await manager.startTurn(child.id, "two");
+    expect(manager.listSubagents(parent.id)[0]?.subagent).toEqual({ parentSessionId: parent.id, isolation: "shared" });
+    expect(emitted.at(-1)).toEqual({ parentSessionId: parent.id, isolation: "shared" });
+
+    fake.complete(second, "second answer");
+    expect(manager.listSubagents(parent.id)[0]?.subagent?.result?.turnId).toBe(second);
+    expect(manager.listSubagents(parent.id)[0]?.subagent?.delivered).toBe(false);
+  });
+
   it("leaves non-child sessions without a subagent link", async () => {
     const { manager, fake, project, store } = makeSandbox();
     const session = await manager.createSession(project.id, "claude", { mode: "current" });

@@ -7,6 +7,7 @@ import { BRANCH_MISMATCH_MARKER } from "../sessions/branchMismatch.js";
 import type { AutoFollowUpMeta } from "../sessions/SessionStore.js";
 import { SHUTDOWN_RESERVED_MESSAGE } from "../shutdown/shutdownReservation.js";
 import type { SessionRuntime, SettledTurnEvent, ThreadNotice } from "../threads/ThreadService.js";
+import type { TurnOrigin } from "../threads/TurnService.js";
 import { autoFollowUps, babysitState, finalReviewPrompt, followUpPrompt, isWatchable, needsFailedLogs, type AutoFollowUp } from "./babysit.js";
 import { seenThrough } from "./prUpdates.js";
 import { loadFailedLogs } from "./prWorkflows.js";
@@ -61,6 +62,7 @@ export class AutoFollowUpEngine {
   private readonly inFlight = new Set<string>();
   private readonly listeners = new Set<(sessionId: string) => void>();
   private readonly published = new Map<string, string>();
+  private readonly wakeTurns = new Map<string, string>();
   private pausedBefore = new Set<string>();
   private scheduled = false;
   private disposed = false;
@@ -100,7 +102,12 @@ export class AutoFollowUpEngine {
     return known;
   }
 
-  turnStarted(sessionId: string, auto: boolean): void {
+  turnStarted(sessionId: string, auto: boolean, turn?: { turnId: string; origin?: TurnOrigin }): void {
+    if (turn?.origin === "subagent-wake") {
+      this.wakeTurns.set(sessionId, turn.turnId);
+      this.reevaluate();
+      return;
+    }
     this.deps.updateAutoFollowUp(sessionId, (current) => {
       if (auto) return { ...current, turns: (current?.turns ?? 0) + 1 };
       return current?.paused === "user" ? { turns: 0, paused: "user" } : undefined;
@@ -117,6 +124,11 @@ export class AutoFollowUpEngine {
   }
 
   turnSettled(sessionId: string, event: SettledTurnEvent): void {
+    if (this.wakeTurns.get(sessionId) === event.turnId) {
+      this.wakeTurns.delete(sessionId);
+      this.reevaluate();
+      return;
+    }
     if (event.type === "turn.error" || event.isError) this.pause(sessionId, "error");
     else this.reevaluate();
   }
