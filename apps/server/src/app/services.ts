@@ -3,6 +3,7 @@ import type { ShutdownReason } from "@cw-code/contracts";
 import { prKey } from "@cw-code/shared/prRef";
 import { ptyTopic } from "@cw-code/shared/topics";
 import { SessionWatch } from "../agent/SessionWatch.js";
+import { SubagentDelivery } from "../agent/SubagentDelivery.js";
 import { FileService } from "../fs/FileService.js";
 import { FilesTopic } from "../fs/FilesTopic.js";
 import { FileWatcher } from "../fs/FileWatcher.js";
@@ -83,6 +84,7 @@ export interface Services {
   workflowPreview: WorkflowPreviewService;
   workflowRunner: WorkflowRunner;
   sessionWatch: SessionWatch;
+  subagentDelivery: SubagentDelivery;
 }
 
 export interface ServiceHooks {
@@ -115,6 +117,12 @@ function wireAutoFollowUp({ autoFollowUp, prStore, threads, turns }: Services): 
 
 function wireSessionWatch({ sessionWatch, threads }: Services): void {
   threads.onTurnSettled((sessionId, _turnId, event) => sessionWatch.turnSettled(sessionId, event));
+}
+
+function wireSubagentDelivery({ subagentDelivery, sessions, threads }: Services): void {
+  const parentOf = (sessionId: string) => sessions.findSession(sessionId)?.subagent?.parentSessionId ?? sessionId;
+  threads.onRuntimeChanged((sessionId) => subagentDelivery.reevaluate(parentOf(sessionId)));
+  threads.onTurnSettled((sessionId) => subagentDelivery.reevaluate(parentOf(sessionId)));
 }
 
 function wireUsage({ sessions, threads, usageTopic }: Services): void {
@@ -178,7 +186,8 @@ function wireServiceEvents(
     threads,
     autoFollowUp,
     sidebar,
-    sessionWatch
+    sessionWatch,
+    subagentDelivery
   }: Services,
   { emit, dropTopic, assessmentChanged, revokeAgentToken }: ServiceHooks
 ): void {
@@ -198,6 +207,7 @@ function wireServiceEvents(
   });
   sessions.setSessionEmitter((session) => {
     sessionWatch.sessionChanged(session);
+    subagentDelivery.reevaluate(session.subagent?.parentSessionId ?? session.id);
     assessmentChanged();
     prTracker.setTracked(sessions.trackedPrRefs());
     prStore.onSessionsChanged();
@@ -516,11 +526,20 @@ export function createServices(stores: { sessionStore: SessionStore; settingsSto
     sidebar,
     workflowPreview,
     workflowRunner,
-    sessionWatch: new SessionWatch({ getSession: (sessionId) => sessions.findSession(sessionId) })
+    sessionWatch: new SessionWatch({ getSession: (sessionId) => sessions.findSession(sessionId) }),
+    subagentDelivery: new SubagentDelivery({
+      sessions: () => sessions.listAllSessions(),
+      runtime: (sessionId) => threads.runtime(sessionId),
+      startTurn: (sessionId, prompt) => turns.start(sessionId, prompt, { auto: true }),
+      markDelivered: (childId, turnId) => sessions.markSubagentDelivered(childId, turnId),
+      postNotice: (sessionId, notice) => sessions.emitNotice(sessionId, notice.noticeId, notice.text, notice.severity),
+      shutdownReserved: () => sessions.isShutdownReserved()
+    })
   };
   wireServiceEvents(services, hooks);
   wireAutoFollowUp(services);
   wireSessionWatch(services);
+  wireSubagentDelivery(services);
   wireUsage(services);
   wireSessionPrs(services);
   wireTurnChanges(services);
