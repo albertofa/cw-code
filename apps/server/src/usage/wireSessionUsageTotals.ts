@@ -7,6 +7,11 @@ interface SessionUsageExtras {
   usageTotalsError: string | null;
 }
 
+export interface SessionFamily {
+  childIds(sessionId: string): string[];
+  parentId(sessionId: string): string | null;
+}
+
 function describeError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
@@ -14,13 +19,14 @@ function describeError(error: unknown): string {
 export function wireSessionUsageTotals(
   threads: Pick<ThreadService, "registerExtras" | "refreshExtras">,
   usageTopic: Pick<UsageTopic, "sessionTotals">,
-  onUsageRecorded: (cb: (sessionId: string) => void) => unknown
+  onUsageRecorded: (cb: (sessionId: string) => void) => unknown,
+  family: SessionFamily
 ): void {
   const cache = new Map<string, SessionUsageExtras>();
 
   const compute = (sessionId: string): SessionUsageExtras => {
     try {
-      const extras = { usageTotals: usageTopic.sessionTotals(sessionId), usageTotalsError: null };
+      const extras = { usageTotals: usageTopic.sessionTotals(sessionId, family.childIds(sessionId)), usageTotalsError: null };
       cache.set(sessionId, extras);
       return extras;
     } catch (error) {
@@ -33,7 +39,10 @@ export function wireSessionUsageTotals(
 
   threads.registerExtras(extras);
   onUsageRecorded((sessionId) => {
-    cache.delete(sessionId);
-    threads.refreshExtras(sessionId);
+    const parentId = family.parentId(sessionId);
+    for (const id of parentId === null ? [sessionId] : [sessionId, parentId]) {
+      cache.delete(id);
+      threads.refreshExtras(id);
+    }
   });
 }

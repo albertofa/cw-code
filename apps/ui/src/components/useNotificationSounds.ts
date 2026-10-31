@@ -18,6 +18,7 @@ export function useNotificationSounds(): void {
   useEffect(() => {
     const states: Record<string, SessionSoundState> = {};
     for (const row of rows) {
+      if (row.session.subagent) continue;
       states[row.session.id] = {
         status: row.session.status,
         questionIds: row.pendingQuestionIds,

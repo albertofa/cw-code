@@ -159,12 +159,13 @@ export function sessionAttention(input: {
   approvals: ApprovalRequest[] | undefined;
   questions: QuestionRequest[] | undefined;
   unseenPr: UnseenPr | null;
+  subagentInputRequired?: boolean;
 }): Attention | null {
-  const { session, approvals, questions, unseenPr } = input;
+  const { session, approvals, questions, unseenPr, subagentInputRequired } = input;
   if (session.status === "resolved" || session.status === "archived") return null;
   if (approvals && approvals.length > 0) return { kind: "approval", line: approvalLine(approvals[0]) };
   if (questions && questions.length > 0) return { kind: "question", line: questionLine(questions[0]) };
-  if (session.status === "input-required") return { kind: "question", line: INPUT_FALLBACK };
+  if (session.status === "input-required" || subagentInputRequired) return { kind: "question", line: INPUT_FALLBACK };
   if (unseenPr) return { kind: "update", line: updateLine(unseenPr) };
   return null;
 }

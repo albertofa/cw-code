@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test";
+import { SUBAGENT_TOOL_NAMES } from "@cw-code/shared/subagents";
 import { cwSkillMarkdown, cwToolName, type AgentHarness } from "./cwSkill.js";
 
 describe("cwToolName", () => {
@@ -16,6 +17,12 @@ describe("cwSkillMarkdown", () => {
     for (const tool of ["session_create", "session_wait", "session_get", "settings_set", "projects_list"]) {
       expect(skill).toContain(`\`${cwToolName(harness, tool)}\``);
     }
+  });
+
+  it.each(["claude", "codex", "opencode"] as AgentHarness[])("names every %s subagent tool", (harness) => {
+    const skill = cwSkillMarkdown(harness);
+    for (const tool of SUBAGENT_TOOL_NAMES) expect(skill).toContain(`\`${cwToolName(harness, tool)}\``);
+    expect(skill).toContain("wait: false");
   });
 
   it("does not leak another harness's tool names", () => {

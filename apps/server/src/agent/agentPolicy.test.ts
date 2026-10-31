@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import type { PermissionMode, SettingsPatch } from "@cw-code/contracts";
+import type { PermissionMode, SessionMeta, SettingsPatch } from "@cw-code/contracts";
 import { requireOwner } from "../handlers/shared.js";
 import { Router, type CallContext } from "../transport/Router.js";
 import {
@@ -7,13 +7,18 @@ import {
   AGENT_WRITABLE_SETTINGS,
   agentTurnPermissionMode,
   assertAgentCreateOptions,
+  assertAgentMayDispatch,
   assertAgentModelId,
   assertAgentOmits,
+  assertAgentSessionTarget,
   assertAgentSettingsPatch,
+  assertCanDispatchSubagents,
   callerPermissionCap,
   capPermissionMode,
   isSafeModelId,
-  SAFE_MODEL_ID
+  ownedSubagent,
+  SAFE_MODEL_ID,
+  SUBAGENT_DEPTH_REFUSAL
 } from "./agentPolicy.js";
 
 const agent: CallContext = { clientId: "c", client: "mcp", auth: { kind: "agent", sessionId: "s1" } };
@@ -136,8 +141,80 @@ describe("agent argument guards", () => {
 describe("AGENT_METHODS", () => {
   test("lists exactly the methods the cw tools call", () => {
     expect([...AGENT_METHODS].sort()).toEqual(
-      ["composer.get", "projects.list", "sessions.create", "sessions.list", "settings.get", "settings.set", "turns.start", "turns.stop", "usage.report"].sort()
+      [
+        "composer.get",
+        "projects.list",
+        "sessions.create",
+        "sessions.list",
+        "settings.get",
+        "settings.set",
+        "subagents.ack",
+        "subagents.create",
+        "subagents.list",
+        "subagents.send",
+        "subagents.stop",
+        "subagents.targets",
+        "turns.start",
+        "turns.stop",
+        "usage.report"
+      ].sort()
     );
+  });
+});
+
+describe("subagent policy", () => {
+  const session = (id: string, parentSessionId?: string): SessionMeta => ({
+    id,
+    projectId: "p1",
+    driver: "codex",
+    title: id,
+    status: "idle",
+    resumeCursor: "",
+    createdAt: 1,
+    updatedAt: 1,
+    ...(parentSessionId ? { subagent: { parentSessionId, isolation: "shared" } } : {})
+  });
+
+  test("refuses a subagent that tries to dispatch its own subagents", () => {
+    expect(() => assertCanDispatchSubagents(session("parent"))).not.toThrow();
+    expect(() => assertCanDispatchSubagents(session("kid", "parent"))).toThrow(SUBAGENT_DEPTH_REFUSAL);
+    try {
+      assertCanDispatchSubagents(session("kid", "parent"));
+    } catch (error) {
+      expect((error as { code?: string }).code).toBe("forbidden");
+    }
+  });
+
+  test("returns a subagent only to its parent, or to a caller without a session", () => {
+    const kid = session("kid", "parent");
+    expect(ownedSubagent(kid, "kid", "parent")).toBe(kid);
+    expect(ownedSubagent(kid, "kid", null)).toBe(kid);
+  });
+
+  test("refuses dispatch only for agent callers whose session is a subagent", () => {
+    const sessions = new Map([
+      ["parent", session("parent")],
+      ["kid", session("kid", "parent")]
+    ]);
+    const lookup = (id: string) => sessions.get(id);
+    const agentOf = (sessionId: string): CallContext => ({ clientId: "c", client: "mcp", auth: { kind: "agent", sessionId } });
+    expect(() => assertAgentMayDispatch(agentOf("parent"), lookup)).not.toThrow();
+    expect(() => assertAgentMayDispatch(owner, lookup)).not.toThrow();
+    expect(() => assertAgentMayDispatch(agentOf("kid"), lookup)).toThrow(SUBAGENT_DEPTH_REFUSAL);
+  });
+
+  test("hides another parent's subagent as an unknown session and points the parent at the subagent tools", () => {
+    const sessions = new Map([["kid", session("kid", "parent")]]);
+    const lookup = (id: string) => sessions.get(id);
+    expect(() => assertAgentSessionTarget(lookup, "kid", "stranger")).toThrow("unknown session kid");
+    expect(() => assertAgentSessionTarget(lookup, "kid", "parent")).toThrow("subagent_send");
+    expect(() => assertAgentSessionTarget(lookup, "plain", "parent")).not.toThrow();
+  });
+
+  test("answers the same for another parent's subagent, a plain session and an unknown id", () => {
+    expect(() => ownedSubagent(session("kid", "parent"), "kid", "stranger")).toThrow("unknown subagent kid");
+    expect(() => ownedSubagent(session("plain"), "plain", null)).toThrow("unknown subagent plain");
+    expect(() => ownedSubagent(undefined, "missing", "parent")).toThrow("unknown subagent missing");
   });
 });
 

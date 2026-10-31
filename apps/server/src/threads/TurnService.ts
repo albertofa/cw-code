@@ -3,6 +3,10 @@ import type { SessionManager } from "../sessions/SessionManager.js";
 import type { GitTopic } from "../sourceControl/GitTopic.js";
 import { notifyAll, type ThreadService } from "./ThreadService.js";
 
+export type TurnOrigin = "subagent-wake";
+
+export type TurnStartedListener = (sessionId: string, auto: boolean, turn: { turnId: string; origin?: TurnOrigin }) => void;
+
 export interface StartTurnInput {
   prefs?: ComposerPrefs;
   attachments?: string[];
@@ -12,10 +16,11 @@ export interface StartTurnInput {
   finalReview?: { ref: PrRef; sha: string };
   acceptFolderHead?: string;
   auto?: boolean;
+  origin?: TurnOrigin;
 }
 
 export interface TurnServiceDeps {
-  sessions: Pick<SessionManager, "assertCanStartTurn" | "startTurn" | "interrupt" | "listActiveTurns">;
+  sessions: Pick<SessionManager, "assertCanStartTurn" | "startTurn" | "interrupt" | "listActiveTurns" | "listSubagents" | "endSubagentWait">;
   threads: ThreadService;
   git: Pick<GitTopic, "keptFolderHead">;
 }
@@ -30,13 +35,13 @@ interface StartingTurn {
 
 export class TurnService {
   private readonly starting = new Map<string, StartingTurn>();
-  private readonly startedListeners = new Set<(sessionId: string, auto: boolean) => void>();
+  private readonly startedListeners = new Set<TurnStartedListener>();
   private readonly stoppedListeners = new Set<(sessionId: string) => void>();
 
   constructor(private readonly deps: TurnServiceDeps) {}
 
   async start(sessionId: string, prompt: string, input: StartTurnInput = {}): Promise<string> {
-    const { auto = false, ...options } = input;
+    const { auto = false, origin, ...options } = input;
     options.acceptFolderHead ??= this.deps.git.keptFolderHead(sessionId) ?? undefined;
     this.deps.sessions.assertCanStartTurn(sessionId);
     const begun = this.deps.threads.beginTurn(sessionId, prompt, auto);
@@ -53,7 +58,7 @@ export class TurnService {
       if (this.starting.get(sessionId) === starting) this.starting.delete(sessionId);
     }
     this.deps.threads.commitTurn(sessionId, begun.pendingId, turnId);
-    notifyAll(this.startedListeners, "[turns] turn started", sessionId, auto);
+    notifyAll(this.startedListeners, "[turns] turn started", sessionId, auto, { turnId, ...(origin ? { origin } : {}) });
     if (starting.stopRequested) {
       this.deps.sessions.interrupt(turnId);
       this.notifyStopped(sessionId);
@@ -62,6 +67,16 @@ export class TurnService {
   }
 
   stop(sessionId: string): StopResult {
+    const result = this.stopSession(sessionId);
+    if (!result.stopped) {
+      if (!this.deps.sessions.endSubagentWait(sessionId, "stopped")) return result;
+      this.notifyStopped(sessionId);
+    }
+    for (const child of this.deps.sessions.listSubagents(sessionId)) this.stopSession(child.id);
+    return { stopped: true };
+  }
+
+  private stopSession(sessionId: string): StopResult {
     const active = this.deps.sessions.listActiveTurns().filter((turn) => turn.sessionId === sessionId);
     if (active.length === 0) {
       const starting = this.starting.get(sessionId);
@@ -78,7 +93,7 @@ export class TurnService {
     notifyAll(this.stoppedListeners, "[turns] turn stopped", sessionId);
   }
 
-  onTurnStarted(cb: (sessionId: string, auto: boolean) => void): () => void {
+  onTurnStarted(cb: TurnStartedListener): () => void {
     this.startedListeners.add(cb);
     return () => this.startedListeners.delete(cb);
   }

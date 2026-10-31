@@ -3,6 +3,7 @@ import type { ShutdownReason } from "@cw-code/contracts";
 import { prKey } from "@cw-code/shared/prRef";
 import { ptyTopic } from "@cw-code/shared/topics";
 import { SessionWatch } from "../agent/SessionWatch.js";
+import { SubagentDelivery } from "../agent/SubagentDelivery.js";
 import { FileService } from "../fs/FileService.js";
 import { FilesTopic } from "../fs/FilesTopic.js";
 import { FileWatcher } from "../fs/FileWatcher.js";
@@ -38,6 +39,7 @@ import { SidebarService } from "../sidebar/SidebarService.js";
 import { SkillsStore } from "../skills/SkillsStore.js";
 import { GitTopic } from "../sourceControl/GitTopic.js";
 import { SourceControlService } from "../sourceControl/SourceControlService.js";
+import { SubagentsModel } from "../threads/SubagentsModel.js";
 import { ThreadService } from "../threads/ThreadService.js";
 import { TurnChangesModel } from "../threads/TurnChangesModel.js";
 import { TurnService } from "../threads/TurnService.js";
@@ -83,6 +85,8 @@ export interface Services {
   workflowPreview: WorkflowPreviewService;
   workflowRunner: WorkflowRunner;
   sessionWatch: SessionWatch;
+  subagentDelivery: SubagentDelivery;
+  subagents: SubagentsModel;
 }
 
 export interface ServiceHooks {
@@ -103,12 +107,13 @@ export interface ServiceHooks {
 
 const PR_STATE_REUSE_MS = 60_000;
 
-function wireAutoFollowUp({ autoFollowUp, prStore, threads, turns }: Services): void {
+function wireAutoFollowUp({ autoFollowUp, prStore, threads, turns, sessions }: Services): void {
   threads.registerExtras((sessionId) => ({ babysit: autoFollowUp.babysit(sessionId) }));
   prStore.onChanged(() => autoFollowUp.reevaluate());
   threads.onRuntimeChanged(() => autoFollowUp.reevaluate());
+  sessions.onSubagentWaitChanged(() => autoFollowUp.reevaluate());
   threads.onTurnSettled((sessionId, _turnId, event) => autoFollowUp.turnSettled(sessionId, event));
-  turns.onTurnStarted((sessionId, auto) => autoFollowUp.turnStarted(sessionId, auto));
+  turns.onTurnStarted((sessionId, auto, turn) => autoFollowUp.turnStarted(sessionId, auto, turn));
   turns.onTurnStopped((sessionId) => autoFollowUp.turnStopped(sessionId));
   autoFollowUp.setEnabled(true);
 }
@@ -117,8 +122,30 @@ function wireSessionWatch({ sessionWatch, threads }: Services): void {
   threads.onTurnSettled((sessionId, _turnId, event) => sessionWatch.turnSettled(sessionId, event));
 }
 
+function wireSubagentDelivery({ subagentDelivery, sessions, threads, turns }: Services): void {
+  const parentOf = (sessionId: string) => sessions.findSession(sessionId)?.subagent?.parentSessionId ?? sessionId;
+  threads.onRuntimeChanged((sessionId) => subagentDelivery.reevaluate(parentOf(sessionId)));
+  threads.onTurnSettled((sessionId) => subagentDelivery.reevaluate(parentOf(sessionId)));
+  turns.onTurnStarted((sessionId, _auto, turn) => subagentDelivery.turnStarted(sessionId, turn.origin));
+  turns.onTurnStopped((sessionId) => subagentDelivery.turnStopped(sessionId));
+}
+
+function wireSubagents({ subagents, threads, sessions }: Services): void {
+  threads.registerExtras((sessionId) => subagents.extras(sessionId));
+  threads.onRuntimeChanged((sessionId) => subagents.changed(sessionId));
+  sessions.onSubagentWaitChanged((sessionId) => subagents.waitChanged(sessionId));
+}
+
 function wireUsage({ sessions, threads, usageTopic }: Services): void {
-  wireSessionUsageTotals(threads, usageTopic, (cb) => sessions.onUsageRecorded(cb));
+  wireSessionUsageTotals(
+    threads,
+    usageTopic,
+    (cb) => sessions.onUsageRecorded(cb),
+    {
+      childIds: (sessionId) => sessions.listSubagents(sessionId).map((child) => child.id),
+      parentId: (sessionId) => sessions.findSession(sessionId)?.subagent?.parentSessionId ?? null
+    }
+  );
 }
 
 function wireSessionPrs({ sessionPrs, threads, prStore, sourceControl, autoFollowUp }: Services): void {
@@ -135,9 +162,10 @@ function wireTurnChanges({ turnChanges, threads, sessions }: Services): void {
   sessions.onSnapshotChanged((sessionId) => turnChanges.snapshotChanged(sessionId));
 }
 
-function wireSidebar({ sidebar, threads, sourceControl, prStore, autoFollowUp, preferences }: Services): void {
+function wireSidebar({ sidebar, threads, sessions, sourceControl, prStore, autoFollowUp, preferences }: Services): void {
   sidebar.watch(
     (onChange) => threads.onRuntimeChanged(onChange),
+    (onChange) => sessions.onSubagentWaitChanged(onChange),
     (onChange) => sourceControl.onPublished(onChange),
     (onChange) => prStore.onChanged(onChange),
     (onChange) => autoFollowUp.onChanged(onChange),
@@ -178,7 +206,9 @@ function wireServiceEvents(
     threads,
     autoFollowUp,
     sidebar,
-    sessionWatch
+    sessionWatch,
+    subagentDelivery,
+    subagents
   }: Services,
   { emit, dropTopic, assessmentChanged, revokeAgentToken }: ServiceHooks
 ): void {
@@ -189,7 +219,7 @@ function wireServiceEvents(
     } catch (error) {
       console.warn(`[threads] ${event.type} for session ${sessionId} failed: ${error instanceof Error ? error.message : String(error)}`);
     }
-    if (event.type === "turn.interrupted") autoFollowUp.turnInterrupted(sessionId, event.reason);
+    if (event.type === "turn.interrupted") autoFollowUp.turnInterrupted(sessionId, event.reason, event.turnId);
     sourceControl.onThreadEvent(sessionId, event);
   });
   sessions.setTitleEmitter(() => {
@@ -198,6 +228,8 @@ function wireServiceEvents(
   });
   sessions.setSessionEmitter((session) => {
     sessionWatch.sessionChanged(session);
+    subagentDelivery.reevaluate(session.subagent?.parentSessionId ?? session.id);
+    subagents.changed(session.id);
     assessmentChanged();
     prTracker.setTracked(sessions.trackedPrRefs());
     prStore.onSessionsChanged();
@@ -330,7 +362,8 @@ export function createServices(stores: { sessionStore: SessionStore; settingsSto
     release: (kind) => sessions.releaseHarnessBinary(kind),
     recheck: () => harnessMonitor.check("recheck"),
     publish: (updates) => appTopic.setHarnessUpdates(updates),
-    shutdownReserved: () => sessions.isShutdownReserved()
+    shutdownReserved: () => sessions.isShutdownReserved(),
+    onUpdateEnded: () => subagentDelivery.reevaluate()
   });
   sessions.setTurnGate((kind) => harnessUpdates.turnGate(kind));
   const threads = new ThreadService({
@@ -342,10 +375,26 @@ export function createServices(stores: { sessionStore: SessionStore; settingsSto
     pendingRequests: (sessionId) => sessions.listPendingRequests(sessionId)
   });
   const turns = new TurnService({ sessions, threads, git: gitTopic });
+  sessions.setTurnStopper((sessionId) => turns.stop(sessionId));
+  const subagentDelivery = new SubagentDelivery({
+    sessions: () => sessions.listAllSessions(),
+    runtime: (sessionId) => threads.runtime(sessionId),
+    startTurn: (sessionId, prompt) => turns.start(sessionId, prompt, { auto: true, origin: "subagent-wake" }),
+    markDelivered: (childId, turnId) => sessions.markSubagentDelivered(childId, turnId),
+    postNotice: (sessionId, notice) => sessions.emitNotice(sessionId, notice.noticeId, notice.text, notice.severity),
+    shutdownReserved: () => sessions.isShutdownReserved(),
+    waitingParents: () => sessions.listSubagentWaits(),
+    endWait: (parentId) => {
+      sessions.endSubagentWait(parentId, "settled");
+    }
+  });
   const autoFollowUp = new AutoFollowUpEngine({
     sessions: () => sessions.listAllSessions(),
     settings: () => sessions.getSettings(),
-    runtime: (sessionId) => threads.runtime(sessionId),
+    runtime: (sessionId) => {
+      const runtime = threads.runtime(sessionId);
+      return sessions.subagentWaitSince(sessionId) === null ? runtime : { ...runtime, busy: true };
+    },
     summaryLookup: () => prStore.summaryLookup(),
     detail: (key) => prStore.detail(key),
     failedCheckLog: (ref, runId) => pullRequests.failedCheckLog(ref, runId),
@@ -387,6 +436,7 @@ export function createServices(stores: { sessionStore: SessionStore; settingsSto
     projects: () => sessions.listProjects(),
     ownsWorktree: (path) => sessions.ownsWorktree(path),
     runtime: (sessionId) => threads.runtime(sessionId),
+    waitingOnSubagents: (sessionId) => sessions.subagentWaitSince(sessionId) !== null,
     gitStatus: (sessionId) => sourceControl.status(sessionId),
     summaryLookup: () => prStore.summaryLookup(),
     detail: (key) => prStore.detail(key),
@@ -515,11 +565,25 @@ export function createServices(stores: { sessionStore: SessionStore; settingsSto
     sidebar,
     workflowPreview,
     workflowRunner,
-    sessionWatch: new SessionWatch({ getSession: (sessionId) => sessions.findSession(sessionId) })
+    sessionWatch: new SessionWatch({ getSession: (sessionId) => sessions.findSession(sessionId) }),
+    subagentDelivery,
+    subagents: new SubagentsModel({
+      children: (parentId) => sessions.listSubagents(parentId),
+      parentOf: (sessionId) => sessions.findSession(sessionId)?.subagent?.parentSessionId ?? null,
+      pendingRequests: (sessionId) => {
+        const { approvals, questions } = threads.runtime(sessionId);
+        return approvals.length + questions.length;
+      },
+      turnStartedAt: (sessionId) => threads.runtime(sessionId).turn?.startedAt,
+      waitSince: (parentId) => sessions.subagentWaitSince(parentId),
+      refresh: (parentId) => threads.refreshExtras(parentId)
+    })
   };
   wireServiceEvents(services, hooks);
   wireAutoFollowUp(services);
   wireSessionWatch(services);
+  wireSubagentDelivery(services);
+  wireSubagents(services);
   wireUsage(services);
   wireSessionPrs(services);
   wireTurnChanges(services);

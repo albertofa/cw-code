@@ -10,7 +10,13 @@ const CW_TOOLS = [
   "session_wait",
   "usage_report",
   "settings_get",
-  "settings_set"
+  "settings_set",
+  "subagent_run",
+  "subagent_wait",
+  "subagent_send",
+  "subagent_stop",
+  "subagents_list",
+  "subagent_targets"
 ] as const;
 
 export const CW_SKILL_NAME = "cw-code";
@@ -43,6 +49,13 @@ The tools are ${CW_TOOLS.map(name).join(", ")}.
 - ${ownSession}
 - Child sessions never run with more permissions than this one.
 - ${name("settings_set")} only accepts model, worktree, session lifecycle and refresh preferences.
+
+## Subagents
+
+- Use ${name("subagent_run")} for work on another harness or in an isolated checkout (\`isolation: "worktree"\`). For work on your own harness, use its own subagent tool.
+- When the user names a model in plain text, call ${name("subagent_targets")} with that text as \`query\` first and pass the returned id as \`model\`.
+- For long tasks, dispatch with \`wait: false\` and end your turn; cw-code sends the results to you as a new turn. Never poll ${name("subagent_wait")} or ${name("subagents_list")} in a loop.
+- A subagent cannot dispatch subagents of its own.
 `;
   return `---\nname: ${CW_SKILL_NAME}\ndescription: ${JSON.stringify(SKILL_DESCRIPTION)}\n---\n\n${body}`;
 }

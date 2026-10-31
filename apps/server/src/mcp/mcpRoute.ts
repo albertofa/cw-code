@@ -1,11 +1,11 @@
 import { createMcpHandler, McpServer, type AuthInfo } from "@modelcontextprotocol/server";
 import { OPENCODE_SESSION_HEADER } from "@cw-code/shared/protocol";
 import type { AgentTokens } from "../agent/AgentTokens.js";
+import { MCP_IDLE_TIMEOUT_SECONDS } from "../agent/mcpTimeouts.js";
 import type { SessionWatch } from "../agent/SessionWatch.js";
-import type { SessionManager } from "../sessions/SessionManager.js";
 import { bearerToken, reply } from "../transport/httpRoutes.js";
 import type { Router } from "../transport/Router.js";
-import { registerCwTools, WAIT_MAX_MS } from "./cwTools.js";
+import { registerCwTools, type CwToolsSessions } from "./cwTools.js";
 
 export const MCP_SERVER_NAME = "cw";
 
@@ -15,7 +15,7 @@ export interface McpRouteDeps {
   router: Router;
   tokens: AgentTokens;
   watch: SessionWatch;
-  sessions: Pick<SessionManager, "getComposer" | "turnPermissionMode">;
+  sessions: CwToolsSessions;
   version: string;
   resolveOpencode?: ResolveOpencodeAgent;
 }
@@ -26,8 +26,9 @@ function callerSessionId(authInfo: AuthInfo | undefined): string {
   return sessionId;
 }
 
-const BUN_MAX_IDLE_TIMEOUT_SECONDS = 255;
-export const MCP_IDLE_TIMEOUT_SECONDS = Math.min(BUN_MAX_IDLE_TIMEOUT_SECONDS, Math.ceil(WAIT_MAX_MS / 1000) + 15);
+function hasStaticToolList(authInfo: AuthInfo | undefined): boolean {
+  return authInfo?.extra?.staticToolList === true;
+}
 
 function agentSessionOf(req: Request, token: string, deps: McpRouteDeps): string | null {
   const opencodeSessionId = req.headers.get(OPENCODE_SESSION_HEADER);
@@ -40,7 +41,13 @@ export function createMcpRoute(deps: McpRouteDeps): (req: Request, extendTimeout
   const handler = createMcpHandler(
     ({ authInfo }) => {
       const server = new McpServer({ name: MCP_SERVER_NAME, version: deps.version });
-      registerCwTools(server, { router: deps.router, watch: deps.watch, sessions: deps.sessions, callerSessionId: callerSessionId(authInfo) });
+      registerCwTools(server, {
+        router: deps.router,
+        watch: deps.watch,
+        sessions: deps.sessions,
+        callerSessionId: callerSessionId(authInfo),
+        exposeAllTools: hasStaticToolList(authInfo)
+      });
       return server;
     },
     { legacy: "stateless", onerror: (error) => console.warn(`[mcp] ${error.message}`) }
@@ -51,7 +58,8 @@ export function createMcpRoute(deps: McpRouteDeps): (req: Request, extendTimeout
     const sessionId = token === null ? null : agentSessionOf(req, token, deps);
     if (token === null || sessionId === null) return reply("unauthorized", 401, { "WWW-Authenticate": "Bearer" });
     extendTimeout(MCP_IDLE_TIMEOUT_SECONDS);
-    const authInfo: AuthInfo = { token, clientId: `mcp:${sessionId}`, scopes: [], extra: { sessionId } };
+    const staticToolList = req.headers.get(OPENCODE_SESSION_HEADER) !== null;
+    const authInfo: AuthInfo = { token, clientId: `mcp:${sessionId}`, scopes: [], extra: { sessionId, staticToolList } };
     return handler.fetch(req, { authInfo });
   };
 }

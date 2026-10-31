@@ -20,6 +20,7 @@ import { isValidSnapshot } from "./prTracking.js";
 const MAX_UNLINKED_KEYS = 20;
 
 export function canOwnAutoLink(session: SessionMeta): boolean {
+  if (session.subagent) return false;
   if (!session.worktreePath && !session.branch) return false;
   return session.status !== "resolved" && session.status !== "archived";
 }

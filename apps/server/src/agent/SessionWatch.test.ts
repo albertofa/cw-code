@@ -109,6 +109,8 @@ describe("SessionWatch", () => {
     expect(watch.lastResult("s1")).toBe("boom");
     watch.turnSettled("s1", { type: "turn.error", turnId: "t3", message: "" });
     expect(watch.lastResult("s1")).toBeNull();
+    watch.turnSettled("s1", turnDone(""));
+    expect(watch.lastResult("s1")).toBeNull();
   });
 
   it("forgets a session's stored result without settling its waiters", async () => {

@@ -1245,7 +1245,8 @@ describe("CodexCliDriver cw agent wiring", () => {
       cw: {
         url: "http://127.0.0.1:4100/mcp",
         http_headers: { Authorization: "Bearer token-a" },
-        default_tools_approval_mode: "approve"
+        default_tools_approval_mode: "approve",
+        tool_timeout_sec: 255
       }
     }
   };

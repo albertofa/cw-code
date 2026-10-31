@@ -4,6 +4,10 @@ export type {
   Project,
   ProjectSettings,
   SessionMeta,
+  SubagentIsolation,
+  SubagentResult,
+  SubagentLink,
+  SubagentSummary,
   ResolvedCheckout,
   SessionStatus,
   TurnRequest,
@@ -208,6 +212,7 @@ export type {
   ContextMeter,
   ThreadUsage,
   ThreadTurnChanges,
+  ThreadSubagentWait,
   ThreadTopicData
 } from "./threads.js";
 export type {

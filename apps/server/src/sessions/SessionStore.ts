@@ -10,7 +10,10 @@ import type {
   ResolvedCheckout,
   SessionMeta,
   SessionPrLink,
-  SessionStatus
+  SessionStatus,
+  SubagentIsolation,
+  SubagentLink,
+  SubagentResult
 } from "@cw-code/contracts";
 import { traceSessionStatus, type SessionStatusReason } from "../debug/sessionStatusTrace.js";
 import { isValidPrLink, upsertLink } from "../github/prLinks.js";
@@ -25,6 +28,8 @@ export type AutoFollowUpMeta = NonNullable<SessionMeta["autoFollowUp"]>;
 export type SessionStatusSnapshot = Pick<SessionMeta, "status" | "idleSince" | "updatedAt">;
 
 const AUTO_FOLLOW_UP_PAUSES: ReadonlySet<AutoFollowUpPause> = new Set(["user", "interrupted", "error"]);
+const SUBAGENT_OUTCOMES: ReadonlySet<SubagentResult["outcome"]> = new Set(["done", "error", "interrupted"]);
+const SUBAGENT_ISOLATIONS: ReadonlySet<SubagentIsolation> = new Set(["shared", "worktree"]);
 
 interface StoreShape {
   projects: Project[];
@@ -120,6 +125,10 @@ function resetRuntimeStatuses(sessions: SessionMeta[]): boolean {
   let changed = false;
   for (const session of sessions) {
     const previous = session.status;
+    if (session.subagent !== undefined && !isSubagentLink(session.subagent)) {
+      delete session.subagent;
+      changed = true;
+    }
     if (!session.status) {
       session.status = "idle";
       changed = true;
@@ -132,6 +141,7 @@ function resetRuntimeStatuses(sessions: SessionMeta[]): boolean {
       });
     } else if (session.status === "working" || session.status === "input-required") {
       session.status = "holding";
+      if (session.subagent) session.subagent = interruptedSubagent(session, session.subagent);
       changed = true;
       traceSessionStatus({
         sessionId: session.id,
@@ -170,6 +180,33 @@ function isResolvedCheckout(value: unknown): value is ResolvedCheckout {
   const checkout = value as Partial<{ kind: string; path: unknown }>;
   if (checkout.kind === "root") return true;
   return checkout.kind === "worktree" && typeof checkout.path === "string" && checkout.path.length > 0;
+}
+
+function isSubagentResult(value: unknown): value is SubagentResult {
+  if (!value || typeof value !== "object") return false;
+  const result = value as Partial<Record<keyof SubagentResult, unknown>>;
+  return (
+    typeof result.turnId === "string" &&
+    SUBAGENT_OUTCOMES.has(result.outcome as SubagentResult["outcome"]) &&
+    (result.text === null || typeof result.text === "string") &&
+    typeof result.at === "number" &&
+    Number.isFinite(result.at)
+  );
+}
+
+function isSubagentLink(value: unknown): value is SubagentLink {
+  if (!value || typeof value !== "object") return false;
+  const link = value as Partial<Record<keyof SubagentLink, unknown>>;
+  if (typeof link.parentSessionId !== "string" || link.parentSessionId.length === 0) return false;
+  if (!SUBAGENT_ISOLATIONS.has(link.isolation as SubagentIsolation)) return false;
+  if (link.result !== undefined && !isSubagentResult(link.result)) return false;
+  return link.delivered === undefined || typeof link.delivered === "boolean";
+}
+
+function interruptedSubagent(session: SessionMeta, link: SubagentLink): SubagentLink {
+  const snapshotTurnId = session.lastTurnSnapshot?.turnId;
+  const turnId = snapshotTurnId && snapshotTurnId !== link.result?.turnId ? snapshotTurnId : `restart:${session.updatedAt}`;
+  return { ...link, result: { turnId, outcome: "interrupted", text: null, at: Date.now() }, delivered: false };
 }
 
 function isAutoFollowUpMeta(value: unknown): value is AutoFollowUpMeta {
@@ -221,6 +258,7 @@ type SessionPatch = Partial<
     | "autoResolved"
     | "resolvedCheckout"
     | "lastTurnSnapshot"
+    | "subagent"
   >
 >;
 
@@ -307,7 +345,7 @@ export class SessionStore {
     projectId: string,
     driver: DriverKind,
     title: string,
-    workspace: { id?: string; worktreePath?: string; branch?: string; baseRef?: string; resumeCursor?: string } = {}
+    workspace: { id?: string; worktreePath?: string; branch?: string; baseRef?: string; resumeCursor?: string; subagent?: SubagentLink } = {}
   ): SessionMeta {
     const now = Date.now();
     const session: SessionMeta = {
@@ -322,7 +360,8 @@ export class SessionStore {
       idleSince: now,
       ...(workspace.worktreePath ? { worktreePath: normalizeRoot(workspace.worktreePath) } : {}),
       ...(workspace.branch ? { branch: workspace.branch } : {}),
-      ...(workspace.baseRef ? { baseRef: workspace.baseRef } : {})
+      ...(workspace.baseRef ? { baseRef: workspace.baseRef } : {}),
+      ...(workspace.subagent ? { subagent: workspace.subagent } : {})
     };
     this.data.sessions.push(session);
     traceSessionStatus({
@@ -393,6 +432,8 @@ export class SessionStore {
     else if ("resolvedCheckout" in patch) delete current.resolvedCheckout;
     if (patch.lastTurnSnapshot !== undefined) current.lastTurnSnapshot = patch.lastTurnSnapshot;
     else if ("lastTurnSnapshot" in patch) delete current.lastTurnSnapshot;
+    if (patch.subagent !== undefined) current.subagent = patch.subagent;
+    else if ("subagent" in patch) delete current.subagent;
     const now = Date.now();
     current.updatedAt = now;
     if (patch.status !== undefined && patch.status !== previousStatus) {

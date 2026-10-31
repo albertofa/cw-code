@@ -1,3 +1,5 @@
+import type { SubagentSummary } from "@cw-code/contracts";
+import { harnessLabel } from "@cw-code/shared/harnessLabels";
 import type { TaskKind } from "../cw.js";
 import type { ChatMessage } from "../stores/appStore.js";
 
@@ -47,6 +49,18 @@ export function liveBackgroundWork(items: ChatMessage[]): BackgroundWork[] {
     });
   }
   return work;
+}
+
+export function cwSubagentWork(subagents: readonly SubagentSummary[]): BackgroundWork[] {
+  return subagents
+    .filter((summary) => summary.status === "working" || summary.status === "input-required")
+    .map((summary) => ({
+      id: `cw:${summary.id}`,
+      kind: "agent",
+      label: `${summary.title} · ${harnessLabel(summary.driver)}`,
+      ...(summary.model ? { detail: summary.model } : {}),
+      ...(summary.turnStartedAt !== undefined ? { startedAt: summary.turnStartedAt } : {})
+    }));
 }
 
 export function sameBackgroundWork(a: BackgroundWork[], b: BackgroundWork[]): boolean {

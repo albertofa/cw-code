@@ -11,6 +11,8 @@ export type SessionStatusReason =
   | "turn-start"
   | "turn-done"
   | "turn-done-background"
+  | "subagents-running"
+  | "subagents-settled"
   | "turn-error"
   | "turn-interrupted"
   | "approval-pending"
@@ -62,6 +64,39 @@ export interface Project {
   settings?: ProjectSettings;
 }
 
+export type SubagentIsolation = "shared" | "worktree";
+
+export interface SubagentResult {
+  turnId: string;
+  outcome: "done" | "error" | "interrupted";
+  text: string | null;
+  at: number;
+}
+
+export interface SubagentLink {
+  parentSessionId: string;
+  isolation: SubagentIsolation;
+  /** Latest settled turn of the child. */
+  result?: SubagentResult;
+  /** True once the result reached the parent agent, through a tool return or a wake turn. */
+  delivered?: boolean;
+}
+
+export interface SubagentSummary {
+  id: string;
+  driver: DriverKind;
+  title: string;
+  status: SessionStatus;
+  model?: string;
+  isolation: SubagentIsolation;
+  result?: SubagentResult;
+  pendingRequests: number;
+  /** Start of the child's running turn, while it has one. */
+  turnStartedAt?: number;
+  createdAt: number;
+  updatedAt: number;
+}
+
 export interface SessionMeta {
   id: string;
   projectId: string;
@@ -99,6 +134,8 @@ export interface SessionMeta {
   lastTurnSnapshot?: TurnSnapshot;
   createNotice?: string;
   autoFollowUp?: { paused?: AutoFollowUpPause; turns: number };
+  /** Set on hidden child sessions dispatched by another session's agent. */
+  subagent?: SubagentLink;
 }
 
 export type ResolvedCheckout = { kind: "worktree"; path: string } | { kind: "root" };

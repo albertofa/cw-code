@@ -1,9 +1,9 @@
 import type { ApprovalDecision, CommandInvocation, DriverKind, PrRef } from "@cw-code/contracts";
 import { isSkillMentionList } from "@cw-code/shared/skillMentions";
-import { agentTurnPermissionMode, assertAgentModelId, assertAgentOmits } from "../agent/agentPolicy.js";
+import { agentTurnPermissionMode, assertAgentMayDispatch, assertAgentModelId, assertAgentOmits, assertAgentSessionTarget } from "../agent/agentPolicy.js";
 import type { ServerApp } from "../app/ServerApp.js";
 import { assertPrRef } from "../github/PullRequestService.js";
-import type { Router } from "../transport/Router.js";
+import type { CallContext, Router } from "../transport/Router.js";
 import { handle, knownSessionId, setComposer } from "./shared.js";
 
 const AGENT_FORBIDDEN_TURN_FIELDS = ["command", "attachments", "acceptFolderHead", "prRefs"] as const;
@@ -34,8 +34,15 @@ interface DriverTarget {
 export function registerTurnHandlers(router: Router, app: ServerApp): void {
   const sessions = () => app.requireServices().sessions;
   const turns = () => app.requireServices().turns;
+  const assertAgentTarget = (ctx: CallContext, sessionId: string): void => {
+    if (ctx.auth.kind !== "agent") return;
+    const findSession = (id: string) => sessions().findSession(id);
+    assertAgentMayDispatch(ctx, findSession);
+    assertAgentSessionTarget(findSession, sessionId, ctx.auth.sessionId);
+  };
   handle<StartTurnArgs>(router, "turns.start", (args, ctx) => {
     if (ctx.auth.kind === "agent") {
+      assertAgentTarget(ctx, args.sessionId);
       assertAgentOmits(args, AGENT_FORBIDDEN_TURN_FIELDS, "turns.start");
       assertAgentModelId(args.prefs?.model, "turns.start prefs.model");
       assertAgentModelId(args.prefs?.variant, "turns.start prefs.variant");
@@ -57,7 +64,11 @@ export function registerTurnHandlers(router: Router, app: ServerApp): void {
       ...(args.acceptFolderHead !== undefined ? { acceptFolderHead: args.acceptFolderHead } : {})
     });
   });
-  handle<{ sessionId: string }>(router, "turns.stop", (args) => turns().stop(knownSessionId(sessions(), args.sessionId)));
+  handle<{ sessionId: string }>(router, "turns.stop", (args, ctx) => {
+    const sessionId = knownSessionId(sessions(), args.sessionId);
+    assertAgentTarget(ctx, sessionId);
+    return turns().stop(sessionId);
+  });
   handle<{ sessionId: string; requestId: string; decision: ApprovalDecision }>(router, "approvals.respond", (args) =>
     sessions().respondApproval(args.requestId, args.decision)
   );

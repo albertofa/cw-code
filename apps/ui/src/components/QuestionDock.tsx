@@ -37,11 +37,13 @@ function tabLabel(q: QuestionInfo, idx: number): string {
 function QuestionPanel({
   request,
   position,
-  total
+  total,
+  origin
 }: {
   request: QuestionRequest;
   position: number;
   total: number;
+  origin?: string;
 }) {
   const respond = useAppStore((s) => s.respondQuestion);
   const panelRef = useRef<HTMLElement>(null);
@@ -256,6 +258,11 @@ function QuestionPanel({
       <header className="question-panel-head">
         <MessageCircleQuestion size={15} className="question-panel-icon" />
         <span className="question-panel-title">Your input is needed</span>
+        {origin && (
+          <span className="dock-origin" title={origin}>
+            {origin}
+          </span>
+        )}
         {total > 1 && (
           <span className="question-panel-count queue chip">{`${position} of ${total}`}</span>
         )}
@@ -358,7 +365,7 @@ function QuestionPanel({
 
 const NO_REQUESTS: QuestionRequest[] = [];
 
-export function QuestionDock({ sessionId }: { sessionId: string }) {
+export function QuestionDock({ sessionId, origin }: { sessionId: string; origin?: string }) {
   const requests = useThreadEntry(sessionId, "questions") ?? NO_REQUESTS;
   const current = requests[0];
   if (!current) return null;
@@ -369,6 +376,7 @@ export function QuestionDock({ sessionId }: { sessionId: string }) {
         request={current}
         position={1}
         total={requests.length}
+        origin={origin}
       />
     </div>
   );

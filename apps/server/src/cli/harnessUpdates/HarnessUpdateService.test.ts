@@ -58,6 +58,7 @@ function setup(options: Setup) {
   const listeners = new Set<() => void>();
   const events: string[] = [];
   const runs: DriverKind[] = [];
+  const ended: Array<{ binary: DriverKind; gateOpen: boolean }> = [];
   const service = new HarnessUpdateService({
     initial: PENDING_HARNESS_UPDATES,
     checks: () => (Object.keys(versions) as DriverKind[]).map((binary) => check(binary, versions[binary] ?? null)),
@@ -86,6 +87,7 @@ function setup(options: Setup) {
     },
     publish: () => {},
     shutdownReserved: () => state.reserved,
+    onUpdateEnded: (binary) => ended.push({ binary, gateOpen: service.turnGate(binary) === null }),
     now: () => 1000,
     platform: options.platform ?? "linux"
   });
@@ -97,6 +99,7 @@ function setup(options: Setup) {
     busy,
     events,
     runs,
+    ended,
     fireActivity: () => {
       for (const listener of [...listeners]) listener();
     }
@@ -140,6 +143,18 @@ describe("HarnessUpdateService", () => {
       output: "added 1 package\n"
     });
     expect(events).toEqual(["release:claude", "run:claude", "release:claude", "recheck"]);
+  });
+
+  it("signals once per update, after the turn gate reopens, on success and on failure", async () => {
+    const { service, ended } = setup({
+      versions: { claude: "1.0.0", codex: "1.0.0" },
+      run: async (_command, binary) => ({ code: binary === "claude" ? 0 : 1, output: "x", error: null })
+    });
+    await service.refresh({ fresh: true });
+    await service.update(["claude", "codex"]);
+    await until(() => ended.length === 2);
+    expect(ended.map((entry) => entry.binary).sort()).toEqual(["claude", "codex"]);
+    expect(ended.every((entry) => entry.gateOpen)).toBe(true);
   });
 
   it("reports unchanged when the harness still reports the old version", async () => {

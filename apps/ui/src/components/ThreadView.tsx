@@ -16,6 +16,10 @@ import { ToolCard } from "./ToolCard.js";
 import { ToolGroupCard } from "./ToolGroupCard.js";
 import { ReasoningBlock } from "./ReasoningBlock.js";
 import { SubagentCard } from "./SubagentCard.js";
+import { CwSubagentCard } from "./CwSubagentCard.js";
+import { SubagentResultsCard } from "./SubagentResultsCard.js";
+import { SubagentRequestDocks } from "./SubagentRequestDocks.js";
+import { cwSubagentCardTool, wakeEntriesOf } from "./cwSubagents.js";
 import { CompactionNote } from "./CompactionNote.js";
 import { NewThread } from "./NewThread.js";
 import { ApprovalDock } from "./ApprovalDock.js";
@@ -219,6 +223,7 @@ export function ThreadView({ hidden = false }: { hidden?: boolean }) {
   const setPendingDriver = useAppStore((s) => s.setPendingDriver);
   const turnStartedAt = turn?.startedAt;
   const turnDurations = useThreadEntry(activeSessionId, "durations");
+  const sessionDriver = session?.driver;
   const subagents = useMemo(() => collectSubagents(messages), [messages]);
   const nestedIds = useMemo(() => new Set(subagents.map((s) => s.id)), [subagents]);
   const turns = useMemo(
@@ -230,7 +235,7 @@ export function ThreadView({ hidden = false }: { hidden?: boolean }) {
         return {
           key: slice.messages[0].seq,
           turnId: slice.turnId,
-          pieces: splitTurn(slice.messages, nestedIds, running),
+          pieces: splitTurn(slice.messages, nestedIds, running, sessionDriver),
           running,
           promptedAt: first?.role === "user" ? first.timestamp : undefined,
           startedAt: running ? turnStartedAt : undefined,
@@ -238,7 +243,7 @@ export function ThreadView({ hidden = false }: { hidden?: boolean }) {
           durationMs: known ?? durationFromMessages(slice.messages)
         };
       }),
-    [messages, nestedIds, busyTurn, turnStartedAt, turnDurations]
+    [messages, nestedIds, busyTurn, turnStartedAt, turnDurations, sessionDriver]
   );
   const streamingId = useMemo(() => {
     if (!busyTurn) return null;
@@ -263,7 +268,7 @@ export function ThreadView({ hidden = false }: { hidden?: boolean }) {
   const [atBottom, setAtBottom] = useState(true);
 
   const promptMarks = useMemo<PromptMark[]>(
-    () => messages.filter((m) => m.role === "user").map((m) => ({ id: m.id, text: m.text })),
+    () => messages.filter((m) => m.role === "user").map((m) => ({ id: m.id, text: wakeEntriesOf(m) ? "Subagent results" : m.text })),
     [messages]
   );
 
@@ -495,13 +500,19 @@ export function ThreadView({ hidden = false }: { hidden?: boolean }) {
           messages={n.items}
           basePath={basePath}
           sessionId={session.id}
+          sessionDriver={session.driver}
           onPreview={onOpenPreview}
         />
       );
     }
     const m = n.msg;
     if (m.role === "user") {
+      const wake = wakeEntriesOf(m);
+      if (wake) return <SubagentResultsCard key={m.id} message={m} entries={wake} />;
       return <UserMessage key={m.id} message={m} sessionId={session.id} projectId={project?.id} skills={skillNames} />;
+    }
+    if (m.role === "tool" && cwSubagentCardTool(m.toolName, session.driver)) {
+      return <CwSubagentCard key={m.id} message={m} sessionId={session.id} sessionDriver={session.driver} />;
     }
     if (m.role === "tool") {
       return (
@@ -510,6 +521,7 @@ export function ThreadView({ hidden = false }: { hidden?: boolean }) {
           message={m}
           basePath={basePath}
           sessionId={session.id}
+          sessionDriver={session.driver}
           onPreview={onOpenPreview}
         />
       );
@@ -681,7 +693,8 @@ export function ThreadView({ hidden = false }: { hidden?: boolean }) {
               <PrUpdateDock key={`pr-dock:${session.id}`} sessionId={session.id} />
               <ApprovalDock sessionId={session.id} />
               <QuestionDock sessionId={session.id} />
-              <WorkingDock key={`working-dock:${session.id}`} sessionId={session.id} basePath={basePath} />
+              {!threadHidden && <SubagentRequestDocks sessionId={session.id} />}
+              <WorkingDock key={`working-dock:${session.id}`} sessionId={session.id} sessionDriver={session.driver} basePath={basePath} />
             </>
           }
         />

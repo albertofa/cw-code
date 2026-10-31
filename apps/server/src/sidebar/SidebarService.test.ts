@@ -4,6 +4,7 @@ import type {
   GitStatus,
   Project,
   PrSummary,
+  QuestionRequest,
   PrWorkflow,
   SessionMeta,
   SessionPrLink,
@@ -30,6 +31,14 @@ function session(id: string, status: SessionStatus, overrides: Partial<SessionMe
 
 function approval(): ApprovalRequest {
   return { requestId: "r1", kind: "command", title: "Run tests", decisions: ["accept", "decline"] };
+}
+
+function question(requestId: string): QuestionRequest {
+  return { requestId, turnId: "t1", questions: [{ question: "Which branch?", header: "Branch", options: [], multiSelect: false, allowCustom: false }] };
+}
+
+function child(id: string, parentSessionId: string, status: SessionStatus, overrides: Partial<SessionMeta> = {}): SessionMeta {
+  return session(id, status, { subagent: { parentSessionId, isolation: "shared" }, ...overrides });
 }
 
 function babysitWorkflow(): PrWorkflow {
@@ -96,7 +105,9 @@ function setup(initial: SessionMeta[], options: { failFirstCompute?: boolean; ow
   const state = {
     sessions: initial,
     approvals: new Map<string, ApprovalRequest[]>(),
+    questions: new Map<string, QuestionRequest[]>(),
     busy: new Set<string>(),
+    waiting: new Set<string>(),
     git: new Map<string, GitStatus>(),
     lookup: new Map<string, PrSummary>(),
     inbox: [] as PrSummary[],
@@ -117,7 +128,8 @@ function setup(initial: SessionMeta[], options: { failFirstCompute?: boolean; ow
     },
     projects: () => [PROJECT],
     ownsWorktree: options.ownsWorktree ?? (() => true),
-    runtime: (id) => ({ busy: state.busy.has(id), approvals: state.approvals.get(id) ?? [], questions: [] }),
+    runtime: (id) => ({ busy: state.busy.has(id), approvals: state.approvals.get(id) ?? [], questions: state.questions.get(id) ?? [] }),
+    waitingOnSubagents: (id) => state.waiting.has(id),
     gitStatus: (id) => state.git.get(id) ?? null,
     summaryLookup: () => state.lookup,
     detail: () => undefined,
@@ -359,6 +371,109 @@ describe("SidebarService", () => {
       { ownsWorktree: (path) => path.startsWith("C:/own/") }
     );
     expect(data()["worktrees/p"]).toEqual([{ sessionId: "owned", title: "owned", worktreePath: "C:/own/wt" }]);
+  });
+
+  describe("subagent sessions", () => {
+    test("a child keeps its row but stays out of every layout list, the count, worktree candidates and defaults", async () => {
+      const { state, sidebar, data, layout, row } = setup([]);
+      state.sessions = [
+        session("parent", "idle", { updatedAt: 1 }),
+        child("kid", "parent", "working", { updatedAt: 9, worktreePath: "C:/own/kid", branch: "kid-branch" })
+      ];
+      sidebar.invalidate();
+      await settle();
+      const listed = [...layout().needsYou.map((entry) => entry.sessionId), ...layout().workingSet, ...layout().main, ...layout().resolved];
+      expect(listed).toEqual(["parent"]);
+      expect(row("kid").session.subagent?.parentSessionId).toBe("parent");
+      expect(row("kid").busy).toBe(false);
+      expect(sidebar.attentionCount()).toBe(0);
+      expect(data()["worktrees/p"]).toEqual([]);
+      expect(data().defaults).toEqual({ restoreSessionId: "parent", restoreProjectId: "p", projectsByRecency: ["p"] });
+    });
+
+    test("a parent waiting on its working children is busy and running, not needing you", async () => {
+      const { state, sidebar, layout, row } = setup([]);
+      state.sessions = [session("parent", "working"), child("kid", "parent", "working")];
+      state.waiting.add("parent");
+      sidebar.invalidate();
+      await settle();
+      expect(layout().needsYou).toEqual([{ sessionId: "parent", slot: "running" }]);
+      expect(row("parent").busy).toBe(true);
+      expect(sidebar.attentionCount()).toBe(0);
+
+      state.approvals.set("kid", [approval()]);
+      sidebar.invalidate();
+      await settle();
+      expect(layout().needsYou).toEqual([{ sessionId: "parent", slot: "approval" }]);
+      expect(sidebar.attentionCount()).toBe(1);
+    });
+
+    test("a child that is done never counts toward attention", async () => {
+      const { state, sidebar, layout } = setup([]);
+      state.sessions = [session("parent", "idle"), child("kid", "parent", "done")];
+      sidebar.invalidate();
+      await settle();
+      expect(layout().needsYou).toEqual([]);
+      expect(sidebar.attentionCount()).toBe(0);
+      expect(state.attention).toEqual([0]);
+    });
+
+    test("the parent carries the pending approval of its open child", async () => {
+      const { state, sidebar, layout, row } = setup([]);
+      state.sessions = [session("parent", "idle"), child("kid", "parent", "working")];
+      state.approvals.set("kid", [approval()]);
+      sidebar.invalidate();
+      await settle();
+      expect(layout().needsYou).toEqual([{ sessionId: "parent", slot: "approval" }]);
+      expect(row("parent").attention).toEqual({ kind: "approval", line: "Run tests" });
+      expect(sidebar.attentionCount()).toBe(1);
+    });
+
+    test("the parent carries the pending question of its open child", async () => {
+      const { state, sidebar, layout, row } = setup([]);
+      state.sessions = [session("parent", "idle"), child("kid", "parent", "working")];
+      state.questions.set("kid", [question("q-kid")]);
+      sidebar.invalidate();
+      await settle();
+      expect(layout().needsYou).toEqual([{ sessionId: "parent", slot: "question" }]);
+      expect(row("parent").pendingQuestionIds).toEqual(["q-kid"]);
+    });
+
+    test("the parent needs attention while a child is in input-required", async () => {
+      const { state, sidebar, layout } = setup([]);
+      state.sessions = [session("parent", "idle"), child("kid", "parent", "input-required")];
+      sidebar.invalidate();
+      await settle();
+      expect(layout().needsYou).toEqual([{ sessionId: "parent", slot: "question" }]);
+      expect(sidebar.attentionCount()).toBe(1);
+    });
+
+    test("a closed child no longer raises attention on the parent", async () => {
+      const { state, sidebar, layout } = setup([]);
+      state.sessions = [session("parent", "idle"), child("kid", "parent", "archived")];
+      state.approvals.set("kid", [approval()]);
+      sidebar.invalidate();
+      await settle();
+      expect(layout().needsYou).toEqual([]);
+      expect(layout().main).toEqual(["parent"]);
+      expect(sidebar.attentionCount()).toBe(0);
+    });
+
+    test("a child's own attention does not leak to another parent", async () => {
+      const { state, sidebar, layout } = setup([]);
+      state.sessions = [session("a", "idle"), session("b", "idle"), child("kid", "a", "working")];
+      state.approvals.set("kid", [approval()]);
+      sidebar.invalidate();
+      await settle();
+      expect(layout().needsYou).toEqual([{ sessionId: "a", slot: "approval" }]);
+      expect(layout().main).toEqual(["b"]);
+    });
+
+    test("a child's working status stays out of the watched working set", () => {
+      const { state, hub } = setup([session("parent", "working"), child("kid", "parent", "working")]);
+      hub.subscribe(ctx, [SIDEBAR_TOPIC]);
+      expect(state.watched.at(-1)).toEqual(["parent"]);
+    });
   });
 
   test("the store survives release and keeps its revision", async () => {

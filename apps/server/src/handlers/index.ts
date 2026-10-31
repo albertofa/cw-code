@@ -15,6 +15,7 @@ import { registerSettingsHandlers } from "./settings.js";
 import { registerShutdownHandlers } from "./shutdown.js";
 import { registerSkillHandlers } from "./skills.js";
 import { registerStartupHandlers } from "./startup.js";
+import { registerSubagentHandlers } from "./subagents.js";
 import { registerTopicHandlers } from "./topics.js";
 import { registerTurnHandlers } from "./turns.js";
 import { registerUsageHandlers } from "./usage.js";
@@ -23,6 +24,7 @@ import { registerWorkflowHandlers } from "./workflows.js";
 export function registerHandlers(router: Router, app: ServerApp): void {
   registerSessionHandlers(router, app);
   registerTurnHandlers(router, app);
+  registerSubagentHandlers(router, app);
   registerGitHandlers(router, app);
   registerGitHubHandlers(router, app);
   registerPrHandlers(router, app);

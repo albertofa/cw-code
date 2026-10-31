@@ -1,6 +1,6 @@
 import type { ApprovalRequest, HistoryMessage, QuestionRequest, TodoItem } from "./events.js";
 import type { BabysitState, PrDockEntry, SessionPrItem } from "./pullRequests.js";
-import type { TurnChanges } from "./session.js";
+import type { SubagentSummary, TurnChanges } from "./session.js";
 import type { ContextUsage, TokenCounts, UsageTotals } from "./usage.js";
 
 export interface ThreadItem extends HistoryMessage {
@@ -46,6 +46,11 @@ export interface ThreadUsage {
   lastTurn: ThreadLastTurn | null;
 }
 
+/** Set while the session's own turn has ended but it stays working for subagents it dispatched. */
+export interface ThreadSubagentWait {
+  since: number;
+}
+
 export interface ThreadTurnChanges {
   changes: TurnChanges | null;
   error: string | null;
@@ -67,4 +72,6 @@ export type ThreadTopicData = {
   prItems: SessionPrItem[];
   prDock: PrDockEntry[];
   turnChanges: ThreadTurnChanges | null;
-} & { [key: `item/${string}`]: ThreadItem };
+  subagents: SubagentSummary[];
+  subagentWait: ThreadSubagentWait | null;
+} &{ [key: `item/${string}`]: ThreadItem };

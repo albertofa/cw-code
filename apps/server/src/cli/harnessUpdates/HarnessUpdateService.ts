@@ -24,6 +24,7 @@ export interface HarnessUpdateDeps {
   recheck(): Promise<unknown>;
   publish(updates: HarnessUpdates): void;
   shutdownReserved(): boolean;
+  onUpdateEnded?(binary: DriverKind): void;
   now?(): number;
   platform?: NodeJS.Platform;
 }
@@ -265,6 +266,7 @@ export class HarnessUpdateService {
       this.running.delete(binary);
       this.active.delete(binary);
       unlock?.();
+      this.deps.onUpdateEnded?.(binary);
     }
   }
 

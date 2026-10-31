@@ -1,4 +1,5 @@
 import { memo, useId, useState } from "react";
+import type { DriverKind } from "@cw-code/contracts";
 import type { ChatMessage } from "../stores/appStore.js";
 import { formatToolDuration, summarizeToolGroup, toolSpanMs } from "./toolSummaries.js";
 import { ToolCard, ToolRow } from "./ToolCard.js";
@@ -7,14 +8,16 @@ export const ToolGroupCard = memo(function ToolGroupCard({
   messages,
   basePath,
   sessionId,
+  sessionDriver,
   onPreview
 }: {
   messages: ChatMessage[];
   basePath?: string;
   sessionId?: string;
+  sessionDriver?: DriverKind;
   onPreview?: (path: string) => void;
 }) {
-  const summary = summarizeToolGroup(messages);
+  const summary = summarizeToolGroup(messages, sessionDriver);
   const [open, setOpen] = useState(false);
   const itemsId = useId();
   if (!summary) return null;
@@ -44,6 +47,7 @@ export const ToolGroupCard = memo(function ToolGroupCard({
               message={m}
               basePath={basePath}
               sessionId={sessionId}
+              sessionDriver={sessionDriver}
               onPreview={onPreview}
               defaultOpen={m.isError === true}
             />

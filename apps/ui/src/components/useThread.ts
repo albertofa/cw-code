@@ -114,10 +114,14 @@ export function useHoldRecentThreads(activeSessionId: string | null | undefined)
   }, []);
 }
 
+function threadBusy(data: ThreadTopicData): boolean {
+  return data.turn != null || data.subagentWait != null;
+}
+
 export function useThreadBusy(sessionId: string | null | undefined): boolean {
   const live = useTopicSelect<boolean | undefined>(
     threadTopic(sessionId),
-    (state) => (state?.status === "ready" ? state.data.turn != null : undefined),
+    (state) => (state?.status === "ready" ? threadBusy(state.data as ThreadTopicData) : undefined),
     HELD
   );
   const rowBusy = useSessionRow(sessionId)?.busy ?? false;
@@ -125,7 +129,8 @@ export function useThreadBusy(sessionId: string | null | undefined): boolean {
 }
 
 export function isThreadBusy(sessionId: string): boolean {
-  return peekTopic<ThreadTopicData>(sessionTopic(sessionId))?.data.turn != null;
+  const data = peekTopic<ThreadTopicData>(sessionTopic(sessionId))?.data;
+  return data !== undefined && threadBusy(data);
 }
 
 export function runningTurnId(turn: ThreadTopicData["turn"] | undefined, items: ThreadItem[]): string | undefined {

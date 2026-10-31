@@ -1,5 +1,6 @@
-import type { AppSettings, PermissionMode, SettingsPatch } from "@cw-code/contracts";
+import type { AppSettings, PermissionMode, SessionMeta, SettingsPatch } from "@cw-code/contracts";
 import { PERMISSION_MODES } from "../providers/permissions.js";
+import type { CallContext } from "../transport/Router.js";
 
 export const AGENT_METHODS: ReadonlySet<string> = new Set([
   "projects.list",
@@ -10,8 +11,16 @@ export const AGENT_METHODS: ReadonlySet<string> = new Set([
   "composer.get",
   "usage.report",
   "settings.get",
-  "settings.set"
+  "settings.set",
+  "subagents.ack",
+  "subagents.create",
+  "subagents.list",
+  "subagents.send",
+  "subagents.stop",
+  "subagents.targets"
 ]);
+
+export const SUBAGENT_DEPTH_REFUSAL = "subagents cannot dispatch subagents; complete this task yourself";
 
 export const AGENT_WRITABLE_SETTINGS: ReadonlySet<keyof AppSettings> = new Set<keyof AppSettings>([
   "claudeDefaultModel",
@@ -91,6 +100,33 @@ export function assertAgentSettingsPatch(patch: SettingsPatch): void {
 export function assertAgentOmits(args: object, fields: readonly string[], method: string): void {
   const denied = fields.find((field) => Reflect.get(args, field) !== undefined);
   if (denied !== undefined) throw forbidden(`${method} ${denied} is not available to agents`);
+}
+
+export type SessionLookup = (sessionId: string) => SessionMeta | undefined;
+
+export function subagentDepthError(): Error {
+  return forbidden(SUBAGENT_DEPTH_REFUSAL);
+}
+
+export function assertCanDispatchSubagents(caller: Pick<SessionMeta, "subagent"> | undefined): void {
+  if (caller?.subagent) throw subagentDepthError();
+}
+
+export function assertAgentMayDispatch(ctx: CallContext, findSession: SessionLookup): void {
+  if (ctx.auth.kind === "agent") assertCanDispatchSubagents(findSession(ctx.auth.sessionId));
+}
+
+export function assertAgentSessionTarget(findSession: SessionLookup, sessionId: string, callerSessionId: string): void {
+  const parentId = findSession(sessionId)?.subagent?.parentSessionId;
+  if (parentId === undefined) return;
+  if (parentId === callerSessionId) throw new Error(`session ${sessionId} is your subagent; use subagent_send, subagent_wait or subagent_stop for it`);
+  throw new Error(`unknown session ${sessionId}`);
+}
+
+export function ownedSubagent(child: SessionMeta | undefined, childId: string, callerSessionId: string | null): SessionMeta {
+  const parentId = child?.subagent?.parentSessionId;
+  if (!child || parentId === undefined || (callerSessionId !== null && parentId !== callerSessionId)) throw new Error(`unknown subagent ${childId}`);
+  return child;
 }
 
 export function assertAgentCreateOptions(options: unknown): void {

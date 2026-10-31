@@ -538,6 +538,7 @@ export class ServerApp {
     this.services?.filesTopic.resume();
     this.services?.harnessUpdates.resume();
     this.services?.autoFollowUp.reactivate();
+    this.services?.subagentDelivery.reactivate();
     this.services?.sourceControl.start();
   }
 
@@ -569,6 +570,7 @@ export class ServerApp {
       console.warn(`preferences flush before exit failed: ${(err as Error).message}`);
     }
     services.autoFollowUp.dispose();
+    services.subagentDelivery.dispose();
     services.sessionWatch.dispose();
     services.prStore.dispose();
     services.threads.dispose();

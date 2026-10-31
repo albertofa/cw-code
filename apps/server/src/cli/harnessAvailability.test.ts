@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import type { CliVersionCheck, DriverKind } from "@cw-code/contracts";
-import { harnessIssues, installedHarnesses, isHarnessSkipped } from "./harnessAvailability.js";
+import { harnessIssues, harnessUnavailableReason, installedHarnesses, isHarnessSkipped } from "./harnessAvailability.js";
 
 function check(binary: DriverKind, found: boolean, configured = false) {
   return { binary, found, configured };
@@ -97,5 +97,33 @@ describe("harnessIssues", () => {
         binaries: ["opencode", "claude"]
       }
     ]);
+  });
+});
+
+describe("harnessUnavailableReason", () => {
+  const entry = (binary: DriverKind, overrides: Partial<CliVersionCheck> = {}) => {
+    const base: CliVersionCheck = { binary, binaryPath: binary, minimum: "1.0.0", actual: "1.2.0", configured: false, found: true, available: true, error: null, ok: true, ...overrides };
+    return { ...base, skipped: isHarnessSkipped(base) };
+  };
+
+  it("explains a harness that was not found on its default path", () => {
+    const missing = entry("opencode", { found: false, available: false, actual: null, error: 'Executable not found in $PATH: "opencode.exe"' });
+    expect(harnessUnavailableReason({ installed: ["claude"], checks: [entry("claude"), missing] }, "opencode")).toBe(
+      `opencode: 'opencode' was not found (Executable not found in $PATH: "opencode.exe"). Install it or set its executable in Settings, then recheck the harnesses.`
+    );
+  });
+
+  it("explains a configured binary that cannot run with the settings message", () => {
+    const broken = entry("codex", { configured: true, available: false, actual: null, binaryPath: "/x/codex", error: "spawn EACCES" });
+    expect(harnessUnavailableReason({ installed: ["claude", "codex"], checks: [broken] }, "codex")).toBe(
+      "codex: could not run '/x/codex' (spawn EACCES). Change its executable in Settings."
+    );
+  });
+
+  it("allows healthy, outdated and not yet checked harnesses", () => {
+    const availability = { installed: ["claude", "codex"] as DriverKind[], checks: [entry("claude"), entry("codex", { actual: "0.1.0", ok: false })] };
+    expect(harnessUnavailableReason(availability, "claude")).toBeNull();
+    expect(harnessUnavailableReason(availability, "codex")).toBeNull();
+    expect(harnessUnavailableReason({ installed: [], checks: [] }, "opencode")).toBeNull();
   });
 });

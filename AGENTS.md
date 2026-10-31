@@ -20,6 +20,9 @@ Core behaviors:
   its own, and the importer hides sessions cw-code already manages or started.
 - History display is best-effort (local transcripts / server API); continuing a
   session always resumes full CLI context, independent of what history shows.
+- A session's agent can dispatch subagents on any harness (see Agent tools). A subagent is a
+  hidden child session: no sidebar section or attention of its own, shown as cards in its
+  parent's thread and in the Agents panel, and it never takes user messages.
 
 ## Architecture
 
@@ -121,7 +124,8 @@ Core behaviors:
     changed is unsubscribed before the resume. After every initialize the driver sets
     `skills/extraRoots/set` to `<userdata>/harness/skills`. Codex terminal tabs are their own
     process: env `CW_MCP_URL`/`CW_AGENT_TOKEN` plus `-c mcp_servers.cw.*` flags with
-    `bearer_token_env_var`.
+    `bearer_token_env_var`. Both set `tool_timeout_sec` to the MCP idle timeout so long
+    subagent waits outlive Codex's default tool timeout.
   - opencode v2: identity comes from the plugin's `context.sessionID`, not a token. The driver
     writes a per-process bridge secret to a file under `<userdata>/harness`; the plugin reads and
     deletes it in setup (only the path is a plugin option, since options are visible to children
@@ -135,6 +139,46 @@ Core behaviors:
     inherit the serve env, so same-host code execution can still impersonate an in-flight
     session. Not covered: opencode v1 and opencode terminal tabs.
   Codex and opencode run cw tools without approval prompts; the server-side caps are the guard.
+- Subagents: `subagent_run`/`subagent_wait`/`subagent_send`/`subagent_stop`/`subagents_list`/
+  `subagent_targets` call the `subagents.*` router methods. The child is a normal session with
+  `SessionMeta.subagent` (`parentSessionId`, `isolation`, the persisted last `result` and whether
+  it was `delivered`); drivers, threads, usage and resume are unchanged.
+  - Ownership and depth: an agent reaches only its own children (others read as unknown). A
+    child's agent is refused `sessions.create`, `turns.start`/`turns.stop` and every
+    `subagents.*` method except `subagents.list`, so depth is 1. Prefs are capped like
+    `turns.start`.
+  - Checkout: `shared` (default) runs in the parent's checkout with no branch of its own and
+    never syncs branch or PR links from git status; `worktree` gets its own worktree from the
+    parent's HEAD with the parent's branch as `baseRef`.
+  - Lifecycle: stopping the parent's turn stops its children (not on shutdown); resolving or
+    archiving the parent resolves or archives the children first. Children skip title turns,
+    import adoption, PR babysit, auto follow-up and the idle/holding/finished-PR sweeps.
+  - Waiting parent: a parent whose turn ends while children are `working` or `input-required`
+    stays `working` (reason `subagents-running`, sidebar slot running, row `busy`) and its topic
+    carries `subagentWait: { since }`, which the UI treats as busy (working dock with one row per
+    working child, Stop, send locked). `SubagentDelivery` ends the wait: it starts the wake turn
+    with no `done` in between, or applies the turn-end status (`subagents-settled`) when nothing
+    wakes. `turns.stop` on a waiting parent stops its children, holds wakes and sets `holding`.
+    The wait is in memory; a restart maps the parent to `holding` as usual.
+  - Results: a wait or run that returns a settled result acks it (`subagents.ack`, only while the
+    caller's turn is live). Unacked `done`/`error` results wake the parent (`SubagentDelivery`)
+    once it is idle with no pending approvals or questions: one batched turn with origin
+    `subagent-wake` whose prompt carries a `<cw-subagent-results>` envelope
+    (`@cw-code/shared/subagents`), rendered as a results card live and after history reload.
+    Unacked results are persisted, so they still wake the parent after a restart; `interrupted`
+    results (user stop, shutdown, restart) never wake on their own and ride along in the next
+    batch. A user stop on the parent holds its wakes until its next non-wake turn. Wake turns are
+    invisible to PR auto follow-up and are not capped.
+  - Visibility: children keep a sidebar `row/<id>` (the UI opens threads through rows) but are
+    left out of sections, needs-you and the attention count; the parent's attention includes
+    their pending approvals and questions, which the parent thread docks. The parent's topic
+    carries `subagents: SubagentSummary[]` (with `turnStartedAt` while a child runs) and its usage
+    footer includes children.
+  - `subagent_targets` lists installed harnesses and models and ranks them against a plain-text
+    query (`agent/modelSearch.ts`), so a model the user names in prose resolves to an exact id.
+    An entry without models always has an `error`: no model matched, or the harness cannot run
+    (message from the cached harness check, `harnessUnavailableReason`). `subagents.create` and
+    `subagents.send` refuse such a harness with the same message before creating anything.
 - Browser entry: a browser opens the server's own address (`/`) and pairs with a device
   token. The owner creates one in Settings (`devices.create`) and gets a link
   `<serverPublicUrl>/#token=<token>`; the UI reads the hash, removes it from the address bar and

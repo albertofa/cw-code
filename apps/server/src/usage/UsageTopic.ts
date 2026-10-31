@@ -97,8 +97,8 @@ export class UsageTopic implements TopicProvider {
     return usageReport(rows, query, today, this.data.ledgerRev);
   }
 
-  sessionTotals(sessionId: string): UsageTotals | null {
-    const rows = this.deps.ledgerRows({ sessionId });
+  sessionTotals(sessionId: string, childIds: readonly string[] = []): UsageTotals | null {
+    const rows = [sessionId, ...childIds].flatMap((id) => this.deps.ledgerRows({ sessionId: id }));
     return rows.length === 0 ? null : totals(rows);
   }
 

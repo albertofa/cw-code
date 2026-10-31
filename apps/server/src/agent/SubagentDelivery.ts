@@ -1,0 +1,172 @@
+import type { SessionMeta, SubagentResult } from "@cw-code/contracts";
+import { buildWakePrompt, type WakeEntry } from "@cw-code/shared/subagents";
+import { SHUTDOWN_RESERVED_MESSAGE } from "../shutdown/shutdownReservation.js";
+import type { SessionRuntime, ThreadNotice } from "../threads/ThreadService.js";
+import type { TurnOrigin } from "../threads/TurnService.js";
+
+export const SUBAGENT_DELIVERY_NOTICE_ID = "subagent-delivery";
+
+export interface SubagentDeliveryDeps {
+  sessions(): SessionMeta[];
+  runtime(sessionId: string): Pick<SessionRuntime, "busy" | "approvals" | "questions">;
+  startTurn(sessionId: string, prompt: string): Promise<string>;
+  markDelivered(childId: string, turnId: string): void;
+  postNotice(sessionId: string, notice: ThreadNotice): void;
+  shutdownReserved(): boolean;
+  waitingParents(): string[];
+  endWait(parentId: string): void;
+}
+
+interface PendingResult {
+  child: SessionMeta;
+  result: SubagentResult;
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function errorCode(error: unknown): unknown {
+  return (error as { code?: unknown } | null)?.code;
+}
+
+function isClosed(session: SessionMeta): boolean {
+  return session.status === "resolved" || session.status === "archived";
+}
+
+function wakeEntry({ child, result }: PendingResult): WakeEntry {
+  return { subagentId: child.id, driver: child.driver, title: child.title, outcome: result.outcome, text: result.text };
+}
+
+export class SubagentDelivery {
+  private readonly starting = new Set<string>();
+  private readonly scoped = new Set<string>();
+  private readonly held = new Set<string>();
+  private everything = false;
+  private scheduled = false;
+  private posting = false;
+  private disposed = false;
+
+  constructor(private readonly deps: SubagentDeliveryDeps) {}
+
+  reevaluate(parentId?: string): void {
+    if (this.disposed || this.posting) return;
+    if (parentId === undefined) this.everything = true;
+    else this.scoped.add(parentId);
+    if (this.scheduled) return;
+    this.scheduled = true;
+    queueMicrotask(() => {
+      this.scheduled = false;
+      const scope = this.everything ? null : new Set(this.scoped);
+      this.everything = false;
+      this.scoped.clear();
+      if (this.disposed) return;
+      try {
+        this.evaluate(scope);
+      } catch (error) {
+        console.warn(`[subagent-delivery] evaluation failed: ${errorMessage(error)}`);
+      }
+    });
+  }
+
+  turnStopped(sessionId: string): void {
+    if (this.deps.sessions().some((session) => session.id === sessionId && !session.subagent)) this.held.add(sessionId);
+  }
+
+  turnStarted(sessionId: string, origin: TurnOrigin | undefined): void {
+    if (origin !== "subagent-wake") this.held.delete(sessionId);
+  }
+
+  dispose(): void {
+    this.disposed = true;
+  }
+
+  reactivate(): void {
+    this.disposed = false;
+    this.reevaluate();
+  }
+
+  private evaluate(scope: Set<string> | null): void {
+    if (this.deps.shutdownReserved()) return;
+    const sessions = this.deps.sessions();
+    const undelivered = this.undelivered(sessions, scope);
+    const waiting = this.deps.waitingParents().filter((parentId) => !scope || scope.has(parentId));
+    for (const parentId of new Set([...undelivered.keys(), ...waiting])) {
+      if (this.starting.has(parentId)) continue;
+      const pending = undelivered.get(parentId) ?? [];
+      const parent = sessions.find((session) => session.id === parentId);
+      if (parent && this.shouldWake(parent, pending)) {
+        this.starting.add(parentId);
+        void this.wake(parentId, pending).finally(() => this.starting.delete(parentId));
+      } else if (waiting.includes(parentId)) {
+        this.settleWait(sessions, parentId);
+      }
+    }
+  }
+
+  private shouldWake(parent: SessionMeta, pending: PendingResult[]): boolean {
+    if (this.held.has(parent.id) || !pending.some(({ result }) => result.outcome !== "interrupted")) return false;
+    return this.canWake(parent);
+  }
+
+  private settleWait(sessions: SessionMeta[], parentId: string): void {
+    const working = sessions.some(
+      (session) => session.subagent?.parentSessionId === parentId && (session.status === "working" || session.status === "input-required")
+    );
+    if (!working) this.deps.endWait(parentId);
+  }
+
+  private undelivered(sessions: SessionMeta[], scope: Set<string> | null): Map<string, PendingResult[]> {
+    const byParent = new Map<string, PendingResult[]>();
+    for (const child of sessions) {
+      const link = child.subagent;
+      if (!link?.result || link.delivered === true || isClosed(child)) continue;
+      if (scope && !scope.has(link.parentSessionId)) continue;
+      const pending = byParent.get(link.parentSessionId) ?? [];
+      pending.push({ child, result: link.result });
+      byParent.set(link.parentSessionId, pending);
+    }
+    for (const pending of byParent.values()) pending.sort((a, b) => a.result.at - b.result.at);
+    return byParent;
+  }
+
+  private canWake(parent: SessionMeta): boolean {
+    if (parent.subagent || isClosed(parent)) return false;
+    const runtime = this.deps.runtime(parent.id);
+    return !runtime.busy && runtime.approvals.length === 0 && runtime.questions.length === 0;
+  }
+
+  private async wake(parentId: string, pending: PendingResult[]): Promise<void> {
+    try {
+      await this.deps.startTurn(parentId, buildWakePrompt(pending.map(wakeEntry)));
+    } catch (error) {
+      if (errorCode(error) === "session-busy" || errorMessage(error) === SHUTDOWN_RESERVED_MESSAGE) return;
+      console.warn(`[subagent-delivery] could not wake session ${parentId}: ${errorMessage(error)}`);
+      this.notifyFailure(parentId, error);
+      if (this.deps.waitingParents().includes(parentId)) this.settleWait(this.deps.sessions(), parentId);
+      return;
+    }
+    for (const { child, result } of pending) {
+      try {
+        this.deps.markDelivered(child.id, result.turnId);
+      } catch (error) {
+        console.warn(`[subagent-delivery] woke ${parentId} but ${child.id} could not be marked delivered: ${errorMessage(error)}`);
+      }
+    }
+  }
+
+  private notifyFailure(parentId: string, error: unknown): void {
+    this.posting = true;
+    try {
+      this.deps.postNotice(parentId, {
+        noticeId: SUBAGENT_DELIVERY_NOTICE_ID,
+        text: `Subagent results could not be delivered to this session: ${errorMessage(error)}. cw-code retries the next time the session settles.`,
+        severity: "error"
+      });
+    } catch (noticeError) {
+      console.warn(`[subagent-delivery] notice for ${parentId} failed: ${errorMessage(noticeError)}`);
+    } finally {
+      this.posting = false;
+    }
+  }
+}

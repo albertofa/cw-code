@@ -145,7 +145,9 @@ describe("PtyPool cw MCP server for codex", () => {
       "-c",
       'mcp_servers.cw.bearer_token_env_var="CW_AGENT_TOKEN"',
       "-c",
-      'mcp_servers.cw.default_tools_approval_mode="approve"'
+      'mcp_servers.cw.default_tools_approval_mode="approve"',
+      "-c",
+      "mcp_servers.cw.tool_timeout_sec=255"
     ]);
     expect(args.join(" ")).not.toContain("secret-token");
     expect(env?.["CW_AGENT_TOKEN"]).toBe("secret-token");
