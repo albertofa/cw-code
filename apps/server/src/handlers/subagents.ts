@@ -1,4 +1,4 @@
-import type { DriverKind, EffortLevel, ModelOption, SessionMeta, SubagentIsolation, SubagentSummary } from "@cw-code/contracts";
+import type { DriverKind, EffortLevel, ModelOption, SessionMeta, SubagentIsolation } from "@cw-code/contracts";
 import {
   agentTurnPermissionMode,
   assertAgentMayDispatch,
@@ -9,6 +9,7 @@ import {
   ownedSubagent
 } from "../agent/agentPolicy.js";
 import { EFFORT_LEVELS, parseModelQuery, rankModelMatches } from "../agent/modelSearch.js";
+import { subagentSummary } from "../agent/subagentSummary.js";
 import type { ServerApp } from "../app/ServerApp.js";
 import type { Services } from "../app/services.js";
 import { effortOptionsFor } from "../prEngine/workflowHarness.js";
@@ -34,21 +35,6 @@ export interface SubagentTarget {
   models: SubagentTargetModel[];
   effort?: EffortLevel;
   error?: string;
-}
-
-export function subagentSummary(child: SessionMeta, pendingRequests: number): SubagentSummary {
-  return {
-    id: child.id,
-    driver: child.driver,
-    title: child.title,
-    status: child.status,
-    ...(child.model ? { model: child.model } : {}),
-    isolation: child.subagent?.isolation ?? "shared",
-    ...(child.subagent?.result ? { result: child.subagent.result } : {}),
-    pendingRequests,
-    createdAt: child.createdAt,
-    updatedAt: child.updatedAt
-  };
 }
 
 function parseOneOf<T extends string>(value: unknown, allowed: readonly T[], name: string): T | undefined {

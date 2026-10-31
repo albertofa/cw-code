@@ -7,7 +7,7 @@ import { createThreadTopicProvider } from "../threads/threadTopic.js";
 import { TopicHub } from "../topics/TopicHub.js";
 import type { CallContext } from "../transport/Router.js";
 import { ACCOUNT_REFRESH_MS, UsageTopic } from "./UsageTopic.js";
-import { wireSessionUsageTotals } from "./wireSessionUsageTotals.js";
+import { wireSessionUsageTotals, type SessionFamily } from "./wireSessionUsageTotals.js";
 import type { UsageLedgerQuery, UsageLedgerRow } from "./ledgerTypes.js";
 
 const ctx: CallContext = { clientId: "a", client: "web", auth: { kind: "owner" } };
@@ -242,7 +242,15 @@ describe("UsageTopic", () => {
     expect(topic.sessionTotals("s1")).toMatchObject({ turns: 2, inputTokens: 11, cacheReadTokens: 20, outputTokens: 6, sessions: 1 });
     expect(topic.sessionTotals("missing")).toBeNull();
   });
+
+  it("sessionTotals folds in the rows of the given children", () => {
+    const { topic } = setup([row(), row({ sessionId: "kid", outputTokens: 100, costUsd: 1 }), row({ sessionId: "other", outputTokens: 999 })]);
+    expect(topic.sessionTotals("s1", ["kid"])).toMatchObject({ turns: 2, outputTokens: 105, costUsd: 1.5, sessions: 2 });
+    expect(topic.sessionTotals("none", ["kid"])).toMatchObject({ turns: 1, outputTokens: 100, sessions: 1 });
+  });
 });
+
+const NO_FAMILY: SessionFamily = { childIds: () => [], parentId: () => null };
 
 describe("session usage totals extra", () => {
   it("fills the thread snapshot and updates for the recorded session", () => {
@@ -257,7 +265,7 @@ describe("session usage totals extra", () => {
     });
     hub.register(createThreadTopicProvider(threads));
     const recorded: Array<(sessionId: string) => void> = [];
-    wireSessionUsageTotals(threads, topic, (cb) => recorded.push(cb));
+    wireSessionUsageTotals(threads, topic, (cb) => recorded.push(cb), NO_FAMILY);
     const totalsOf = (sessionId: string, clientId: string) =>
       (hub.subscribe({ ...ctx, clientId }, [sessionTopic(sessionId)])[sessionTopic(sessionId)]?.data as ThreadTopicData).usageTotals;
 
@@ -282,7 +290,7 @@ describe("session usage totals extra", () => {
       loadHistoryOnSubscribe: false
     });
     hub.register(createThreadTopicProvider(threads));
-    wireSessionUsageTotals(threads, topic, () => undefined);
+    wireSessionUsageTotals(threads, topic, () => undefined, NO_FAMILY);
     hub.subscribe(ctx, [sessionTopic("s1")]);
     threads.refreshExtras("s1");
     threads.refreshExtras("s1");
@@ -301,10 +309,36 @@ describe("session usage totals extra", () => {
       loadHistoryOnSubscribe: false
     });
     hub.register(createThreadTopicProvider(threads));
-    wireSessionUsageTotals(threads, failing, () => undefined);
+    wireSessionUsageTotals(threads, failing, () => undefined, NO_FAMILY);
     const state = hub.subscribe(ctx, [sessionTopic("s1")])[sessionTopic("s1")]?.data as ThreadTopicData;
     expect(state.usageTotals).toBeNull();
     expect(state.usageTotalsError).toBe("ledger locked");
     warn.mockRestore();
+  });
+
+  it("sums the parent with its children and refreshes the parent when a child records usage", () => {
+    const rows = [row(), row({ sessionId: "kid", outputTokens: 100 })];
+    const { hub, topic, patches } = setup(rows);
+    const threads = new ThreadService({
+      hub,
+      history: async () => [],
+      liveTasks: () => [],
+      pendingRequests: () => [],
+      loadHistoryOnSubscribe: false
+    });
+    hub.register(createThreadTopicProvider(threads));
+    const recorded: Array<(sessionId: string) => void> = [];
+    wireSessionUsageTotals(threads, topic, (cb) => recorded.push(cb), {
+      childIds: (sessionId) => (sessionId === "s1" ? ["kid"] : []),
+      parentId: (sessionId) => (sessionId === "kid" ? "s1" : null)
+    });
+    const state = hub.subscribe(ctx, [sessionTopic("s1")])[sessionTopic("s1")]?.data as ThreadTopicData;
+    expect(state.usageTotals).toMatchObject({ turns: 2, outputTokens: 105 });
+    patches.length = 0;
+
+    rows.push(row({ sessionId: "kid", model: "opus", outputTokens: 50 }));
+    recorded.forEach((cb) => cb("kid"));
+    const upsert = patches.flatMap((patch) => patch.ops).find((op) => op.op === "upsert" && op.key === "usageTotals");
+    expect(upsert).toMatchObject({ value: { turns: 3, outputTokens: 155 } });
   });
 });

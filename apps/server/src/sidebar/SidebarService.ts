@@ -81,6 +81,17 @@ function groupByProject(sessions: SessionMeta[]): Record<string, SessionMeta[]> 
   return byProject;
 }
 
+function openSubagentsByParent(sessions: SessionMeta[]): Map<string, SessionMeta[]> {
+  const byParent = new Map<string, SessionMeta[]>();
+  for (const session of sessions) {
+    if (!session.subagent || isClosed(session)) continue;
+    const siblings = byParent.get(session.subagent.parentSessionId) ?? [];
+    siblings.push(session);
+    byParent.set(session.subagent.parentSessionId, siblings);
+  }
+  return byParent;
+}
+
 function watchedWorkingSet(sessions: SessionMeta[]): string[] {
   return sessions
     .filter((session) => isWorkingSetStatus(session.status))
@@ -222,10 +233,12 @@ export class SidebarService implements TopicProvider {
   private compute(): Computed {
     const allSessions = this.deps.sessions();
     const projects = this.deps.projects();
-    const sessions = allSessions.filter((session) => session.status !== "archived");
+    const topLevel = allSessions.filter((session) => !session.subagent);
+    const sessions = topLevel.filter((session) => session.status !== "archived");
+    const subagents = openSubagentsByParent(allSessions);
     const lookup = this.deps.summaryLookup();
     const workflows = this.deps.workflows();
-    const rows = new Map(allSessions.map((session) => [session.id, this.row(session, lookup, workflows)]));
+    const rows = new Map(allSessions.map((session) => [session.id, this.row(session, subagents.get(session.id) ?? [], lookup, workflows)]));
     const needsYou = needsYouEntries(
       sessions,
       (session) => rows.get(session.id)?.attention ?? null,
@@ -245,9 +258,9 @@ export class SidebarService implements TopicProvider {
         prAttention: needsAttentionCount(this.deps.inboxItems().map((item) => lookup.get(prKey(item.ref)) ?? item))
       }
     };
-    const byProject = groupByProject(allSessions);
+    const byProject = groupByProject(topLevel);
     const defaults: SidebarDefaults = {
-      ...restoreDefaults(allSessions, projects),
+      ...restoreDefaults(topLevel, projects),
       projectsByRecency: projectsByRecentActivity(projects, byProject).map((project) => project.id)
     };
     const entries: Record<string, unknown> = { layout, defaults };
@@ -265,8 +278,11 @@ export class SidebarService implements TopicProvider {
     };
   }
 
-  private row(session: SessionMeta, lookup: PrSummaryLookup, workflows: PrWorkflow[]): SessionRow {
+  private row(session: SessionMeta, subagents: SessionMeta[], lookup: PrSummaryLookup, workflows: PrWorkflow[]): SessionRow {
     const runtime = this.deps.runtime(session.id);
+    const family = [runtime, ...subagents.map((child) => this.deps.runtime(child.id))];
+    const approvals = family.flatMap((member) => member.approvals);
+    const questions = family.flatMap((member) => member.questions);
     const git = this.deps.gitStatus(session.id);
     const links = sessionLinks(session);
     const detailByKey: Record<string, PrDetail> = {};
@@ -292,13 +308,14 @@ export class SidebarService implements TopicProvider {
       branch: git?.branch ?? session.branch ?? null,
       attention: sessionAttention({
         session,
-        approvals: runtime.approvals,
-        questions: runtime.questions,
-        unseenPr: firstUnseenPr(session, lookup, detailByKey)
+        approvals,
+        questions,
+        unseenPr: firstUnseenPr(session, lookup, detailByKey),
+        subagentInputRequired: subagents.some((child) => child.status === "input-required")
       }),
       babysit,
       prBadge: chip ? { chip, title: links.length > 1 ? linksTitle(links, lookup, gitPr) : chip.title, linkCount: links.length } : null,
-      pendingQuestionIds: runtime.questions.map((request) => request.requestId),
+      pendingQuestionIds: questions.map((request) => request.requestId),
       latestUnseenPrUpdateAt: isClosed(session) ? null : latestUnseenPrUpdateAt(session, lookup, detailByKey),
       prMuted: babysit !== null
     };

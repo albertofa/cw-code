@@ -39,6 +39,7 @@ import { SidebarService } from "../sidebar/SidebarService.js";
 import { SkillsStore } from "../skills/SkillsStore.js";
 import { GitTopic } from "../sourceControl/GitTopic.js";
 import { SourceControlService } from "../sourceControl/SourceControlService.js";
+import { SubagentsModel } from "../threads/SubagentsModel.js";
 import { ThreadService } from "../threads/ThreadService.js";
 import { TurnChangesModel } from "../threads/TurnChangesModel.js";
 import { TurnService } from "../threads/TurnService.js";
@@ -85,6 +86,7 @@ export interface Services {
   workflowRunner: WorkflowRunner;
   sessionWatch: SessionWatch;
   subagentDelivery: SubagentDelivery;
+  subagents: SubagentsModel;
 }
 
 export interface ServiceHooks {
@@ -125,8 +127,21 @@ function wireSubagentDelivery({ subagentDelivery, sessions, threads }: Services)
   threads.onTurnSettled((sessionId) => subagentDelivery.reevaluate(parentOf(sessionId)));
 }
 
+function wireSubagents({ subagents, threads }: Services): void {
+  threads.registerExtras((sessionId) => subagents.extras(sessionId));
+  threads.onRuntimeChanged((sessionId) => subagents.changed(sessionId));
+}
+
 function wireUsage({ sessions, threads, usageTopic }: Services): void {
-  wireSessionUsageTotals(threads, usageTopic, (cb) => sessions.onUsageRecorded(cb));
+  wireSessionUsageTotals(
+    threads,
+    usageTopic,
+    (cb) => sessions.onUsageRecorded(cb),
+    {
+      childIds: (sessionId) => sessions.listSubagents(sessionId).map((child) => child.id),
+      parentId: (sessionId) => sessions.findSession(sessionId)?.subagent?.parentSessionId ?? null
+    }
+  );
 }
 
 function wireSessionPrs({ sessionPrs, threads, prStore, sourceControl, autoFollowUp }: Services): void {
@@ -187,7 +202,8 @@ function wireServiceEvents(
     autoFollowUp,
     sidebar,
     sessionWatch,
-    subagentDelivery
+    subagentDelivery,
+    subagents
   }: Services,
   { emit, dropTopic, assessmentChanged, revokeAgentToken }: ServiceHooks
 ): void {
@@ -208,6 +224,7 @@ function wireServiceEvents(
   sessions.setSessionEmitter((session) => {
     sessionWatch.sessionChanged(session);
     subagentDelivery.reevaluate(session.subagent?.parentSessionId ?? session.id);
+    subagents.changed(session.id);
     assessmentChanged();
     prTracker.setTracked(sessions.trackedPrRefs());
     prStore.onSessionsChanged();
@@ -534,12 +551,22 @@ export function createServices(stores: { sessionStore: SessionStore; settingsSto
       markDelivered: (childId, turnId) => sessions.markSubagentDelivered(childId, turnId),
       postNotice: (sessionId, notice) => sessions.emitNotice(sessionId, notice.noticeId, notice.text, notice.severity),
       shutdownReserved: () => sessions.isShutdownReserved()
+    }),
+    subagents: new SubagentsModel({
+      children: (parentId) => sessions.listSubagents(parentId),
+      parentOf: (sessionId) => sessions.findSession(sessionId)?.subagent?.parentSessionId ?? null,
+      pendingRequests: (sessionId) => {
+        const { approvals, questions } = threads.runtime(sessionId);
+        return approvals.length + questions.length;
+      },
+      refresh: (parentId) => threads.refreshExtras(parentId)
     })
   };
   wireServiceEvents(services, hooks);
   wireAutoFollowUp(services);
   wireSessionWatch(services);
   wireSubagentDelivery(services);
+  wireSubagents(services);
   wireUsage(services);
   wireSessionPrs(services);
   wireTurnChanges(services);
