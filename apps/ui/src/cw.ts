@@ -596,6 +596,7 @@ export interface CwApi {
   retryConnection(sessionId: string): Promise<RetryConnectionResult>;
   startTurn(sessionId: string, prompt: string, opts?: { prefs?: ComposerPrefs; attachments?: string[]; command?: CommandInvocation; skills?: string[]; prRefs?: PrRef[]; acceptFolderHead?: string }): Promise<string>;
   stopTurn(sessionId: string): Promise<StopTurnResult>;
+  stopSubagent(subagentId: string): Promise<StopTurnResult>;
   reloadHistory(sessionId: string): Promise<void>;
   respondApproval(requestId: string, decision: ApprovalDecision): Promise<void>;
   respondQuestion(requestId: string, answers: Record<string, string>): Promise<void>;

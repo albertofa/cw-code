@@ -1,20 +1,33 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import type { ComposerPrefs, CreateSessionOptions, DriverKind, PermissionMode, Project, SessionMeta, SettingsPatch } from "@cw-code/contracts";
+import type {
+  ComposerPrefs,
+  CreateSessionOptions,
+  DriverKind,
+  ModelOption,
+  PermissionMode,
+  Project,
+  SessionMeta,
+  SettingsPatch,
+  SubagentIsolation
+} from "@cw-code/contracts";
 import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
+import { SUBAGENT_DEPTH_REFUSAL } from "../agent/agentPolicy.js";
 import { AgentTokens } from "../agent/AgentTokens.js";
 import { SessionWatch } from "../agent/SessionWatch.js";
 import type { ServerApp } from "../app/ServerApp.js";
 import { registerSessionHandlers } from "../handlers/sessions.js";
 import { registerSettingsHandlers } from "../handlers/settings.js";
+import { registerSubagentHandlers, type SubagentTarget } from "../handlers/subagents.js";
 import { registerTurnHandlers } from "../handlers/turns.js";
 import type { StartTurnInput } from "../threads/TurnService.js";
 import { Router, type CallContext } from "../transport/Router.js";
 import { OPENCODE_SESSION_HEADER } from "@cw-code/shared/protocol";
-import { cwToolDefinitions, WAIT_MAX_MS } from "./cwTools.js";
+import { SUBAGENT_TOOL_NAMES } from "@cw-code/shared/subagents";
+import { cwToolDefinitions, SUBAGENT_INPUT_NEXT, SUBAGENT_RUNNING_NEXT, WAIT_MAX_MS } from "./cwTools.js";
 import { createMcpRoute, MCP_IDLE_TIMEOUT_SECONDS, MCP_SERVER_NAME } from "./mcpRoute.js";
 
 const URL_MCP = "http://127.0.0.1:4100/mcp";
-const TOOL_NAMES = [
+const SESSION_TOOL_NAMES = [
   "projects_list",
   "sessions_list",
   "session_get",
@@ -26,7 +39,16 @@ const TOOL_NAMES = [
   "settings_get",
   "settings_set"
 ];
+const TOOL_NAMES = [...SESSION_TOOL_NAMES, ...SUBAGENT_TOOL_NAMES];
 const PROJECTS: Project[] = [{ id: "p1", rootPath: "/repo", name: "repo" }];
+const MODELS: Record<DriverKind, ModelOption[]> = {
+  claude: [
+    { id: "claude-opus-5-5", label: "Opus 5.5", source: "curated" },
+    { id: "claude-opus-4-5", label: "Opus 4.5", source: "curated" }
+  ],
+  codex: [{ id: "gpt-5-codex", label: "GPT-5 Codex", source: "live" }],
+  opencode: [{ id: "anthropic/claude-opus-4-5", label: "Claude Opus 4.5", source: "live", variants: ["high", "max"] }]
+};
 
 interface StartedTurn {
   sessionId: string;
@@ -59,11 +81,23 @@ let router: Router;
 let extended: number[];
 let route: ReturnType<typeof createMcpRoute>;
 let watch: SessionWatch;
+let lastTurns: Map<string, string>;
+let pendingCounts: Map<string, number>;
+let delivered: Array<[string, string]>;
+let installed: DriverKind[];
+let failingHarnesses: Set<DriverKind>;
+let failNextStart: boolean;
 
 function findSession(id: string): SessionMeta {
   const session = sessions.find((candidate) => candidate.id === id);
   if (!session) throw new Error(`unknown session ${id}`);
   return session;
+}
+
+function child(id: string, parentSessionId: string, status: SessionMeta["status"] = "idle", permissionMode?: PermissionMode): SessionMeta {
+  const created = { ...meta(id, status, permissionMode), driver: "codex" as const, subagent: { parentSessionId, isolation: "shared" as const } };
+  sessions.push(created);
+  return created;
 }
 
 const fakeSessions = {
@@ -74,6 +108,24 @@ const fakeSessions = {
     sessions.push(created);
     return { ...created };
   },
+  createSubagentSession: async (parentId: string, driver: DriverKind, opts: { title: string; isolation: SubagentIsolation }) => {
+    const created: SessionMeta = {
+      ...meta(`s${sessions.length + 1}`, "idle"),
+      driver,
+      title: opts.title,
+      subagent: { parentSessionId: parentId, isolation: opts.isolation }
+    };
+    sessions.push(created);
+    return { ...created };
+  },
+  listSubagents: (parentId: string) => sessions.filter((session) => session.subagent?.parentSessionId === parentId),
+  listPendingRequests: (id: string) => Array.from({ length: pendingCounts.get(id) ?? 0 }),
+  markSubagentDelivered: (childId: string, turnId: string) => {
+    delivered.push([childId, turnId]);
+    const link = findSession(childId).subagent;
+    if (link?.result?.turnId === turnId) link.delivered = true;
+  },
+  findSession: (id: string) => sessions.find((session) => session.id === id),
   getComposer: (id: string): ComposerPrefs => ({ permissionMode: findSession(id).permissionMode ?? "auto" }),
   setComposer: (id: string, prefs: ComposerPrefs): ComposerPrefs => {
     findSession(id).permissionMode = prefs.permissionMode;
@@ -81,6 +133,11 @@ const fakeSessions = {
   },
   turnPermissionMode: (id: string) => turnModes.get(id),
   hasSession: (id: string) => sessions.some((session) => session.id === id),
+  listModelsFor: async (_projectId: string, driver: DriverKind): Promise<ModelOption[]> => (failingHarnesses.has(driver) ? [] : MODELS[driver]),
+  listModelsForHarness: async (driver: DriverKind): Promise<ModelOption[]> => {
+    if (failingHarnesses.has(driver)) throw new Error(`${driver} model list failed`);
+    return MODELS[driver];
+  },
   getSettings: () => settings,
   setSettings: (patch: SettingsPatch) => Object.assign(settings, patch)
 };
@@ -92,9 +149,10 @@ function setStatus(id: string, status: SessionMeta["status"]): void {
 }
 
 function completeTurn(id: string, resultText: string): void {
+  const turnId = lastTurns.get(id) ?? "t";
   watch.turnSettled(id, {
     type: "turn.done",
-    turnId: "t",
+    turnId,
     sessionId: id,
     resumeCursor: "",
     resultText,
@@ -103,7 +161,14 @@ function completeTurn(id: string, resultText: string): void {
     isError: false,
     backgroundTasks: 0
   });
+  const session = findSession(id);
+  if (session.subagent) session.subagent = { ...session.subagent, result: { turnId, outcome: "done", text: resultText, at: 3 }, delivered: false };
   setStatus(id, "idle");
+}
+
+async function until(condition: () => boolean): Promise<void> {
+  for (let attempt = 0; attempt < 400 && !condition(); attempt += 1) await new Promise((resolve) => setTimeout(resolve, 5));
+  if (!condition()) throw new Error("condition not met");
 }
 
 const noop = (): void => {};
@@ -112,17 +177,28 @@ function buildRouter(): Router {
   const built = new Router();
   const turns = {
     start: async (sessionId: string, prompt: string, input: StartTurnInput) => {
+      if (failNextStart) {
+        failNextStart = false;
+        throw new Error(`${findSession(sessionId).driver} is updating`);
+      }
       setStatus(sessionId, "working");
       started.push({ sessionId, prompt, input });
       turnModes.set(sessionId, input.prefs?.permissionMode ?? fakeSessions.getComposer(sessionId).permissionMode ?? "auto");
-      return `turn-${started.length}`;
+      const turnId = `turn-${started.length}`;
+      lastTurns.set(sessionId, turnId);
+      return turnId;
     },
     stop: () => ({ stopped: true })
   };
   const services = {
     sessions: fakeSessions,
     turns,
-    appTopic: { setSettings: noop },
+    appTopic: {
+      setSettings: noop,
+      get harnesses() {
+        return { installed };
+      }
+    },
     prStore: { onSettingsChanged: noop },
     autoFollowUp: { reevaluate: noop },
     sidebar: { invalidate: noop },
@@ -136,6 +212,7 @@ function buildRouter(): Router {
   } as unknown as ServerApp;
   registerSessionHandlers(built, app);
   registerTurnHandlers(built, app);
+  registerSubagentHandlers(built, app);
   registerSettingsHandlers(built, app);
   built.handle("usage.report", (query) => ({ query }));
   return built;
@@ -201,6 +278,12 @@ beforeEach(() => {
   turnModes = new Map();
   emitted = [];
   settings = { claudeDefaultModel: "opus" };
+  lastTurns = new Map();
+  pendingCounts = new Map();
+  delivered = [];
+  installed = ["claude", "codex", "opencode"];
+  failingHarnesses = new Set();
+  failNextStart = false;
   extended = [];
   router = buildRouter();
   watch = new SessionWatch({ getSession: (id) => sessions.find((session) => session.id === id) });
@@ -402,6 +485,191 @@ describe("mcp modern era", () => {
     expect(result.isError).toBeUndefined();
     expect(settings.claudeDefaultModel).toBe("sonnet");
   });
+
+  test("subagent_run waits for the result, caps the permission mode and marks the result delivered", async () => {
+    const running = client.callTool({
+      name: "subagent_run",
+      arguments: { driver: "codex", task: "review the diff\nthen report", permissionMode: "bypassPermissions", timeoutMs: 5_000 }
+    });
+    await until(() => started.length === 1);
+    expect(started[0]).toMatchObject({ sessionId: "s4", prompt: "review the diff\nthen report" });
+    expect(started[0]?.input.prefs?.permissionMode).toBe("manual");
+    expect(findSession("s4")).toMatchObject({ title: "review the diff", permissionMode: "manual", subagent: { parentSessionId: "caller" } });
+    completeTurn("s4", "looks good");
+    expect(JSON.parse(toolText(await running))).toEqual({ subagentId: "s4", status: "idle", resultText: "looks good", timedOut: false, next: null });
+    expect(delivered).toEqual([["s4", "turn-1"]]);
+    expect(findSession("s4").subagent?.delivered).toBe(true);
+  });
+
+  test("subagent_run with wait false returns at once with the running hint", async () => {
+    const result = await client.callTool({ name: "subagent_run", arguments: { driver: "claude", task: "long job", title: "Long job", wait: false } });
+    expect(JSON.parse(toolText(result))).toEqual({ subagentId: "s4", status: "working", resultText: null, timedOut: false, next: SUBAGENT_RUNNING_NEXT });
+    expect(findSession("s4").title).toBe("Long job");
+    expect(delivered).toEqual([]);
+  });
+
+  test("a pending approval ends the wait without marking the result delivered", async () => {
+    const running = client.callTool({ name: "subagent_run", arguments: { driver: "codex", task: "edit files", timeoutMs: 5_000 } });
+    await until(() => started.length === 1);
+    pendingCounts.set("s4", 1);
+    setStatus("s4", "input-required");
+    expect(JSON.parse(toolText(await running))).toEqual({
+      subagentId: "s4",
+      status: "input-required",
+      resultText: null,
+      timedOut: false,
+      next: SUBAGENT_INPUT_NEXT
+    });
+    expect(delivered).toEqual([]);
+  });
+
+  test("subagent_wait returns a settled result of the caller's own subagent", async () => {
+    child("kid", "caller", "working");
+    lastTurns.set("kid", "turn-9");
+    const waiting = client.callTool({ name: "subagent_wait", arguments: { subagentId: "kid", timeoutMs: 5_000 } });
+    const pending = Symbol("pending");
+    expect(await Promise.race([waiting, new Promise((resolve) => setTimeout(() => resolve(pending), 50))])).toBe(pending);
+    completeTurn("kid", "done it");
+    expect(JSON.parse(toolText(await waiting))).toEqual({ status: "idle", resultText: "done it", timedOut: false, next: null });
+    expect(delivered).toEqual([["kid", "turn-9"]]);
+  });
+
+  test("subagent tools answer the same way for another session's subagent and an unknown id", async () => {
+    child("theirs", "target", "working");
+    for (const subagentId of ["theirs", "missing"]) {
+      for (const [name, args] of [
+        ["subagent_wait", { subagentId }],
+        ["subagent_send", { subagentId, prompt: "hi" }],
+        ["subagent_stop", { subagentId }]
+      ] as const) {
+        const result = await client.callTool({ name, arguments: args });
+        expect(result.isError).toBe(true);
+        expect(toolText(result)).toBe(`unknown subagent ${subagentId}`);
+      }
+    }
+    expect(started).toHaveLength(0);
+    expect(JSON.parse(toolText(await client.callTool({ name: "subagents_list", arguments: {} })))).toEqual([]);
+  });
+
+  test("subagent_send caps the subagent's stored mode at the caller's", async () => {
+    child("kid", "caller", "idle", "bypassPermissions");
+    const result = await client.callTool({ name: "subagent_send", arguments: { subagentId: "kid", prompt: "again", wait: false } });
+    expect(JSON.parse(toolText(result))).toMatchObject({ subagentId: "kid", status: "working", next: SUBAGENT_RUNNING_NEXT });
+    expect(started[0]).toMatchObject({ sessionId: "kid", prompt: "again" });
+    expect(started[0]?.input.prefs?.permissionMode).toBe("manual");
+  });
+
+  test("subagents_list summarizes the caller's subagents with their pending requests", async () => {
+    child("kid", "caller", "input-required");
+    child("other", "target");
+    pendingCounts.set("kid", 2);
+    const result = await client.callTool({ name: "subagents_list", arguments: {} });
+    expect(JSON.parse(toolText(result))).toEqual([
+      { id: "kid", driver: "codex", title: "kid", status: "input-required", isolation: "shared", pendingRequests: 2, createdAt: 1, updatedAt: 2 }
+    ]);
+  });
+
+  test("a subagent caller does not get the subagent tools and the router refuses it", async () => {
+    child("kid", "caller", "working", "auto");
+    const kid = await clientFor("kid");
+    const { tools } = await kid.listTools();
+    expect(tools.map((tool) => tool.name).sort()).toEqual([...SESSION_TOOL_NAMES].sort());
+    for (const [method, params] of [
+      ["subagents.create", { driver: "claude", task: "deeper" }],
+      ["subagents.send", { subagentId: "kid", prompt: "p" }],
+      ["subagents.targets", {}]
+    ] as const) {
+      await expect(router.dispatch(method, params, agent("kid"))).rejects.toThrow(SUBAGENT_DEPTH_REFUSAL);
+    }
+    expect(sessions).toHaveLength(4);
+  });
+
+  test("session tools hide subagents and refuse them", async () => {
+    child("kid", "target", "working");
+    const listed = await client.callTool({ name: "sessions_list", arguments: { includeResolved: true } });
+    expect(JSON.parse(toolText(listed)).map((row: { id: string }) => row.id)).toEqual(["caller", "target", "old"]);
+    const got = await client.callTool({ name: "session_get", arguments: { sessionId: "kid" } });
+    expect(toolText(got)).toBe("unknown session kid");
+    for (const [name, args] of [
+      ["session_send", { sessionId: "kid", prompt: "p" }],
+      ["session_stop", { sessionId: "kid" }],
+      ["session_wait", { sessionId: "kid" }]
+    ] as const) {
+      const result = await client.callTool({ name, arguments: args });
+      expect(result.isError).toBe(true);
+      expect(toolText(result)).toContain("subagent_send");
+    }
+    expect(started).toHaveLength(0);
+  });
+
+  test("subagent_targets ranks a plain-text model and reports a failing harness in its entry", async () => {
+    Object.assign(settings, { codexDefaultModel: "gpt-5-codex", opencodeDefaultModel: " " });
+    failingHarnesses.add("opencode");
+    installed = ["claude", "opencode"];
+    const result = await client.callTool({ name: "subagent_targets", arguments: { query: "opus 4.5 high" } });
+    expect(result.isError).toBeUndefined();
+    expect(JSON.parse(toolText(result)) as SubagentTarget[]).toEqual([
+      { driver: "claude", installed: true, defaultModel: "opus", effort: "high", models: [{ id: "claude-opus-4-5", label: "Opus 4.5" }] },
+      { driver: "opencode", installed: true, defaultModel: null, effort: "high", models: [], error: "opencode model list failed" },
+      { driver: "codex", installed: false, defaultModel: "gpt-5-codex", effort: "high", models: [] }
+    ]);
+  });
+
+  test("subagent_targets narrows to the harness named in the query and lists opencode efforts", async () => {
+    Object.assign(settings, { codexDefaultModel: "", opencodeDefaultModel: "anthropic/claude-opus-4-5" });
+    const result = await client.callTool({ name: "subagent_targets", arguments: { query: "opencode opus" } });
+    expect(JSON.parse(toolText(result))).toEqual([
+      {
+        driver: "opencode",
+        installed: true,
+        defaultModel: "anthropic/claude-opus-4-5",
+        models: [{ id: "anthropic/claude-opus-4-5", label: "Claude Opus 4.5", variants: ["high", "max"], efforts: ["high", "max"] }]
+      }
+    ]);
+  });
+});
+
+describe("subagent router methods", () => {
+  const owner: CallContext = { clientId: "ui", client: "desktop-ui", auth: { kind: "owner" } };
+  const device: CallContext = { clientId: "web", client: "web", auth: { kind: "device", deviceId: "d1" } };
+
+  test("owner and device clients stop any subagent but not a plain session", async () => {
+    child("kid", "target", "working");
+    expect(await router.dispatch("subagents.stop", { subagentId: "kid" }, owner)).toEqual({ stopped: true });
+    expect(await router.dispatch("subagents.stop", { subagentId: "kid" }, device)).toEqual({ stopped: true });
+    await expect(router.dispatch("subagents.stop", { subagentId: "target" }, owner)).rejects.toThrow("unknown subagent target");
+  });
+
+  test("an agent stops only its own subagents", async () => {
+    child("kid", "target", "working");
+    await expect(router.dispatch("subagents.stop", { subagentId: "kid" }, agent("caller"))).rejects.toThrow("unknown subagent kid");
+    expect(await router.dispatch("subagents.stop", { subagentId: "kid" }, agent("target"))).toEqual({ stopped: true });
+  });
+
+  test("create, send and targets are agent-only", async () => {
+    for (const method of ["subagents.create", "subagents.send", "subagents.targets"]) {
+      await expect(router.dispatch(method, {}, owner)).rejects.toMatchObject({ code: "forbidden" });
+    }
+  });
+
+  test("owner clients list the subagents of a named parent", async () => {
+    child("kid", "target");
+    const listed = (await router.dispatch("subagents.list", { parentSessionId: "target" }, owner)) as Array<{ id: string }>;
+    expect(listed.map((summary) => summary.id)).toEqual(["kid"]);
+  });
+
+  test("rejects an unsafe model before creating anything", async () => {
+    const start = router.dispatch("subagents.create", { driver: "claude", task: "go", model: "opus&whoami" }, agent("caller"));
+    await expect(start).rejects.toMatchObject({ code: "forbidden" });
+    expect(sessions).toHaveLength(3);
+  });
+
+  test("reports a created subagent whose first turn did not start", async () => {
+    failNextStart = true;
+    const start = router.dispatch("subagents.create", { driver: "codex", task: "go" }, agent("caller"));
+    await expect(start).rejects.toThrow("subagent s4 was created but its first turn did not start: codex is updating");
+    expect(findSession("s4").subagent?.parentSessionId).toBe("caller");
+  });
 });
 
 describe("agent call arguments", () => {
@@ -456,7 +724,7 @@ describe("agent call arguments", () => {
 });
 
 describe("cw tool definitions", () => {
-  test("describe the same ten tools the server registers, with object input schemas", async () => {
+  test("describe the same tools the server registers, with object input schemas", async () => {
     const definitions = cwToolDefinitions();
     expect(definitions.map((definition) => definition.name)).toEqual(TOOL_NAMES);
     const client = await modernClient([]);

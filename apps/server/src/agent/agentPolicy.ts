@@ -1,4 +1,4 @@
-import type { AppSettings, PermissionMode, SettingsPatch } from "@cw-code/contracts";
+import type { AppSettings, PermissionMode, SessionMeta, SettingsPatch } from "@cw-code/contracts";
 import { PERMISSION_MODES } from "../providers/permissions.js";
 
 export const AGENT_METHODS: ReadonlySet<string> = new Set([
@@ -10,8 +10,15 @@ export const AGENT_METHODS: ReadonlySet<string> = new Set([
   "composer.get",
   "usage.report",
   "settings.get",
-  "settings.set"
+  "settings.set",
+  "subagents.create",
+  "subagents.list",
+  "subagents.send",
+  "subagents.stop",
+  "subagents.targets"
 ]);
+
+export const SUBAGENT_DEPTH_REFUSAL = "subagents cannot dispatch subagents; complete this task yourself";
 
 export const AGENT_WRITABLE_SETTINGS: ReadonlySet<keyof AppSettings> = new Set<keyof AppSettings>([
   "claudeDefaultModel",
@@ -91,6 +98,16 @@ export function assertAgentSettingsPatch(patch: SettingsPatch): void {
 export function assertAgentOmits(args: object, fields: readonly string[], method: string): void {
   const denied = fields.find((field) => Reflect.get(args, field) !== undefined);
   if (denied !== undefined) throw forbidden(`${method} ${denied} is not available to agents`);
+}
+
+export function assertCanDispatchSubagents(caller: Pick<SessionMeta, "subagent">): void {
+  if (caller.subagent) throw forbidden(SUBAGENT_DEPTH_REFUSAL);
+}
+
+export function ownedSubagent(child: SessionMeta | undefined, childId: string, callerSessionId: string | null): SessionMeta {
+  const parentId = child?.subagent?.parentSessionId;
+  if (!child || parentId === undefined || (callerSessionId !== null && parentId !== callerSessionId)) throw new Error(`unknown subagent ${childId}`);
+  return child;
 }
 
 export function assertAgentCreateOptions(options: unknown): void {

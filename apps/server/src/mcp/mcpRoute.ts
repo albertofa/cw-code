@@ -2,10 +2,9 @@ import { createMcpHandler, McpServer, type AuthInfo } from "@modelcontextprotoco
 import { OPENCODE_SESSION_HEADER } from "@cw-code/shared/protocol";
 import type { AgentTokens } from "../agent/AgentTokens.js";
 import type { SessionWatch } from "../agent/SessionWatch.js";
-import type { SessionManager } from "../sessions/SessionManager.js";
 import { bearerToken, reply } from "../transport/httpRoutes.js";
 import type { Router } from "../transport/Router.js";
-import { registerCwTools, WAIT_MAX_MS } from "./cwTools.js";
+import { registerCwTools, WAIT_MAX_MS, type CwToolsSessions } from "./cwTools.js";
 
 export const MCP_SERVER_NAME = "cw";
 
@@ -15,7 +14,7 @@ export interface McpRouteDeps {
   router: Router;
   tokens: AgentTokens;
   watch: SessionWatch;
-  sessions: Pick<SessionManager, "getComposer" | "turnPermissionMode">;
+  sessions: CwToolsSessions;
   version: string;
   resolveOpencode?: ResolveOpencodeAgent;
 }

@@ -1,16 +1,19 @@
-import type { ComposerPrefs, PermissionMode, Project, SessionMeta } from "@cw-code/contracts";
+import type { ComposerPrefs, PermissionMode, Project, SessionMeta, SessionStatus, SubagentSummary } from "@cw-code/contracts";
 import type { CallToolResult, McpServer, ServerContext } from "@modelcontextprotocol/server";
 import { z } from "zod";
 import { agentTurnPermissionMode, SAFE_MODEL_ID } from "../agent/agentPolicy.js";
+import { EFFORT_LEVELS } from "../agent/modelSearch.js";
 import type { SessionWatch } from "../agent/SessionWatch.js";
 import { PERMISSION_MODES } from "../providers/permissions.js";
 import type { SessionManager } from "../sessions/SessionManager.js";
 import type { CallContext, Router } from "../transport/Router.js";
 
+export type CwToolsSessions = Pick<SessionManager, "getComposer" | "turnPermissionMode" | "findSession" | "markSubagentDelivered">;
+
 export interface CwToolsDeps {
   router: Router;
   watch: Pick<SessionWatch, "wait" | "lastResult">;
-  sessions: Pick<SessionManager, "getComposer" | "turnPermissionMode">;
+  sessions: CwToolsSessions;
   callerSessionId: string;
 }
 
@@ -19,10 +22,16 @@ export const WAIT_MIN_MS = 1_000;
 export const WAIT_MAX_MS = 240_000;
 export const WAIT_PROGRESS_INTERVAL_MS = 15_000;
 
+export const SUBAGENT_RUNNING_NEXT =
+  "The subagent is still running. End your turn now; cw-code sends its result to you as a new turn when it finishes. Call subagent_wait only if you cannot continue without the result.";
+export const SUBAGENT_INPUT_NEXT =
+  "The subagent is waiting for the user to answer an approval or question in cw-code. Tell the user, then end your turn; cw-code sends its result to you as a new turn when it finishes.";
+
 const DRIVERS = ["claude", "codex", "opencode"] as const;
-const EFFORTS = ["minimal", "low", "medium", "high", "xhigh", "max"] as const;
 const HIDDEN_STATUSES: ReadonlySet<SessionMeta["status"]> = new Set(["resolved", "archived"]);
 const READ_ONLY = { readOnlyHint: true } as const;
+const WAIT_RANGE = `default ${WAIT_DEFAULT_MS}, ${WAIT_MIN_MS}-${WAIT_MAX_MS}`;
+const SUBAGENT_RETURN = "Returns {subagentId, status, resultText, timedOut, next}; when next is set, follow it.";
 
 const CW_TOOL_SPECS = {
   projects_list: { description: "List the cw-code projects (id, name, rootPath).", inputSchema: z.object({}), annotations: READ_ONLY },
@@ -45,7 +54,7 @@ const CW_TOOL_SPECS = {
       driver: z.enum(DRIVERS),
       prompt: z.string().min(1),
       model: z.string().regex(SAFE_MODEL_ID, "not a valid model id").optional(),
-      effort: z.enum(EFFORTS).optional(),
+      effort: z.enum(EFFORT_LEVELS).optional(),
       permissionMode: z.enum(PERMISSION_MODES).optional(),
       useWorktree: z.boolean().optional()
     })
@@ -59,7 +68,7 @@ const CW_TOOL_SPECS = {
     inputSchema: z.object({ sessionId: z.string() })
   },
   session_wait: {
-    description: `Block until another session (not your own) stops working or timeoutMs passes (default ${WAIT_DEFAULT_MS}, ${WAIT_MIN_MS}-${WAIT_MAX_MS}). Returns {status, lastResultText, timedOut}; returns at once if the session is not working.`,
+    description: `Block until another session (not your own) stops working or timeoutMs passes (${WAIT_RANGE}). Returns {status, lastResultText, timedOut}; returns at once if the session is not working.`,
     inputSchema: z.object({ sessionId: z.string(), timeoutMs: z.number().int().optional() }),
     annotations: READ_ONLY
   },
@@ -78,6 +87,49 @@ const CW_TOOL_SPECS = {
   settings_set: {
     description: "Change cw-code app settings with a partial patch (only model, worktree, session lifecycle and refresh settings are writable). Returns the full settings.",
     inputSchema: z.object({ patch: z.record(z.string(), z.unknown()) })
+  },
+  subagent_run: {
+    description: `Dispatch a subagent: a hidden cw-code session on driver (claude, codex or opencode) that runs task and reports back only to you. Use it for work on another harness or, with isolation 'worktree', in its own checkout ('shared', the default, works in your checkout). If the user named a model in plain text, call subagent_targets with that text first and pass the returned id as model. permissionMode is capped at your own. With wait (default true) blocks until the subagent finishes, needs the user, or timeoutMs passes (${WAIT_RANGE}); for long tasks pass wait: false and end your turn. ${SUBAGENT_RETURN}`,
+    inputSchema: z.object({
+      driver: z.enum(DRIVERS),
+      task: z.string().min(1),
+      title: z.string().optional(),
+      model: z.string().regex(SAFE_MODEL_ID, "not a valid model id").optional(),
+      effort: z.enum(EFFORT_LEVELS).optional(),
+      permissionMode: z.enum(PERMISSION_MODES).optional(),
+      isolation: z.enum(["shared", "worktree"]).default("shared"),
+      wait: z.boolean().default(true),
+      timeoutMs: z.number().int().optional()
+    })
+  },
+  subagent_wait: {
+    description: `Block until one of your subagents stops working, needs the user (status 'input-required') or timeoutMs passes (${WAIT_RANGE}). Do not call it in a loop: if it times out, end your turn and cw-code sends the result as a new turn. Returns {status, resultText, timedOut, next}; when next is set, follow it.`,
+    inputSchema: z.object({ subagentId: z.string(), timeoutMs: z.number().int().optional() }),
+    annotations: READ_ONLY
+  },
+  subagent_send: {
+    description: `Send a follow-up prompt to one of your subagents that is not working, as a new turn in its own context. wait and timeoutMs work as in subagent_run. ${SUBAGENT_RETURN}`,
+    inputSchema: z.object({
+      subagentId: z.string(),
+      prompt: z.string().min(1),
+      wait: z.boolean().default(true),
+      timeoutMs: z.number().int().optional()
+    })
+  },
+  subagent_stop: {
+    description: "Interrupt the running turn of one of your subagents. Returns {stopped}.",
+    inputSchema: z.object({ subagentId: z.string() })
+  },
+  subagents_list: {
+    description: "List your subagents as {id, driver, title, status, model, isolation, result, pendingRequests, createdAt, updatedAt}.",
+    inputSchema: z.object({}),
+    annotations: READ_ONLY
+  },
+  subagent_targets: {
+    description:
+      "List the harnesses a subagent can run on, with their models: [{driver, installed, defaultModel, models: [{id, label, variants, efforts}], effort, error}]. When the user names a model in plain text (e.g. 'opus 4.5', 'gpt 5 codex high', 'kimi'), pass that text as query: matching ids come first, a harness name in the query narrows the harnesses and an effort word comes back as effort. Use the returned id as subagent_run's model.",
+    inputSchema: z.object({ driver: z.enum(DRIVERS).optional(), query: z.string().optional() }),
+    annotations: READ_ONLY
   }
 };
 
@@ -137,18 +189,65 @@ function definedPrefs(prefs: { model?: string; effort?: string; permissionMode?:
   return Object.fromEntries(Object.entries(prefs).filter((entry): entry is [string, string] => entry[1] !== undefined));
 }
 
+async function withWaitProgress<T>(request: ServerContext, tool: string, subject: string, work: () => Promise<T>): Promise<T> {
+  const progressToken = request.mcpReq._meta?.progressToken;
+  let ticks = 0;
+  let progress: ReturnType<typeof setInterval> | null = null;
+  const stopProgress = (): void => {
+    if (progress) clearInterval(progress);
+    progress = null;
+  };
+  if (progressToken !== undefined) {
+    progress = setInterval(() => {
+      ticks += 1;
+      request.mcpReq
+        .notify({ method: "notifications/progress", params: { progressToken, progress: ticks, message: `waiting for ${subject}` } })
+        .catch((error: unknown) => {
+          if (progress === null) return;
+          stopProgress();
+          console.warn(`[mcp] ${tool} progress stopped: ${error instanceof Error ? error.message : String(error)}`);
+        });
+    }, WAIT_PROGRESS_INTERVAL_MS);
+  }
+  try {
+    return await work();
+  } finally {
+    stopProgress();
+  }
+}
+
+type RouterCall = (method: string, params?: unknown) => Promise<unknown>;
+
+interface SubagentTurn {
+  subagentId: string;
+  turnId: string | undefined;
+}
+
+interface SubagentReport {
+  status: SessionStatus;
+  resultText: string | null;
+  timedOut: boolean;
+  next: string | null;
+}
+
 export function registerCwTools(server: McpServer, deps: CwToolsDeps): void {
   const ctx: CallContext = { clientId: `mcp:${deps.callerSessionId}`, client: "mcp", auth: { kind: "agent", sessionId: deps.callerSessionId } };
-  const call = (method: string, params?: unknown): Promise<unknown> => deps.router.dispatch(method, params, ctx);
+  const call: RouterCall = (method, params) => deps.router.dispatch(method, params, ctx);
 
   const listSessions = async (projectId: string | undefined): Promise<SessionMeta[]> => {
     const projectIds = projectId !== undefined ? [projectId] : ((await call("projects.list")) as Project[]).map((project) => project.id);
     const perProject = await Promise.all(projectIds.map((id) => call("sessions.list", id) as Promise<SessionMeta[]>));
-    return perProject.flat();
+    return perProject.flat().filter((session) => !session.subagent);
   };
 
   const assertNotOwnSession = (sessionId: string, action: string): void => {
     if (sessionId === deps.callerSessionId) throw new Error(`an agent cannot ${action} its own session`);
+  };
+
+  const assertNotSubagent = (sessionId: string): void => {
+    if (deps.sessions.findSession(sessionId)?.subagent) {
+      throw new Error(`session ${sessionId} is a subagent; use subagent_send, subagent_wait or subagent_stop for it`);
+    }
   };
 
   server.registerTool("projects_list", CW_TOOL_SPECS.projects_list, () => run(() => call("projects.list")));
@@ -195,6 +294,7 @@ export function registerCwTools(server: McpServer, deps: CwToolsDeps): void {
   server.registerTool("session_send", CW_TOOL_SPECS.session_send, ({ sessionId, prompt }) =>
     run(async () => {
       assertNotOwnSession(sessionId, "send a prompt to");
+      assertNotSubagent(sessionId);
       return { turnId: await call("turns.start", { sessionId, prompt }) };
     })
   );
@@ -202,6 +302,7 @@ export function registerCwTools(server: McpServer, deps: CwToolsDeps): void {
   server.registerTool("session_stop", CW_TOOL_SPECS.session_stop, ({ sessionId }) =>
     run(async () => {
       assertNotOwnSession(sessionId, "stop");
+      assertNotSubagent(sessionId);
       return call("turns.stop", { sessionId });
     })
   );
@@ -209,30 +310,10 @@ export function registerCwTools(server: McpServer, deps: CwToolsDeps): void {
   server.registerTool("session_wait", CW_TOOL_SPECS.session_wait, ({ sessionId, timeoutMs }, request: ServerContext) =>
     run(async () => {
       assertNotOwnSession(sessionId, "wait on");
-      const progressToken = request.mcpReq._meta?.progressToken;
-      let ticks = 0;
-      let progress: ReturnType<typeof setInterval> | null = null;
-      const stopProgress = (): void => {
-        if (progress) clearInterval(progress);
-        progress = null;
-      };
-      if (progressToken !== undefined) {
-        progress = setInterval(() => {
-          ticks += 1;
-          request.mcpReq
-            .notify({ method: "notifications/progress", params: { progressToken, progress: ticks, message: `waiting for session ${sessionId}` } })
-            .catch((error: unknown) => {
-              if (progress === null) return;
-              stopProgress();
-              console.warn(`[mcp] session_wait progress stopped: ${error instanceof Error ? error.message : String(error)}`);
-            });
-        }, WAIT_PROGRESS_INTERVAL_MS);
-      }
-      try {
-        return await deps.watch.wait(sessionId, clampWait(timeoutMs), request.mcpReq.signal);
-      } finally {
-        stopProgress();
-      }
+      assertNotSubagent(sessionId);
+      return withWaitProgress(request, "session_wait", `session ${sessionId}`, () =>
+        deps.watch.wait(sessionId, clampWait(timeoutMs), request.mcpReq.signal)
+      );
     })
   );
 
@@ -241,4 +322,64 @@ export function registerCwTools(server: McpServer, deps: CwToolsDeps): void {
   server.registerTool("settings_get", CW_TOOL_SPECS.settings_get, () => run(() => call("settings.get")));
 
   server.registerTool("settings_set", CW_TOOL_SPECS.settings_set, ({ patch }) => run(() => call("settings.set", patch)));
+
+  if (!deps.sessions.findSession(deps.callerSessionId)?.subagent) registerSubagentTools(server, deps, call);
+}
+
+function registerSubagentTools(server: McpServer, deps: CwToolsDeps, call: RouterCall): void {
+  const ownSubagent = async (subagentId: string): Promise<SubagentSummary> => {
+    const child = ((await call("subagents.list")) as SubagentSummary[]).find((summary) => summary.id === subagentId);
+    if (!child) throw new Error(`unknown subagent ${subagentId}`);
+    return child;
+  };
+
+  const report = async (subagentId: string, turnId: string | undefined, timedOut: boolean): Promise<SubagentReport> => {
+    const child = await ownSubagent(subagentId);
+    if (child.status === "input-required" || child.pendingRequests > 0) {
+      return { status: "input-required", resultText: null, timedOut, next: SUBAGENT_INPUT_NEXT };
+    }
+    if (child.status === "working") return { status: child.status, resultText: null, timedOut, next: SUBAGENT_RUNNING_NEXT };
+    const result = child.result;
+    if (!result || (turnId !== undefined && result.turnId !== turnId)) return { status: child.status, resultText: null, timedOut, next: null };
+    deps.sessions.markSubagentDelivered(subagentId, result.turnId);
+    return { status: child.status, resultText: result.text, timedOut, next: null };
+  };
+
+  const settle = async (tool: string, turn: SubagentTurn, wait: boolean, timeoutMs: number | undefined, request: ServerContext): Promise<SubagentReport> => {
+    if (!wait) return report(turn.subagentId, turn.turnId, false);
+    const waited = await withWaitProgress(request, tool, `subagent ${turn.subagentId}`, () =>
+      deps.watch.wait(turn.subagentId, clampWait(timeoutMs), request.mcpReq.signal)
+    );
+    return report(turn.subagentId, turn.turnId, waited.timedOut);
+  };
+
+  server.registerTool(
+    "subagent_run",
+    CW_TOOL_SPECS.subagent_run,
+    ({ driver, task, title, model, effort, permissionMode, isolation, wait, timeoutMs }, request: ServerContext) =>
+      run(async () => {
+        const created = (await call("subagents.create", { driver, task, title, model, effort, permissionMode, isolation })) as { subagentId: string; turnId: string };
+        return { subagentId: created.subagentId, ...(await settle("subagent_run", created, wait, timeoutMs, request)) };
+      })
+  );
+
+  server.registerTool("subagent_wait", CW_TOOL_SPECS.subagent_wait, ({ subagentId, timeoutMs }, request: ServerContext) =>
+    run(async () => {
+      await ownSubagent(subagentId);
+      return settle("subagent_wait", { subagentId, turnId: undefined }, true, timeoutMs, request);
+    })
+  );
+
+  server.registerTool("subagent_send", CW_TOOL_SPECS.subagent_send, ({ subagentId, prompt, wait, timeoutMs }, request: ServerContext) =>
+    run(async () => {
+      const { turnId } = (await call("subagents.send", { subagentId, prompt })) as { turnId: string };
+      return { subagentId, ...(await settle("subagent_send", { subagentId, turnId }, wait, timeoutMs, request)) };
+    })
+  );
+
+  server.registerTool("subagent_stop", CW_TOOL_SPECS.subagent_stop, ({ subagentId }) => run(() => call("subagents.stop", { subagentId })));
+
+  server.registerTool("subagents_list", CW_TOOL_SPECS.subagents_list, () => run(() => call("subagents.list")));
+
+  server.registerTool("subagent_targets", CW_TOOL_SPECS.subagent_targets, ({ driver, query }) => run(() => call("subagents.targets", { driver, query })));
 }
