@@ -223,6 +223,7 @@ export function ThreadView({ hidden = false }: { hidden?: boolean }) {
   const setPendingDriver = useAppStore((s) => s.setPendingDriver);
   const turnStartedAt = turn?.startedAt;
   const turnDurations = useThreadEntry(activeSessionId, "durations");
+  const sessionDriver = session?.driver;
   const subagents = useMemo(() => collectSubagents(messages), [messages]);
   const nestedIds = useMemo(() => new Set(subagents.map((s) => s.id)), [subagents]);
   const turns = useMemo(
@@ -234,7 +235,7 @@ export function ThreadView({ hidden = false }: { hidden?: boolean }) {
         return {
           key: slice.messages[0].seq,
           turnId: slice.turnId,
-          pieces: splitTurn(slice.messages, nestedIds, running),
+          pieces: splitTurn(slice.messages, nestedIds, running, sessionDriver),
           running,
           promptedAt: first?.role === "user" ? first.timestamp : undefined,
           startedAt: running ? turnStartedAt : undefined,
@@ -242,7 +243,7 @@ export function ThreadView({ hidden = false }: { hidden?: boolean }) {
           durationMs: known ?? durationFromMessages(slice.messages)
         };
       }),
-    [messages, nestedIds, busyTurn, turnStartedAt, turnDurations]
+    [messages, nestedIds, busyTurn, turnStartedAt, turnDurations, sessionDriver]
   );
   const streamingId = useMemo(() => {
     if (!busyTurn) return null;
@@ -499,6 +500,7 @@ export function ThreadView({ hidden = false }: { hidden?: boolean }) {
           messages={n.items}
           basePath={basePath}
           sessionId={session.id}
+          sessionDriver={session.driver}
           onPreview={onOpenPreview}
         />
       );
@@ -509,8 +511,8 @@ export function ThreadView({ hidden = false }: { hidden?: boolean }) {
       if (wake) return <SubagentResultsCard key={m.id} message={m} entries={wake} />;
       return <UserMessage key={m.id} message={m} sessionId={session.id} projectId={project?.id} skills={skillNames} />;
     }
-    if (m.role === "tool" && cwSubagentCardTool(m.toolName)) {
-      return <CwSubagentCard key={m.id} message={m} sessionId={session.id} />;
+    if (m.role === "tool" && cwSubagentCardTool(m.toolName, session.driver)) {
+      return <CwSubagentCard key={m.id} message={m} sessionId={session.id} sessionDriver={session.driver} />;
     }
     if (m.role === "tool") {
       return (
@@ -519,6 +521,7 @@ export function ThreadView({ hidden = false }: { hidden?: boolean }) {
           message={m}
           basePath={basePath}
           sessionId={session.id}
+          sessionDriver={session.driver}
           onPreview={onOpenPreview}
         />
       );
@@ -691,7 +694,7 @@ export function ThreadView({ hidden = false }: { hidden?: boolean }) {
               <ApprovalDock sessionId={session.id} />
               <QuestionDock sessionId={session.id} />
               {!threadHidden && <SubagentRequestDocks sessionId={session.id} />}
-              <WorkingDock key={`working-dock:${session.id}`} sessionId={session.id} basePath={basePath} />
+              <WorkingDock key={`working-dock:${session.id}`} sessionId={session.id} sessionDriver={session.driver} basePath={basePath} />
             </>
           }
         />

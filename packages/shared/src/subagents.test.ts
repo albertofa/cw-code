@@ -1,5 +1,13 @@
 import { describe, expect, it } from "bun:test";
-import { buildWakePrompt, cwSubagentToolOf, parseWakePrompt, SUBAGENT_TOOL_NAMES, type WakeEntry } from "./subagents.js";
+import {
+  buildWakePrompt,
+  cwSubagentToolOf,
+  normalizeSubagentTitle,
+  parseWakePrompt,
+  SUBAGENT_TITLE_MAX,
+  SUBAGENT_TOOL_NAMES,
+  type WakeEntry
+} from "./subagents.js";
 
 const entries: WakeEntry[] = [
   { subagentId: "s1", driver: "codex", title: "Review the diff", outcome: "done", text: "Looks fine.\nSecond line with \"quotes\"." },
@@ -67,7 +75,34 @@ describe("cwSubagentToolOf", () => {
     expect(cwSubagentToolOf("mcp__cw__session_create")).toBeNull();
     expect(cwSubagentToolOf("cw_session_send")).toBeNull();
     expect(cwSubagentToolOf("mcp__other__subagent_run")).toBeNull();
-    expect(cwSubagentToolOf("subagent_run")).toBe("subagent_run");
     expect(cwSubagentToolOf("cw_subagent_run_extra")).toBeNull();
+  });
+
+  it("accepts bare names only for codex", () => {
+    expect(cwSubagentToolOf("subagent_run", "codex")).toBe("subagent_run");
+    expect(cwSubagentToolOf("subagent_run")).toBeNull();
+    expect(cwSubagentToolOf("subagent_run", "claude")).toBeNull();
+    expect(cwSubagentToolOf("subagent_run", "opencode")).toBeNull();
+    expect(cwSubagentToolOf("mcp__cw__subagent_run", "claude")).toBe("subagent_run");
+    expect(cwSubagentToolOf("session_create", "codex")).toBeNull();
+  });
+});
+
+describe("normalizeSubagentTitle", () => {
+  it("trims and collapses whitespace", () => {
+    expect(normalizeSubagentTitle("  fix \n the\t bug  ")).toBe("fix the bug");
+  });
+
+  it("caps long titles at 60 characters with an ellipsis", () => {
+    const normalized = normalizeSubagentTitle("x".repeat(100));
+    expect(normalized).toBe(`${"x".repeat(59)}…`);
+    expect(normalized).toHaveLength(SUBAGENT_TITLE_MAX);
+    expect(normalizeSubagentTitle("y".repeat(60))).toBe("y".repeat(60));
+  });
+
+  it("is idempotent and keeps an empty title empty", () => {
+    const once = normalizeSubagentTitle(`  ${"word ".repeat(30)}`);
+    expect(normalizeSubagentTitle(once)).toBe(once);
+    expect(normalizeSubagentTitle("  \n ")).toBe("");
   });
 });

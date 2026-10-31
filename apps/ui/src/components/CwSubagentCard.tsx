@@ -1,6 +1,6 @@
 import { memo, useId, useMemo, useState } from "react";
 import { Bot, ChevronRight, PanelRight } from "lucide-react";
-import type { SubagentSummary } from "@cw-code/contracts";
+import type { DriverKind, SubagentSummary } from "@cw-code/contracts";
 import type { ChatMessage } from "../stores/appStore.js";
 import { openCwSubagent } from "./AgentsPanel.js";
 import { ToolRow, type ToolStatus } from "./ToolCard.js";
@@ -48,7 +48,15 @@ function clip(text: string): string {
   return flat.length > TITLE_MAX ? `${flat.slice(0, TITLE_MAX - 1)}…` : flat;
 }
 
-export const CwSubagentCard = memo(function CwSubagentCard({ message, sessionId }: { message: ChatMessage; sessionId: string }) {
+export const CwSubagentCard = memo(function CwSubagentCard({
+  message,
+  sessionId,
+  sessionDriver
+}: {
+  message: ChatMessage;
+  sessionId: string;
+  sessionDriver: DriverKind;
+}) {
   const [open, setOpen] = useState(false);
   const panelId = useId();
   const subagents = useThreadEntry(sessionId, "subagents") ?? NO_SUBAGENTS;
@@ -56,13 +64,13 @@ export const CwSubagentCard = memo(function CwSubagentCard({ message, sessionId 
   const toolRunning = message.toolInput !== undefined && !done;
   const elapsed = useElapsed(message.toolStartedAt, toolRunning);
   const call = useMemo(
-    () => describeCwSubagentCall(message.toolName, message.toolInput, message.toolOutput),
-    [message.toolName, message.toolInput, message.toolOutput]
+    () => describeCwSubagentCall(message.toolName, message.toolInput, message.toolOutput, sessionDriver),
+    [message.toolName, message.toolInput, message.toolOutput, sessionDriver]
   );
   if (!call) return null;
 
   const startedAt = message.toolStartedAt ?? message.timestamp;
-  const summary = matchCwSubagent(subagents, call, startedAt);
+  const summary = matchCwSubagent(subagents, call, startedAt, message.toolCompletedAt);
   const subagentId = summary?.id ?? call.subagentId;
   const failedCall = message.isError === true;
   const state: CwSubagentState = failedCall

@@ -1,18 +1,18 @@
 import type { DriverKind, SessionStatus, SubagentResult, SubagentSummary, TaskState } from "@cw-code/contracts";
-import { cwSubagentToolOf, parseWakePrompt, type SubagentToolName, type WakeEntry } from "@cw-code/shared/subagents";
+import { isDriverKind } from "@cw-code/shared/driverKinds";
+import { cwSubagentToolOf, normalizeSubagentTitle, parseWakePrompt, type SubagentToolName, type WakeEntry } from "@cw-code/shared/subagents";
 
 export type CwSubagentCardTool = Extract<SubagentToolName, "subagent_run" | "subagent_send" | "subagent_wait">;
 
 const CARD_TOOLS: readonly SubagentToolName[] = ["subagent_run", "subagent_send", "subagent_wait"];
-const DRIVERS: readonly string[] = ["claude", "opencode", "codex"] satisfies DriverKind[];
 
-export function cwToolOf(toolName: string | undefined): SubagentToolName | null {
+export function cwToolOf(toolName: string | undefined, sessionDriver?: DriverKind): SubagentToolName | null {
   if (!toolName) return null;
-  return cwSubagentToolOf(toolName);
+  return cwSubagentToolOf(toolName, sessionDriver);
 }
 
-export function cwSubagentCardTool(toolName: string | undefined): CwSubagentCardTool | null {
-  const tool = cwToolOf(toolName);
+export function cwSubagentCardTool(toolName: string | undefined, sessionDriver?: DriverKind): CwSubagentCardTool | null {
+  const tool = cwToolOf(toolName, sessionDriver);
   return tool && CARD_TOOLS.includes(tool) ? (tool as CwSubagentCardTool) : null;
 }
 
@@ -103,8 +103,13 @@ function argsOf(input: unknown): Record<string, unknown> {
   return isRecord(nested) ? { ...nested, ...input } : input;
 }
 
-export function describeCwSubagentCall(toolName: string | undefined, input: unknown, output: string | undefined): CwSubagentCall | null {
-  const tool = cwSubagentCardTool(toolName);
+export function describeCwSubagentCall(
+  toolName: string | undefined,
+  input: unknown,
+  output: string | undefined,
+  sessionDriver?: DriverKind
+): CwSubagentCall | null {
+  const tool = cwSubagentCardTool(toolName, sessionDriver);
   if (!tool) return null;
   const args = argsOf(input);
   const parsed = parseCwSubagentOutput(output);
@@ -112,7 +117,7 @@ export function describeCwSubagentCall(toolName: string | undefined, input: unkn
   const call: CwSubagentCall = { tool, output: parsed };
   const subagentId = parsed?.subagentId ?? str(args["subagentId"]);
   if (subagentId) call.subagentId = subagentId;
-  if (driver && DRIVERS.includes(driver)) call.driver = driver as DriverKind;
+  if (isDriverKind(driver)) call.driver = driver;
   const title = str(args["title"]);
   if (title) call.title = title;
   const prompt = str(args["task"]) ?? str(args["prompt"]);
@@ -123,19 +128,24 @@ export function describeCwSubagentCall(toolName: string | undefined, input: unkn
 }
 
 const CREATE_SLACK_MS = 2000;
+const UNFINISHED_CALL_WINDOW_MS = 60_000;
 
 export function matchCwSubagent(
   subagents: readonly SubagentSummary[],
   call: Pick<CwSubagentCall, "tool" | "subagentId" | "driver" | "title">,
-  startedAt: number | undefined
+  startedAt: number | undefined,
+  completedAt?: number
 ): SubagentSummary | undefined {
   if (call.subagentId) return subagents.find((summary) => summary.id === call.subagentId);
   if (call.tool !== "subagent_run" || startedAt === undefined) return undefined;
+  const windowEnd = completedAt ?? startedAt + UNFINISHED_CALL_WINDOW_MS;
+  const title = call.title === undefined ? undefined : normalizeSubagentTitle(call.title);
   const candidates = subagents.filter(
     (summary) =>
       summary.createdAt >= startedAt - CREATE_SLACK_MS &&
+      summary.createdAt <= windowEnd &&
       (call.driver === undefined || summary.driver === call.driver) &&
-      (call.title === undefined || summary.title === call.title)
+      (title === undefined || summary.title === title)
   );
   return candidates.length === 1 ? candidates[0] : undefined;
 }
@@ -172,7 +182,7 @@ export function summaryState(summary: Pick<SubagentSummary, "status" | "result">
   return cwSubagentState(summary.status, summary.status === "working" ? undefined : summary.result?.outcome);
 }
 
-export function isOpenSubagent(summary: Pick<SubagentSummary, "status">): boolean {
+function isOpenSubagent(summary: Pick<SubagentSummary, "status">): boolean {
   return !CLOSED.includes(summary.status);
 }
 

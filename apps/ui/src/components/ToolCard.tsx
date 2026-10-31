@@ -11,6 +11,7 @@ import {
   X,
   type LucideIcon
 } from "lucide-react";
+import type { DriverKind } from "@cw-code/contracts";
 import type { ChatMessage } from "../stores/appStore.js";
 import { useAppStore } from "../stores/appStore.js";
 import {
@@ -122,12 +123,14 @@ export const ToolCard = memo(function ToolCard({
   message,
   basePath,
   sessionId,
+  sessionDriver,
   onPreview,
   defaultOpen
 }: {
   message: ChatMessage;
   basePath?: string;
   sessionId?: string;
+  sessionDriver?: DriverKind;
   onPreview?: (path: string) => void;
   defaultOpen?: boolean;
 }) {
@@ -147,7 +150,7 @@ export const ToolCard = memo(function ToolCard({
   const elapsed = useElapsed(message.toolStartedAt, running);
   const status: ToolStatus = isError ? "error" : waiting ? "waiting" : running ? "running" : done ? "complete" : "pending";
   const toolInput = message.toolInput ?? recoverToolInput(name, message.text);
-  const summary = describeToolCall(name, toolInput);
+  const summary = describeToolCall(name, toolInput, sessionDriver);
   const fileDiff = extractFileDiff(name, toolInput) ?? extractFileDiffFromText(name, message.text);
   const MAX_DIFF_LINES = 120;
   const visibleDiff = fileDiff?.slice(0, MAX_DIFF_LINES) ?? [];

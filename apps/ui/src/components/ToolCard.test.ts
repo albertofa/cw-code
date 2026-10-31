@@ -36,7 +36,8 @@ describe("describeToolCall", () => {
   it("summarizes cw subagent tools across harness prefixes", () => {
     expect(describeToolCall("mcp__plugin_cw-code_cw__subagent_stop", { subagentId: "sess_c" })).toMatchObject({ verb: "Stop subagent", subject: "sess_c" });
     expect(describeToolCall("cw_subagents_list", {})).toMatchObject({ verb: "List subagents", subject: "your subagents" });
-    expect(describeToolCall("subagent_targets", { driver: "codex", query: "gpt 5" })).toMatchObject({ subject: "codex · gpt 5" });
+    expect(describeToolCall("subagent_targets", { driver: "codex", query: "gpt 5" }, "codex")).toMatchObject({ subject: "codex · gpt 5" });
+    expect(describeToolCall("subagent_targets", { driver: "codex" }, "claude")).toBeNull();
     expect(summarizeToolGroup([msg({ id: "a", toolName: "mcp__cw__subagents_list", toolDone: true }), msg({ id: "b", toolName: "cw_subagent_stop", toolDone: true })])?.text).toBe("Ran 2 subagent tools");
   });
 

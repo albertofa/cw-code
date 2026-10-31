@@ -1,3 +1,4 @@
+import type { DriverKind } from "@cw-code/contracts";
 import type { ChatMessage } from "../stores/appStore.js";
 import { describeSubagent, isSubagentMessage, type SubagentGroup } from "./subagents.js";
 import { isRunningTool, orderToolsForDisplay } from "./toolSummaries.js";
@@ -49,7 +50,7 @@ function isSkillTool(m: ChatMessage): boolean {
   return (m.toolName ?? "").toLowerCase() === "skill";
 }
 
-export function buildThreadNodes(messages: ChatMessage[], nestedIds: Set<string>): ThreadNode[] {
+export function buildThreadNodes(messages: ChatMessage[], nestedIds: Set<string>, sessionDriver?: DriverKind): ThreadNode[] {
   const out: ThreadNode[] = [];
   let pending: ChatMessage[] = [];
   let toolRun: ChatMessage[] = [];
@@ -76,7 +77,7 @@ export function buildThreadNodes(messages: ChatMessage[], nestedIds: Set<string>
     } else if (m.parentToolCallId && nestedIds.has(m.parentToolCallId)) continue;
     else if (m.role === "tool") {
       flushSubs();
-      if (isRunningTool(m) || isSkillTool(m) || cwSubagentCardTool(m.toolName) !== null) {
+      if (isRunningTool(m) || isSkillTool(m) || cwSubagentCardTool(m.toolName, sessionDriver) !== null) {
         flushTools();
         out.push({ kind: "msg", msg: m });
       } else {
@@ -121,7 +122,7 @@ function endsAnswer(m: ChatMessage): boolean {
  * started a new answer, so both halves stay visible. Interim text that the model
  * wrote *before* real work resumed stays folded.
  */
-export function splitTurn(messages: ChatMessage[], nestedIds: Set<string>, running = false): TurnPieces {
+export function splitTurn(messages: ChatMessage[], nestedIds: Set<string>, running = false, sessionDriver?: DriverKind): TurnPieces {
   const lead: ChatMessage[] = [];
   const system: ChatMessage[] = [];
   const rest: ChatMessage[] = [];
@@ -164,7 +165,8 @@ export function splitTurn(messages: ChatMessage[], nestedIds: Set<string>, runni
 
   const activity = buildThreadNodes(
     rest.filter((_, i) => !taken.has(i)),
-    nestedIds
+    nestedIds,
+    sessionDriver
   );
   return pinned.length > 0 ? { lead, activity, system, pinned } : { lead, activity, system };
 }

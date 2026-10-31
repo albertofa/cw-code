@@ -15,10 +15,12 @@ import {
 const REPORT = { subagentId: "sess_child", status: "idle", resultText: "all done", timedOut: false, next: null };
 
 describe("cwToolOf", () => {
-  it("recognizes prefixed and bare codex names", () => {
+  it("recognizes prefixed names and bare names only for codex", () => {
     expect(cwToolOf("mcp__plugin_cw-code_cw__subagent_run")).toBe("subagent_run");
     expect(cwToolOf("cw_subagents_list")).toBe("subagents_list");
-    expect(cwToolOf("subagent_wait")).toBe("subagent_wait");
+    expect(cwToolOf("subagent_wait", "codex")).toBe("subagent_wait");
+    expect(cwToolOf("subagent_wait")).toBeNull();
+    expect(cwToolOf("subagent_wait", "claude")).toBeNull();
     expect(cwToolOf("read")).toBeNull();
     expect(cwToolOf(undefined)).toBeNull();
   });
@@ -70,6 +72,11 @@ describe("describeCwSubagentCall", () => {
   it("ignores non-card tools", () => {
     expect(describeCwSubagentCall("mcp__cw__subagents_list", {}, "[]")).toBeNull();
   });
+
+  it("describes a bare tool name only in a codex session", () => {
+    expect(describeCwSubagentCall("subagent_wait", { subagentId: "sess_w" }, undefined, "codex")).toMatchObject({ tool: "subagent_wait" });
+    expect(describeCwSubagentCall("subagent_wait", { subagentId: "sess_w" }, undefined, "claude")).toBeNull();
+  });
 });
 
 describe("matchCwSubagent", () => {
@@ -93,6 +100,22 @@ describe("matchCwSubagent", () => {
     expect(matchCwSubagent(list, { tool: "subagent_run", driver: "codex" }, 4000)?.id).toBe("new");
     expect(matchCwSubagent([...list, summary("twin", 5100)], { tool: "subagent_run", driver: "codex" }, 4000)).toBeUndefined();
     expect(matchCwSubagent(list, { tool: "subagent_run", driver: "claude" }, 4000)).toBeUndefined();
+  });
+
+  it("compares the call title with the server-normalized title", () => {
+    const titled = { ...summary("new", 5000), title: `${"x".repeat(59)}…` };
+    expect(matchCwSubagent([titled], { tool: "subagent_run", title: "x".repeat(100) }, 4000)?.id).toBe("new");
+    const spaced = { ...summary("spaced", 5000), title: "fix the bug" };
+    expect(matchCwSubagent([spaced], { tool: "subagent_run", title: "  fix \n the  bug " }, 4000)?.id).toBe("spaced");
+    expect(matchCwSubagent([spaced], { tool: "subagent_run", title: "other" }, 4000)).toBeUndefined();
+  });
+
+  it("only matches children created while the call was in flight", () => {
+    const later = [summary("later", 90_000)];
+    expect(matchCwSubagent(later, { tool: "subagent_run" }, 4000, 8000)).toBeUndefined();
+    expect(matchCwSubagent(later, { tool: "subagent_run" }, 4000)).toBeUndefined();
+    expect(matchCwSubagent([summary("during", 6000)], { tool: "subagent_run" }, 4000, 8000)?.id).toBe("during");
+    expect(matchCwSubagent([summary("running", 50_000)], { tool: "subagent_run" }, 4000)?.id).toBe("running");
   });
 });
 

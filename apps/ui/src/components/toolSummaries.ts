@@ -14,6 +14,7 @@ import {
   Trash2,
   type LucideIcon
 } from "lucide-react";
+import type { DriverKind } from "@cw-code/contracts";
 import type { SubagentToolName } from "@cw-code/shared/subagents";
 import { cwToolOf } from "./cwSubagents.js";
 
@@ -315,8 +316,8 @@ function describeCwTool(tool: SubagentToolName, input: unknown): ToolSummary {
   };
 }
 
-export function describeToolCall(toolName: string, input: unknown): ToolSummary | null {
-  const cwTool = cwToolOf(toolName);
+export function describeToolCall(toolName: string, input: unknown, sessionDriver?: DriverKind): ToolSummary | null {
+  const cwTool = cwToolOf(toolName, sessionDriver);
   if (cwTool) return describeCwTool(cwTool, input);
   const lower = toolName.toLowerCase();
   const collab = lower.startsWith("collab:");
@@ -628,7 +629,7 @@ function groupItemStatus(m: GroupableMessage): "error" | "running" | "complete" 
   return "pending";
 }
 
-export function summarizeToolGroup(messages: GroupableMessage[]): ToolGroupSummary | null {
+export function summarizeToolGroup(messages: GroupableMessage[], sessionDriver?: DriverKind): ToolGroupSummary | null {
   if (messages.length === 0) return null;
   let commands = 0;
   let reads = 0;
@@ -641,7 +642,7 @@ export function summarizeToolGroup(messages: GroupableMessage[]): ToolGroupSumma
     if (!order.includes(key)) order.push(key);
   };
   for (const m of messages) {
-    const name = cwToolOf(m.toolName) ? "subagent tool" : (m.toolName ?? "tool").toLowerCase();
+    const name = cwToolOf(m.toolName, sessionDriver) ? "subagent tool" : (m.toolName ?? "tool").toLowerCase();
     if (name === "bash" || name === "shell") {
       commands++;
       pushOrder("commands");
