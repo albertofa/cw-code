@@ -124,7 +124,8 @@ Core behaviors:
     changed is unsubscribed before the resume. After every initialize the driver sets
     `skills/extraRoots/set` to `<userdata>/harness/skills`. Codex terminal tabs are their own
     process: env `CW_MCP_URL`/`CW_AGENT_TOKEN` plus `-c mcp_servers.cw.*` flags with
-    `bearer_token_env_var`.
+    `bearer_token_env_var`. Both set `tool_timeout_sec` to the MCP idle timeout so long
+    subagent waits outlive Codex's default tool timeout.
   - opencode v2: identity comes from the plugin's `context.sessionID`, not a token. The driver
     writes a per-process bridge secret to a file under `<userdata>/harness`; the plugin reads and
     deletes it in setup (only the path is a plugin option, since options are visible to children
@@ -143,8 +144,9 @@ Core behaviors:
   `SessionMeta.subagent` (`parentSessionId`, `isolation`, the persisted last `result` and whether
   it was `delivered`); drivers, threads, usage and resume are unchanged.
   - Ownership and depth: an agent reaches only its own children (others read as unknown). A
-    child's agent is refused `sessions.create`, `turns.start`/`turns.stop` and every mutating
-    `subagents.*` method, so depth is 1. Prefs are capped like `turns.start`.
+    child's agent is refused `sessions.create`, `turns.start`/`turns.stop` and every
+    `subagents.*` method except `subagents.list`, so depth is 1. Prefs are capped like
+    `turns.start`.
   - Checkout: `shared` (default) runs in the parent's checkout with no branch of its own and
     never syncs branch or PR links from git status; `worktree` gets its own worktree from the
     parent's HEAD with the parent's branch as `baseRef`.
@@ -153,10 +155,13 @@ Core behaviors:
     import adoption, PR babysit and the idle/holding/finished-PR sweeps.
   - Results: a wait or run that returns a settled result acks it (`subagents.ack`, only while the
     caller's turn is live). Unacked `done`/`error` results wake the parent (`SubagentDelivery`)
-    once it is idle with no pending approvals: one batched turn with origin `subagent-wake` whose
-    prompt carries a `<cw-subagent-results>` envelope (`@cw-code/shared/subagents`), rendered as
-    a results card live and after history reload. `interrupted` results never wake on their own,
-    so a restart never starts agent turns. Wake turns are invisible to PR auto follow-up.
+    once it is idle with no pending approvals or questions: one batched turn with origin
+    `subagent-wake` whose prompt carries a `<cw-subagent-results>` envelope
+    (`@cw-code/shared/subagents`), rendered as a results card live and after history reload.
+    Unacked results are persisted, so they still wake the parent after a restart; `interrupted`
+    results (user stop, shutdown, restart) never wake on their own and ride along in the next
+    batch. A user stop on the parent holds its wakes until its next non-wake turn. Wake turns are
+    invisible to PR auto follow-up and are not capped.
   - Visibility: children keep a sidebar `row/<id>` (the UI opens threads through rows) but are
     left out of sections, needs-you and the attention count; the parent's attention includes
     their pending approvals and questions, which the parent thread docks. The parent's topic
