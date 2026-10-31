@@ -107,10 +107,11 @@ export interface ServiceHooks {
 
 const PR_STATE_REUSE_MS = 60_000;
 
-function wireAutoFollowUp({ autoFollowUp, prStore, threads, turns }: Services): void {
+function wireAutoFollowUp({ autoFollowUp, prStore, threads, turns, sessions }: Services): void {
   threads.registerExtras((sessionId) => ({ babysit: autoFollowUp.babysit(sessionId) }));
   prStore.onChanged(() => autoFollowUp.reevaluate());
   threads.onRuntimeChanged(() => autoFollowUp.reevaluate());
+  sessions.onSubagentWaitChanged(() => autoFollowUp.reevaluate());
   threads.onTurnSettled((sessionId, _turnId, event) => autoFollowUp.turnSettled(sessionId, event));
   turns.onTurnStarted((sessionId, auto, turn) => autoFollowUp.turnStarted(sessionId, auto, turn));
   turns.onTurnStopped((sessionId) => autoFollowUp.turnStopped(sessionId));
@@ -390,7 +391,10 @@ export function createServices(stores: { sessionStore: SessionStore; settingsSto
   const autoFollowUp = new AutoFollowUpEngine({
     sessions: () => sessions.listAllSessions(),
     settings: () => sessions.getSettings(),
-    runtime: (sessionId) => threads.runtime(sessionId),
+    runtime: (sessionId) => {
+      const runtime = threads.runtime(sessionId);
+      return sessions.subagentWaitSince(sessionId) === null ? runtime : { ...runtime, busy: true };
+    },
     summaryLookup: () => prStore.summaryLookup(),
     detail: (key) => prStore.detail(key),
     failedCheckLog: (ref, runId) => pullRequests.failedCheckLog(ref, runId),
