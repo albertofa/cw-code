@@ -1,6 +1,6 @@
 import type { TurnRequest } from "@cw-code/contracts";
-import { MCP_IDLE_TIMEOUT_SECONDS } from "../mcp/mcpRoute.js";
 import { agentTokenFingerprint, CW_AGENT_TOKEN_ENV } from "./claudePlugin.js";
+import { MCP_IDLE_TIMEOUT_SECONDS } from "./mcpTimeouts.js";
 
 const MCP_SERVER_NAME = "cw";
 

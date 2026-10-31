@@ -3,9 +3,9 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { WAIT_MAX_MS } from "../mcp/cwTools.js";
-import { MCP_IDLE_TIMEOUT_SECONDS } from "../mcp/mcpRoute.js";
 import { toShellTarget } from "../pty/resolve.js";
 import { codexAgentFingerprint, codexTerminalMcpArgs, codexThreadConfig } from "./codexMcp.js";
+import { MCP_IDLE_TIMEOUT_SECONDS } from "./mcpTimeouts.js";
 
 describe("codexThreadConfig", () => {
   it("sends the token as an Authorization header, auto-approves the cw tools and outlasts the longest wait", () => {

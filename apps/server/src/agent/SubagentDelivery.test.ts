@@ -312,6 +312,91 @@ describe("SubagentDelivery failures", () => {
   });
 });
 
+describe("SubagentDelivery user stops", () => {
+  it("holds wakes after a user stop until a non-wake turn starts, then delivers everything", async () => {
+    const h = harness([meta("parent"), child("a", "parent", DONE)]);
+    h.delivery.turnStopped("parent");
+    h.delivery.reevaluate("parent");
+    await flush();
+    expect(h.started).toHaveLength(0);
+    expect(h.delivered).toHaveLength(0);
+
+    h.sessions.push(child("b", "parent", result("t2", "done", 200)));
+    h.delivery.reevaluate();
+    await flush();
+    expect(h.started).toHaveLength(0);
+
+    h.delivery.turnStarted("parent", undefined);
+    h.delivery.reevaluate("parent");
+    await flush();
+    expect(h.started).toHaveLength(1);
+    expect(parseWakePrompt(h.started[0].prompt)?.map((entry) => entry.subagentId)).toEqual(["a", "b"]);
+  });
+
+  it("keeps holding when only a wake turn starts", async () => {
+    const h = harness([meta("parent"), child("a", "parent", DONE)]);
+    h.delivery.turnStopped("parent");
+    h.delivery.turnStarted("parent", "subagent-wake");
+    h.delivery.reevaluate();
+    await flush();
+    expect(h.started).toHaveLength(0);
+  });
+
+  it("only holds the stopped parent", async () => {
+    const h = harness([meta("p1"), meta("p2"), child("a", "p1", DONE), child("b", "p2", result("t2", "done", 200))]);
+    h.delivery.turnStopped("p1");
+    h.delivery.reevaluate();
+    await flush();
+    expect(h.started.map((item) => item.sessionId)).toEqual(["p2"]);
+  });
+
+  it("does not hold on the stop of a subagent session", async () => {
+    const h = harness([meta("parent"), child("a", "parent", DONE)]);
+    h.delivery.turnStopped("a");
+    h.delivery.reevaluate();
+    await flush();
+    expect(h.started).toHaveLength(1);
+  });
+
+  it("does not re-wake right after a stopped wake turn settles", async () => {
+    const h = harness([meta("parent"), child("a", "parent", DONE)]);
+    h.delivery.reevaluate();
+    await flush();
+    expect(h.started).toHaveLength(1);
+
+    h.delivery.turnStarted("parent", "subagent-wake");
+    h.sessions.push(child("b", "parent", result("t2", "done", 200)));
+    h.delivery.turnStopped("parent");
+    h.delivery.reevaluate("parent");
+    await flush();
+    expect(h.started).toHaveLength(1);
+
+    h.delivery.turnStarted("parent", undefined);
+    h.delivery.reevaluate("parent");
+    await flush();
+    expect(h.started).toHaveLength(2);
+    expect(parseWakePrompt(h.started[1].prompt)?.map((entry) => entry.subagentId)).toEqual(["b"]);
+  });
+});
+
+describe("SubagentDelivery blocked wakes", () => {
+  it("retries when reevaluated after the harness update that blocked the wake", async () => {
+    const h = harness([meta("parent"), child("a", "parent", DONE)]);
+    h.failStartWith(new SessionBusyError("harness updating", "Codex is updating. Try again when the update finishes."));
+    h.delivery.reevaluate();
+    await flush();
+    expect(h.started).toHaveLength(1);
+    expect(h.notices).toHaveLength(0);
+    expect(h.delivered).toHaveLength(0);
+
+    h.succeedStart();
+    h.delivery.reevaluate();
+    await flush();
+    expect(h.started).toHaveLength(2);
+    expect(h.delivered).toEqual([{ childId: "a", turnId: "t1" }]);
+  });
+});
+
 describe("SubagentDelivery lifecycle", () => {
   it("wakes once for a persisted undelivered result on startup", async () => {
     const h = harness([meta("parent"), child("a", "parent", DONE, false)]);

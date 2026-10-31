@@ -121,10 +121,12 @@ function wireSessionWatch({ sessionWatch, threads }: Services): void {
   threads.onTurnSettled((sessionId, _turnId, event) => sessionWatch.turnSettled(sessionId, event));
 }
 
-function wireSubagentDelivery({ subagentDelivery, sessions, threads }: Services): void {
+function wireSubagentDelivery({ subagentDelivery, sessions, threads, turns }: Services): void {
   const parentOf = (sessionId: string) => sessions.findSession(sessionId)?.subagent?.parentSessionId ?? sessionId;
   threads.onRuntimeChanged((sessionId) => subagentDelivery.reevaluate(parentOf(sessionId)));
   threads.onTurnSettled((sessionId) => subagentDelivery.reevaluate(parentOf(sessionId)));
+  turns.onTurnStarted((sessionId, _auto, turn) => subagentDelivery.turnStarted(sessionId, turn.origin));
+  turns.onTurnStopped((sessionId) => subagentDelivery.turnStopped(sessionId));
 }
 
 function wireSubagents({ subagents, threads }: Services): void {
@@ -214,7 +216,7 @@ function wireServiceEvents(
     } catch (error) {
       console.warn(`[threads] ${event.type} for session ${sessionId} failed: ${error instanceof Error ? error.message : String(error)}`);
     }
-    if (event.type === "turn.interrupted") autoFollowUp.turnInterrupted(sessionId, event.reason);
+    if (event.type === "turn.interrupted") autoFollowUp.turnInterrupted(sessionId, event.reason, event.turnId);
     sourceControl.onThreadEvent(sessionId, event);
   });
   sessions.setTitleEmitter(() => {
@@ -357,7 +359,8 @@ export function createServices(stores: { sessionStore: SessionStore; settingsSto
     release: (kind) => sessions.releaseHarnessBinary(kind),
     recheck: () => harnessMonitor.check("recheck"),
     publish: (updates) => appTopic.setHarnessUpdates(updates),
-    shutdownReserved: () => sessions.isShutdownReserved()
+    shutdownReserved: () => sessions.isShutdownReserved(),
+    onUpdateEnded: () => subagentDelivery.reevaluate()
   });
   sessions.setTurnGate((kind) => harnessUpdates.turnGate(kind));
   const threads = new ThreadService({
@@ -370,6 +373,14 @@ export function createServices(stores: { sessionStore: SessionStore; settingsSto
   });
   const turns = new TurnService({ sessions, threads, git: gitTopic });
   sessions.setTurnStopper((sessionId) => turns.stop(sessionId));
+  const subagentDelivery = new SubagentDelivery({
+    sessions: () => sessions.listAllSessions(),
+    runtime: (sessionId) => threads.runtime(sessionId),
+    startTurn: (sessionId, prompt) => turns.start(sessionId, prompt, { auto: true, origin: "subagent-wake" }),
+    markDelivered: (childId, turnId) => sessions.markSubagentDelivered(childId, turnId),
+    postNotice: (sessionId, notice) => sessions.emitNotice(sessionId, notice.noticeId, notice.text, notice.severity),
+    shutdownReserved: () => sessions.isShutdownReserved()
+  });
   const autoFollowUp = new AutoFollowUpEngine({
     sessions: () => sessions.listAllSessions(),
     settings: () => sessions.getSettings(),
@@ -544,14 +555,7 @@ export function createServices(stores: { sessionStore: SessionStore; settingsSto
     workflowPreview,
     workflowRunner,
     sessionWatch: new SessionWatch({ getSession: (sessionId) => sessions.findSession(sessionId) }),
-    subagentDelivery: new SubagentDelivery({
-      sessions: () => sessions.listAllSessions(),
-      runtime: (sessionId) => threads.runtime(sessionId),
-      startTurn: (sessionId, prompt) => turns.start(sessionId, prompt, { auto: true, origin: "subagent-wake" }),
-      markDelivered: (childId, turnId) => sessions.markSubagentDelivered(childId, turnId),
-      postNotice: (sessionId, notice) => sessions.emitNotice(sessionId, notice.noticeId, notice.text, notice.severity),
-      shutdownReserved: () => sessions.isShutdownReserved()
-    }),
+    subagentDelivery,
     subagents: new SubagentsModel({
       children: (parentId) => sessions.listSubagents(parentId),
       parentOf: (sessionId) => sessions.findSession(sessionId)?.subagent?.parentSessionId ?? null,

@@ -1,4 +1,5 @@
 import type { DriverKind, EffortLevel, ModelOption, SessionMeta, SubagentIsolation } from "@cw-code/contracts";
+import { normalizeSubagentTitle } from "@cw-code/shared/subagents";
 import {
   agentTurnPermissionMode,
   assertAgentMayDispatch,
@@ -19,7 +20,6 @@ import type { CallContext, Router } from "../transport/Router.js";
 import { handle, knownSessionId, parseArgs, parseOptionalString, parseString, setComposer } from "./shared.js";
 
 const ISOLATIONS: readonly SubagentIsolation[] = ["shared", "worktree"];
-const TITLE_MAX = 60;
 
 export interface SubagentTargetModel {
   id: string;
@@ -50,14 +50,9 @@ function parseText(value: unknown, name: string): string {
   return text;
 }
 
-function subagentTitle(text: string): string {
-  const line = text.replace(/\s+/g, " ").trim();
-  return line.length > TITLE_MAX ? `${line.slice(0, TITLE_MAX - 1)}…` : line;
-}
-
 function titleFor(title: string | undefined, task: string): string {
-  const explicit = title === undefined ? "" : subagentTitle(title);
-  return explicit || subagentTitle(task.split("\n").find((line) => line.trim()) ?? task);
+  const explicit = title === undefined ? "" : normalizeSubagentTitle(title);
+  return explicit || normalizeSubagentTitle(task.split("\n").find((line) => line.trim()) ?? task);
 }
 
 function agentCaller(ctx: CallContext, method: string): string {

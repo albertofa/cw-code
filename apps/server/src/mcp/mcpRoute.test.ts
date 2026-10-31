@@ -8,12 +8,14 @@ import type {
   Project,
   SessionMeta,
   SettingsPatch,
-  SubagentIsolation
+  SubagentIsolation,
+  SubagentResult
 } from "@cw-code/contracts";
 import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
 import type { CallToolResult, McpServer, ServerContext } from "@modelcontextprotocol/server";
 import { SUBAGENT_DEPTH_REFUSAL } from "../agent/agentPolicy.js";
 import { AgentTokens } from "../agent/AgentTokens.js";
+import { MCP_IDLE_TIMEOUT_SECONDS } from "../agent/mcpTimeouts.js";
 import { SessionWatch } from "../agent/SessionWatch.js";
 import type { ServerApp } from "../app/ServerApp.js";
 import { registerSessionHandlers } from "../handlers/sessions.js";
@@ -25,7 +27,7 @@ import { Router, type CallContext } from "../transport/Router.js";
 import { OPENCODE_SESSION_HEADER } from "@cw-code/shared/protocol";
 import { SUBAGENT_TOOL_NAMES } from "@cw-code/shared/subagents";
 import { cwToolDefinitions, registerCwTools, SUBAGENT_INPUT_NEXT, SUBAGENT_RUNNING_NEXT, WAIT_MAX_MS } from "./cwTools.js";
-import { createMcpRoute, MCP_IDLE_TIMEOUT_SECONDS, MCP_SERVER_NAME } from "./mcpRoute.js";
+import { createMcpRoute, MCP_SERVER_NAME } from "./mcpRoute.js";
 
 const URL_MCP = "http://127.0.0.1:4100/mcp";
 const SESSION_TOOL_NAMES = [
@@ -159,7 +161,7 @@ function setStatus(id: string, status: SessionMeta["status"]): void {
   watch.sessionChanged({ ...session });
 }
 
-function completeTurn(id: string, resultText: string): void {
+function completeTurn(id: string, resultText: string, outcome: SubagentResult["outcome"] = "done"): void {
   const turnId = lastTurns.get(id) ?? "t";
   watch.turnSettled(id, {
     type: "turn.done",
@@ -173,7 +175,7 @@ function completeTurn(id: string, resultText: string): void {
     backgroundTasks: 0
   });
   const session = findSession(id);
-  if (session.subagent) session.subagent = { ...session.subagent, result: { turnId, outcome: "done", text: resultText, at: 3 }, delivered: false };
+  if (session.subagent) session.subagent = { ...session.subagent, result: { turnId, outcome, text: resultText, at: 3 }, delivered: false };
   setStatus(id, "idle");
 }
 
@@ -508,14 +510,28 @@ describe("mcp modern era", () => {
     expect(started[0]?.input.prefs?.permissionMode).toBe("manual");
     expect(findSession("s4")).toMatchObject({ title: "review the diff", permissionMode: "manual", subagent: { parentSessionId: "caller" } });
     completeTurn("s4", "looks good");
-    expect(JSON.parse(toolText(await running))).toEqual({ subagentId: "s4", status: "idle", resultText: "looks good", timedOut: false, next: null });
+    expect(JSON.parse(toolText(await running))).toEqual({
+      subagentId: "s4",
+      status: "idle",
+      outcome: "done",
+      resultText: "looks good",
+      timedOut: false,
+      next: null
+    });
     expect(delivered).toEqual([["s4", "turn-1"]]);
     expect(findSession("s4").subagent?.delivered).toBe(true);
   });
 
   test("subagent_run with wait false returns at once with the running hint", async () => {
     const result = await client.callTool({ name: "subagent_run", arguments: { driver: "claude", task: "long job", title: "Long job", wait: false } });
-    expect(JSON.parse(toolText(result))).toEqual({ subagentId: "s4", status: "working", resultText: null, timedOut: false, next: SUBAGENT_RUNNING_NEXT });
+    expect(JSON.parse(toolText(result))).toEqual({
+      subagentId: "s4",
+      status: "working",
+      outcome: null,
+      resultText: null,
+      timedOut: false,
+      next: SUBAGENT_RUNNING_NEXT
+    });
     expect(findSession("s4").title).toBe("Long job");
     expect(delivered).toEqual([]);
   });
@@ -528,6 +544,7 @@ describe("mcp modern era", () => {
     expect(JSON.parse(toolText(await running))).toEqual({
       subagentId: "s4",
       status: "input-required",
+      outcome: null,
       resultText: null,
       timedOut: false,
       next: SUBAGENT_INPUT_NEXT
@@ -542,8 +559,21 @@ describe("mcp modern era", () => {
     const pending = Symbol("pending");
     expect(await Promise.race([waiting, new Promise((resolve) => setTimeout(() => resolve(pending), 50))])).toBe(pending);
     completeTurn("kid", "done it");
-    expect(JSON.parse(toolText(await waiting))).toEqual({ status: "idle", resultText: "done it", timedOut: false, next: null });
+    expect(JSON.parse(toolText(await waiting))).toEqual({ status: "idle", outcome: "done", resultText: "done it", timedOut: false, next: null });
     expect(delivered).toEqual([["kid", "turn-9"]]);
+  });
+
+  test("subagent_wait and subagent_send report an error or interrupted outcome", async () => {
+    child("kid", "caller", "working");
+    lastTurns.set("kid", "turn-9");
+    const waiting = client.callTool({ name: "subagent_wait", arguments: { subagentId: "kid", timeoutMs: 5_000 } });
+    completeTurn("kid", "boom", "error");
+    expect(JSON.parse(toolText(await waiting))).toMatchObject({ status: "idle", outcome: "error", resultText: "boom" });
+
+    const sending = client.callTool({ name: "subagent_send", arguments: { subagentId: "kid", prompt: "again", timeoutMs: 5_000 } });
+    await until(() => started.length === 1);
+    completeTurn("kid", "", "interrupted");
+    expect(JSON.parse(toolText(await sending))).toMatchObject({ subagentId: "kid", status: "idle", outcome: "interrupted" });
   });
 
   test("subagent tools answer the same way for another session's subagent and an unknown id", async () => {

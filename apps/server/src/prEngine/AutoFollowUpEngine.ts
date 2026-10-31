@@ -108,6 +108,7 @@ export class AutoFollowUpEngine {
       this.reevaluate();
       return;
     }
+    this.wakeTurns.delete(sessionId);
     this.deps.updateAutoFollowUp(sessionId, (current) => {
       if (auto) return { ...current, turns: (current?.turns ?? 0) + 1 };
       return current?.paused === "user" ? { turns: 0, paused: "user" } : undefined;
@@ -116,11 +117,14 @@ export class AutoFollowUpEngine {
   }
 
   turnStopped(sessionId: string): void {
+    if (this.wakeTurns.has(sessionId)) return;
     this.pause(sessionId, "interrupted");
   }
 
-  turnInterrupted(sessionId: string, reason: "shutdown" | undefined): void {
-    if (reason !== "shutdown") this.pause(sessionId, "interrupted");
+  turnInterrupted(sessionId: string, reason: "shutdown" | undefined, turnId?: string): void {
+    if (reason === "shutdown") return;
+    if (turnId !== undefined && this.wakeTurns.get(sessionId) === turnId) return;
+    this.pause(sessionId, "interrupted");
   }
 
   turnSettled(sessionId: string, event: SettledTurnEvent): void {

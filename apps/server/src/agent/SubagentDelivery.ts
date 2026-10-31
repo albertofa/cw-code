@@ -2,6 +2,7 @@ import type { SessionMeta, SubagentResult } from "@cw-code/contracts";
 import { buildWakePrompt, type WakeEntry } from "@cw-code/shared/subagents";
 import { SHUTDOWN_RESERVED_MESSAGE } from "../shutdown/shutdownReservation.js";
 import type { SessionRuntime, ThreadNotice } from "../threads/ThreadService.js";
+import type { TurnOrigin } from "../threads/TurnService.js";
 
 export const SUBAGENT_DELIVERY_NOTICE_ID = "subagent-delivery";
 
@@ -38,6 +39,7 @@ function wakeEntry({ child, result }: PendingResult): WakeEntry {
 export class SubagentDelivery {
   private readonly starting = new Set<string>();
   private readonly scoped = new Set<string>();
+  private readonly held = new Set<string>();
   private everything = false;
   private scheduled = false;
   private posting = false;
@@ -65,6 +67,14 @@ export class SubagentDelivery {
     });
   }
 
+  turnStopped(sessionId: string): void {
+    if (this.deps.sessions().some((session) => session.id === sessionId && !session.subagent)) this.held.add(sessionId);
+  }
+
+  turnStarted(sessionId: string, origin: TurnOrigin | undefined): void {
+    if (origin !== "subagent-wake") this.held.delete(sessionId);
+  }
+
   dispose(): void {
     this.disposed = true;
   }
@@ -78,7 +88,7 @@ export class SubagentDelivery {
     if (this.deps.shutdownReserved()) return;
     const sessions = this.deps.sessions();
     for (const [parentId, pending] of this.undelivered(sessions, scope)) {
-      if (this.starting.has(parentId)) continue;
+      if (this.starting.has(parentId) || this.held.has(parentId)) continue;
       if (!pending.some(({ result }) => result.outcome !== "interrupted")) continue;
       const parent = sessions.find((session) => session.id === parentId);
       if (!parent || !this.canWake(parent)) continue;

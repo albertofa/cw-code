@@ -374,6 +374,25 @@ describe("AutoFollowUpEngine pause rules", () => {
     expect(h.autoFollowUp()).toEqual({ turns: 0, paused: "error" });
   });
 
+  it("does not pause when the user stops a subagent wake turn", async () => {
+    const h = harness({ enabled: false });
+    h.engine.turnStarted(h.sessionId, true, { turnId: "w1", origin: "subagent-wake" });
+    h.engine.turnInterrupted(h.sessionId, undefined, "w1");
+    h.engine.turnStopped(h.sessionId);
+    expect(h.autoFollowUp()).toBeUndefined();
+  });
+
+  it("pauses on a stop once a real turn follows a stopped wake turn", async () => {
+    const h = harness({ enabled: false });
+    h.engine.turnStarted(h.sessionId, true, { turnId: "w1", origin: "subagent-wake" });
+    h.engine.turnInterrupted(h.sessionId, undefined, "w1");
+    h.engine.turnStopped(h.sessionId);
+    h.engine.turnStarted(h.sessionId, false, { turnId: "t2" });
+    h.engine.turnInterrupted(h.sessionId, undefined, "t2");
+    h.engine.turnStopped(h.sessionId);
+    expect(h.autoFollowUp()).toEqual({ turns: 0, paused: "interrupted" });
+  });
+
   it("persists counters and pauses across a store reload", async () => {
     const h = harness({ enabled: false });
     h.engine.turnStarted(h.sessionId, true);

@@ -1,10 +1,11 @@
 import { createMcpHandler, McpServer, type AuthInfo } from "@modelcontextprotocol/server";
 import { OPENCODE_SESSION_HEADER } from "@cw-code/shared/protocol";
 import type { AgentTokens } from "../agent/AgentTokens.js";
+import { MCP_IDLE_TIMEOUT_SECONDS } from "../agent/mcpTimeouts.js";
 import type { SessionWatch } from "../agent/SessionWatch.js";
 import { bearerToken, reply } from "../transport/httpRoutes.js";
 import type { Router } from "../transport/Router.js";
-import { registerCwTools, WAIT_MAX_MS, type CwToolsSessions } from "./cwTools.js";
+import { registerCwTools, type CwToolsSessions } from "./cwTools.js";
 
 export const MCP_SERVER_NAME = "cw";
 
@@ -28,9 +29,6 @@ function callerSessionId(authInfo: AuthInfo | undefined): string {
 function hasStaticToolList(authInfo: AuthInfo | undefined): boolean {
   return authInfo?.extra?.staticToolList === true;
 }
-
-const BUN_MAX_IDLE_TIMEOUT_SECONDS = 255;
-export const MCP_IDLE_TIMEOUT_SECONDS = Math.min(BUN_MAX_IDLE_TIMEOUT_SECONDS, Math.ceil(WAIT_MAX_MS / 1000) + 15);
 
 function agentSessionOf(req: Request, token: string, deps: McpRouteDeps): string | null {
   const opencodeSessionId = req.headers.get(OPENCODE_SESSION_HEADER);

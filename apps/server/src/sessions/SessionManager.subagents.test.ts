@@ -9,7 +9,7 @@ import { waitFor } from "../../tests/testing.js";
 import { ThreadService } from "../threads/ThreadService.js";
 import { TurnService } from "../threads/TurnService.js";
 import { TopicHub } from "../topics/TopicHub.js";
-import { SessionManager, type SessionManagerOptions } from "./SessionManager.js";
+import { SessionManager, SUBAGENT_RESULT_TEXT_MAX, type SessionManagerOptions } from "./SessionManager.js";
 import { SessionStore } from "./SessionStore.js";
 import { NEW_SESSION_TITLE } from "./sessionRestore.js";
 import { sameWorktreePath } from "./worktreeCleanup.js";
@@ -563,6 +563,20 @@ describe("subagent results", () => {
     expect(afterThird?.result?.outcome).toBe("interrupted");
     expect(afterThird?.result?.text).toBeNull();
     expect(afterThird?.delivered).toBe(false);
+  });
+
+  it("keeps the head of an oversized result and marks the cut", async () => {
+    const { manager, fake, project } = makeSandbox();
+    const parent = await manager.createSession(project.id, "claude", { mode: "current" });
+    const child = await manager.createSubagentSession(parent.id, "claude", { title: "Child", isolation: "shared" });
+
+    const exact = await manager.startTurn(child.id, "exact");
+    fake.complete(exact, "x".repeat(SUBAGENT_RESULT_TEXT_MAX));
+    expect(manager.listSubagents(parent.id)[0]?.subagent?.result?.text).toBe("x".repeat(SUBAGENT_RESULT_TEXT_MAX));
+
+    const big = await manager.startTurn(child.id, "big");
+    fake.complete(big, `${"a".repeat(SUBAGENT_RESULT_TEXT_MAX)}${"b".repeat(500)}`);
+    expect(manager.listSubagents(parent.id)[0]?.subagent?.result?.text).toBe(`${"a".repeat(SUBAGENT_RESULT_TEXT_MAX)}\n…[truncated 500 characters]`);
   });
 
   it("clears the previous result and delivery flag when the child starts another turn", async () => {

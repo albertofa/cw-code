@@ -169,6 +169,11 @@ export interface BackgroundWork {
 
 const DRIVER_KINDS: DriverKind[] = ["claude", "opencode", "codex"];
 const DRIVER_SHUTDOWN_GRACE_MS = 1000;
+export const SUBAGENT_RESULT_TEXT_MAX = 32_000;
+
+function truncatedResultText(text: string): string {
+  return `${text.slice(0, SUBAGENT_RESULT_TEXT_MAX)}\n…[truncated ${text.length - SUBAGENT_RESULT_TEXT_MAX} characters]`;
+}
 
 interface TitleTurn {
   sessionId: string;
@@ -931,7 +936,8 @@ export class SessionManager {
   private recordSubagentResult(sessionId: string, result: Omit<SubagentResult, "at">): void {
     const link = this.store.getSession(sessionId)?.subagent;
     if (!link) return;
-    this.store.updateSession(sessionId, { subagent: { ...link, result: { ...result, at: Date.now() }, delivered: false } });
+    const text = result.text !== null && result.text.length > SUBAGENT_RESULT_TEXT_MAX ? truncatedResultText(result.text) : result.text;
+    this.store.updateSession(sessionId, { subagent: { ...link, result: { ...result, text, at: Date.now() }, delivered: false } });
   }
 
   private async buildSession(projectId: string, driver: DriverKind, options: CreateSessionOptions): Promise<SessionMeta> {

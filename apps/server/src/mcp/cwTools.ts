@@ -1,5 +1,6 @@
-import type { ComposerPrefs, PermissionMode, Project, SessionMeta, SessionStatus, SubagentSummary } from "@cw-code/contracts";
+import type { ComposerPrefs, PermissionMode, Project, SessionMeta, SessionStatus, SubagentResult, SubagentSummary } from "@cw-code/contracts";
 import type { CallToolResult, McpServer, ServerContext } from "@modelcontextprotocol/server";
+import { DRIVER_KINDS } from "@cw-code/shared/driverKinds";
 import { z } from "zod";
 import { agentTurnPermissionMode, assertAgentSessionTarget, SAFE_MODEL_ID } from "../agent/agentPolicy.js";
 import { EFFORT_LEVELS } from "../agent/modelSearch.js";
@@ -28,11 +29,11 @@ export const SUBAGENT_RUNNING_NEXT =
 export const SUBAGENT_INPUT_NEXT =
   "The subagent is waiting for the user to answer an approval or question in cw-code. Tell the user, then end your turn; cw-code sends its result to you as a new turn when it finishes.";
 
-const DRIVERS = ["claude", "codex", "opencode"] as const;
 const HIDDEN_STATUSES: ReadonlySet<SessionMeta["status"]> = new Set(["resolved", "archived"]);
 const READ_ONLY = { readOnlyHint: true } as const;
 const WAIT_RANGE = `default ${WAIT_DEFAULT_MS}, ${WAIT_MIN_MS}-${WAIT_MAX_MS}`;
-const SUBAGENT_RETURN = "Returns {subagentId, status, resultText, timedOut, next}; when next is set, follow it.";
+const SUBAGENT_RETURN =
+  "Returns {subagentId, status, outcome, resultText, timedOut, next}; outcome is done, error or interrupted once the turn settled, otherwise null; when next is set, follow it.";
 
 const CW_TOOL_SPECS = {
   projects_list: { description: "List the cw-code projects (id, name, rootPath).", inputSchema: z.object({}), annotations: READ_ONLY },
@@ -52,7 +53,7 @@ const CW_TOOL_SPECS = {
       "Create a session in a project and start its first turn with prompt. permissionMode is capped at your own session's mode. Returns {sessionId, turnId, permissionMode}. Use session_wait to wait for it.",
     inputSchema: z.object({
       projectId: z.string(),
-      driver: z.enum(DRIVERS),
+      driver: z.enum(DRIVER_KINDS),
       prompt: z.string().min(1),
       model: z.string().regex(SAFE_MODEL_ID, "not a valid model id").optional(),
       effort: z.enum(EFFORT_LEVELS).optional(),
@@ -79,7 +80,7 @@ const CW_TOOL_SPECS = {
     inputSchema: z.object({
       days: z.number().int().min(1).max(366),
       metric: z.enum(["all", "fresh"]),
-      driver: z.enum([...DRIVERS, "all"]),
+      driver: z.enum([...DRIVER_KINDS, "all"]),
       projectId: z.string()
     }),
     annotations: READ_ONLY
@@ -92,7 +93,7 @@ const CW_TOOL_SPECS = {
   subagent_run: {
     description: `Dispatch a subagent: a hidden cw-code session on driver (claude, codex or opencode) that runs task and reports back only to you. Use it for work on another harness or, with isolation 'worktree', in its own checkout ('shared', the default, works in your checkout). If the user named a model in plain text, call subagent_targets with that text first and pass the returned id as model. permissionMode is capped at your own. With wait (default true) blocks until the subagent finishes, needs the user, or timeoutMs passes (${WAIT_RANGE}); for long tasks pass wait: false and end your turn. ${SUBAGENT_RETURN}`,
     inputSchema: z.object({
-      driver: z.enum(DRIVERS),
+      driver: z.enum(DRIVER_KINDS),
       task: z.string().min(1),
       title: z.string().optional(),
       model: z.string().regex(SAFE_MODEL_ID, "not a valid model id").optional(),
@@ -104,7 +105,7 @@ const CW_TOOL_SPECS = {
     })
   },
   subagent_wait: {
-    description: `Block until one of your subagents stops working, needs the user (status 'input-required') or timeoutMs passes (${WAIT_RANGE}). Do not call it in a loop: if it times out, end your turn and cw-code sends the result as a new turn. Returns {status, resultText, timedOut, next}; when next is set, follow it.`,
+    description: `Block until one of your subagents stops working, needs the user (status 'input-required') or timeoutMs passes (${WAIT_RANGE}). Do not call it in a loop: if it times out, end your turn and cw-code sends the result as a new turn. Returns {status, outcome, resultText, timedOut, next}: outcome is done, error or interrupted once the turn settled, otherwise null; when next is set, follow it.`,
     inputSchema: z.object({ subagentId: z.string(), timeoutMs: z.number().int().optional() }),
     annotations: READ_ONLY
   },
@@ -129,7 +130,7 @@ const CW_TOOL_SPECS = {
   subagent_targets: {
     description:
       "List the harnesses a subagent can run on, with their models: [{driver, installed, defaultModel, models: [{id, label, variants, efforts}], effort, error}]. When the user names a model in plain text (e.g. 'opus 4.5', 'gpt 5 codex high', 'kimi'), pass that text as query: matching ids come first, a harness name in the query narrows the harnesses and an effort word comes back as effort. Use the returned id as subagent_run's model.",
-    inputSchema: z.object({ driver: z.enum(DRIVERS).optional(), query: z.string().optional() }),
+    inputSchema: z.object({ driver: z.enum(DRIVER_KINDS).optional(), query: z.string().optional() }),
     annotations: READ_ONLY
   }
 };
@@ -226,6 +227,7 @@ interface SubagentTurn {
 
 interface SubagentReport {
   status: SessionStatus;
+  outcome: SubagentResult["outcome"] | null;
   resultText: string | null;
   timedOut: boolean;
   next: string | null;
@@ -334,13 +336,15 @@ function registerSubagentTools(server: McpServer, deps: CwToolsDeps, call: Route
   const report = async (turn: SubagentTurn, timedOut: boolean, signal: AbortSignal): Promise<SubagentReport> => {
     const child = await ownSubagent(turn.subagentId);
     if (child.status === "input-required" || child.pendingRequests > 0) {
-      return { status: "input-required", resultText: null, timedOut, next: SUBAGENT_INPUT_NEXT };
+      return { status: "input-required", outcome: null, resultText: null, timedOut, next: SUBAGENT_INPUT_NEXT };
     }
-    if (child.status === "working") return { status: child.status, resultText: null, timedOut, next: SUBAGENT_RUNNING_NEXT };
+    if (child.status === "working") return { status: child.status, outcome: null, resultText: null, timedOut, next: SUBAGENT_RUNNING_NEXT };
     const result = child.result;
-    if (!result || (turn.turnId !== undefined && result.turnId !== turn.turnId)) return { status: child.status, resultText: null, timedOut, next: null };
+    if (!result || (turn.turnId !== undefined && result.turnId !== turn.turnId)) {
+      return { status: child.status, outcome: null, resultText: null, timedOut, next: null };
+    }
     if (!signal.aborted) await call("subagents.ack", { subagentId: turn.subagentId, turnId: result.turnId });
-    return { status: child.status, resultText: result.text, timedOut, next: null };
+    return { status: child.status, outcome: result.outcome, resultText: result.text, timedOut, next: null };
   };
 
   const settle = async (tool: string, turn: SubagentTurn, wait: boolean, timeoutMs: number | undefined, request: ServerContext): Promise<SubagentReport> => {

@@ -1,13 +1,15 @@
 import { mkdirSync, renameSync } from "node:fs";
 import { dirname } from "node:path";
 import type { ComposerDraft, DriverKind, LegacyPreferences, SidebarOrderPrefs } from "@cw-code/contracts";
+import { DRIVER_KINDS } from "@cw-code/shared/driverKinds";
 import { readBytesIfExists, writeFileAtomic } from "../storage/atomicFile.js";
+
+export { DRIVER_KINDS };
 
 export const PREFERENCES_VERSION = 1;
 export const RECENT_MODELS_MAX = 3;
 export const MAX_DRAFTS = 50;
 export const DRAFT_FLUSH_MS = 1_000;
-export const DRIVER_KINDS: readonly DriverKind[] = ["claude", "opencode", "codex"];
 
 const CONTEXT_SUFFIX = /\[1m\]$/i;
 const BYTE_ORDER_MARK = /^﻿/;
