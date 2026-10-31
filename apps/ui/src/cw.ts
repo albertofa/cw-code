@@ -667,6 +667,7 @@ export interface CwApi {
   renamePath(sessionId: string, from: string, to: string): Promise<void>;
   trashPath(sessionId: string, path: string): Promise<void>;
   workspaceRoot(sessionId: string): Promise<string>;
+  resolveFilePath(sessionId: string, path: string): Promise<string>;
   listWorkspaceFiles(sessionId: string): Promise<string[]>;
   gitBaseline(sessionId: string, path: string): Promise<GitBaseline>;
   searchText(sessionId: string, query: TextSearchQuery): Promise<TextSearchResult>;

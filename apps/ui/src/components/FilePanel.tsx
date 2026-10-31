@@ -24,7 +24,7 @@ import { useDocumentVisible } from "../server/topics.js";
 import { useServerHost } from "../server/serverHost.js";
 import { useConfirm } from "./ConfirmDialog.js";
 import { ipcErrorMessage } from "./ipcError.js";
-import { isAbsolutePath } from "./Markdown.js";
+import { isAbsolutePath, resolvePreviewPaths } from "./Markdown.js";
 import { EditorGroup, isImagePath, type PathReveal, type TabView } from "./files/EditorGroup.js";
 import { FileContextMenu, type MenuEntry } from "./files/FileContextMenu.js";
 import { FileExplorer, type InlineEdit } from "./files/FileExplorer.js";
@@ -851,11 +851,14 @@ function FileWorkspace({ sessionId }: { sessionId: string }) {
   useEffect(() => {
     if (!revealRequest || revealRequest.sessionId !== sessionId || revealRequest.nonce === handledReveal.current) return;
     handledReveal.current = revealRequest.nonce;
-    const { path, line } = revealRequest;
+    const { path: requested, line } = revealRequest;
     clearRevealRequest(revealRequest.nonce);
     hideSideForReveal();
     void (async () => {
+      let path = requested;
       try {
+        const [root, absolute] = await Promise.all([workspaceRoot(), window.cw.resolveFilePath(sessionId, requested)]);
+        path = resolvePreviewPaths(root, absolute).rel;
         const info = await window.cw.readFileInfo(sessionId, path);
         if (!aliveRef.current) return;
         if (info.kind !== "missing") {
@@ -875,7 +878,7 @@ function FileWorkspace({ sessionId }: { sessionId: string }) {
         if (aliveRef.current) showNotice(`Couldn’t open ${path}: ${ipcErrorMessage(err)}`, "error");
       }
     })();
-  }, [revealRequest, sessionId, openFile, clearRevealRequest, showNotice, hideSideForReveal]);
+  }, [revealRequest, sessionId, openFile, clearRevealRequest, showNotice, hideSideForReveal, workspaceRoot]);
 
   useEffect(() => {
     if (revealHidden && tabsState.tabs.length === 0) showSide();

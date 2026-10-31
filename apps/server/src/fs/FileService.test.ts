@@ -18,7 +18,8 @@ import {
   assertInside,
   imageExtMime,
   pasteImageExt,
-  pasteImageName
+  pasteImageName,
+  resolveFileTarget
 } from "./FileService.js";
 import { attachmentsDir } from "../paths/appPaths.js";
 
@@ -211,6 +212,31 @@ describe("FileService file operations", () => {
 
     it("reports a missing absolute file as missing", async () => {
       expect(await svc.readFileInfo(makeRoot(), join(makeRoot(), "gone.ts"))).toEqual({ kind: "missing" });
+    });
+
+    it("expands a leading environment variable before resolving", () => {
+      const root = makeRoot();
+      const dir = makeRoot();
+      const expansion = { env: { SCRATCH: dir, SHARE: "//server/share", UP: ".." }, homeDir: dir };
+      expect(resolveFileTarget(root, "%SCRATCH%/plan.md", expansion)).toBe(join(dir, "plan.md"));
+      expect(resolveFileTarget(root, "$env:SCRATCH/plan.md", expansion)).toBe(join(dir, "plan.md"));
+      expect(resolveFileTarget(root, "${SCRATCH:-/tmp}/plan.md", expansion)).toBe(join(dir, "plan.md"));
+      expect(resolveFileTarget(root, "~/plan.md", expansion)).toBe(join(dir, "plan.md"));
+      expect(resolveFileTarget(root, "$NOPE/plan.md", expansion)).toBe(join(root, "$NOPE", "plan.md"));
+      expect(() => resolveFileTarget(root, "$SHARE/x.ts", expansion)).toThrow(/escapes project root/);
+      expect(() => resolveFileTarget(root, "$UP/x.ts", expansion)).toThrow(/escapes project root/);
+    });
+
+    it("reads a file addressed through an environment variable", async () => {
+      const dir = makeRoot();
+      writeFileSync(join(dir, "plan.md"), "# plan", "utf8");
+      process.env.CW_TEST_SCRATCH = dir;
+      try {
+        expect(await readText(makeRoot(), "%CW_TEST_SCRATCH%/plan.md")).toMatchObject({ content: "# plan" });
+        expect(await readText(makeRoot(), "${CW_TEST_SCRATCH}/plan.md")).toMatchObject({ content: "# plan" });
+      } finally {
+        delete process.env.CW_TEST_SCRATCH;
+      }
     });
 
     it("still rejects relative escapes and network paths", async () => {
