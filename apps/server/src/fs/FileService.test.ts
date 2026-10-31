@@ -218,7 +218,7 @@ describe("FileService file operations", () => {
       const root = makeRoot();
       const dir = makeRoot();
       const expansion = { env: { SCRATCH: dir, SHARE: "//server/share", UP: ".." }, homeDir: dir };
-      expect(resolveFileTarget(root, "%SCRATCH%\\plan.md", expansion)).toBe(join(dir, "plan.md"));
+      expect(resolveFileTarget(root, "%SCRATCH%/plan.md", expansion)).toBe(join(dir, "plan.md"));
       expect(resolveFileTarget(root, "$env:SCRATCH/plan.md", expansion)).toBe(join(dir, "plan.md"));
       expect(resolveFileTarget(root, "${SCRATCH:-/tmp}/plan.md", expansion)).toBe(join(dir, "plan.md"));
       expect(resolveFileTarget(root, "~/plan.md", expansion)).toBe(join(dir, "plan.md"));
