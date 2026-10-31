@@ -4,8 +4,9 @@ import { existsSync, mkdtempSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
-import type { CliDriver, HistoryMessage, SessionMeta, ThreadEvent, TurnHandle } from "@cw-code/contracts";
-import { SessionManager } from "./SessionManager.js";
+import type { CliDriver, GitStatus, HistoryMessage, PrRef, SessionMeta, SubagentLink, ThreadEvent, TurnHandle } from "@cw-code/contracts";
+import { waitFor } from "../../tests/testing.js";
+import { SessionManager, type SessionManagerOptions } from "./SessionManager.js";
 import { SessionStore } from "./SessionStore.js";
 import { NEW_SESSION_TITLE } from "./sessionRestore.js";
 import { sameWorktreePath } from "./worktreeCleanup.js";
@@ -49,7 +50,7 @@ function git(repository: string, ...args: string[]): string {
 
 const managers: SessionManager[] = [];
 
-function makeSandbox() {
+function makeSandbox(options: Pick<SessionManagerOptions, "prState"> = {}) {
   const sandbox = mkdtempSync(join(tmpdir(), "cw-subagents-"));
   const repository = join(sandbox, "repo");
   execFileSync("git", ["init", "-b", "main", repository]);
@@ -58,7 +59,7 @@ function makeSandbox() {
   git(repository, "add", "README.md");
   git(repository, "commit", "-m", "initial");
   const dbPath = join(sandbox, "data", "test.db");
-  const manager = new SessionManager({ dbPath, settingsPath: join(sandbox, "data", "settings.json"), worktreesRoot: join(sandbox, "worktrees") });
+  const manager = new SessionManager({ dbPath, settingsPath: join(sandbox, "data", "settings.json"), worktreesRoot: join(sandbox, "worktrees"), ...options });
   managers.push(manager);
   const fake = new FakeDriver((event) => (manager as unknown as { routeEvent(e: ThreadEvent): void }).routeEvent(event));
   (manager as unknown as { drivers: Record<string, CliDriver> }).drivers = { claude: fake, opencode: fake, codex: fake };
@@ -70,6 +71,53 @@ function makeSandbox() {
 
 function localBranches(repository: string): string[] {
   return git(repository, "branch", "--format=%(refname:short)").split("\n").filter(Boolean).sort();
+}
+
+const widgets: PrRef = { host: "github.com", owner: "acme", repo: "widgets", number: 42 };
+
+function statusOf(overrides: Partial<GitStatus>): GitStatus {
+  return {
+    available: true,
+    branch: "main",
+    dirtyCount: 0,
+    addedLines: 0,
+    deletedLines: 0,
+    stagedCount: 0,
+    ahead: 0,
+    behind: 0,
+    baseRef: "main",
+    baseAhead: 0,
+    baseBehind: 0,
+    isWorktree: true,
+    worktreeName: "wt",
+    worktreePath: "",
+    repositoryRoot: "",
+    prNumber: widgets.number,
+    pullRequest: null,
+    githubError: null,
+    githubHost: "github.com",
+    githubAccount: null,
+    githubAccountSource: "none",
+    clean: true,
+    ...overrides
+  };
+}
+
+function openPullRequest(branch: string): NonNullable<GitStatus["pullRequest"]> {
+  return {
+    number: widgets.number,
+    title: "Feature",
+    url: "https://github.com/acme/widgets/pull/42",
+    state: "OPEN",
+    isDraft: false,
+    reviewDecision: null,
+    mergeStateStatus: null,
+    headRefName: branch,
+    baseRefName: "main",
+    headRefOid: "",
+    updatedAt: 0,
+    checks: { total: 0, passed: 0, failed: 0, pending: 0 }
+  };
 }
 
 afterEach(() => {
@@ -140,15 +188,73 @@ describe("createSubagentSession", () => {
     await expect(manager.createSubagentSession(parent.id, "claude", { title: "x", isolation: "shared" })).rejects.toThrow("resolved");
   });
 
-  it("refuses to recreate a missing shared worktree instead of branching", async () => {
+  it("recovers a missing shared worktree through the parent without a new branch", async () => {
     const { manager, repository, project } = makeSandbox();
     const parent = await manager.createSession(project.id, "claude");
     const child = await manager.createSubagentSession(parent.id, "claude", { title: "Child", isolation: "shared" });
     git(repository, "worktree", "remove", "--force", parent.worktreePath ?? "");
     const branchesBefore = localBranches(repository);
 
+    const path = await manager.ensureWorktree(child.id);
+
+    expect(sameWorktreePath(path, parent.worktreePath ?? "")).toBe(true);
+    expect(existsSync(path)).toBe(true);
+    expect(localBranches(repository)).toEqual(branchesBefore);
+  });
+
+  it("refuses to recreate a missing shared worktree the parent no longer uses", async () => {
+    const { manager, repository, project, store } = makeSandbox();
+    const parent = await manager.createSession(project.id, "claude");
+    const child = await manager.createSubagentSession(parent.id, "claude", { title: "Child", isolation: "shared" });
+    git(repository, "worktree", "remove", "--force", parent.worktreePath ?? "");
+    store.updateSession(parent.id, { worktreePath: undefined });
+    const branchesBefore = localBranches(repository);
+
     await expect(manager.ensureWorktree(child.id)).rejects.toThrow("shared with the parent");
     expect(localBranches(repository)).toEqual(branchesBefore);
+  });
+
+  it("never takes the parent's branch or PR from a git status sync", async () => {
+    const { manager, project, store } = makeSandbox();
+    const parent = await manager.createSession(project.id, "claude");
+    const child = await manager.createSubagentSession(parent.id, "claude", { title: "Child", isolation: "shared" });
+    const parentStatus = statusOf({
+      branch: parent.branch ?? "",
+      worktreePath: parent.worktreePath ?? "",
+      pullRequest: openPullRequest(parent.branch ?? "")
+    });
+
+    expect(manager.syncFromStatus(child.id, parentStatus)).toBeNull();
+    expect(store.getSession(child.id)?.branch).toBeUndefined();
+    expect(store.getSession(child.id)?.prs).toBeUndefined();
+    expect(manager.syncFromStatus(parent.id, parentStatus)?.prs?.length).toBe(1);
+  });
+
+  it("starts an isolated child's diffs from the parent's branch and keeps title-based branch renaming", async () => {
+    const { manager, fake, project, store } = makeSandbox();
+    const parent = await manager.createSession(project.id, "claude");
+    const child = await manager.createSubagentSession(parent.id, "claude", { title: "Fix the flaky login test", isolation: "worktree" });
+    const originalBranch = child.branch;
+
+    expect(child.baseRef).toBe(parent.branch);
+    fake.complete(await manager.startTurn(child.id, "go"), "done");
+
+    await waitFor(() => expect(store.getSession(child.id)?.branch).not.toBe(originalBranch));
+  });
+
+  it("does not let a shared child with a linked PR enter babysit", async () => {
+    const { manager, fake, project, store } = makeSandbox({ prState: () => "OPEN" });
+    const link = { ref: widgets, origin: "workflow" as const, workflowId: "babysit", lastSeenSha: "old", lastSeenAt: 0 };
+    const parent = await manager.createSession(project.id, "claude", { mode: "current" });
+    const child = await manager.createSubagentSession(parent.id, "claude", { title: "Child", isolation: "shared" });
+    const control = await manager.createSession(project.id, "claude", { mode: "current" });
+    for (const id of [child.id, control.id]) manager.linkPr(id, link);
+
+    fake.complete(await manager.startTurn(child.id, "go"), "done");
+    fake.complete(await manager.startTurn(control.id, "go"), "done");
+
+    expect(store.getSession(control.id)?.status).toBe("babysit");
+    expect(store.getSession(child.id)?.status).toBe("done");
   });
 
   it("does not let a live child block the parent's branch rename", async () => {
@@ -205,17 +311,49 @@ describe("subagent sessions in turns and sweeps", () => {
 
     expect(resolved).toEqual([idleControl.id]);
     expect(expired).toEqual([holdingControl.id]);
+    expect(manager.expireHoldingSessions([holdingChild.id])).toEqual([]);
     expect(store.getSession(idleChild.id)?.status).toBe("idle");
     expect(store.getSession(holdingChild.id)?.status).toBe("holding");
   });
 
-  it("does not turn a titled child without a cursor into an import claim", async () => {
+  it("skips children in the finished-PR sweep", async () => {
+    const { manager, project, store } = makeSandbox({ prState: () => "MERGED" });
+    manager.setSettings({ prFinishedSessionStatus: "idle" });
+    const link = { ref: widgets, origin: "workflow" as const, workflowId: "babysit", lastSeenSha: "old", lastSeenAt: 0 };
+    const parent = await manager.createSession(project.id, "claude", { mode: "current" });
+    const child = await manager.createSubagentSession(parent.id, "claude", { title: "Child", isolation: "shared" });
+    const control = await manager.createSession(project.id, "claude", { mode: "current" });
+    for (const id of [child.id, control.id]) {
+      manager.linkPr(id, link);
+      store.updateSession(id, { status: "holding" }, "turn-seen");
+    }
+
+    expect(await manager.settleFinishedPrSessions()).toEqual([control.id]);
+    expect(store.getSession(child.id)?.status).toBe("holding");
+  });
+
+  it("does not turn a titled child that never ran into an import claim", async () => {
     const { manager, project } = makeSandbox();
     const parent = await manager.createSession(project.id, "claude", { mode: "current" });
     await manager.createSubagentSession(parent.id, "claude", { title: "Never ran", isolation: "shared" });
     const claims = (manager as unknown as { pendingImportClaims(): unknown[] }).pendingImportClaims();
 
     expect(claims).toEqual([]);
+  });
+
+  it("keeps import claims for a child that has a turn in flight or ran without a cursor", async () => {
+    const { manager, project, repository, store } = makeSandbox();
+    const parent = await manager.createSession(project.id, "claude", { mode: "current" });
+    const child = await manager.createSubagentSession(parent.id, "claude", { title: "Child", isolation: "shared" });
+    const claims = () => (manager as unknown as { pendingImportClaims(): Array<{ driver: string; root: string; since: number }> }).pendingImportClaims();
+
+    const turnId = await manager.startTurn(child.id, "work");
+    expect(claims().map((claim) => claim.driver)).toEqual(["claude"]);
+
+    manager.interrupt(turnId);
+    const snapshot = store.getSession(child.id)?.lastTurnSnapshot;
+    expect(snapshot).toBeDefined();
+    expect(claims()).toEqual([{ driver: "claude", root: repository, since: snapshot?.capturedAt ?? 0 }]);
   });
 });
 
@@ -277,5 +415,36 @@ describe("subagent results", () => {
     expect(reloaded?.subagent?.result?.outcome).toBe("interrupted");
     expect(reloaded?.subagent?.result?.text).toBeNull();
     expect(reloaded?.subagent?.delivered).toBe(false);
+  });
+
+  it("uses a synthetic restart turn id when the working turn already settled", async () => {
+    const { manager, fake, project, store, dbPath } = makeSandbox();
+    const parent = await manager.createSession(project.id, "claude", { mode: "current" });
+    const child = await manager.createSubagentSession(parent.id, "claude", { title: "Child", isolation: "shared" });
+    const settledTurn = await manager.startTurn(child.id, "task");
+    fake.complete(settledTurn, "answer");
+    manager.markSubagentDelivered(child.id, settledTurn);
+    store.updateSession(child.id, { status: "working" }, "turn-start");
+
+    const result = new SessionStore(dbPath).getSession(child.id)?.subagent?.result;
+
+    expect(result?.outcome).toBe("interrupted");
+    expect(result?.turnId).not.toBe(settledTurn);
+    expect(result?.turnId.startsWith("restart:")).toBe(true);
+  });
+
+  it("drops a malformed subagent link on load", async () => {
+    const { manager, project, store, dbPath } = makeSandbox();
+    const parent = await manager.createSession(project.id, "claude", { mode: "current" });
+    const child = await manager.createSubagentSession(parent.id, "claude", { title: "Child", isolation: "shared" });
+    const valid = await manager.createSubagentSession(parent.id, "claude", { title: "Valid", isolation: "shared" });
+    const broken = store.getSession(child.id) as SessionMeta;
+    broken.subagent = { parentSessionId: "", isolation: "shared" } satisfies SubagentLink;
+    store.updateSession(child.id, { title: "Child" });
+
+    const reloaded = new SessionStore(dbPath);
+
+    expect(reloaded.getSession(child.id)?.subagent).toBeUndefined();
+    expect(reloaded.getSession(valid.id)?.subagent).toEqual({ parentSessionId: parent.id, isolation: "shared" });
   });
 });

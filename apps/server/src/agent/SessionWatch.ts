@@ -32,7 +32,7 @@ export class SessionWatch {
   }
 
   turnSettled(sessionId: string, event: SettledTurnEvent): void {
-    this.results.set(sessionId, event.type === "turn.done" ? event.resultText : event.message || null);
+    this.results.set(sessionId, (event.type === "turn.done" ? event.resultText : event.message) || null);
   }
 
   forget(sessionId: string): void {

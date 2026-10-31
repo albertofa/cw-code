@@ -245,6 +245,10 @@ function isTopLevelSession(session: SessionMeta): boolean {
   return session.subagent === undefined;
 }
 
+function isSharedSubagent(session: SessionMeta): boolean {
+  return session.subagent?.isolation === "shared";
+}
+
 function autoFinishedTarget(value: AppSettings["prFinishedSessionStatus"]): value is "idle" | "resolved" | "archived" {
   return value !== "none";
 }
@@ -639,7 +643,7 @@ export class SessionManager {
   }
 
   private babysits(session: SessionMeta): boolean {
-    return babysitsOpenPr(session.prs, this.settings.get().prWorkflows, (ref) => isFinishedPrState(this.prState(ref)));
+    return isTopLevelSession(session) && babysitsOpenPr(session.prs, this.settings.get().prWorkflows, (ref) => isFinishedPrState(this.prState(ref)));
   }
 
   private turnEndStatus(sessionId: string): SessionStatus {
@@ -677,7 +681,7 @@ export class SessionManager {
           this.recordSubagentResult(event.sessionId, {
             turnId: event.turnId,
             outcome: event.isError ? "error" : "done",
-            text: event.isError ? event.resultText || null : event.resultText
+            text: event.resultText || null
           });
         }
         this.emitIfKnown(event.sessionId);
@@ -703,7 +707,9 @@ export class SessionManager {
         if (wasActive) {
           this.store.updateSession(sessionId, { status: "holding", ...resumeCursor }, "turn-error");
           this.recordSubagentResult(sessionId, { turnId: event.turnId, outcome: "error", text: event.message || null });
-        } else if (event.resumeCursor) this.store.updateSession(sessionId, resumeCursor);
+        } else if (event.resumeCursor) {
+          this.store.updateSession(sessionId, resumeCursor);
+        }
         if (wasActive || event.resumeCursor) this.emitIfKnown(sessionId);
       }
     }
@@ -844,11 +850,13 @@ export class SessionManager {
     const parentRoot = await this.ensureWorktree(parent.id);
     if (!(await this.git.isRepository(parentRoot))) throw new Error(`${project.name} is not a Git repository; use a shared checkout for this subagent`);
     if (!(await this.git.hasCommits(parentRoot))) throw new Error(`${project.name} has no commits yet; use a shared checkout for this subagent`);
+    this.assertNotReserved();
     const worktree = await this.git.createWorktree(parentRoot, project.id, id, this.worktreesRoot, "HEAD", { exact: true });
     const session = this.store.createSession(project.id, driver, title, {
       id,
       worktreePath: worktree.path,
       branch: worktree.branch,
+      ...storableBaseRef(parent.branch, worktree.branch, {}),
       subagent: { parentSessionId: parent.id, isolation: "worktree" }
     });
     this.startWorktreeSetup(session, project, worktree.path);
@@ -935,9 +943,9 @@ export class SessionManager {
       const root = this.sessionRoot(session);
       if (!root) continue;
       const ranWithoutCursor =
-        isTopLevelSession(session) &&
         !session.resumeCursor &&
-        (session.lastTurnSnapshot !== undefined || session.title.trim().toLowerCase() !== NEW_SESSION_TITLE.toLowerCase());
+        (session.lastTurnSnapshot !== undefined ||
+          (isTopLevelSession(session) && session.title.trim().toLowerCase() !== NEW_SESSION_TITLE.toLowerCase()));
       const since =
         turnStarts.get(session.id) ??
         (this.pendingTurns.has(session.id) ? Date.now() : undefined) ??
@@ -1316,7 +1324,7 @@ export class SessionManager {
 
   syncFromStatus(sessionId: string, status: GitStatus): SessionMeta | null {
     const stored = this.store.getSession(sessionId);
-    if (!stored) return null;
+    if (!stored || isSharedSubagent(stored)) return null;
     const branch = changedWorktreeBranch(stored, status);
     if (branch) this.store.updateSession(sessionId, { branch });
     const session = this.store.getSession(sessionId) ?? stored;
@@ -1451,6 +1459,8 @@ export class SessionManager {
   expireHoldingSessions(sessionIds: string[]): SessionMeta[] {
     const expired: SessionMeta[] = [];
     for (const sessionId of sessionIds) {
+      const session = this.store.getSession(sessionId);
+      if (!session || !isTopLevelSession(session)) continue;
       const updated = this.store.expireHolding(sessionId);
       if (!updated) continue;
       expired.push(updated);
@@ -1462,7 +1472,7 @@ export class SessionManager {
   expireDueHoldingSessions(now = Date.now()): SessionMeta[] {
     const { holdingAutoExpireEnabled, holdingHours } = this.settings.get();
     if (!holdingAutoExpireEnabled) return [];
-    return this.expireHoldingSessions(expiredHoldingIds(this.store.listAllSessions().filter(isTopLevelSession), holdingHours, now));
+    return this.expireHoldingSessions(expiredHoldingIds(this.store.listAllSessions(), holdingHours, now));
   }
 
   settleFinishedPrSessions(): Promise<string[]> {
@@ -2859,7 +2869,7 @@ export class SessionManager {
     if (session.status === "resolved" || session.status === "archived") {
       throw new Error(`session is ${session.status}; its worktree was removed`);
     }
-    if (session.subagent?.isolation === "shared") throw new Error(`the worktree shared with the parent session is missing: ${session.worktreePath}`);
+    if (session.subagent?.isolation === "shared") return this.ensureSharedWorktree(session, session.subagent.parentSessionId);
     const pending = this.worktreeRecovery.get(sessionId);
     if (pending) return pending;
     this.assertNotReserved();
@@ -2868,6 +2878,20 @@ export class SessionManager {
     });
     this.worktreeRecovery.set(sessionId, recovery);
     return recovery;
+  }
+
+  private async ensureSharedWorktree(session: SessionMeta, parentId: string): Promise<string> {
+    const missing = session.worktreePath ?? "";
+    const parent = this.store.getSession(parentId);
+    if (!parent?.worktreePath || !sameWorktreePath(parent.worktreePath, missing)) {
+      throw new Error(`the worktree shared with the parent session is missing: ${missing}`);
+    }
+    const path = await this.ensureWorktree(parentId);
+    if (!sameWorktreePath(path, missing)) {
+      this.store.updateSession(session.id, { worktreePath: path });
+      this.emitSession(session.id);
+    }
+    return path;
   }
 
   private async recoverWorktree(sessionId: string, session: SessionMeta): Promise<string> {
@@ -3011,7 +3035,7 @@ export class SessionManager {
     if (pendingTitle) await pendingTitle.promise;
     if (this.branchRenamed.has(sessionId)) return;
     const session = this.store.getSession(sessionId);
-    if (!session?.worktreePath || !session.branch || !isTopLevelSession(session)) return;
+    if (!session?.worktreePath || !session.branch || isSharedSubagent(session)) return;
     const { worktreePath, branch } = session;
     const temporary = TEMP_BRANCH_PATTERN.test(branch);
     const title = session.title.trim();
