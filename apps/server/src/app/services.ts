@@ -129,9 +129,10 @@ function wireSubagentDelivery({ subagentDelivery, sessions, threads, turns }: Se
   turns.onTurnStopped((sessionId) => subagentDelivery.turnStopped(sessionId));
 }
 
-function wireSubagents({ subagents, threads }: Services): void {
+function wireSubagents({ subagents, threads, sessions }: Services): void {
   threads.registerExtras((sessionId) => subagents.extras(sessionId));
   threads.onRuntimeChanged((sessionId) => subagents.changed(sessionId));
+  sessions.onSubagentWaitChanged((sessionId) => subagents.waitChanged(sessionId));
 }
 
 function wireUsage({ sessions, threads, usageTopic }: Services): void {
@@ -160,9 +161,10 @@ function wireTurnChanges({ turnChanges, threads, sessions }: Services): void {
   sessions.onSnapshotChanged((sessionId) => turnChanges.snapshotChanged(sessionId));
 }
 
-function wireSidebar({ sidebar, threads, sourceControl, prStore, autoFollowUp, preferences }: Services): void {
+function wireSidebar({ sidebar, threads, sessions, sourceControl, prStore, autoFollowUp, preferences }: Services): void {
   sidebar.watch(
     (onChange) => threads.onRuntimeChanged(onChange),
+    (onChange) => sessions.onSubagentWaitChanged(onChange),
     (onChange) => sourceControl.onPublished(onChange),
     (onChange) => prStore.onChanged(onChange),
     (onChange) => autoFollowUp.onChanged(onChange),
@@ -379,7 +381,11 @@ export function createServices(stores: { sessionStore: SessionStore; settingsSto
     startTurn: (sessionId, prompt) => turns.start(sessionId, prompt, { auto: true, origin: "subagent-wake" }),
     markDelivered: (childId, turnId) => sessions.markSubagentDelivered(childId, turnId),
     postNotice: (sessionId, notice) => sessions.emitNotice(sessionId, notice.noticeId, notice.text, notice.severity),
-    shutdownReserved: () => sessions.isShutdownReserved()
+    shutdownReserved: () => sessions.isShutdownReserved(),
+    waitingParents: () => sessions.listSubagentWaits(),
+    endWait: (parentId) => {
+      sessions.endSubagentWait(parentId, "settled");
+    }
   });
   const autoFollowUp = new AutoFollowUpEngine({
     sessions: () => sessions.listAllSessions(),
@@ -426,6 +432,7 @@ export function createServices(stores: { sessionStore: SessionStore; settingsSto
     projects: () => sessions.listProjects(),
     ownsWorktree: (path) => sessions.ownsWorktree(path),
     runtime: (sessionId) => threads.runtime(sessionId),
+    waitingOnSubagents: (sessionId) => sessions.subagentWaitSince(sessionId) !== null,
     gitStatus: (sessionId) => sourceControl.status(sessionId),
     summaryLookup: () => prStore.summaryLookup(),
     detail: (key) => prStore.detail(key),
@@ -563,6 +570,8 @@ export function createServices(stores: { sessionStore: SessionStore; settingsSto
         const { approvals, questions } = threads.runtime(sessionId);
         return approvals.length + questions.length;
       },
+      turnStartedAt: (sessionId) => threads.runtime(sessionId).turn?.startedAt,
+      waitSince: (parentId) => sessions.subagentWaitSince(parentId),
       refresh: (parentId) => threads.refreshExtras(parentId)
     })
   };

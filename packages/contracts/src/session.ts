@@ -11,6 +11,8 @@ export type SessionStatusReason =
   | "turn-start"
   | "turn-done"
   | "turn-done-background"
+  | "subagents-running"
+  | "subagents-settled"
   | "turn-error"
   | "turn-interrupted"
   | "approval-pending"
@@ -89,6 +91,8 @@ export interface SubagentSummary {
   isolation: SubagentIsolation;
   result?: SubagentResult;
   pendingRequests: number;
+  /** Start of the child's running turn, while it has one. */
+  turnStartedAt?: number;
   createdAt: number;
   updatedAt: number;
 }

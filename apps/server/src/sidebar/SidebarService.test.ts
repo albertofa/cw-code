@@ -107,6 +107,7 @@ function setup(initial: SessionMeta[], options: { failFirstCompute?: boolean; ow
     approvals: new Map<string, ApprovalRequest[]>(),
     questions: new Map<string, QuestionRequest[]>(),
     busy: new Set<string>(),
+    waiting: new Set<string>(),
     git: new Map<string, GitStatus>(),
     lookup: new Map<string, PrSummary>(),
     inbox: [] as PrSummary[],
@@ -128,6 +129,7 @@ function setup(initial: SessionMeta[], options: { failFirstCompute?: boolean; ow
     projects: () => [PROJECT],
     ownsWorktree: options.ownsWorktree ?? (() => true),
     runtime: (id) => ({ busy: state.busy.has(id), approvals: state.approvals.get(id) ?? [], questions: state.questions.get(id) ?? [] }),
+    waitingOnSubagents: (id) => state.waiting.has(id),
     gitStatus: (id) => state.git.get(id) ?? null,
     summaryLookup: () => state.lookup,
     detail: () => undefined,
@@ -387,6 +389,23 @@ describe("SidebarService", () => {
       expect(sidebar.attentionCount()).toBe(0);
       expect(data()["worktrees/p"]).toEqual([]);
       expect(data().defaults).toEqual({ restoreSessionId: "parent", restoreProjectId: "p", projectsByRecency: ["p"] });
+    });
+
+    test("a parent waiting on its working children is busy and running, not needing you", async () => {
+      const { state, sidebar, layout, row } = setup([]);
+      state.sessions = [session("parent", "working"), child("kid", "parent", "working")];
+      state.waiting.add("parent");
+      sidebar.invalidate();
+      await settle();
+      expect(layout().needsYou).toEqual([{ sessionId: "parent", slot: "running" }]);
+      expect(row("parent").busy).toBe(true);
+      expect(sidebar.attentionCount()).toBe(0);
+
+      state.approvals.set("kid", [approval()]);
+      sidebar.invalidate();
+      await settle();
+      expect(layout().needsYou).toEqual([{ sessionId: "parent", slot: "approval" }]);
+      expect(sidebar.attentionCount()).toBe(1);
     });
 
     test("a child that is done never counts toward attention", async () => {

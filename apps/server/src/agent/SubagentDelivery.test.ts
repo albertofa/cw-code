@@ -34,6 +34,8 @@ function harness(initial: SessionMeta[]) {
   const started: Array<{ sessionId: string; prompt: string }> = [];
   const delivered: Array<{ childId: string; turnId: string }> = [];
   const notices: Array<{ sessionId: string; notice: ThreadNotice }> = [];
+  const waiting = new Set<string>();
+  const ended: string[] = [];
   let shutdownReserved = false;
   let startTurn = async (): Promise<string> => "wake-turn";
   const delivery = new SubagentDelivery({
@@ -52,7 +54,12 @@ function harness(initial: SessionMeta[]) {
       notices.push({ sessionId, notice });
       delivery.reevaluate(sessionId);
     },
-    shutdownReserved: () => shutdownReserved
+    shutdownReserved: () => shutdownReserved,
+    waitingParents: () => [...waiting],
+    endWait: (parentId) => {
+      waiting.delete(parentId);
+      ended.push(parentId);
+    }
   });
   return {
     delivery,
@@ -61,6 +68,8 @@ function harness(initial: SessionMeta[]) {
     started,
     delivered,
     notices,
+    waiting,
+    ended,
     setShutdownReserved(value: boolean) {
       shutdownReserved = value;
     },
@@ -394,6 +403,79 @@ describe("SubagentDelivery blocked wakes", () => {
     await flush();
     expect(h.started).toHaveLength(2);
     expect(h.delivered).toEqual([{ childId: "a", turnId: "t1" }]);
+  });
+});
+
+describe("SubagentDelivery parents waiting on subagents", () => {
+  function working(id: string, parentSessionId: string): SessionMeta {
+    return { ...child(id, parentSessionId), status: "working" };
+  }
+
+  it("keeps the wait while a child still works, even after another child's wake", async () => {
+    const h = harness([meta("parent", { status: "working" }), working("a", "parent"), child("b", "parent", DONE)]);
+    h.waiting.add("parent");
+    h.delivery.reevaluate("parent");
+    await flush();
+    expect(h.started).toHaveLength(1);
+    expect(h.ended).toEqual([]);
+
+    h.waiting.add("parent");
+    h.setStatus("b", "done");
+    h.delivery.reevaluate("parent");
+    await flush();
+    expect(h.ended).toEqual([]);
+
+    h.setStatus("a", "input-required");
+    h.delivery.reevaluate("parent");
+    await flush();
+    expect(h.ended).toEqual([]);
+  });
+
+  it("wakes instead of ending the wait when the last child settles with a result", async () => {
+    const h = harness([meta("parent", { status: "working" }), child("a", "parent", DONE)]);
+    h.waiting.add("parent");
+    h.delivery.reevaluate("parent");
+    await flush();
+    expect(h.started.map((item) => item.sessionId)).toEqual(["parent"]);
+    expect(h.ended).toEqual([]);
+  });
+
+  it("ends the wait when the last child settles with only interrupted results", async () => {
+    const h = harness([meta("parent", { status: "working" }), child("a", "parent", result("t1", "interrupted", 100, null))]);
+    h.waiting.add("parent");
+    h.delivery.reevaluate("parent");
+    await flush();
+    expect(h.started).toHaveLength(0);
+    expect(h.ended).toEqual(["parent"]);
+  });
+
+  it("ends the wait when wakes are held after a user stop", async () => {
+    const h = harness([meta("parent", { status: "working" }), child("a", "parent", DONE)]);
+    h.delivery.turnStopped("parent");
+    h.waiting.add("parent");
+    h.delivery.reevaluate("parent");
+    await flush();
+    expect(h.started).toHaveLength(0);
+    expect(h.ended).toEqual(["parent"]);
+  });
+
+  it("ends the wait when the wake turn fails to start and no child works", async () => {
+    const h = harness([meta("parent", { status: "working" }), child("a", "parent", DONE)]);
+    h.failStartWith(new Error("harness unavailable"));
+    h.waiting.add("parent");
+    h.delivery.reevaluate("parent");
+    await flush();
+    expect(h.notices).toHaveLength(1);
+    expect(h.ended).toEqual(["parent"]);
+  });
+
+  it("leaves waits of parents outside the scope alone", async () => {
+    const h = harness([meta("p1", { status: "working" }), meta("p2", { status: "working" })]);
+    h.waiting.add("p1");
+    h.waiting.add("p2");
+    h.delivery.reevaluate("p2");
+    await flush();
+    expect(h.ended).toEqual(["p2"]);
   });
 });
 

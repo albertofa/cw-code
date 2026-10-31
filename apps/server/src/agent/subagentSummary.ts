@@ -1,6 +1,6 @@
 import type { SessionMeta, SubagentSummary } from "@cw-code/contracts";
 
-export function subagentSummary(child: SessionMeta, pendingRequests: number): SubagentSummary {
+export function subagentSummary(child: SessionMeta, pendingRequests: number, turnStartedAt?: number): SubagentSummary {
   return {
     id: child.id,
     driver: child.driver,
@@ -10,6 +10,7 @@ export function subagentSummary(child: SessionMeta, pendingRequests: number): Su
     isolation: child.subagent?.isolation ?? "shared",
     ...(child.subagent?.result ? { result: child.subagent.result } : {}),
     pendingRequests,
+    ...(turnStartedAt !== undefined ? { turnStartedAt } : {}),
     createdAt: child.createdAt,
     updatedAt: child.updatedAt
   };

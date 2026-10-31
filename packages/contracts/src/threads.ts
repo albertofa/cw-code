@@ -46,6 +46,11 @@ export interface ThreadUsage {
   lastTurn: ThreadLastTurn | null;
 }
 
+/** Set while the session's own turn has ended but it stays working for subagents it dispatched. */
+export interface ThreadSubagentWait {
+  since: number;
+}
+
 export interface ThreadTurnChanges {
   changes: TurnChanges | null;
   error: string | null;
@@ -68,4 +73,5 @@ export type ThreadTopicData = {
   prDock: PrDockEntry[];
   turnChanges: ThreadTurnChanges | null;
   subagents: SubagentSummary[];
-} & { [key: `item/${string}`]: ThreadItem };
+  subagentWait: ThreadSubagentWait | null;
+} &{ [key: `item/${string}`]: ThreadItem };

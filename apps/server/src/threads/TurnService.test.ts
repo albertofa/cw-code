@@ -40,7 +40,8 @@ function setup(startTurn: Sessions["startTurn"], keptHeads: Record<string, strin
       threads.onDriverEvent(turn.sessionId, { type: "turn.interrupted", turnId, sessionId: turn.sessionId });
     },
     listActiveTurns: () => [...active],
-    listSubagents: () => []
+    listSubagents: () => [],
+    endSubagentWait: () => false
   };
   const turns = new TurnService({ sessions, threads, git: { keptFolderHead: (sessionId) => keptHeads[sessionId] ?? null } });
   const topic = sessionTopic("s1");

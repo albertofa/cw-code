@@ -13,6 +13,8 @@ export interface SubagentDeliveryDeps {
   markDelivered(childId: string, turnId: string): void;
   postNotice(sessionId: string, notice: ThreadNotice): void;
   shutdownReserved(): boolean;
+  waitingParents(): string[];
+  endWait(parentId: string): void;
 }
 
 interface PendingResult {
@@ -87,14 +89,31 @@ export class SubagentDelivery {
   private evaluate(scope: Set<string> | null): void {
     if (this.deps.shutdownReserved()) return;
     const sessions = this.deps.sessions();
-    for (const [parentId, pending] of this.undelivered(sessions, scope)) {
-      if (this.starting.has(parentId) || this.held.has(parentId)) continue;
-      if (!pending.some(({ result }) => result.outcome !== "interrupted")) continue;
+    const undelivered = this.undelivered(sessions, scope);
+    const waiting = this.deps.waitingParents().filter((parentId) => !scope || scope.has(parentId));
+    for (const parentId of new Set([...undelivered.keys(), ...waiting])) {
+      if (this.starting.has(parentId)) continue;
+      const pending = undelivered.get(parentId) ?? [];
       const parent = sessions.find((session) => session.id === parentId);
-      if (!parent || !this.canWake(parent)) continue;
-      this.starting.add(parentId);
-      void this.wake(parentId, pending).finally(() => this.starting.delete(parentId));
+      if (parent && this.shouldWake(parent, pending)) {
+        this.starting.add(parentId);
+        void this.wake(parentId, pending).finally(() => this.starting.delete(parentId));
+      } else if (waiting.includes(parentId)) {
+        this.settleWait(sessions, parentId);
+      }
     }
+  }
+
+  private shouldWake(parent: SessionMeta, pending: PendingResult[]): boolean {
+    if (this.held.has(parent.id) || !pending.some(({ result }) => result.outcome !== "interrupted")) return false;
+    return this.canWake(parent);
+  }
+
+  private settleWait(sessions: SessionMeta[], parentId: string): void {
+    const working = sessions.some(
+      (session) => session.subagent?.parentSessionId === parentId && (session.status === "working" || session.status === "input-required")
+    );
+    if (!working) this.deps.endWait(parentId);
   }
 
   private undelivered(sessions: SessionMeta[], scope: Set<string> | null): Map<string, PendingResult[]> {
@@ -124,6 +143,7 @@ export class SubagentDelivery {
       if (errorCode(error) === "session-busy" || errorMessage(error) === SHUTDOWN_RESERVED_MESSAGE) return;
       console.warn(`[subagent-delivery] could not wake session ${parentId}: ${errorMessage(error)}`);
       this.notifyFailure(parentId, error);
+      if (this.deps.waitingParents().includes(parentId)) this.settleWait(this.deps.sessions(), parentId);
       return;
     }
     for (const { child, result } of pending) {

@@ -18,7 +18,7 @@ function child(id: string, status: SessionStatus, createdAt: number, overrides: 
 }
 
 function setup(initial: SessionMeta[]) {
-  const state = { sessions: initial, pending: new Map<string, number>() };
+  const state = { sessions: initial, pending: new Map<string, number>(), turnStarts: new Map<string, number>(), waits: new Map<string, number>() };
   const patches: TopicPatch[] = [];
   const hub = new TopicHub((_clientIds, frame) => patches.push(JSON.parse(frame) as TopicPatch));
   const threads = new ThreadService({ hub, history: async () => [], liveTasks: () => [], pendingRequests: () => [], loadHistoryOnSubscribe: false });
@@ -28,6 +28,8 @@ function setup(initial: SessionMeta[]) {
       state.sessions.filter((session) => session.subagent?.parentSessionId === parentId).sort((a, b) => a.createdAt - b.createdAt),
     parentOf: (sessionId) => state.sessions.find((session) => session.id === sessionId)?.subagent?.parentSessionId ?? null,
     pendingRequests: (sessionId) => state.pending.get(sessionId) ?? 0,
+    turnStartedAt: (sessionId) => state.turnStarts.get(sessionId),
+    waitSince: (parentId) => state.waits.get(parentId) ?? null,
     refresh: (parentId) => threads.refreshExtras(parentId)
   });
   threads.registerExtras((sessionId) => model.extras(sessionId));
@@ -81,5 +83,26 @@ describe("SubagentsModel", () => {
     model.changed("kid");
     model.changed("missing");
     expect(subagentUpserts()).toEqual([]);
+  });
+
+  test("carries the start of a working child's turn", () => {
+    const { state, subscribe } = setup([meta("parent", "idle"), child("kid", "working", 1), child("idle", "done", 2)]);
+    state.turnStarts.set("kid", 500);
+    const { subagents } = subscribe();
+    expect(subagents[0]?.turnStartedAt).toBe(500);
+    expect(subagents[1]).not.toHaveProperty("turnStartedAt");
+  });
+
+  test("publishes the parent's wait on its subagents and clears it", () => {
+    const { state, model, patches, subscribe } = setup([meta("parent", "working"), child("kid", "working", 1)]);
+    expect(subscribe().subagentWait).toBeNull();
+    const waitUpserts = () => patches.flatMap((patch) => patch.ops).filter((op) => op.op === "upsert" && op.key === "subagentWait");
+
+    state.waits.set("parent", 700);
+    model.waitChanged("parent");
+    state.waits.delete("parent");
+    model.waitChanged("parent");
+
+    expect(waitUpserts()).toMatchObject([{ value: { since: 700 } }, { value: null }]);
   });
 });

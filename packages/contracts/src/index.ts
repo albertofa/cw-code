@@ -212,6 +212,7 @@ export type {
   ContextMeter,
   ThreadUsage,
   ThreadTurnChanges,
+  ThreadSubagentWait,
   ThreadTopicData
 } from "./threads.js";
 export type {

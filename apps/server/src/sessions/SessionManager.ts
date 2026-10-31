@@ -273,6 +273,8 @@ export class SessionManager {
   private readonly checkoutListeners = new Set<(change: CheckoutChange) => void>();
   private readonly snapshotListeners = new Set<(sessionId: string) => void>();
   private readonly usageRecordedListeners = new Set<(sessionId: string) => void>();
+  private readonly subagentWaitListeners = new Set<(sessionId: string) => void>();
+  private readonly subagentWaits = new Map<string, number>();
   private unwatchDriverActivity: () => void = () => {};
   private turnGate: ((kind: DriverKind) => string | null) | null = null;
   private driverFactory: DriverFactory;
@@ -393,6 +395,11 @@ export class SessionManager {
   onSnapshotChanged(listener: (sessionId: string) => void): () => void {
     this.snapshotListeners.add(listener);
     return () => this.snapshotListeners.delete(listener);
+  }
+
+  onSubagentWaitChanged(listener: (sessionId: string) => void): () => void {
+    this.subagentWaitListeners.add(listener);
+    return () => this.subagentWaitListeners.delete(listener);
   }
 
   private notifyCheckoutChanged(change: CheckoutChange): void {
@@ -658,6 +665,35 @@ export class SessionManager {
     return session && this.babysits(session) ? "babysit" : "done";
   }
 
+  private hasWorkingSubagents(parentId: string): boolean {
+    return this.listSubagents(parentId).some((child) => child.status === "working" || child.status === "input-required");
+  }
+
+  private setSubagentWait(parentId: string, waiting: boolean): void {
+    if (waiting === this.subagentWaits.has(parentId)) return;
+    if (waiting) this.subagentWaits.set(parentId, Date.now());
+    else this.subagentWaits.delete(parentId);
+    notifyAll(this.subagentWaitListeners, "[subagents] wait changed", parentId);
+  }
+
+  subagentWaitSince(sessionId: string): number | null {
+    return this.subagentWaits.get(sessionId) ?? null;
+  }
+
+  listSubagentWaits(): string[] {
+    return [...this.subagentWaits.keys()];
+  }
+
+  endSubagentWait(parentId: string, outcome: "settled" | "stopped"): boolean {
+    if (!this.subagentWaits.has(parentId) || this.sessionBusy(parentId)) return false;
+    this.setSubagentWait(parentId, false);
+    if (this.store.getSession(parentId)?.status !== "working") return true;
+    if (outcome === "stopped") this.store.updateSession(parentId, { status: "holding" }, "turn-interrupted");
+    else this.store.updateSession(parentId, { status: this.turnEndStatus(parentId) }, "subagents-settled");
+    this.emitSession(parentId);
+    return true;
+  }
+
   private endStaleBabysit(sessionId: string): boolean {
     const session = this.store.getSession(sessionId);
     if (session?.status !== "babysit" || this.babysits(session)) return false;
@@ -681,6 +717,9 @@ export class SessionManager {
         const stillActive = [...this.activeTurns.values()].some((entry) => entry.sessionId === event.sessionId);
         if (!wasActive || stillActive) {
           this.store.updateSession(event.sessionId, { resumeCursor: event.resumeCursor });
+        } else if (this.hasWorkingSubagents(event.sessionId)) {
+          this.store.updateSession(event.sessionId, { resumeCursor: event.resumeCursor, status: "working" }, "subagents-running");
+          this.setSubagentWait(event.sessionId, true);
         } else {
           this.store.updateSession(event.sessionId, { resumeCursor: event.resumeCursor, status: this.turnEndStatus(event.sessionId) }, "turn-done");
         }
@@ -1266,6 +1305,7 @@ export class SessionManager {
     const session = this.store.getSession(sessionId);
     if (!session) throw new Error(`unknown session ${sessionId}`);
     if (this.pendingRestores.has(sessionId)) throw new Error("session busy (restore pending)");
+    if (status !== "working") this.setSubagentWait(sessionId, false);
     this.store.updateSession(sessionId, { status }, reason);
     return this.emitSession(sessionId);
   }
@@ -1744,6 +1784,7 @@ export class SessionManager {
     this.branchRenamed.delete(sessionId);
     this.cancelTitleTurns(sessionId);
     this.dropPendingRequests(this.pendingRequests.clearSession(sessionId));
+    this.setSubagentWait(sessionId, false);
     const resolvedCheckout: ResolvedCheckout = session.worktreePath ? { kind: "worktree", path: session.worktreePath } : { kind: "root" };
     this.store.updateSession(
       sessionId,
@@ -2507,6 +2548,7 @@ export class SessionManager {
       this.turnPermissionModes.set(sessionId, resolvePermissionMode(prefs.permissionMode));
       const startedAt = Date.now();
       this.activeTurns.set(handle.turnId, { sessionId, startedAt });
+      this.setSubagentWait(sessionId, false);
       const restoreWorking = this.store.getSession(sessionId)?.status !== "working";
       if (restoreWorking) this.store.updateSession(sessionId, { status: "working" }, "turn-start");
       this.onEvent(sessionId, { type: "turn.started", turnId: handle.turnId, sessionId, startedAt, prompt });

@@ -535,7 +535,8 @@ describe("AutoFollowUpEngine with the real thread and turn services", () => {
         },
         interrupt: () => {},
         listActiveTurns: () => [],
-        listSubagents: () => []
+        listSubagents: () => [],
+        endSubagentWait: () => false
       },
       threads,
       git: { keptFolderHead: () => null }

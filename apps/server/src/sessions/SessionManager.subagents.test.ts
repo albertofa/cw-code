@@ -4,8 +4,11 @@ import { existsSync, mkdtempSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
-import type { CliDriver, GitStatus, HistoryMessage, PrRef, SessionMeta, SubagentLink, ThreadEvent, TurnHandle } from "@cw-code/contracts";
+import type { CliDriver, GitStatus, HistoryMessage, PrRef, SessionMeta, SessionStatus, SubagentLink, ThreadEvent, TurnHandle } from "@cw-code/contracts";
+import { parseWakePrompt } from "@cw-code/shared/subagents";
 import { waitFor } from "../../tests/testing.js";
+import { SubagentDelivery } from "../agent/SubagentDelivery.js";
+import { needsYouEntry } from "../prEngine/needsYou.js";
 import { ThreadService } from "../threads/ThreadService.js";
 import { TurnService } from "../threads/TurnService.js";
 import { TopicHub } from "../topics/TopicHub.js";
@@ -374,6 +377,10 @@ function wireTurns(manager: SessionManager): TurnService {
   return turns;
 }
 
+function flush(): Promise<void> {
+  return new Promise((resolve) => setImmediate(resolve));
+}
+
 function activeSessionIds(manager: SessionManager): string[] {
   return manager.listActiveTurns().map((turn) => turn.sessionId);
 }
@@ -526,6 +533,127 @@ describe("subagent lifecycle cascade", () => {
     expect(store.getSession(healthy.id)?.status).toBe("resolved");
     expect(store.getSession(broken.id)?.status).toBe("idle");
     expect(warnings.some((message) => message.includes(broken.id) && message.includes("resolve exploded"))).toBe(true);
+  });
+});
+
+function wireSubagentWaits(manager: SessionManager) {
+  const threads = new ThreadService({
+    hub: new TopicHub(() => {}),
+    history: async () => [],
+    liveTasks: () => [],
+    pendingRequests: () => [],
+    loadHistoryOnSubscribe: false
+  });
+  manager.setEmitter((sessionId, event) => threads.onDriverEvent(sessionId, event));
+  const turns = new TurnService({ sessions: manager, threads, git: { keptFolderHead: () => null } });
+  manager.setTurnStopper((sessionId) => turns.stop(sessionId));
+  const delivery = new SubagentDelivery({
+    sessions: () => manager.listAllSessions(),
+    runtime: (sessionId) => threads.runtime(sessionId),
+    startTurn: (sessionId, prompt) => turns.start(sessionId, prompt, { auto: true, origin: "subagent-wake" }),
+    markDelivered: (childId, turnId) => manager.markSubagentDelivered(childId, turnId),
+    postNotice: () => {},
+    shutdownReserved: () => false,
+    waitingParents: () => manager.listSubagentWaits(),
+    endWait: (parentId) => {
+      manager.endSubagentWait(parentId, "settled");
+    }
+  });
+  turns.onTurnStarted((sessionId, _auto, turn) => delivery.turnStarted(sessionId, turn.origin));
+  turns.onTurnStopped((sessionId) => delivery.turnStopped(sessionId));
+  const emitted: Array<{ id: string; status: SessionStatus }> = [];
+  manager.setSessionEmitter((session) => {
+    emitted.push({ id: session.id, status: session.status });
+    delivery.reevaluate(session.subagent?.parentSessionId ?? session.id);
+  });
+  const statusesOf = (sessionId: string): SessionStatus[] => emitted.filter((entry) => entry.id === sessionId).map((entry) => entry.status);
+  return { turns, threads, statusesOf };
+}
+
+describe("parents waiting on background subagents", () => {
+  async function dispatched() {
+    const sandbox = makeSandbox();
+    const wired = wireSubagentWaits(sandbox.manager);
+    const parent = await sandbox.manager.createSession(sandbox.project.id, "claude", { mode: "current" });
+    const parentTurn = await wired.turns.start(parent.id, "dispatch");
+    const first = await sandbox.manager.createSubagentSession(parent.id, "claude", { title: "First", isolation: "shared" });
+    const second = await sandbox.manager.createSubagentSession(parent.id, "claude", { title: "Second", isolation: "shared" });
+    const firstTurn = await wired.turns.start(first.id, "work");
+    const secondTurn = await wired.turns.start(second.id, "work");
+    sandbox.fake.complete(parentTurn, "dispatched");
+    return { ...sandbox, ...wired, parent, first, second, firstTurn, secondTurn };
+  }
+
+  it("keeps the parent working and running in the sidebar when its turn ends with working children", async () => {
+    const { manager, store, threads, parent } = await dispatched();
+
+    expect(store.getSession(parent.id)?.status).toBe("working");
+    expect(manager.listSubagentWaits()).toEqual([parent.id]);
+    expect(manager.subagentWaitSince(parent.id)).toBeNumber();
+    expect(threads.runtime(parent.id).busy).toBe(false);
+    expect(needsYouEntry(store.getSession(parent.id) as SessionMeta, null)?.slot).toBe("running");
+  });
+
+  it("carries the parent straight into the wake turn when the last child finishes, without a done status", async () => {
+    const { manager, store, fake, parent, firstTurn, secondTurn, statusesOf } = await dispatched();
+    const before = statusesOf(parent.id).length;
+
+    fake.complete(firstTurn, "first result");
+    await flush();
+    expect(store.getSession(parent.id)?.status).toBe("working");
+
+    await waitFor(() => expect(fake.requests.filter((request) => request.sessionId === parent.id)).toHaveLength(2));
+    const wakePrompt = fake.requests.filter((request) => request.sessionId === parent.id)[1]?.prompt ?? "";
+    expect(parseWakePrompt(wakePrompt)?.map((entry) => entry.text)).toEqual(["first result"]);
+    expect(manager.listSubagentWaits()).toEqual([]);
+
+    const wakeTurn = manager.listActiveTurns().find((turn) => turn.sessionId === parent.id)?.turnId ?? "";
+    fake.complete(wakeTurn, "noted");
+    expect(store.getSession(parent.id)?.status).toBe("working");
+    expect(manager.listSubagentWaits()).toEqual([parent.id]);
+
+    fake.complete(secondTurn, "second result");
+    await waitFor(() => expect(fake.requests.filter((request) => request.sessionId === parent.id)).toHaveLength(3));
+    expect(statusesOf(parent.id).slice(before)).not.toContain("done");
+    expect(store.getSession(parent.id)?.status).toBe("working");
+  });
+
+  it("moves the parent to done when its children end with only interrupted results", async () => {
+    const { manager, store, fake, parent, firstTurn, secondTurn } = await dispatched();
+
+    manager.interrupt(firstTurn);
+    await flush();
+    expect(store.getSession(parent.id)?.status).toBe("working");
+
+    manager.interrupt(secondTurn);
+    await waitFor(() => expect(store.getSession(parent.id)?.status).toBe("done"));
+    expect(manager.listSubagentWaits()).toEqual([]);
+    expect(fake.requests.filter((request) => request.sessionId === parent.id)).toHaveLength(1);
+  });
+
+  it("stops the working children and holds the parent when the user stops the wait", async () => {
+    const { manager, store, fake, turns, parent, first, second } = await dispatched();
+
+    expect(turns.stop(parent.id)).toEqual({ stopped: true });
+
+    expect(activeSessionIds(manager)).toEqual([]);
+    expect(store.getSession(parent.id)?.status).toBe("holding");
+    expect(store.getSession(first.id)?.subagent?.result?.outcome).toBe("interrupted");
+    expect(store.getSession(second.id)?.subagent?.result?.outcome).toBe("interrupted");
+    expect(manager.listSubagentWaits()).toEqual([]);
+    await flush();
+    expect(store.getSession(parent.id)?.status).toBe("holding");
+    expect(fake.requests.filter((request) => request.sessionId === parent.id)).toHaveLength(1);
+    expect(turns.stop(parent.id)).toEqual({ stopped: false });
+  });
+
+  it("maps a waiting parent to holding and its children to interrupted on restart", async () => {
+    const { dbPath, parent, first } = await dispatched();
+
+    const reloaded = new SessionStore(dbPath);
+
+    expect(reloaded.getSession(parent.id)?.status).toBe("holding");
+    expect(reloaded.getSession(first.id)?.subagent?.result?.outcome).toBe("interrupted");
   });
 });
 

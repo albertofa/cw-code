@@ -34,6 +34,7 @@ export interface SidebarServiceDeps {
   /** True when cw-code owns the worktree path, so it may be offered for reuse. */
   ownsWorktree(path: string): boolean;
   runtime(sessionId: string): Pick<SessionRuntime, "busy" | "approvals" | "questions">;
+  waitingOnSubagents(sessionId: string): boolean;
   gitStatus(sessionId: string): GitStatus | null;
   summaryLookup(): PrSummaryLookup;
   detail(key: string): PrDetail | undefined;
@@ -304,7 +305,7 @@ export class SidebarService implements TopicProvider {
     const chip = urgent ? displayChip(urgent, lookup, gitPr) : null;
     return {
       session,
-      busy: runtime.busy,
+      busy: runtime.busy || this.deps.waitingOnSubagents(session.id),
       branch: git?.branch ?? session.branch ?? null,
       attention: sessionAttention({
         session,
