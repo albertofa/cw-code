@@ -10,7 +10,8 @@ import type {
   ResolvedCheckout,
   SessionMeta,
   SessionPrLink,
-  SessionStatus
+  SessionStatus,
+  SubagentLink
 } from "@cw-code/contracts";
 import { traceSessionStatus, type SessionStatusReason } from "../debug/sessionStatusTrace.js";
 import { isValidPrLink, upsertLink } from "../github/prLinks.js";
@@ -132,6 +133,13 @@ function resetRuntimeStatuses(sessions: SessionMeta[]): boolean {
       });
     } else if (session.status === "working" || session.status === "input-required") {
       session.status = "holding";
+      if (session.subagent) {
+        session.subagent = {
+          ...session.subagent,
+          result: { turnId: session.lastTurnSnapshot?.turnId ?? `restart:${session.updatedAt}`, outcome: "interrupted", text: null, at: Date.now() },
+          delivered: false
+        };
+      }
       changed = true;
       traceSessionStatus({
         sessionId: session.id,
@@ -221,6 +229,7 @@ type SessionPatch = Partial<
     | "autoResolved"
     | "resolvedCheckout"
     | "lastTurnSnapshot"
+    | "subagent"
   >
 >;
 
@@ -307,7 +316,7 @@ export class SessionStore {
     projectId: string,
     driver: DriverKind,
     title: string,
-    workspace: { id?: string; worktreePath?: string; branch?: string; baseRef?: string; resumeCursor?: string } = {}
+    workspace: { id?: string; worktreePath?: string; branch?: string; baseRef?: string; resumeCursor?: string; subagent?: SubagentLink } = {}
   ): SessionMeta {
     const now = Date.now();
     const session: SessionMeta = {
@@ -322,7 +331,8 @@ export class SessionStore {
       idleSince: now,
       ...(workspace.worktreePath ? { worktreePath: normalizeRoot(workspace.worktreePath) } : {}),
       ...(workspace.branch ? { branch: workspace.branch } : {}),
-      ...(workspace.baseRef ? { baseRef: workspace.baseRef } : {})
+      ...(workspace.baseRef ? { baseRef: workspace.baseRef } : {}),
+      ...(workspace.subagent ? { subagent: workspace.subagent } : {})
     };
     this.data.sessions.push(session);
     traceSessionStatus({
@@ -393,6 +403,7 @@ export class SessionStore {
     else if ("resolvedCheckout" in patch) delete current.resolvedCheckout;
     if (patch.lastTurnSnapshot !== undefined) current.lastTurnSnapshot = patch.lastTurnSnapshot;
     else if ("lastTurnSnapshot" in patch) delete current.lastTurnSnapshot;
+    if (patch.subagent !== undefined) current.subagent = patch.subagent;
     const now = Date.now();
     current.updatedAt = now;
     if (patch.status !== undefined && patch.status !== previousStatus) {

@@ -38,6 +38,8 @@ import type {
   SessionStatus,
   SettingsPatch,
   ShutdownActiveTurn,
+  SubagentIsolation,
+  SubagentResult,
   SubagentToolsResult,
   TaskSnapshot,
   TerminalLaunch,
@@ -238,6 +240,10 @@ function driverLiveTasks(driver: CliDriver, sessionId: string): TaskSnapshot[] {
 }
 
 const SETTLEABLE_STATUSES: ReadonlySet<SessionStatus> = new Set(["holding", "done", "babysit"]);
+
+function isTopLevelSession(session: SessionMeta): boolean {
+  return session.subagent === undefined;
+}
 
 function autoFinishedTarget(value: AppSettings["prFinishedSessionStatus"]): value is "idle" | "resolved" | "archived" {
   return value !== "none";
@@ -667,6 +673,13 @@ export class SessionManager {
         } else {
           this.store.updateSession(event.sessionId, { resumeCursor: event.resumeCursor, status: this.turnEndStatus(event.sessionId) }, "turn-done");
         }
+        if (wasActive && !stillActive) {
+          this.recordSubagentResult(event.sessionId, {
+            turnId: event.turnId,
+            outcome: event.isError ? "error" : "done",
+            text: event.isError ? event.resultText || null : event.resultText
+          });
+        }
         this.emitIfKnown(event.sessionId);
         this.captureEndSnapshot(event.sessionId, event.turnId);
         if (wasActive && !event.isError) void this.renameBranchForTitle(event.sessionId, event.turnId);
@@ -687,8 +700,10 @@ export class SessionManager {
       if (sessionId) {
         this.captureEndSnapshot(sessionId, event.turnId);
         const resumeCursor = event.resumeCursor ? { resumeCursor: event.resumeCursor } : {};
-        if (wasActive) this.store.updateSession(sessionId, { status: "holding", ...resumeCursor }, "turn-error");
-        else if (event.resumeCursor) this.store.updateSession(sessionId, resumeCursor);
+        if (wasActive) {
+          this.store.updateSession(sessionId, { status: "holding", ...resumeCursor }, "turn-error");
+          this.recordSubagentResult(sessionId, { turnId: event.turnId, outcome: "error", text: event.message || null });
+        } else if (event.resumeCursor) this.store.updateSession(sessionId, resumeCursor);
         if (wasActive || event.resumeCursor) this.emitIfKnown(sessionId);
       }
     }
@@ -804,6 +819,62 @@ export class SessionManager {
     return session;
   }
 
+  async createSubagentSession(parentId: string, driver: DriverKind, opts: { title: string; isolation: SubagentIsolation }): Promise<SessionMeta> {
+    this.assertNotReserved();
+    const parent = this.store.getSession(parentId);
+    if (!parent) throw new Error(`unknown session ${parentId}`);
+    if (parent.subagent) throw new Error("subagents cannot dispatch subagents; complete this task yourself");
+    if (parent.status === "resolved" || parent.status === "archived") {
+      throw new Error(`session is ${parent.status}; reopen it before dispatching subagents`);
+    }
+    const title = opts.title.trim();
+    if (!title) throw new Error("a subagent needs a title");
+    const project = this.getProject(parent.projectId);
+    const id = `sess_${randomUUID().slice(0, 8)}`;
+    const subagent = { parentSessionId: parentId, isolation: opts.isolation };
+    const session =
+      opts.isolation === "worktree"
+        ? await this.createIsolatedSubagentSession(parent, project, driver, id, title)
+        : this.store.createSession(project.id, driver, title, { id, subagent, ...(parent.worktreePath ? { worktreePath: parent.worktreePath } : {}) });
+    this.emitSession(session.id);
+    return session;
+  }
+
+  private async createIsolatedSubagentSession(parent: SessionMeta, project: Project, driver: DriverKind, id: string, title: string): Promise<SessionMeta> {
+    const parentRoot = await this.ensureWorktree(parent.id);
+    if (!(await this.git.isRepository(parentRoot))) throw new Error(`${project.name} is not a Git repository; use a shared checkout for this subagent`);
+    if (!(await this.git.hasCommits(parentRoot))) throw new Error(`${project.name} has no commits yet; use a shared checkout for this subagent`);
+    const worktree = await this.git.createWorktree(parentRoot, project.id, id, this.worktreesRoot, "HEAD", { exact: true });
+    const session = this.store.createSession(project.id, driver, title, {
+      id,
+      worktreePath: worktree.path,
+      branch: worktree.branch,
+      subagent: { parentSessionId: parent.id, isolation: "worktree" }
+    });
+    this.startWorktreeSetup(session, project, worktree.path);
+    return session;
+  }
+
+  listSubagents(parentId: string): SessionMeta[] {
+    return this.store
+      .listAllSessions()
+      .filter((session) => session.subagent?.parentSessionId === parentId)
+      .sort((a, b) => a.createdAt - b.createdAt);
+  }
+
+  markSubagentDelivered(childId: string, turnId: string): void {
+    const link = this.store.getSession(childId)?.subagent;
+    if (!link?.result || link.result.turnId !== turnId || link.delivered === true) return;
+    this.store.updateSession(childId, { subagent: { ...link, delivered: true } });
+    this.emitSession(childId);
+  }
+
+  private recordSubagentResult(sessionId: string, result: Omit<SubagentResult, "at">): void {
+    const link = this.store.getSession(sessionId)?.subagent;
+    if (!link) return;
+    this.store.updateSession(sessionId, { subagent: { ...link, result: { ...result, at: Date.now() }, delivered: false } });
+  }
+
   private async buildSession(projectId: string, driver: DriverKind, options: CreateSessionOptions): Promise<SessionMeta> {
     this.assertNotReserved();
     if (options.baseFallback !== undefined && options.baseFallback !== "default") {
@@ -864,6 +935,7 @@ export class SessionManager {
       const root = this.sessionRoot(session);
       if (!root) continue;
       const ranWithoutCursor =
+        isTopLevelSession(session) &&
         !session.resumeCursor &&
         (session.lastTurnSnapshot !== undefined || session.title.trim().toLowerCase() !== NEW_SESSION_TITLE.toLowerCase());
       const since =
@@ -1390,7 +1462,7 @@ export class SessionManager {
   expireDueHoldingSessions(now = Date.now()): SessionMeta[] {
     const { holdingAutoExpireEnabled, holdingHours } = this.settings.get();
     if (!holdingAutoExpireEnabled) return [];
-    return this.expireHoldingSessions(expiredHoldingIds(this.store.listAllSessions(), holdingHours, now));
+    return this.expireHoldingSessions(expiredHoldingIds(this.store.listAllSessions().filter(isTopLevelSession), holdingHours, now));
   }
 
   settleFinishedPrSessions(): Promise<string[]> {
@@ -1421,7 +1493,7 @@ export class SessionManager {
 
   private async runFinishedPrSweep(): Promise<string[]> {
     const settled: string[] = [];
-    for (const session of this.store.listAllSessions()) {
+    for (const session of this.store.listAllSessions().filter(isTopLevelSession)) {
       if (!SETTLEABLE_STATUSES.has(session.status)) continue;
       if (session.status !== "babysit" && !autoFinishedTarget(this.settings.get().prFinishedSessionStatus)) continue;
       if (!session.prs?.length) continue;
@@ -1471,7 +1543,7 @@ export class SessionManager {
   }
 
   private idleCutoffReached(session: SessionMeta, now: number): boolean {
-    if (session.status !== "idle") return false;
+    if (session.status !== "idle" || !isTopLevelSession(session)) return false;
     const idleSince = session.idleSince;
     if (idleSince === undefined || !Number.isFinite(idleSince)) return false;
     const days = this.settings.get().idleResolveAfterDays;
@@ -1899,6 +1971,7 @@ export class SessionManager {
 
   private isUnstarted(session: SessionMeta): boolean {
     if (session.resumeCursor) return false;
+    if (!isTopLevelSession(session)) return true;
     if (session.title.trim().toLowerCase() === NEW_SESSION_TITLE.toLowerCase()) return true;
     if (this.pendingTurns.has(session.id)) return true;
     for (const entry of this.activeTurns.values()) {
@@ -1957,6 +2030,7 @@ export class SessionManager {
     cwd: string,
     listed: SessionMeta[] | null
   ): Promise<HistoryMessage[] | null> {
+    if (!isTopLevelSession(session)) return null;
     let candidates: SessionMeta[];
     if (listed) {
       candidates = listed;
@@ -2332,7 +2406,7 @@ export class SessionManager {
       await this.assertFolderOnSessionBranch(session, project, cwd, opts?.acceptFolderHead);
       const snapshot = await this.captureTurnSnapshot(sessionId, cwd);
       this.assertNotReserved();
-      const firstMessage = session.title === NEW_SESSION_TITLE && !opts?.command;
+      const firstMessage = session.title === NEW_SESSION_TITLE && !opts?.command && isTopLevelSession(session);
       const placeholder = prompt.slice(0, 60);
       if (firstMessage) {
         this.firstPrompts.set(sessionId, prompt);
@@ -2661,6 +2735,7 @@ export class SessionManager {
     this.turnFinalReviews.delete(turnId);
     this.captureEndSnapshot(sessionId, turnId, driver ? () => this.driverSettled(driver, sessionId) : undefined);
     this.store.updateSession(sessionId, { status: "holding" }, "turn-interrupted");
+    this.recordSubagentResult(sessionId, { turnId, outcome: "interrupted", text: null });
     this.onEvent(sessionId, { type: "turn.interrupted", turnId, sessionId, ...(this.shutdownReserved ? { reason: "shutdown" as const } : {}) });
     if (!session) return;
     if (this.shutdownReserved) this.interruptedForShutdown.add(sessionId);
@@ -2784,6 +2859,7 @@ export class SessionManager {
     if (session.status === "resolved" || session.status === "archived") {
       throw new Error(`session is ${session.status}; its worktree was removed`);
     }
+    if (session.subagent?.isolation === "shared") throw new Error(`the worktree shared with the parent session is missing: ${session.worktreePath}`);
     const pending = this.worktreeRecovery.get(sessionId);
     if (pending) return pending;
     this.assertNotReserved();
@@ -2923,6 +2999,7 @@ export class SessionManager {
     return this.store.listAllSessions().some(
       (other) =>
         other.id !== sessionId &&
+        isTopLevelSession(other) &&
         pinsWorktree(other) &&
         ((other.worktreePath && sameWorktreePath(other.worktreePath, worktreePath)) || other.branch === branch)
     );
@@ -2934,7 +3011,7 @@ export class SessionManager {
     if (pendingTitle) await pendingTitle.promise;
     if (this.branchRenamed.has(sessionId)) return;
     const session = this.store.getSession(sessionId);
-    if (!session?.worktreePath || !session.branch) return;
+    if (!session?.worktreePath || !session.branch || !isTopLevelSession(session)) return;
     const { worktreePath, branch } = session;
     const temporary = TEMP_BRANCH_PATTERN.test(branch);
     const title = session.title.trim();
