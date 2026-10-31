@@ -1,8 +1,8 @@
 import { Bot, Terminal } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { DriverKind } from "@cw-code/contracts";
 import type { ChatMessage } from "../stores/appStore.js";
-import { backgroundWaitLabel, liveBackgroundWork, sameBackgroundWork, type BackgroundWork } from "./backgroundWork.js";
+import { backgroundWaitLabel, cwSubagentWork, liveBackgroundWork, sameBackgroundWork, type BackgroundWork } from "./backgroundWork.js";
 import { describeToolCall, formatDuration, isRunningTool, relativizeToBase } from "./toolSummaries.js";
 import { useElapsed } from "./useElapsed.js";
 import { runningTurnId, useThreadBusy, useThreadEntry, useThreadItemsSelect } from "./useThread.js";
@@ -58,14 +58,20 @@ export function WorkingDock({ sessionId, sessionDriver, basePath }: { sessionId:
   const turn = useThreadEntry(sessionId, "turn");
   const approvals = useThreadEntry(sessionId, "approvals");
   const questions = useThreadEntry(sessionId, "questions");
-  const startedAt = turn?.startedAt;
+  const subagentWait = useThreadEntry(sessionId, "subagentWait");
+  const subagents = useThreadEntry(sessionId, "subagents");
+  const startedAt = turn?.startedAt ?? subagentWait?.since;
   const waiting =
     (approvals?.length ?? 0) > 0 ? "waiting for approval" : (questions?.length ?? 0) > 0 ? "waiting for your answer" : undefined;
   const step = useThreadItemsSelect(sessionId, (items) => {
     const turnId = runningTurnId(turn, items);
     return turnId === undefined ? undefined : runningStep(items, turnId, basePath, sessionDriver);
   });
-  const background = useThreadItemsSelect(sessionId, liveBackgroundWork, sameBackgroundWork);
+  const native = useThreadItemsSelect(sessionId, liveBackgroundWork, sameBackgroundWork);
+  const background = useMemo(
+    () => (turn == null && subagentWait != null && subagents ? [...native, ...cwSubagentWork(subagents)] : native),
+    [native, turn, subagentWait, subagents]
+  );
   const running = useThreadBusy(sessionId);
   const [announcement, setAnnouncement] = useState("");
   const wasRunning = useRef(running);

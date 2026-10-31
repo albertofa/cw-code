@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
-import { backgroundWaitLabel, liveBackgroundWork, sameBackgroundWork } from "./backgroundWork.js";
+import type { SubagentSummary } from "@cw-code/contracts";
+import { backgroundWaitLabel, cwSubagentWork, liveBackgroundWork, sameBackgroundWork } from "./backgroundWork.js";
 import type { ChatMessage } from "../stores/appStore.js";
 import type { TaskSnapshot } from "../cw.js";
 
@@ -53,6 +54,27 @@ describe("liveBackgroundWork", () => {
       ["Audit the API", undefined],
       ["PowerShell", undefined]
     ]);
+  });
+});
+
+describe("cwSubagentWork", () => {
+  function summary(id: string, status: SubagentSummary["status"], extra: Partial<SubagentSummary> = {}): SubagentSummary {
+    return { id, driver: "opencode", title: `Task ${id}`, status, isolation: "shared", pendingRequests: 0, createdAt: 1, updatedAt: 2, ...extra };
+  }
+
+  it("lists working and input-required subagents with their harness, model and turn start", () => {
+    const work = cwSubagentWork([
+      summary("a", "working", { model: "opencode-go/deepseek-v4.1-flash", turnStartedAt: 900 }),
+      summary("b", "done"),
+      summary("c", "input-required", { driver: "codex" }),
+      summary("d", "archived")
+    ]);
+
+    expect(work).toEqual([
+      { id: "cw:a", kind: "agent", label: "Task a · OpenCode", detail: "opencode-go/deepseek-v4.1-flash", startedAt: 900 },
+      { id: "cw:c", kind: "agent", label: "Task c · Codex" }
+    ]);
+    expect(backgroundWaitLabel(work)).toBe("waiting on 2 background subagents");
   });
 });
 

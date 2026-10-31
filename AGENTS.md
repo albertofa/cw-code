@@ -152,7 +152,14 @@ Core behaviors:
     parent's HEAD with the parent's branch as `baseRef`.
   - Lifecycle: stopping the parent's turn stops its children (not on shutdown); resolving or
     archiving the parent resolves or archives the children first. Children skip title turns,
-    import adoption, PR babysit and the idle/holding/finished-PR sweeps.
+    import adoption, PR babysit, auto follow-up and the idle/holding/finished-PR sweeps.
+  - Waiting parent: a parent whose turn ends while children are `working` or `input-required`
+    stays `working` (reason `subagents-running`, sidebar slot running, row `busy`) and its topic
+    carries `subagentWait: { since }`, which the UI treats as busy (working dock with one row per
+    working child, Stop, send locked). `SubagentDelivery` ends the wait: it starts the wake turn
+    with no `done` in between, or applies the turn-end status (`subagents-settled`) when nothing
+    wakes. `turns.stop` on a waiting parent stops its children, holds wakes and sets `holding`.
+    The wait is in memory; a restart maps the parent to `holding` as usual.
   - Results: a wait or run that returns a settled result acks it (`subagents.ack`, only while the
     caller's turn is live). Unacked `done`/`error` results wake the parent (`SubagentDelivery`)
     once it is idle with no pending approvals or questions: one batched turn with origin
@@ -165,9 +172,13 @@ Core behaviors:
   - Visibility: children keep a sidebar `row/<id>` (the UI opens threads through rows) but are
     left out of sections, needs-you and the attention count; the parent's attention includes
     their pending approvals and questions, which the parent thread docks. The parent's topic
-    carries `subagents: SubagentSummary[]` and its usage footer includes children.
+    carries `subagents: SubagentSummary[]` (with `turnStartedAt` while a child runs) and its usage
+    footer includes children.
   - `subagent_targets` lists installed harnesses and models and ranks them against a plain-text
     query (`agent/modelSearch.ts`), so a model the user names in prose resolves to an exact id.
+    An entry without models always has an `error`: no model matched, or the harness cannot run
+    (message from the cached harness check, `harnessUnavailableReason`). `subagents.create` and
+    `subagents.send` refuse such a harness with the same message before creating anything.
 - Browser entry: a browser opens the server's own address (`/`) and pairs with a device
   token. The owner creates one in Settings (`devices.create`) and gets a link
   `<serverPublicUrl>/#token=<token>`; the UI reads the hash, removes it from the address bar and
