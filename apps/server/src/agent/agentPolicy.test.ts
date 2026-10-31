@@ -7,8 +7,10 @@ import {
   AGENT_WRITABLE_SETTINGS,
   agentTurnPermissionMode,
   assertAgentCreateOptions,
+  assertAgentMayDispatch,
   assertAgentModelId,
   assertAgentOmits,
+  assertAgentSessionTarget,
   assertAgentSettingsPatch,
   assertCanDispatchSubagents,
   callerPermissionCap,
@@ -146,6 +148,7 @@ describe("AGENT_METHODS", () => {
         "sessions.list",
         "settings.get",
         "settings.set",
+        "subagents.ack",
         "subagents.create",
         "subagents.list",
         "subagents.send",
@@ -186,6 +189,26 @@ describe("subagent policy", () => {
     const kid = session("kid", "parent");
     expect(ownedSubagent(kid, "kid", "parent")).toBe(kid);
     expect(ownedSubagent(kid, "kid", null)).toBe(kid);
+  });
+
+  test("refuses dispatch only for agent callers whose session is a subagent", () => {
+    const sessions = new Map([
+      ["parent", session("parent")],
+      ["kid", session("kid", "parent")]
+    ]);
+    const lookup = (id: string) => sessions.get(id);
+    const agentOf = (sessionId: string): CallContext => ({ clientId: "c", client: "mcp", auth: { kind: "agent", sessionId } });
+    expect(() => assertAgentMayDispatch(agentOf("parent"), lookup)).not.toThrow();
+    expect(() => assertAgentMayDispatch(owner, lookup)).not.toThrow();
+    expect(() => assertAgentMayDispatch(agentOf("kid"), lookup)).toThrow(SUBAGENT_DEPTH_REFUSAL);
+  });
+
+  test("hides another parent's subagent as an unknown session and points the parent at the subagent tools", () => {
+    const sessions = new Map([["kid", session("kid", "parent")]]);
+    const lookup = (id: string) => sessions.get(id);
+    expect(() => assertAgentSessionTarget(lookup, "kid", "stranger")).toThrow("unknown session kid");
+    expect(() => assertAgentSessionTarget(lookup, "kid", "parent")).toThrow("subagent_send");
+    expect(() => assertAgentSessionTarget(lookup, "plain", "parent")).not.toThrow();
   });
 
   test("answers the same for another parent's subagent, a plain session and an unknown id", () => {

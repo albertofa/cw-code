@@ -11,6 +11,7 @@ import type {
   SubagentIsolation
 } from "@cw-code/contracts";
 import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
+import type { CallToolResult, McpServer, ServerContext } from "@modelcontextprotocol/server";
 import { SUBAGENT_DEPTH_REFUSAL } from "../agent/agentPolicy.js";
 import { AgentTokens } from "../agent/AgentTokens.js";
 import { SessionWatch } from "../agent/SessionWatch.js";
@@ -23,7 +24,7 @@ import type { StartTurnInput } from "../threads/TurnService.js";
 import { Router, type CallContext } from "../transport/Router.js";
 import { OPENCODE_SESSION_HEADER } from "@cw-code/shared/protocol";
 import { SUBAGENT_TOOL_NAMES } from "@cw-code/shared/subagents";
-import { cwToolDefinitions, SUBAGENT_INPUT_NEXT, SUBAGENT_RUNNING_NEXT, WAIT_MAX_MS } from "./cwTools.js";
+import { cwToolDefinitions, registerCwTools, SUBAGENT_INPUT_NEXT, SUBAGENT_RUNNING_NEXT, WAIT_MAX_MS } from "./cwTools.js";
 import { createMcpRoute, MCP_IDLE_TIMEOUT_SECONDS, MCP_SERVER_NAME } from "./mcpRoute.js";
 
 const URL_MCP = "http://127.0.0.1:4100/mcp";
@@ -47,7 +48,10 @@ const MODELS: Record<DriverKind, ModelOption[]> = {
     { id: "claude-opus-4-5", label: "Opus 4.5", source: "curated" }
   ],
   codex: [{ id: "gpt-5-codex", label: "GPT-5 Codex", source: "live" }],
-  opencode: [{ id: "anthropic/claude-opus-4-5", label: "Claude Opus 4.5", source: "live", variants: ["high", "max"] }]
+  opencode: [
+    { id: "anthropic/claude-opus-4-5", label: "Claude Opus 4.5", source: "live", variants: ["high", "max"] },
+    { id: "openai/gpt-5-codex", label: "GPT-5 Codex", source: "live" }
+  ]
 };
 
 interface StartedTurn {
@@ -87,6 +91,7 @@ let delivered: Array<[string, string]>;
 let installed: DriverKind[];
 let failingHarnesses: Set<DriverKind>;
 let failNextStart: boolean;
+let resolvedSessions: Array<[string, SessionMeta["status"], { removeWorktree?: boolean }]>;
 
 function findSession(id: string): SessionMeta {
   const session = sessions.find((candidate) => candidate.id === id);
@@ -126,6 +131,12 @@ const fakeSessions = {
     if (link?.result?.turnId === turnId) link.delivered = true;
   },
   findSession: (id: string) => sessions.find((session) => session.id === id),
+  listActiveTurns: () =>
+    sessions.filter((session) => session.status === "working").map((session) => ({ sessionId: session.id, turnId: lastTurns.get(session.id) ?? "t", startedAt: 1 })),
+  resolveSession: async (id: string, status: SessionMeta["status"], options: { removeWorktree?: boolean }) => {
+    resolvedSessions.push([id, status, options]);
+    findSession(id).status = status;
+  },
   getComposer: (id: string): ComposerPrefs => ({ permissionMode: findSession(id).permissionMode ?? "auto" }),
   setComposer: (id: string, prefs: ComposerPrefs): ComposerPrefs => {
     findSession(id).permissionMode = prefs.permissionMode;
@@ -284,6 +295,7 @@ beforeEach(() => {
   installed = ["claude", "codex", "opencode"];
   failingHarnesses = new Set();
   failNextStart = false;
+  resolvedSessions = [];
   extended = [];
   router = buildRouter();
   watch = new SessionWatch({ getSession: (id) => sessions.find((session) => session.id === id) });
@@ -569,27 +581,33 @@ describe("mcp modern era", () => {
     ]);
   });
 
-  test("a subagent caller does not get the subagent tools and the router refuses it", async () => {
+  test("a subagent caller gets only the read and settings tools", async () => {
     child("kid", "caller", "working", "auto");
     const kid = await clientFor("kid");
     const { tools } = await kid.listTools();
-    expect(tools.map((tool) => tool.name).sort()).toEqual([...SESSION_TOOL_NAMES].sort());
-    for (const [method, params] of [
-      ["subagents.create", { driver: "claude", task: "deeper" }],
-      ["subagents.send", { subagentId: "kid", prompt: "p" }],
-      ["subagents.targets", {}]
-    ] as const) {
-      await expect(router.dispatch(method, params, agent("kid"))).rejects.toThrow(SUBAGENT_DEPTH_REFUSAL);
-    }
-    expect(sessions).toHaveLength(4);
+    const dispatching = new Set(["session_create", "session_send", "session_stop"]);
+    expect(tools.map((tool) => tool.name).sort()).toEqual(SESSION_TOOL_NAMES.filter((name) => !dispatching.has(name)).sort());
   });
 
-  test("session tools hide subagents and refuse them", async () => {
+  test("session tools hide another session's subagents as unknown sessions", async () => {
     child("kid", "target", "working");
     const listed = await client.callTool({ name: "sessions_list", arguments: { includeResolved: true } });
     expect(JSON.parse(toolText(listed)).map((row: { id: string }) => row.id)).toEqual(["caller", "target", "old"]);
-    const got = await client.callTool({ name: "session_get", arguments: { sessionId: "kid" } });
-    expect(toolText(got)).toBe("unknown session kid");
+    for (const [name, args] of [
+      ["session_get", { sessionId: "kid" }],
+      ["session_send", { sessionId: "kid", prompt: "p" }],
+      ["session_stop", { sessionId: "kid" }],
+      ["session_wait", { sessionId: "kid" }]
+    ] as const) {
+      const result = await client.callTool({ name, arguments: args });
+      expect(result.isError).toBe(true);
+      expect(toolText(result)).toBe("unknown session kid");
+    }
+    expect(started).toHaveLength(0);
+  });
+
+  test("session tools point the parent at the subagent tools for its own subagent", async () => {
+    child("kid", "caller", "working");
     for (const [name, args] of [
       ["session_send", { sessionId: "kid", prompt: "p" }],
       ["session_stop", { sessionId: "kid" }],
@@ -599,7 +617,40 @@ describe("mcp modern era", () => {
       expect(result.isError).toBe(true);
       expect(toolText(result)).toContain("subagent_send");
     }
+    expect(toolText(await client.callTool({ name: "session_get", arguments: { sessionId: "kid" } }))).toBe("unknown session kid");
     expect(started).toHaveLength(0);
+  });
+
+  test("does not mark a result delivered once the caller's turn has ended", async () => {
+    const running = client.callTool({ name: "subagent_run", arguments: { driver: "codex", task: "review", timeoutMs: 5_000 } });
+    await until(() => started.length === 1);
+    setStatus("caller", "holding");
+    completeTurn("s4", "too late");
+    expect(JSON.parse(toolText(await running))).toMatchObject({ status: "idle", resultText: "too late" });
+    expect(delivered).toEqual([]);
+    expect(findSession("s4").subagent?.delivered).toBe(false);
+  });
+
+  test("subagent_targets finds provider-prefixed opencode ids that contain a harness name", async () => {
+    Object.assign(settings, { codexDefaultModel: "", opencodeDefaultModel: "" });
+    for (const [query, id] of [
+      ["anthropic/claude-opus-4-5", "anthropic/claude-opus-4-5"],
+      ["openai/gpt-5-codex", "openai/gpt-5-codex"]
+    ] as const) {
+      const targets = JSON.parse(toolText(await client.callTool({ name: "subagent_targets", arguments: { query } }))) as SubagentTarget[];
+      expect(targets.map((target) => target.driver)).toEqual(["claude", "opencode", "codex"]);
+      expect(targets.find((target) => target.driver === "opencode")?.models.map((model) => model.id)).toEqual([id]);
+    }
+  });
+
+  test("subagent_targets searches every harness when the named harness has no match", async () => {
+    Object.assign(settings, { codexDefaultModel: "", opencodeDefaultModel: "" });
+    const targets = JSON.parse(toolText(await client.callTool({ name: "subagent_targets", arguments: { query: "codex anthropic opus" } }))) as SubagentTarget[];
+    expect(targets.map((target) => [target.driver, target.models.map((model) => model.id)])).toEqual([
+      ["claude", []],
+      ["opencode", ["anthropic/claude-opus-4-5"]],
+      ["codex", []]
+    ]);
   });
 
   test("subagent_targets ranks a plain-text model and reports a failing harness in its entry", async () => {
@@ -664,11 +715,83 @@ describe("subagent router methods", () => {
     expect(sessions).toHaveLength(3);
   });
 
-  test("reports a created subagent whose first turn did not start", async () => {
+  test("archives a created subagent whose first turn did not start and reports it", async () => {
     failNextStart = true;
-    const start = router.dispatch("subagents.create", { driver: "codex", task: "go" }, agent("caller"));
+    const start = router.dispatch("subagents.create", { driver: "codex", task: "go", isolation: "worktree" }, agent("caller"));
     await expect(start).rejects.toThrow("subagent s4 was created but its first turn did not start: codex is updating");
-    expect(findSession("s4").subagent?.parentSessionId).toBe("caller");
+    expect(resolvedSessions).toEqual([["s4", "archived", { removeWorktree: true }]]);
+  });
+
+  test("caps an explicit title like a derived one", async () => {
+    const title = `  Review   the\n${"x".repeat(80)}  `;
+    await router.dispatch("subagents.create", { driver: "codex", task: "go", title }, agent("caller"));
+    const stored = findSession("s4").title;
+    expect(stored).toHaveLength(60);
+    expect(stored.startsWith("Review the xxx")).toBe(true);
+    expect(stored.endsWith("…")).toBe(true);
+  });
+
+  test("subagents.ack marks a result delivered only while the caller is in a turn", async () => {
+    child("kid", "caller");
+    findSession("kid").subagent = { parentSessionId: "caller", isolation: "shared", result: { turnId: "turn-7", outcome: "done", text: "ok", at: 1 } };
+    expect(await router.dispatch("subagents.ack", { subagentId: "kid", turnId: "turn-6" }, agent("caller"))).toEqual({ delivered: false });
+    setStatus("caller", "idle");
+    expect(await router.dispatch("subagents.ack", { subagentId: "kid", turnId: "turn-7" }, agent("caller"))).toEqual({ delivered: false });
+    setStatus("caller", "working");
+    expect(await router.dispatch("subagents.ack", { subagentId: "kid", turnId: "turn-7" }, agent("caller"))).toEqual({ delivered: true });
+    expect(delivered).toEqual([["kid", "turn-7"]]);
+    await expect(router.dispatch("subagents.ack", { subagentId: "kid", turnId: "turn-7" }, agent("target"))).rejects.toThrow("unknown subagent kid");
+  });
+
+  test.each([
+    ["sessions.create", { projectId: "p1", driver: "claude" }],
+    ["turns.start", { sessionId: "caller", prompt: "p" }],
+    ["turns.start", { sessionId: "target", prompt: "p" }],
+    ["turns.stop", { sessionId: "caller" }],
+    ["subagents.create", { driver: "claude", task: "deeper" }],
+    ["subagents.send", { subagentId: "kid", prompt: "p" }],
+    ["subagents.stop", { subagentId: "kid" }],
+    ["subagents.ack", { subagentId: "kid", turnId: "t" }],
+    ["subagents.targets", {}]
+  ] as const)("refuses %s from a subagent caller", async (method, params) => {
+    child("kid", "caller", "working", "auto");
+    await expect(router.dispatch(method, params, agent("kid"))).rejects.toMatchObject({ code: "forbidden", message: SUBAGENT_DEPTH_REFUSAL });
+    expect(sessions).toHaveLength(4);
+    expect(started).toHaveLength(0);
+  });
+
+  test("lets a subagent caller use the read-only methods", async () => {
+    child("kid", "caller", "working", "auto");
+    expect(await router.dispatch("projects.list", undefined, agent("kid"))).toEqual(PROJECTS);
+    expect(await router.dispatch("subagents.list", undefined, agent("kid"))).toEqual([]);
+    expect(await router.dispatch("composer.get", { sessionId: "target" }, agent("kid"))).toMatchObject({ permissionMode: "bypassPermissions" });
+  });
+});
+
+describe("cw tools abort", () => {
+  type ToolCallback = (args: Record<string, unknown>, request: ServerContext) => Promise<CallToolResult>;
+
+  function capturedTools(): Map<string, ToolCallback> {
+    const tools = new Map<string, ToolCallback>();
+    const server = { registerTool: (name: string, _spec: unknown, callback: ToolCallback) => tools.set(name, callback) } as unknown as McpServer;
+    registerCwTools(server, { router, watch, sessions: fakeSessions, callerSessionId: "caller" });
+    return tools;
+  }
+
+  test("does not mark a result delivered when the request was aborted", async () => {
+    child("kid", "caller");
+    findSession("kid").subagent = { parentSessionId: "caller", isolation: "shared", result: { turnId: "turn-3", outcome: "done", text: "ok", at: 1 }, delivered: false };
+    const controller = new AbortController();
+    controller.abort();
+    const request = { mcpReq: { signal: controller.signal, notify: async () => {} } } as unknown as ServerContext;
+    const wait = capturedTools().get("subagent_wait");
+    if (!wait) throw new Error("subagent_wait is not registered");
+    expect(JSON.parse(toolText(await wait({ subagentId: "kid" }, request)))).toMatchObject({ status: "idle", resultText: "ok" });
+    expect(delivered).toEqual([]);
+
+    const live = { mcpReq: { signal: new AbortController().signal, notify: async () => {} } } as unknown as ServerContext;
+    await wait({ subagentId: "kid" }, live);
+    expect(delivered).toEqual([["kid", "turn-3"]]);
   });
 });
 
@@ -793,6 +916,33 @@ describe("mcp opencode principal", () => {
     );
     const created = await readRpc(response);
     expect(JSON.parse((created.result?.content as Array<{ text: string }>)[0]?.text ?? "null")).toMatchObject({ permissionMode: "manual" });
+  });
+
+  test("keeps the static tool list for an opencode subagent and returns the depth refusal from the router", async () => {
+    child("kid", "caller", "working", "auto");
+    inFlight.set("ses_kid", "kid");
+    const list = await readRpc(
+      await callRoute(
+        post(
+          { jsonrpc: "2.0", id: 8, method: "tools/list", params: {} },
+          { Authorization: `Bearer ${SECRET}`, [OPENCODE_SESSION_HEADER]: "ses_kid", "MCP-Protocol-Version": "2025-11-25" }
+        )
+      )
+    );
+    expect((list.result?.tools as Array<{ name: string }>).map((tool) => tool.name).sort()).toEqual([...TOOL_NAMES].sort());
+    for (const [name, args] of [
+      ["subagent_run", { driver: "claude", task: "deeper" }],
+      ["subagent_send", { subagentId: "kid", prompt: "p" }],
+      ["session_create", { projectId: "p1", driver: "claude", prompt: "go" }],
+      ["session_send", { sessionId: "caller", prompt: "p" }],
+      ["session_stop", { sessionId: "caller" }]
+    ] as const) {
+      const called = await readRpc(await callRoute(opencodeCall(name, args, SECRET, "ses_kid")));
+      expect(called.result?.isError).toBe(true);
+      expect((called.result?.content as Array<{ text: string }>)[0]?.text).toBe(SUBAGENT_DEPTH_REFUSAL);
+    }
+    expect(sessions).toHaveLength(4);
+    expect(started).toHaveLength(0);
   });
 
   test.each([

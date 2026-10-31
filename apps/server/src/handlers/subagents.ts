@@ -1,6 +1,7 @@
 import type { DriverKind, EffortLevel, ModelOption, SessionMeta, SubagentIsolation, SubagentSummary } from "@cw-code/contracts";
 import {
   agentTurnPermissionMode,
+  assertAgentMayDispatch,
   assertAgentModelId,
   assertCanDispatchSubagents,
   callerPermissionCap,
@@ -63,9 +64,14 @@ function parseText(value: unknown, name: string): string {
   return text;
 }
 
-function defaultTitle(task: string): string {
-  const line = task.split("\n").find((candidate) => candidate.trim())?.trim().replace(/\s+/g, " ") ?? task;
+function subagentTitle(text: string): string {
+  const line = text.replace(/\s+/g, " ").trim();
   return line.length > TITLE_MAX ? `${line.slice(0, TITLE_MAX - 1)}…` : line;
+}
+
+function titleFor(title: string | undefined, task: string): string {
+  const explicit = title === undefined ? "" : subagentTitle(title);
+  return explicit || subagentTitle(task.split("\n").find((line) => line.trim()) ?? task);
 }
 
 function agentCaller(ctx: CallContext, method: string): string {
@@ -80,6 +86,10 @@ function dispatchingCaller(sessions: Services["sessions"], callerId: string): Se
   return caller;
 }
 
+function errorText(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
 function targetModel(driver: DriverKind, model: ModelOption): SubagentTargetModel {
   const efforts = driver === "opencode" && model.variants !== undefined ? effortOptionsFor(driver, [model], model.id).map((option) => option.id) : undefined;
   return {
@@ -91,13 +101,20 @@ function targetModel(driver: DriverKind, model: ModelOption): SubagentTargetMode
 }
 
 async function harnessModels(sessions: Services["sessions"], projectId: string, driver: DriverKind): Promise<ModelOption[]> {
-  const models = await sessions.listModelsFor(projectId, driver).catch(() => []);
+  const models = await sessions.listModelsFor(projectId, driver).catch((error: unknown) => {
+    console.warn(`[subagents] ${driver} model list for project ${projectId} failed: ${errorText(error)}`);
+    return [];
+  });
   return models.length > 0 ? models : sessions.listModelsForHarness(driver);
 }
 
-async function listTargets(services: Services, caller: SessionMeta, driver: DriverKind | undefined, query: string | undefined): Promise<SubagentTarget[]> {
-  const parsed = query ? parseModelQuery(query) : null;
-  const drivers = driver ? [driver] : parsed && parsed.harnesses.length > 0 ? DRIVER_KINDS.filter((kind) => parsed.harnesses.includes(kind)) : DRIVER_KINDS;
+async function listTargets(
+  services: Services,
+  caller: SessionMeta,
+  drivers: readonly DriverKind[],
+  query: string | undefined,
+  effort: EffortLevel | undefined
+): Promise<SubagentTarget[]> {
   const { installed } = services.appTopic.harnesses;
   const settings = services.sessions.getSettings();
   const defaults: Record<DriverKind, string> = {
@@ -111,7 +128,7 @@ async function listTargets(services: Services, caller: SessionMeta, driver: Driv
         driver: kind,
         installed: installed.length === 0 || installed.includes(kind),
         defaultModel: defaults[kind].trim() || null,
-        ...(parsed?.effort !== undefined ? { effort: parsed.effort } : {})
+        ...(effort !== undefined ? { effort } : {})
       };
       if (!base.installed) return { ...base, models: [] };
       try {
@@ -119,10 +136,27 @@ async function listTargets(services: Services, caller: SessionMeta, driver: Driv
         const matched = query ? rankModelMatches(models, query) : models;
         return { ...base, models: matched.map((model) => targetModel(kind, model)) };
       } catch (error) {
-        return { ...base, models: [], error: error instanceof Error ? error.message : String(error) };
+        return { ...base, models: [], error: errorText(error) };
       }
     })
   );
+}
+
+async function searchTargets(services: Services, caller: SessionMeta, driver: DriverKind | undefined, query: string | undefined): Promise<SubagentTarget[]> {
+  const parsed = query ? parseModelQuery(query) : null;
+  if (driver) return listTargets(services, caller, [driver], query, parsed?.effort);
+  if (!parsed || parsed.harnesses.length === 0) return listTargets(services, caller, DRIVER_KINDS, query, parsed?.effort);
+  const narrowed = await listTargets(services, caller, DRIVER_KINDS.filter((kind) => parsed.harnesses.includes(kind)), query, parsed.effort);
+  if (narrowed.some((target) => target.models.length > 0)) return narrowed;
+  return listTargets(services, caller, DRIVER_KINDS, query, parsed.effort);
+}
+
+async function archiveUnstartedSubagent(sessions: Services["sessions"], child: SessionMeta, isolation: SubagentIsolation): Promise<void> {
+  try {
+    await sessions.resolveSession(child.id, "archived", { removeWorktree: isolation === "worktree" });
+  } catch (error) {
+    console.warn(`[subagents] could not archive ${child.id} after its first turn failed to start: ${errorText(error)}`);
+  }
 }
 
 export function registerSubagentHandlers(router: Router, app: ServerApp): void {
@@ -136,7 +170,7 @@ export function registerSubagentHandlers(router: Router, app: ServerApp): void {
     const driver = parseOneOf(args.driver, DRIVER_KINDS, "driver");
     if (driver === undefined) throw new Error("driver is required");
     const task = parseText(args.task, "task");
-    const title = parseOptionalString(args.title, "title")?.trim() || defaultTitle(task);
+    const title = titleFor(parseOptionalString(args.title, "title"), task);
     assertAgentModelId(args.model, "subagents.create model");
     const model = parseOptionalString(args.model, "model");
     const effort = parseOneOf(args.effort, EFFORT_LEVELS, "effort");
@@ -150,7 +184,8 @@ export function registerSubagentHandlers(router: Router, app: ServerApp): void {
     try {
       turnId = await turns.start(child.id, task, { prefs: { ...(model ? { model } : {}), ...(effort ? { effort } : {}), permissionMode } });
     } catch (error) {
-      throw new Error(`subagent ${child.id} was created but its first turn did not start: ${(error as Error).message}`);
+      await archiveUnstartedSubagent(sessions, child, isolation);
+      throw new Error(`subagent ${child.id} was created but its first turn did not start: ${errorText(error)}`);
     }
     return { subagentId: child.id, turnId, permissionMode };
   });
@@ -167,6 +202,20 @@ export function registerSubagentHandlers(router: Router, app: ServerApp): void {
     return { turnId: await turns.start(child.id, prompt, { prefs: { permissionMode } }) };
   });
 
+  handle<unknown>(router, "subagents.ack", (value, ctx) => {
+    const callerId = agentCaller(ctx, "subagents.ack");
+    const { sessions } = services();
+    dispatchingCaller(sessions, callerId);
+    const args = parseArgs(value, "subagents.ack");
+    const subagentId = parseString(args.subagentId, "subagentId");
+    const turnId = parseString(args.turnId, "turnId");
+    const child = ownedSubagent(sessions.findSession(subagentId), subagentId, callerId);
+    const callerInTurn = sessions.listActiveTurns().some((turn) => turn.sessionId === callerId);
+    if (!callerInTurn || child.subagent?.result?.turnId !== turnId) return { delivered: false };
+    sessions.markSubagentDelivered(child.id, turnId);
+    return { delivered: true };
+  });
+
   handle<unknown>(router, "subagents.list", (value, ctx) => {
     const { sessions } = services();
     const parentId =
@@ -176,6 +225,7 @@ export function registerSubagentHandlers(router: Router, app: ServerApp): void {
 
   handle<unknown>(router, "subagents.stop", (value, ctx) => {
     const { sessions, turns } = services();
+    assertAgentMayDispatch(ctx, (id) => sessions.findSession(id));
     const subagentId = parseString(parseArgs(value, "subagents.stop").subagentId, "subagentId");
     const child = ownedSubagent(sessions.findSession(subagentId), subagentId, ctx.auth.kind === "agent" ? ctx.auth.sessionId : null);
     return turns.stop(child.id);
@@ -188,6 +238,6 @@ export function registerSubagentHandlers(router: Router, app: ServerApp): void {
     const args = value === undefined ? {} : parseArgs(value, "subagents.targets");
     const driver = parseOneOf(args.driver, DRIVER_KINDS, "driver");
     const query = parseOptionalString(args.query, "query")?.trim() || undefined;
-    return listTargets(all, caller, driver, query);
+    return searchTargets(all, caller, driver, query);
   });
 }

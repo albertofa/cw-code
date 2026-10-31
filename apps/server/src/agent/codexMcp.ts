@@ -1,4 +1,5 @@
 import type { TurnRequest } from "@cw-code/contracts";
+import { MCP_IDLE_TIMEOUT_SECONDS } from "../mcp/mcpRoute.js";
 import { agentTokenFingerprint, CW_AGENT_TOKEN_ENV } from "./claudePlugin.js";
 
 const MCP_SERVER_NAME = "cw";
@@ -9,6 +10,7 @@ export interface CodexMcpServerConfig {
   url: string;
   http_headers: { Authorization: string };
   default_tools_approval_mode: "approve";
+  tool_timeout_sec: number;
 }
 
 export interface CodexThreadConfig {
@@ -21,7 +23,8 @@ export function codexThreadConfig(agent: CodexAgent): CodexThreadConfig {
       [MCP_SERVER_NAME]: {
         url: agent.mcpUrl,
         http_headers: { Authorization: `Bearer ${agent.token}` },
-        default_tools_approval_mode: "approve"
+        default_tools_approval_mode: "approve",
+        tool_timeout_sec: MCP_IDLE_TIMEOUT_SECONDS
       }
     }
   };
@@ -39,6 +42,8 @@ export function codexTerminalMcpArgs(mcpUrl: string): string[] {
     "-c",
     `${key}.bearer_token_env_var=${JSON.stringify(CW_AGENT_TOKEN_ENV)}`,
     "-c",
-    `${key}.default_tools_approval_mode="approve"`
+    `${key}.default_tools_approval_mode="approve"`,
+    "-c",
+    `${key}.tool_timeout_sec=${MCP_IDLE_TIMEOUT_SECONDS}`
   ];
 }

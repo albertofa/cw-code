@@ -1,20 +1,21 @@
 import type { ComposerPrefs, PermissionMode, Project, SessionMeta, SessionStatus, SubagentSummary } from "@cw-code/contracts";
 import type { CallToolResult, McpServer, ServerContext } from "@modelcontextprotocol/server";
 import { z } from "zod";
-import { agentTurnPermissionMode, SAFE_MODEL_ID } from "../agent/agentPolicy.js";
+import { agentTurnPermissionMode, assertAgentSessionTarget, SAFE_MODEL_ID } from "../agent/agentPolicy.js";
 import { EFFORT_LEVELS } from "../agent/modelSearch.js";
 import type { SessionWatch } from "../agent/SessionWatch.js";
 import { PERMISSION_MODES } from "../providers/permissions.js";
 import type { SessionManager } from "../sessions/SessionManager.js";
 import type { CallContext, Router } from "../transport/Router.js";
 
-export type CwToolsSessions = Pick<SessionManager, "getComposer" | "turnPermissionMode" | "findSession" | "markSubagentDelivered">;
+export type CwToolsSessions = Pick<SessionManager, "getComposer" | "turnPermissionMode" | "findSession">;
 
 export interface CwToolsDeps {
   router: Router;
   watch: Pick<SessionWatch, "wait" | "lastResult">;
   sessions: CwToolsSessions;
   callerSessionId: string;
+  exposeAllTools?: boolean;
 }
 
 export const WAIT_DEFAULT_MS = 120_000;
@@ -244,11 +245,8 @@ export function registerCwTools(server: McpServer, deps: CwToolsDeps): void {
     if (sessionId === deps.callerSessionId) throw new Error(`an agent cannot ${action} its own session`);
   };
 
-  const assertNotSubagent = (sessionId: string): void => {
-    if (deps.sessions.findSession(sessionId)?.subagent) {
-      throw new Error(`session ${sessionId} is a subagent; use subagent_send, subagent_wait or subagent_stop for it`);
-    }
-  };
+  const findSession = (sessionId: string): SessionMeta | undefined => deps.sessions.findSession(sessionId);
+  const dispatches = deps.exposeAllTools === true || !findSession(deps.callerSessionId)?.subagent;
 
   server.registerTool("projects_list", CW_TOOL_SPECS.projects_list, () => run(() => call("projects.list")));
 
@@ -274,43 +272,43 @@ export function registerCwTools(server: McpServer, deps: CwToolsDeps): void {
     })
   );
 
-  server.registerTool("session_create", CW_TOOL_SPECS.session_create, ({ projectId, driver, prompt, model, effort, permissionMode, useWorktree }) =>
-    run(async () => {
-      const session = (await call("sessions.create", { projectId, driver, options: { useWorktree } })) as SessionMeta;
-      let turnId: string;
-      try {
-        turnId = (await call("turns.start", { sessionId: session.id, prompt, prefs: definedPrefs({ model, effort, permissionMode }) })) as string;
-      } catch (error) {
-        throw new Error(`session ${session.id} was created but its first turn did not start: ${(error as Error).message}`);
-      }
-      return {
-        sessionId: session.id,
-        turnId,
-        permissionMode: agentTurnPermissionMode(deps.sessions, session.id, deps.callerSessionId, permissionMode)
-      };
-    })
-  );
+  if (dispatches) {
+    server.registerTool("session_create", CW_TOOL_SPECS.session_create, ({ projectId, driver, prompt, model, effort, permissionMode, useWorktree }) =>
+      run(async () => {
+        const session = (await call("sessions.create", { projectId, driver, options: { useWorktree } })) as SessionMeta;
+        let turnId: string;
+        try {
+          turnId = (await call("turns.start", { sessionId: session.id, prompt, prefs: definedPrefs({ model, effort, permissionMode }) })) as string;
+        } catch (error) {
+          throw new Error(`session ${session.id} was created but its first turn did not start: ${(error as Error).message}`);
+        }
+        return {
+          sessionId: session.id,
+          turnId,
+          permissionMode: agentTurnPermissionMode(deps.sessions, session.id, deps.callerSessionId, permissionMode)
+        };
+      })
+    );
 
-  server.registerTool("session_send", CW_TOOL_SPECS.session_send, ({ sessionId, prompt }) =>
-    run(async () => {
-      assertNotOwnSession(sessionId, "send a prompt to");
-      assertNotSubagent(sessionId);
-      return { turnId: await call("turns.start", { sessionId, prompt }) };
-    })
-  );
+    server.registerTool("session_send", CW_TOOL_SPECS.session_send, ({ sessionId, prompt }) =>
+      run(async () => {
+        assertNotOwnSession(sessionId, "send a prompt to");
+        return { turnId: await call("turns.start", { sessionId, prompt }) };
+      })
+    );
 
-  server.registerTool("session_stop", CW_TOOL_SPECS.session_stop, ({ sessionId }) =>
-    run(async () => {
-      assertNotOwnSession(sessionId, "stop");
-      assertNotSubagent(sessionId);
-      return call("turns.stop", { sessionId });
-    })
-  );
+    server.registerTool("session_stop", CW_TOOL_SPECS.session_stop, ({ sessionId }) =>
+      run(async () => {
+        assertNotOwnSession(sessionId, "stop");
+        return call("turns.stop", { sessionId });
+      })
+    );
+  }
 
   server.registerTool("session_wait", CW_TOOL_SPECS.session_wait, ({ sessionId, timeoutMs }, request: ServerContext) =>
     run(async () => {
       assertNotOwnSession(sessionId, "wait on");
-      assertNotSubagent(sessionId);
+      assertAgentSessionTarget(findSession, sessionId, deps.callerSessionId);
       return withWaitProgress(request, "session_wait", `session ${sessionId}`, () =>
         deps.watch.wait(sessionId, clampWait(timeoutMs), request.mcpReq.signal)
       );
@@ -323,7 +321,7 @@ export function registerCwTools(server: McpServer, deps: CwToolsDeps): void {
 
   server.registerTool("settings_set", CW_TOOL_SPECS.settings_set, ({ patch }) => run(() => call("settings.set", patch)));
 
-  if (!deps.sessions.findSession(deps.callerSessionId)?.subagent) registerSubagentTools(server, deps, call);
+  if (dispatches) registerSubagentTools(server, deps, call);
 }
 
 function registerSubagentTools(server: McpServer, deps: CwToolsDeps, call: RouterCall): void {
@@ -333,24 +331,23 @@ function registerSubagentTools(server: McpServer, deps: CwToolsDeps, call: Route
     return child;
   };
 
-  const report = async (subagentId: string, turnId: string | undefined, timedOut: boolean): Promise<SubagentReport> => {
-    const child = await ownSubagent(subagentId);
+  const report = async (turn: SubagentTurn, timedOut: boolean, signal: AbortSignal): Promise<SubagentReport> => {
+    const child = await ownSubagent(turn.subagentId);
     if (child.status === "input-required" || child.pendingRequests > 0) {
       return { status: "input-required", resultText: null, timedOut, next: SUBAGENT_INPUT_NEXT };
     }
     if (child.status === "working") return { status: child.status, resultText: null, timedOut, next: SUBAGENT_RUNNING_NEXT };
     const result = child.result;
-    if (!result || (turnId !== undefined && result.turnId !== turnId)) return { status: child.status, resultText: null, timedOut, next: null };
-    deps.sessions.markSubagentDelivered(subagentId, result.turnId);
+    if (!result || (turn.turnId !== undefined && result.turnId !== turn.turnId)) return { status: child.status, resultText: null, timedOut, next: null };
+    if (!signal.aborted) await call("subagents.ack", { subagentId: turn.subagentId, turnId: result.turnId });
     return { status: child.status, resultText: result.text, timedOut, next: null };
   };
 
   const settle = async (tool: string, turn: SubagentTurn, wait: boolean, timeoutMs: number | undefined, request: ServerContext): Promise<SubagentReport> => {
-    if (!wait) return report(turn.subagentId, turn.turnId, false);
-    const waited = await withWaitProgress(request, tool, `subagent ${turn.subagentId}`, () =>
-      deps.watch.wait(turn.subagentId, clampWait(timeoutMs), request.mcpReq.signal)
-    );
-    return report(turn.subagentId, turn.turnId, waited.timedOut);
+    const { signal } = request.mcpReq;
+    if (!wait) return report(turn, false, signal);
+    const waited = await withWaitProgress(request, tool, `subagent ${turn.subagentId}`, () => deps.watch.wait(turn.subagentId, clampWait(timeoutMs), signal));
+    return report(turn, waited.timedOut, signal);
   };
 
   server.registerTool(

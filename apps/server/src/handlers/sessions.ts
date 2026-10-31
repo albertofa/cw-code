@@ -11,7 +11,7 @@ import type {
 } from "@cw-code/contracts";
 import { stat } from "node:fs/promises";
 import { isAbsolute } from "node:path";
-import { assertAgentCreateOptions, callerPermissionCap } from "../agent/agentPolicy.js";
+import { assertAgentCreateOptions, assertAgentMayDispatch, callerPermissionCap } from "../agent/agentPolicy.js";
 import type { ServerApp } from "../app/ServerApp.js";
 import type { Services } from "../app/services.js";
 import type { SessionStatusReason } from "../debug/sessionStatusTrace.js";
@@ -73,8 +73,9 @@ export function registerSessionHandlers(router: Router, app: ServerApp): void {
   handle<string>(router, "sessions.list", (projectId) => services().sessions.listSessions(projectId));
   handle<{ projectId: string; driver: DriverKind; options?: CreateSessionOptions }>(router, "sessions.create", async (args, ctx) => {
     if (ctx.auth.kind !== "agent") return services().sessions.createSession(args.projectId, args.driver, args.options);
-    assertAgentCreateOptions(args.options);
     const { sessions } = services();
+    assertAgentMayDispatch(ctx, (id) => sessions.findSession(id));
+    assertAgentCreateOptions(args.options);
     const permissionMode = callerPermissionCap(sessions, ctx.auth.sessionId);
     const created = await sessions.createSession(args.projectId, args.driver, args.options);
     const prefs = setComposer(app, created.id, { permissionMode });

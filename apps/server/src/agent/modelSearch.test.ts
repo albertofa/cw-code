@@ -35,15 +35,17 @@ describe("modelSearchTokens", () => {
 });
 
 describe("parseModelQuery", () => {
-  test("reports an effort word instead of matching it", () => {
-    expect(parseModelQuery("gpt 5 codex high")).toEqual({ terms: ["gpt", "5", "codex"], harnesses: ["codex"], effort: "high" });
-    expect(parseModelQuery("opus x-high").effort).toBe("xhigh");
+  test("reports an effort word and keeps it as an optional term", () => {
+    expect(parseModelQuery("gpt 5 codex high")).toEqual({ terms: ["gpt", "5", "codex", "high"], harnesses: ["codex"], effort: "high" });
+    expect(parseModelQuery("opus x-high")).toEqual({ terms: ["opus"], harnesses: [], effort: "xhigh" });
     expect(parseModelQuery("opus extra high").effort).toBe("xhigh");
   });
 
-  test("collects harness words", () => {
+  test("collects harness words outside provider-prefixed ids", () => {
     expect(parseModelQuery("opencode claude sonnet").harnesses).toEqual(["opencode", "claude"]);
     expect(parseModelQuery("kimi").harnesses).toEqual([]);
+    expect(parseModelQuery("anthropic/claude-opus-4-5").harnesses).toEqual([]);
+    expect(parseModelQuery("openai/gpt-5-codex").harnesses).toEqual([]);
   });
 });
 
@@ -80,8 +82,26 @@ describe("rankModelMatches", () => {
     expect(ids(rankModelMatches(models, "sonnet"))).toEqual(["anthropic/sonnet-x", "provider/supersonnet"]);
   });
 
-  test("ignores the effort word when matching", () => {
+  test("does not require the effort word to match", () => {
     expect(ids(rankModelMatches(CODEX, "gpt 5 codex high"))[0]).toBe("gpt-5-codex");
+  });
+
+  test("prefers a model whose id contains the effort word", () => {
+    expect(ids(rankModelMatches(CODEX, "gpt 5.1 codex max"))).toEqual(["gpt-5.1-codex-max"]);
+    const models = [
+      { id: "gpt-5.1-codex", label: "GPT-5.1 Codex" },
+      { id: "gpt-5.1-codex-max", label: "GPT-5.1 Codex Max" }
+    ];
+    expect(ids(rankModelMatches(models, "gpt 5.1 codex max"))).toEqual(["gpt-5.1-codex-max", "gpt-5.1-codex"]);
+    expect(parseModelQuery("gpt 5.1 codex max").effort).toBe("max");
+  });
+
+  test("ranks digits in the query order above the same digits in another order", () => {
+    const models = [
+      { id: "claude-opus-5-4", label: "claude-opus-5-4" },
+      { id: "claude-opus-4-5", label: "claude-opus-4-5" }
+    ];
+    expect(ids(rankModelMatches(models, "opus 4.5"))).toEqual(["claude-opus-4-5", "claude-opus-5-4"]);
   });
 
   test("returns nothing when a term matches no model", () => {

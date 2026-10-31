@@ -50,6 +50,7 @@ import type {
   TurnSnapshot,
   WorktreePruneSummary
 } from "@cw-code/contracts";
+import { subagentDepthError } from "../agent/agentPolicy.js";
 import { CW_AGENT_TOKEN_ENV, CW_MCP_URL_ENV } from "../agent/claudePlugin.js";
 import { type SessionStatusReason } from "../debug/sessionStatusTrace.js";
 import { isWorkingSetStatus } from "@cw-code/shared/workingSet";
@@ -830,7 +831,7 @@ export class SessionManager {
     this.assertNotReserved();
     const parent = this.store.getSession(parentId);
     if (!parent) throw new Error(`unknown session ${parentId}`);
-    if (parent.subagent) throw new Error("subagents cannot dispatch subagents; complete this task yourself");
+    if (parent.subagent) throw subagentDepthError();
     if (parent.status === "resolved" || parent.status === "archived") {
       throw new Error(`session is ${parent.status}; reopen it before dispatching subagents`);
     }
