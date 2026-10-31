@@ -210,6 +210,7 @@ function turnReachesPast(turn: TurnSnapshot, since: number): boolean {
 
 const INTERRUPT_SETTLE_TIMEOUT_MS = 3_000;
 const INTERRUPT_SETTLE_POLL_MS = 100;
+const SUBAGENT_SETTLE_TIMEOUT_MS = 10_000;
 
 function withCreateNotice(session: SessionMeta, notice: string | null): SessionMeta {
   return notice ? { ...session, createNotice: notice } : session;
@@ -868,6 +869,48 @@ export class SessionManager {
       .listAllSessions()
       .filter((session) => session.subagent?.parentSessionId === parentId)
       .sort((a, b) => a.createdAt - b.createdAt);
+  }
+
+  setTurnStopper(stopper: (sessionId: string) => void): void {
+    this.stopTurns = stopper;
+  }
+
+  private stopTurns = (sessionId: string): void => {
+    for (const turn of this.listActiveTurns()) {
+      if (turn.sessionId === sessionId) this.interrupt(turn.turnId);
+    }
+  };
+
+  private async stopAndAwaitTurns(sessionId: string): Promise<void> {
+    if (!this.hasTurnInFlight(sessionId)) return;
+    await new Promise<void>((resolve) => {
+      const done = (): void => {
+        clearTimeout(timer);
+        unsubscribe();
+        resolve();
+      };
+      const timer = setTimeout(done, SUBAGENT_SETTLE_TIMEOUT_MS);
+      const unsubscribe = this.onDriverActivityChanged(() => {
+        if (!this.hasTurnInFlight(sessionId)) done();
+      });
+      this.stopTurns(sessionId);
+    });
+  }
+
+  async resolveSubagents(
+    parentId: string,
+    status: "resolved" | "archived",
+    opts: { reason?: SessionStatusReason; auto?: boolean } = {}
+  ): Promise<void> {
+    for (const child of this.listSubagents(parentId)) {
+      if (child.status === status) continue;
+      try {
+        await this.stopAndAwaitTurns(child.id);
+        await this.resolveSession(child.id, status, { ...opts, removeWorktree: child.subagent?.isolation === "worktree" });
+      } catch (err) {
+        console.warn(`[subagents] could not ${status === "archived" ? "archive" : "resolve"} ${child.id} of ${parentId}: ${(err as Error).message}`);
+      }
+    }
   }
 
   markSubagentDelivered(childId: string, turnId: string): void {
@@ -1663,6 +1706,9 @@ export class SessionManager {
     const current = refreshed ?? session;
     if (opts.stillEligible && !opts.stillEligible(current)) {
       return { sessionId, status, worktreeOrphaned: false, worktreeRemoved: false, branchDeleted: false };
+    }
+    if ((status === "resolved" || status === "archived") && this.listSubagents(sessionId).length > 0) {
+      await this.resolveSubagents(sessionId, status, { reason: opts.reason, auto: opts.auto });
     }
     return await this.resolveSessionInner(current, status, project, opts);
   }

@@ -6,6 +6,9 @@ import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
 import type { CliDriver, GitStatus, HistoryMessage, PrRef, SessionMeta, SubagentLink, ThreadEvent, TurnHandle } from "@cw-code/contracts";
 import { waitFor } from "../../tests/testing.js";
+import { ThreadService } from "../threads/ThreadService.js";
+import { TurnService } from "../threads/TurnService.js";
+import { TopicHub } from "../topics/TopicHub.js";
 import { SessionManager, type SessionManagerOptions } from "./SessionManager.js";
 import { SessionStore } from "./SessionStore.js";
 import { NEW_SESSION_TITLE } from "./sessionRestore.js";
@@ -50,7 +53,7 @@ function git(repository: string, ...args: string[]): string {
 
 const managers: SessionManager[] = [];
 
-function makeSandbox(options: Pick<SessionManagerOptions, "prState"> = {}) {
+function makeSandbox(options: Pick<SessionManagerOptions, "prState" | "onResolved"> = {}) {
   const sandbox = mkdtempSync(join(tmpdir(), "cw-subagents-"));
   const repository = join(sandbox, "repo");
   execFileSync("git", ["init", "-b", "main", repository]);
@@ -354,6 +357,175 @@ describe("subagent sessions in turns and sweeps", () => {
     const snapshot = store.getSession(child.id)?.lastTurnSnapshot;
     expect(snapshot).toBeDefined();
     expect(claims()).toEqual([{ driver: "claude", root: repository, since: snapshot?.capturedAt ?? 0 }]);
+  });
+});
+
+function wireTurns(manager: SessionManager): TurnService {
+  const threads = new ThreadService({
+    hub: new TopicHub(() => {}),
+    history: async () => [],
+    liveTasks: () => [],
+    pendingRequests: () => [],
+    loadHistoryOnSubscribe: false
+  });
+  manager.setEmitter((sessionId, event) => threads.onDriverEvent(sessionId, event));
+  const turns = new TurnService({ sessions: manager, threads, git: { keptFolderHead: () => null } });
+  manager.setTurnStopper((sessionId) => turns.stop(sessionId));
+  return turns;
+}
+
+function activeSessionIds(manager: SessionManager): string[] {
+  return manager.listActiveTurns().map((turn) => turn.sessionId);
+}
+
+describe("subagent lifecycle cascade", () => {
+  it("stops working children when the parent's turn is stopped", async () => {
+    const { manager, project } = makeSandbox();
+    const turns = wireTurns(manager);
+    const parent = await manager.createSession(project.id, "claude", { mode: "current" });
+    const working = await manager.createSubagentSession(parent.id, "claude", { title: "Working", isolation: "shared" });
+    const idle = await manager.createSubagentSession(parent.id, "claude", { title: "Idle", isolation: "shared" });
+    const stranger = await manager.createSession(project.id, "claude");
+    await manager.startTurn(parent.id, "dispatch");
+    await manager.startTurn(working.id, "work");
+    await manager.startTurn(stranger.id, "unrelated");
+
+    expect(turns.stop(parent.id)).toEqual({ stopped: true });
+
+    expect(activeSessionIds(manager)).toEqual([stranger.id]);
+    expect(manager.listSubagents(parent.id).find((child) => child.id === working.id)?.subagent?.result?.outcome).toBe("interrupted");
+    expect(manager.listSubagents(parent.id).find((child) => child.id === idle.id)?.subagent?.result).toBeUndefined();
+  });
+
+  it("does not stop children when the parent is interrupted for shutdown", async () => {
+    const { manager, project } = makeSandbox();
+    wireTurns(manager);
+    const parent = await manager.createSession(project.id, "claude", { mode: "current" });
+    const child = await manager.createSubagentSession(parent.id, "claude", { title: "Child", isolation: "shared" });
+    const parentTurn = await manager.startTurn(parent.id, "dispatch");
+    await manager.startTurn(child.id, "work");
+
+    manager.beginShutdownReservation();
+    manager.interrupt(parentTurn);
+
+    expect(activeSessionIds(manager)).toEqual([child.id]);
+  });
+
+  it("archives children with the parent, removing only an isolated child's worktree", async () => {
+    const resolved: string[] = [];
+    const { manager, project, store } = makeSandbox({ onResolved: (sessionId) => resolved.push(sessionId) });
+    wireTurns(manager);
+    const parent = await manager.createSession(project.id, "claude");
+    const shared = await manager.createSubagentSession(parent.id, "claude", { title: "Shared", isolation: "shared" });
+    const isolated = await manager.createSubagentSession(parent.id, "claude", { title: "Isolated", isolation: "worktree" });
+    const isolatedPath = isolated.worktreePath ?? "";
+    await manager.startTurn(shared.id, "work");
+    await manager.startTurn(isolated.id, "work");
+
+    const result = await manager.resolveSession(parent.id, "archived", { removeWorktree: false });
+
+    expect(result.status).toBe("archived");
+    expect(activeSessionIds(manager)).toEqual([]);
+    expect(store.getSession(shared.id)?.status).toBe("archived");
+    expect(store.getSession(isolated.id)?.status).toBe("archived");
+    expect(existsSync(isolatedPath)).toBe(false);
+    expect(existsSync(parent.worktreePath ?? "")).toBe(true);
+    expect(resolved).toEqual(expect.arrayContaining([shared.id, isolated.id, parent.id]));
+  });
+
+  it("keeps a shared worktree through child cleanup and lets the parent's own cleanup remove it", async () => {
+    const { manager, project } = makeSandbox();
+    const parent = await manager.createSession(project.id, "claude");
+    const parentPath = parent.worktreePath ?? "";
+    await manager.createSubagentSession(parent.id, "claude", { title: "Shared", isolation: "shared" });
+
+    await manager.resolveSubagents(parent.id, "resolved");
+    expect(existsSync(parentPath)).toBe(true);
+
+    const result = await manager.resolveSession(parent.id, "resolved", { removeWorktree: true });
+
+    expect(result.worktreeRemoved).toBe(true);
+    expect(existsSync(parentPath)).toBe(false);
+  });
+
+  it("archives children when the parent status is set directly", async () => {
+    const { manager, project, store } = makeSandbox();
+    const parent = await manager.createSession(project.id, "claude", { mode: "current" });
+    const child = await manager.createSubagentSession(parent.id, "claude", { title: "Child", isolation: "shared" });
+    await manager.startTurn(child.id, "work");
+
+    const updated = manager.setSessionStatus(parent.id, "archived");
+    await manager.resolveSubagents(parent.id, "archived");
+
+    expect(updated.status).toBe("archived");
+    expect(store.getSession(child.id)?.status).toBe("archived");
+    expect(activeSessionIds(manager)).toEqual([]);
+  });
+
+  it("waits for a child whose turn is still starting before archiving it", async () => {
+    const { manager, project, store } = makeSandbox();
+    const turns = wireTurns(manager);
+    const parent = await manager.createSession(project.id, "claude", { mode: "current" });
+    const child = await manager.createSubagentSession(parent.id, "claude", { title: "Child", isolation: "shared" });
+    const starting = turns.start(child.id, "work");
+
+    await manager.resolveSession(parent.id, "archived");
+    await starting;
+
+    expect(store.getSession(child.id)?.status).toBe("archived");
+    expect(activeSessionIds(manager)).toEqual([]);
+  });
+
+  it("leaves children resolved when the parent is restored", async () => {
+    const { manager, project, store } = makeSandbox();
+    const parent = await manager.createSession(project.id, "claude");
+    const child = await manager.createSubagentSession(parent.id, "claude", { title: "Child", isolation: "shared" });
+
+    await manager.resolveSession(parent.id, "resolved", { removeWorktree: false });
+    const restored = await manager.restoreSession(parent.id);
+
+    expect(restored.status).toBe("idle");
+    expect(store.getSession(child.id)?.status).toBe("resolved");
+  });
+
+  it("leaves the parent and its other children untouched when a child is archived directly", async () => {
+    const { manager, project, store } = makeSandbox();
+    const parent = await manager.createSession(project.id, "claude");
+    const archived = await manager.createSubagentSession(parent.id, "claude", { title: "Archived", isolation: "shared" });
+    const sibling = await manager.createSubagentSession(parent.id, "claude", { title: "Sibling", isolation: "shared" });
+    const before = store.getSession(parent.id)?.status;
+
+    await manager.resolveSession(archived.id, "archived", { removeWorktree: false });
+
+    expect(store.getSession(archived.id)?.status).toBe("archived");
+    expect(store.getSession(parent.id)?.status).toBe(before);
+    expect(store.getSession(sibling.id)?.status).toBe("idle");
+    expect(existsSync(parent.worktreePath ?? "")).toBe(true);
+  });
+
+  it("still resolves the parent and the other children when one child fails to resolve", async () => {
+    const { manager, project, store } = makeSandbox();
+    const parent = await manager.createSession(project.id, "claude", { mode: "current" });
+    const broken = await manager.createSubagentSession(parent.id, "claude", { title: "Broken", isolation: "shared" });
+    const healthy = await manager.createSubagentSession(parent.id, "claude", { title: "Healthy", isolation: "shared" });
+    const resolveSession = manager.resolveSession.bind(manager);
+    manager.resolveSession = (sessionId, ...rest) =>
+      sessionId === broken.id ? Promise.reject(new Error("resolve exploded")) : resolveSession(sessionId, ...rest);
+    const warnings: string[] = [];
+    const warn = console.warn;
+    console.warn = (message: string) => warnings.push(message);
+
+    try {
+      const result = await manager.resolveSession(parent.id, "resolved");
+      expect(result.status).toBe("resolved");
+    } finally {
+      console.warn = warn;
+    }
+
+    expect(store.getSession(parent.id)?.status).toBe("resolved");
+    expect(store.getSession(healthy.id)?.status).toBe("resolved");
+    expect(store.getSession(broken.id)?.status).toBe("idle");
+    expect(warnings.some((message) => message.includes(broken.id) && message.includes("resolve exploded"))).toBe(true);
   });
 });
 

@@ -86,12 +86,13 @@ export function registerSessionHandlers(router: Router, app: ServerApp): void {
     services().sessions.renameSession(args.sessionId, args.title)
   );
   handle<{ sessionId: string }>(router, "sessions.regenerateTitle", (args) => services().sessions.regenerateTitle(args.sessionId));
-  handle<{ sessionId: string; status: SessionStatus; reason?: SessionStatusReason }>(router, "sessions.setStatus", (args) => {
+  handle<{ sessionId: string; status: SessionStatus; reason?: SessionStatusReason }>(router, "sessions.setStatus", async (args) => {
     const { sessions, ptys, fileWatcher } = services();
     const updated = sessions.setSessionStatus(args.sessionId, args.status, args.reason);
     if (updated.status === "resolved" || updated.status === "archived") {
       ptys.killSession(args.sessionId);
       void fileWatcher.unwatch(args.sessionId);
+      await sessions.resolveSubagents(args.sessionId, updated.status);
     }
     return updated;
   });

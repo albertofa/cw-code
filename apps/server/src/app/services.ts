@@ -342,6 +342,7 @@ export function createServices(stores: { sessionStore: SessionStore; settingsSto
     pendingRequests: (sessionId) => sessions.listPendingRequests(sessionId)
   });
   const turns = new TurnService({ sessions, threads, git: gitTopic });
+  sessions.setTurnStopper((sessionId) => turns.stop(sessionId));
   const autoFollowUp = new AutoFollowUpEngine({
     sessions: () => sessions.listAllSessions(),
     settings: () => sessions.getSettings(),

@@ -463,7 +463,8 @@ describe("AutoFollowUpEngine with the real thread and turn services", () => {
           return turnId;
         },
         interrupt: () => {},
-        listActiveTurns: () => []
+        listActiveTurns: () => [],
+        listSubagents: () => []
       },
       threads,
       git: { keptFolderHead: () => null }

@@ -15,7 +15,7 @@ export interface StartTurnInput {
 }
 
 export interface TurnServiceDeps {
-  sessions: Pick<SessionManager, "assertCanStartTurn" | "startTurn" | "interrupt" | "listActiveTurns">;
+  sessions: Pick<SessionManager, "assertCanStartTurn" | "startTurn" | "interrupt" | "listActiveTurns" | "listSubagents">;
   threads: ThreadService;
   git: Pick<GitTopic, "keptFolderHead">;
 }
@@ -62,6 +62,14 @@ export class TurnService {
   }
 
   stop(sessionId: string): StopResult {
+    const result = this.stopSession(sessionId);
+    if (result.stopped) {
+      for (const child of this.deps.sessions.listSubagents(sessionId)) this.stopSession(child.id);
+    }
+    return result;
+  }
+
+  private stopSession(sessionId: string): StopResult {
     const active = this.deps.sessions.listActiveTurns().filter((turn) => turn.sessionId === sessionId);
     if (active.length === 0) {
       const starting = this.starting.get(sessionId);
