@@ -325,6 +325,7 @@ export const HEAD_QUERY = `
 query($owner: String!, $repo: String!, $number: Int!) {
   repository(owner: $owner, name: $repo) {
     pullRequest(number: $number) {
+      url
       headRefOid
       state
       updatedAt

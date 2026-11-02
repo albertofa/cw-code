@@ -14,6 +14,10 @@ export function prRefFromUrl(url: string): PrRef | null {
   return { host: match[1].toLowerCase(), owner: match[2], repo: match[3], number };
 }
 
+export function prRefUrl(ref: PrRef): string {
+  return `https://${ref.host}/${ref.owner}/${ref.repo}/pull/${ref.number}`;
+}
+
 export function prRefLabel(ref: PrRef): string {
   return `${ref.owner}/${ref.repo}#${ref.number}`;
 }

@@ -10,6 +10,7 @@ import { registerPrefsHandlers } from "./prefs.js";
 import { registerPrHandlers } from "./prs.js";
 import { registerPtyHandlers } from "./pty.js";
 import { registerServerHandlers } from "./server.js";
+import { registerSessionPrHandlers } from "./sessionPrs.js";
 import { registerSessionHandlers } from "./sessions.js";
 import { registerSettingsHandlers } from "./settings.js";
 import { registerShutdownHandlers } from "./shutdown.js";
@@ -28,6 +29,7 @@ export function registerHandlers(router: Router, app: ServerApp): void {
   registerGitHandlers(router, app);
   registerGitHubHandlers(router, app);
   registerPrHandlers(router, app);
+  registerSessionPrHandlers(router, app);
   registerFileHandlers(router, app);
   registerPtyHandlers(router, app);
   registerSettingsHandlers(router, app);

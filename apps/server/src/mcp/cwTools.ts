@@ -34,6 +34,7 @@ const READ_ONLY = { readOnlyHint: true } as const;
 const WAIT_RANGE = `default ${WAIT_DEFAULT_MS}, ${WAIT_MIN_MS}-${WAIT_MAX_MS}`;
 const SUBAGENT_RETURN =
   "Returns {subagentId, status, outcome, resultText, timedOut, next}; outcome is done, error or interrupted once the turn settled, otherwise null; when next is set, follow it.";
+const PR_INPUT = "pr is a pull request URL, owner/repo#123, or a number in the GitHub repository of your checkout";
 
 const CW_TOOL_SPECS = {
   projects_list: { description: "List the cw-code projects (id, name, rootPath).", inputSchema: z.object({}), annotations: READ_ONLY },
@@ -89,6 +90,20 @@ const CW_TOOL_SPECS = {
   settings_set: {
     description: "Change cw-code app settings with a partial patch (only model, worktree, session lifecycle and refresh settings are writable). Returns the full settings.",
     inputSchema: z.object({ patch: z.record(z.string(), z.unknown()) })
+  },
+  prs_list: {
+    description:
+      "List the pull requests cw-code tracks for your session: the linked ones, plus the PR it sees on the session's current branch when that one is not linked (linked: false). A subagent sees its parent session's PRs. Returns {sessionId, branch, prs: [{pr, url, title, state, linked, origin}]}.",
+    inputSchema: z.object({}),
+    annotations: READ_ONLY
+  },
+  pr_link: {
+    description: `Link a GitHub pull request to your cw-code session so cw-code tracks its checks, reviews and comments there. On its own cw-code only links the PR of the session's current branch, so call this right after you open a PR (opened: true) and when you start working on a PR this session did not open (opened: false). ${PR_INPUT}. A subagent links to its parent session. Returns {sessionId, pr, url, state, origin, alreadyLinked}.`,
+    inputSchema: z.object({ pr: z.string().min(1), opened: z.boolean().default(false) })
+  },
+  pr_unlink: {
+    description: `Unlink a pull request from your cw-code session, for example one linked by mistake; cw-code then stops linking it from the branch. ${PR_INPUT}. Returns {sessionId, pr, wasLinked}.`,
+    inputSchema: z.object({ pr: z.string().min(1) })
   },
   subagent_run: {
     description: `Dispatch a subagent: a hidden cw-code session on driver (claude, codex or opencode) that runs task and reports back only to you. Use it for work on another harness or, with isolation 'worktree', in its own checkout ('shared', the default, works in your checkout). If the user named a model in plain text, call subagent_targets with that text first and pass the returned id as model. permissionMode is capped at your own. With wait (default true) blocks until the subagent finishes, needs the user, or timeoutMs passes (${WAIT_RANGE}); for long tasks pass wait: false and end your turn. Fails without creating anything when driver cannot run on this machine; report that error to the user. ${SUBAGENT_RETURN}`,
@@ -322,6 +337,12 @@ export function registerCwTools(server: McpServer, deps: CwToolsDeps): void {
   server.registerTool("settings_get", CW_TOOL_SPECS.settings_get, () => run(() => call("settings.get")));
 
   server.registerTool("settings_set", CW_TOOL_SPECS.settings_set, ({ patch }) => run(() => call("settings.set", patch)));
+
+  server.registerTool("prs_list", CW_TOOL_SPECS.prs_list, () => run(() => call("sessionPrs.list")));
+
+  server.registerTool("pr_link", CW_TOOL_SPECS.pr_link, ({ pr, opened }) => run(() => call("sessionPrs.link", { pr, opened })));
+
+  server.registerTool("pr_unlink", CW_TOOL_SPECS.pr_unlink, ({ pr }) => run(() => call("sessionPrs.unlink", { pr })));
 
   if (dispatches) registerSubagentTools(server, deps, call);
 }

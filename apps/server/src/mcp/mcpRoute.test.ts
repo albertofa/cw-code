@@ -43,7 +43,8 @@ const SESSION_TOOL_NAMES = [
   "settings_get",
   "settings_set"
 ];
-const TOOL_NAMES = [...SESSION_TOOL_NAMES, ...SUBAGENT_TOOL_NAMES];
+const PR_TOOL_NAMES = ["prs_list", "pr_link", "pr_unlink"];
+const TOOL_NAMES = [...SESSION_TOOL_NAMES, ...PR_TOOL_NAMES, ...SUBAGENT_TOOL_NAMES];
 const PROJECTS: Project[] = [{ id: "p1", rootPath: "/repo", name: "repo" }];
 const MODELS: Record<DriverKind, ModelOption[]> = {
   claude: [
@@ -618,12 +619,12 @@ describe("mcp modern era", () => {
     ]);
   });
 
-  test("a subagent caller gets only the read and settings tools", async () => {
+  test("a subagent caller gets only the read, settings and pull request tools", async () => {
     child("kid", "caller", "working", "auto");
     const kid = await clientFor("kid");
     const { tools } = await kid.listTools();
     const dispatching = new Set(["session_create", "session_send", "session_stop"]);
-    expect(tools.map((tool) => tool.name).sort()).toEqual(SESSION_TOOL_NAMES.filter((name) => !dispatching.has(name)).sort());
+    expect(tools.map((tool) => tool.name).sort()).toEqual([...SESSION_TOOL_NAMES.filter((name) => !dispatching.has(name)), ...PR_TOOL_NAMES].sort());
   });
 
   test("session tools hide another session's subagents as unknown sessions", async () => {

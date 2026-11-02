@@ -1,5 +1,5 @@
 import type { GitPullRequest, PrDetail, PrRef, PrSummary, SessionPrItem, SessionPrLink } from "@cw-code/contracts";
-import { prKey } from "@cw-code/shared/prRef";
+import { prKey, prRefUrl } from "@cw-code/shared/prRef";
 import { prChip } from "./prChip.js";
 import { hasUnseen } from "./prUpdates.js";
 import { compareUrgency, displayChip, prRefFromUrl, prUrgency, sessionLinks, type PrSummaryLookup } from "./sessionPrLinks.js";
@@ -12,10 +12,6 @@ const NO_RECENCY = 0;
 
 export function canLink(item: Pick<SessionPrItem, "source" | "state">): boolean {
   return item.source === "branch" && item.state === "OPEN";
-}
-
-function refUrl(ref: PrRef): string {
-  return `https://${ref.host}/${ref.owner}/${ref.repo}/pull/${ref.number}`;
 }
 
 function linkedItem(
@@ -36,7 +32,7 @@ function linkedItem(
     link,
     chip,
     title: basis?.title ?? git?.title ?? null,
-    url: basis?.url ?? git?.url ?? refUrl(link.ref),
+    url: basis?.url ?? git?.url ?? prRefUrl(link.ref),
     state: basis?.state ?? link.snapshot?.state ?? git?.state ?? "OPEN",
     headSha: basis?.headRefOid ?? link.snapshot?.headRefOid ?? "",
     unseen: basis !== undefined && hasUnseen(basis, link),

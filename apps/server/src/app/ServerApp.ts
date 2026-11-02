@@ -3,7 +3,7 @@ import { CLOSE_UNAUTHORIZED, PROTOCOL_VERSION, SERVER_READY_PREFIX } from "@cw-c
 import { APP_TOPIC } from "@cw-code/shared/topics";
 import { AgentTokens } from "../agent/AgentTokens.js";
 import { CW_AGENT_TOKEN_ENV, CW_MCP_URL_ENV, writeClaudePlugin } from "../agent/claudePlugin.js";
-import { writeCodexSkill } from "../agent/codexSkill.js";
+import { writeCodexSkills } from "../agent/codexSkill.js";
 import { appendCrashLog, initCrashLog } from "../debug/crashLog.js";
 import { initHarnessTrace } from "../debug/harnessTrace.js";
 import { initServerLog } from "../debug/serverLog.js";
@@ -280,16 +280,16 @@ export class ServerApp {
 
   private prepareCodexSkill(): void {
     const root = codexSkillsRoot();
-    writeCodexSkill(root)
+    writeCodexSkills(root)
       .then(() => {
         this.codexSkillsDir = root;
       })
       .catch((err) => {
         const detail = err instanceof Error ? err.message : String(err);
-        const message = `could not write the Codex skill to ${root}; the cw-code skill is unavailable in Codex sessions: ${detail}`;
+        const message = `could not write the Codex skills to ${root}; the cw-code skills are unavailable in Codex sessions: ${detail}`;
         console.warn(message);
         appendCrashLog(message);
-        this.noticeShell({ level: "warning", title: "cw-code", message: "the cw-code skill is unavailable in Codex sessions", detail: message });
+        this.noticeShell({ level: "warning", title: "cw-code", message: "the cw-code skills are unavailable in Codex sessions", detail: message });
       });
   }
 

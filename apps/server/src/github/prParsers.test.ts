@@ -441,7 +441,7 @@ describe("ciFromRollup", () => {
 describe("parseHead", () => {
   it("extracts the head sha and state", () => {
     const json = JSON.stringify({ data: { repository: { pullRequest: { headRefOid: "sha-1", state: "MERGED" } } } });
-    expect(parseHead(json)).toEqual({ headRefOid: "sha-1", state: "MERGED", updatedAt: null });
+    expect(parseHead(json)).toEqual({ ref: null, headRefOid: "sha-1", state: "MERGED", updatedAt: null });
   });
 
   it("extracts the updatedAt timestamp", () => {
@@ -449,9 +449,15 @@ describe("parseHead", () => {
     expect(parseHead(json).updatedAt).toBe(Date.parse("2026-09-24T18:06:56Z"));
   });
 
+  it("reads the ref from GitHub's url, in its canonical casing", () => {
+    const json = JSON.stringify({ data: { repository: { pullRequest: { url: "https://github.com/Acme/Widgets/pull/7", headRefOid: "sha-1", state: "OPEN" } } } });
+    expect(parseHead(json).ref).toEqual({ host: "github.com", owner: "Acme", repo: "Widgets", number: 7 });
+  });
+
   it("returns nulls when the head sha and state are missing or unknown", () => {
-    expect(parseHead(JSON.stringify({ data: { repository: { pullRequest: {} } } }))).toEqual({ headRefOid: null, state: null, updatedAt: null });
+    expect(parseHead(JSON.stringify({ data: { repository: { pullRequest: {} } } }))).toEqual({ ref: null, headRefOid: null, state: null, updatedAt: null });
     expect(parseHead(JSON.stringify({ data: { repository: { pullRequest: { headRefOid: "sha-1", state: "DRAFT" } } } }))).toEqual({
+      ref: null,
       headRefOid: "sha-1",
       state: null,
       updatedAt: null
@@ -459,7 +465,7 @@ describe("parseHead", () => {
   });
 
   it("returns nulls for malformed JSON", () => {
-    expect(parseHead("not-json")).toEqual({ headRefOid: null, state: null, updatedAt: null });
+    expect(parseHead("not-json")).toEqual({ ref: null, headRefOid: null, state: null, updatedAt: null });
   });
 });
 
