@@ -1,7 +1,8 @@
-import { beforeEach, describe, expect, test } from "bun:test";
+import { beforeEach, describe, expect, test, vi } from "bun:test";
 import type { PrRef, SessionMeta, SessionPrItem, SessionPrLink } from "@cw-code/contracts";
 import { prKey } from "@cw-code/shared/prRef";
 import type { ServerApp } from "../app/ServerApp.js";
+import { findLink } from "../github/prLinks.js";
 import type { PrHeadInfo } from "../github/prParsers.js";
 import { Router, type CallContext } from "../transport/Router.js";
 import { registerSessionPrHandlers } from "./sessionPrs.js";
@@ -13,6 +14,10 @@ let heads: Map<string, PrHeadInfo>;
 let unlinked: Array<[string, PrRef]>;
 let prItems: SessionPrItem[];
 let router: Router;
+
+function onGitHub(ref: PrRef, head: Omit<PrHeadInfo, "ref">): void {
+  heads.set(prKey(ref).toLowerCase(), { ref, ...head });
+}
 
 function meta(id: string, overrides: Partial<SessionMeta> = {}): SessionMeta {
   return { id, projectId: "p1", driver: "claude", title: id, status: "working", resumeCursor: "", createdAt: 1, updatedAt: 2, ...overrides };
@@ -45,7 +50,7 @@ function buildRouter(): Router {
     git: { githubRemote: async () => ({ host: "github.com", owner: "acme", repository: "widgets", slug: "acme/widgets", url: "" }) },
     pullRequests: {
       head: async (ref: PrRef) => {
-        const head = heads.get(prKey(ref));
+        const head = heads.get(prKey(ref).toLowerCase());
         if (!head) throw new Error("GraphQL: Could not resolve to a PullRequest");
         return head;
       }
@@ -58,7 +63,9 @@ function buildRouter(): Router {
 
 beforeEach(() => {
   sessions = [meta("parent", { branch: "feature/a" }), meta("kid", { subagent: { parentSessionId: "parent", isolation: "worktree" } })];
-  heads = new Map([[prKey(WIDGETS(7)), { headRefOid: "sha-7", state: "OPEN", updatedAt: 500 }]]);
+  heads = new Map();
+  onGitHub(WIDGETS(7), { headRefOid: "sha-7", state: "OPEN", updatedAt: 500 });
+  onGitHub(WIDGETS(8), { headRefOid: "sha-8", state: "OPEN", updatedAt: 600 });
   unlinked = [];
   prItems = [];
   router = buildRouter();
@@ -103,9 +110,17 @@ describe("sessionPrs.link", () => {
 
   test("reports a PR that GitHub cannot find and links nothing", async () => {
     await expect(router.dispatch("sessionPrs.link", { pr: "#9" }, agent("parent"))).rejects.toThrow("Could not resolve to a PullRequest");
-    heads.set(prKey(WIDGETS(9)), { headRefOid: null, state: null, updatedAt: null });
+    onGitHub(WIDGETS(9), { headRefOid: null, state: null, updatedAt: null });
     await expect(router.dispatch("sessionPrs.link", { pr: "#9" }, agent("parent"))).rejects.toThrow("could not find pull request acme/widgets#9");
     expect(find("parent")?.prs).toBeUndefined();
+  });
+
+  test("stores GitHub's canonical casing, so the branch auto-link finds the same link", async () => {
+    const reply = await router.dispatch("sessionPrs.link", { pr: "ACME/Widgets#7", opened: true }, agent("parent"));
+    expect(reply).toMatchObject({ pr: "acme/widgets#7", alreadyLinked: false });
+    const prs = find("parent")?.prs;
+    expect(prs?.map((link) => link.ref)).toEqual([WIDGETS(7)]);
+    expect(findLink(prs, WIDGETS(7))).toBeDefined();
   });
 
   test("rejects an empty or non-string pr", async () => {
@@ -124,6 +139,23 @@ describe("sessionPrs.unlink", () => {
       ["parent", WIDGETS(8)]
     ]);
     expect(find("parent")?.prs).toEqual([]);
+  });
+
+  test("records an unlinked PR in GitHub's canonical casing so the branch auto-link stays suppressed", async () => {
+    expect(await router.dispatch("sessionPrs.unlink", { pr: "ACME/WIDGETS#8" }, agent("parent"))).toEqual({
+      sessionId: "parent",
+      pr: "acme/widgets#8",
+      wasLinked: false
+    });
+    expect(unlinked).toEqual([["parent", WIDGETS(8)]]);
+  });
+
+  test("falls back to the casing given when GitHub cannot read the PR", async () => {
+    const warnings = vi.spyOn(console, "warn").mockImplementation(() => {});
+    await router.dispatch("sessionPrs.unlink", { pr: "Acme/widgets#9" }, agent("parent"));
+    expect(unlinked).toEqual([["parent", { ...WIDGETS(9), owner: "Acme" }]]);
+    expect(String(warnings.mock.calls[0]?.[0])).toContain("could not read Acme/widgets#9 from GitHub");
+    warnings.mockRestore();
   });
 });
 

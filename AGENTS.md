@@ -145,8 +145,10 @@ Core behaviors:
   (`linkFromStatus`) only sees the PR of the session's current branch. `pr_link` takes a PR URL,
   `owner/repo#n` or a number in the caller's checkout remote, reads the head from GitHub (an unknown
   PR links nothing), and stores origin `opened` or `linked`; an existing link (matched ignoring
-  case) is left untouched so workflow links keep their `workflowId`. `pr_unlink` goes through
-  `unlinkPr`, so the branch auto-link does not bring the PR back.
+  case) is left untouched so workflow links keep their `workflowId`. Both tools store the ref in
+  GitHub's canonical casing (the head query's `url`), because `prKey` and the branch auto-link
+  compare case-sensitively. `pr_unlink` goes through `unlinkPr`, so the branch auto-link does not
+  bring the PR back.
 - Subagents: `subagent_run`/`subagent_wait`/`subagent_send`/`subagent_stop`/`subagents_list`/
   `subagent_targets` call the `subagents.*` router methods. The child is a normal session with
   `SessionMeta.subagent` (`parentSessionId`, `isolation`, the persisted last `result` and whether

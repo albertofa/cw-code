@@ -70,9 +70,10 @@ function linkReply(sessionId: string, link: SessionPrLink, alreadyLinked: boolea
   };
 }
 
-async function newLink(services: SessionPrServices, ref: PrRef, origin: PrLinkOrigin): Promise<SessionPrLink> {
-  const head = await services.pullRequests.head(ref);
-  if (!head.headRefOid || !head.state) throw new Error(`could not find pull request ${prRefLabel(ref)} on ${ref.host}`);
+async function newLink(services: SessionPrServices, requested: PrRef, origin: PrLinkOrigin): Promise<SessionPrLink> {
+  const head = await services.pullRequests.head(requested);
+  if (!head.headRefOid || !head.state) throw new Error(`could not find pull request ${prRefLabel(requested)} on ${requested.host}`);
+  const ref = head.ref ?? requested;
   const now = Date.now();
   return {
     ref,
@@ -81,6 +82,16 @@ async function newLink(services: SessionPrServices, ref: PrRef, origin: PrLinkOr
     lastSeenAt: now,
     ...(head.updatedAt !== null ? { snapshot: { state: head.state, headRefOid: head.headRefOid, updatedAt: head.updatedAt, syncedAt: now } } : {})
   };
+}
+
+async function canonicalRef(services: SessionPrServices, requested: PrRef): Promise<PrRef> {
+  try {
+    return (await services.pullRequests.head(requested)).ref ?? requested;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.warn(`[session-prs] could not read ${prRefLabel(requested)} from GitHub; unlinking it with the casing given: ${message}`);
+    return requested;
+  }
 }
 
 export function registerSessionPrHandlers(router: Router, app: Pick<ServerApp, "requireServices">): void {
@@ -102,7 +113,7 @@ export function registerSessionPrHandlers(router: Router, app: Pick<ServerApp, "
     const existing = findLinkIgnoringCase(owner.prs, ref);
     if (existing) return linkReply(owner.id, existing, true);
     const link = await newLink(all, ref, opened ? "opened" : "linked");
-    const linkedMeanwhile = findLinkIgnoringCase(all.sessions.findSession(owner.id)?.prs, ref);
+    const linkedMeanwhile = findLinkIgnoringCase(all.sessions.findSession(owner.id)?.prs, link.ref);
     if (linkedMeanwhile) return linkReply(owner.id, linkedMeanwhile, true);
     all.sessions.linkPr(owner.id, link);
     return linkReply(owner.id, link, false);
@@ -113,9 +124,10 @@ export function registerSessionPrHandlers(router: Router, app: Pick<ServerApp, "
     const all = services();
     const { input } = parsePrArgs(value, "sessionPrs.unlink");
     const owner = linkOwner(all.sessions, callerId);
-    const ref = await resolvePrInput(input, () => checkoutRemote(all, callerId));
-    const existing = findLinkIgnoringCase(owner.prs, ref);
-    all.sessions.unlinkPr(owner.id, existing?.ref ?? ref);
-    return { sessionId: owner.id, pr: prRefLabel(existing?.ref ?? ref), wasLinked: existing !== undefined };
+    const requested = await resolvePrInput(input, () => checkoutRemote(all, callerId));
+    const existing = findLinkIgnoringCase(owner.prs, requested);
+    const ref = existing?.ref ?? (await canonicalRef(all, requested));
+    all.sessions.unlinkPr(owner.id, ref);
+    return { sessionId: owner.id, pr: prRefLabel(ref), wasLinked: existing !== undefined };
   });
 }

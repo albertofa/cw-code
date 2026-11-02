@@ -454,6 +454,8 @@ function parseTimeline(value: unknown, threadIndex: Map<string, string[]>): PrTi
 }
 
 export interface PrHeadInfo {
+  /** The ref in GitHub's canonical owner and repository casing. */
+  ref: PrRef | null;
   headRefOid: string | null;
   state: PrSummary["state"] | null;
   updatedAt: number | null;
@@ -464,11 +466,12 @@ export function parseHead(json: string): PrHeadInfo {
   try {
     root = JSON.parse(json) as Record<string, unknown>;
   } catch {
-    return { headRefOid: null, state: null, updatedAt: null };
+    return { ref: null, headRefOid: null, state: null, updatedAt: null };
   }
   const pr = asRecord(asRecord(asRecord(root.data).repository).pullRequest);
   const state = asString(pr.state);
   return {
+    ref: prRefFromUrl(asString(pr.url)),
     headRefOid: asString(pr.headRefOid) || null,
     state: state === "OPEN" || state === "CLOSED" || state === "MERGED" ? state : null,
     updatedAt: asEpochMs(pr.updatedAt) || null
