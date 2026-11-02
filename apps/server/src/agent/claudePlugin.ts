@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { join } from "node:path";
-import { cwSkillMarkdown } from "./cwSkill.js";
+import { cwSkills } from "./cwSkill.js";
 import { writeFileIfChanged } from "./writeFileIfChanged.js";
 
 export const CLAUDE_PLUGIN_NAME = "cw-code";
@@ -23,7 +23,7 @@ export function claudePluginFiles(version: string): Record<string, string> {
         }
       }
     }),
-    "skills/cw-code/SKILL.md": cwSkillMarkdown("claude")
+    ...Object.fromEntries(cwSkills("claude").map((skill) => [`skills/${skill.name}/SKILL.md`, skill.markdown]))
   };
 }
 

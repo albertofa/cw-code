@@ -4,7 +4,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, utimesSync, wr
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { OPENCODE_SESSION_HEADER } from "@cw-code/shared/protocol";
-import { cwSkillMarkdown } from "../../../agent/cwSkill.js";
+import { cwSkills } from "../../../agent/cwSkill.js";
 import { cwToolDefinitions } from "../../../mcp/cwTools.js";
 import {
   mergeConfigContent,
@@ -102,8 +102,8 @@ describe("cw-code v2 plugin source", () => {
     expect(source).toContain("fs.rm(file");
     expect(source).toContain('ctx.shell.hook("create.before"');
     for (const key of SHELL_STRIPPED_ENV) expect(source).toContain(`"${key}"`);
-    expect(source).toContain("ctx.skill.transform((skills) => skills.add(CW_SKILL))");
-    expect(source).toContain(JSON.stringify(cwSkillMarkdown("opencode")));
+    expect(source).toContain("for (const skill of CW_SKILLS) skills.add(skill);");
+    for (const skill of cwSkills("opencode")) expect(source).toContain(JSON.stringify(skill.markdown));
   });
 });
 
@@ -138,8 +138,16 @@ describe("cw-code v2 plugin", () => {
     expect(existsSync(file)).toBe(false);
     expect(tools.map((t) => t.name)).toEqual(["todo", "cw_ask", ...cwToolDefinitions().map((definition) => `cw_${definition.name}`)]);
     for (const tool of tools.slice(2)) expect(tool.input.type).toBe("object");
-    expect(skills).toHaveLength(1);
-    expect(skills[0]).toMatchObject({ id: "cw-code", name: "cw-code", path: opencodeSkillPath(PLUGIN_DIR), content: cwSkillMarkdown("opencode") });
+    expect(skills).toEqual(
+      cwSkills("opencode").map((skill) => ({
+        id: skill.name,
+        name: skill.name,
+        description: skill.description,
+        path: opencodeSkillPath(PLUGIN_DIR, skill.name),
+        content: skill.markdown
+      }))
+    );
+    expect(skills.map((skill) => skill.name)).toEqual(["cw-code", "cw-code-prs"]);
   });
 
   it("shares the secret with plugin instances that opencode loads later for other directories", async () => {
@@ -149,7 +157,7 @@ describe("cw-code v2 plugin", () => {
     expect(existsSync(file)).toBe(false);
     const later = await loadPlugin(options);
     expect(later.tools.map((t) => t.name)).toContain("cw_projects_list");
-    expect(later.skills).toHaveLength(1);
+    expect(later.skills).toHaveLength(cwSkills("opencode").length);
   });
 
   it("strips the server secrets from the env of agent shells", async () => {

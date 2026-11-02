@@ -24,6 +24,12 @@ describe("claudePluginFiles", () => {
     expect(skill.startsWith("---\nname: cw-code\ndescription: ")).toBe(true);
     expect(skill).toContain("mcp__plugin_cw-code_cw__");
   });
+
+  it("ships the pull request skill next to it", () => {
+    const skill = claudePluginFiles("1.2.3")["skills/cw-code-prs/SKILL.md"] ?? "";
+    expect(skill.startsWith("---\nname: cw-code-prs\ndescription: ")).toBe(true);
+    expect(skill).toContain("mcp__plugin_cw-code_cw__pr_link");
+  });
 });
 
 describe("claudePluginArgs", () => {

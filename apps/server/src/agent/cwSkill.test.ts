@@ -1,6 +1,16 @@
 import { describe, expect, it } from "bun:test";
 import { SUBAGENT_TOOL_NAMES } from "@cw-code/shared/subagents";
-import { cwSkillMarkdown, cwToolName, type AgentHarness } from "./cwSkill.js";
+import {
+  cwPrSkillMarkdown,
+  cwSkillMarkdown,
+  cwSkills,
+  cwToolName,
+  PR_SKILL_DESCRIPTION,
+  PR_SKILL_NAME,
+  PR_TOOLS,
+  SKILL_DESCRIPTION,
+  type AgentHarness
+} from "./cwSkill.js";
 
 describe("cwToolName", () => {
   it("prefixes the tool the way each harness exposes MCP tools", () => {
@@ -35,5 +45,28 @@ describe("cwSkillMarkdown", () => {
     expect(cwSkillMarkdown("claude")).toContain("CW_SESSION_ID");
     expect(cwSkillMarkdown("codex")).not.toContain("CW_SESSION_ID");
     expect(cwSkillMarkdown("opencode")).not.toContain("CW_SESSION_ID");
+  });
+});
+
+describe("cwPrSkillMarkdown", () => {
+  it.each(["claude", "codex", "opencode"] as AgentHarness[])("names every %s pull request tool under its own frontmatter", (harness) => {
+    const skill = cwPrSkillMarkdown(harness);
+    expect(skill.startsWith(`---\nname: ${PR_SKILL_NAME}\ndescription: `)).toBe(true);
+    for (const tool of PR_TOOLS) expect(skill).toContain(`\`${cwToolName(harness, tool)}\``);
+    expect(skill).toContain("opened: true");
+  });
+
+  it("does not leak another harness's tool names", () => {
+    expect(cwPrSkillMarkdown("codex")).not.toContain("mcp__plugin_cw-code_cw__");
+    expect(cwPrSkillMarkdown("opencode")).not.toContain("mcp__");
+  });
+});
+
+describe("cwSkills", () => {
+  it.each(["claude", "codex", "opencode"] as AgentHarness[])("ships the session and pull request skills for %s", (harness) => {
+    expect(cwSkills(harness)).toEqual([
+      { name: "cw-code", description: SKILL_DESCRIPTION, markdown: cwSkillMarkdown(harness) },
+      { name: "cw-code-prs", description: PR_SKILL_DESCRIPTION, markdown: cwPrSkillMarkdown(harness) }
+    ]);
   });
 });
