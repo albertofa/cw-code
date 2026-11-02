@@ -101,7 +101,7 @@ Core behaviors:
   `serverPublicUrl` and `keepServerRunning` settings. That is not a security boundary: a
   device token still grants full remote control (terminals, sessions, files, all other settings). Treat it like a shell login.
   Per-method scopes exist only for agent tokens (see Agent tools).
-- Agent tools: `/mcp` serves the `cw` MCP server (sessions, settings, usage, monitoring) to the
+- Agent tools: `/mcp` serves the `cw` MCP server (sessions, settings, usage, monitoring, PR links) to the
   harness CLIs cw-code spawns, statelessly: MCP revision 2026-07-28 through
   `@modelcontextprotocol/server` `createMcpHandler`, with the SDK's stateless fallback for
   2025-era `initialize` clients (no `Mcp-Session-Id`, GET/DELETE 405). Callers authenticate with
@@ -117,7 +117,8 @@ Core behaviors:
   title turns; an inherited `CW_MCP_URL`/`CW_AGENT_TOKEN` pair is stripped):
   - Claude: turns and terminal tabs get `CW_MCP_URL`/`CW_AGENT_TOKEN` in their env and
     `--plugin-dir <userdata>/harness/claude-plugin`, a plugin cw-code writes at startup with the
-    `cw` MCP entry and the `cw-code` skill. A changed token respawns the session's Claude process.
+    `cw` MCP entry and the `cw-code` and `cw-code-prs` skills (`cwSkills`; Codex and opencode ship
+    the same list). A changed token respawns the session's Claude process.
   - Codex: the shared app-server never sees a token in its env. `thread/start`/`thread/resume`
     carry `config.mcp_servers.cw` with the session's token in `http_headers` (per-thread, never
     persisted by Codex) and `default_tools_approval_mode: "approve"`; a loaded thread whose token
@@ -139,6 +140,13 @@ Core behaviors:
     inherit the serve env, so same-host code execution can still impersonate an in-flight
     session. Not covered: opencode v1 and opencode terminal tabs.
   Codex and opencode run cw tools without approval prompts; the server-side caps are the guard.
+- PR links: `prs_list`/`pr_link`/`pr_unlink` call the agent-only `sessionPrs.*` router methods, which
+  act on the caller's session (a subagent's parent for a subagent). They exist because auto-linking
+  (`linkFromStatus`) only sees the PR of the session's current branch. `pr_link` takes a PR URL,
+  `owner/repo#n` or a number in the caller's checkout remote, reads the head from GitHub (an unknown
+  PR links nothing), and stores origin `opened` or `linked`; an existing link (matched ignoring
+  case) is left untouched so workflow links keep their `workflowId`. `pr_unlink` goes through
+  `unlinkPr`, so the branch auto-link does not bring the PR back.
 - Subagents: `subagent_run`/`subagent_wait`/`subagent_send`/`subagent_stop`/`subagents_list`/
   `subagent_targets` call the `subagents.*` router methods. The child is a normal session with
   `SessionMeta.subagent` (`parentSessionId`, `isolation`, the persisted last `result` and whether

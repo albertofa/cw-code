@@ -11,6 +11,11 @@ export function requireOwner(ctx: CallContext, action: string): void {
   if (ctx.auth.kind !== "owner") throw Object.assign(new Error(`${action} requires the owner token`), { code: "forbidden" });
 }
 
+export function agentCaller(ctx: CallContext, method: string): string {
+  if (ctx.auth.kind !== "agent") throw Object.assign(new Error(`${method} is only available to agents`), { code: "forbidden" });
+  return ctx.auth.sessionId;
+}
+
 export function setComposer(app: Pick<ServerApp, "requireServices" | "emit">, sessionId: string, prefs: ComposerPrefs): ComposerPrefs {
   const updated = app.requireServices().sessions.setComposer(sessionId, prefs);
   app.emit("composer.changed", { sessionId, prefs: updated });

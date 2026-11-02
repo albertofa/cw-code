@@ -17,8 +17,8 @@ import type { Services } from "../app/services.js";
 import { effortOptionsFor } from "../prEngine/workflowHarness.js";
 import { DRIVER_KINDS } from "../prefs/PreferencesStore.js";
 import { PERMISSION_MODES } from "../providers/permissions.js";
-import type { CallContext, Router } from "../transport/Router.js";
-import { handle, knownSessionId, parseArgs, parseOptionalString, parseString, setComposer } from "./shared.js";
+import type { Router } from "../transport/Router.js";
+import { agentCaller, handle, knownSessionId, parseArgs, parseOptionalString, parseString, setComposer } from "./shared.js";
 
 const ISOLATIONS: readonly SubagentIsolation[] = ["shared", "worktree"];
 
@@ -54,11 +54,6 @@ function parseText(value: unknown, name: string): string {
 function titleFor(title: string | undefined, task: string): string {
   const explicit = title === undefined ? "" : normalizeSubagentTitle(title);
   return explicit || normalizeSubagentTitle(task.split("\n").find((line) => line.trim()) ?? task);
-}
-
-function agentCaller(ctx: CallContext, method: string): string {
-  if (ctx.auth.kind !== "agent") throw Object.assign(new Error(`${method} is only available to agents`), { code: "forbidden" });
-  return ctx.auth.sessionId;
 }
 
 function dispatchingCaller(sessions: Services["sessions"], callerId: string): SessionMeta {

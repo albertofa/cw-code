@@ -243,15 +243,19 @@ export class PullRequestService {
     if (updatedAt !== null) this.knownUpdatedAts.set(key, Math.max(updatedAt, this.knownUpdatedAts.get(key) ?? 0));
   }
 
+  async head(ref: PrRef): Promise<PrHeadInfo> {
+    assertPrRef(ref);
+    const { stdout } = await this.execForRef(ref, [
+      "api", "graphql", "-f", `query=${HEAD_QUERY}`, "-f", `owner=${ref.owner}`, "-f", `repo=${ref.repo}`, "-F", `number=${ref.number}`
+    ]);
+    const parsed = parseHead(stdout);
+    this.remember(ref, parsed.headRefOid, parsed.state, parsed.updatedAt);
+    return parsed;
+  }
+
   private async fetchHead(ref: PrRef): Promise<PrHeadInfo | null> {
     try {
-      assertPrRef(ref);
-      const { stdout } = await this.execForRef(ref, [
-        "api", "graphql", "-f", `query=${HEAD_QUERY}`, "-f", `owner=${ref.owner}`, "-f", `repo=${ref.repo}`, "-F", `number=${ref.number}`
-      ]);
-      const parsed = parseHead(stdout);
-      this.remember(ref, parsed.headRefOid, parsed.state, parsed.updatedAt);
-      return parsed;
+      return await this.head(ref);
     } catch {
       return null;
     }
