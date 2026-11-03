@@ -213,7 +213,7 @@ export function GitHubView() {
         {showLoading && <GitHubListSkeleton label={`Loading ${KIND_NOUNS[kind]}`} />}
         {showEmpty && (
           <div className="pr-view-empty">
-            No {KIND_NOUNS[kind]} match <code>{normalizeQuery(tab.query)}</code>.
+            No {view.hasMore ? `loaded ${KIND_NOUNS[kind]}` : KIND_NOUNS[kind]} match <code>{normalizeQuery(tab.query)}</code>.
             {currentView && edited && (
               <>
                 {" "}
@@ -236,14 +236,14 @@ export function GitHubView() {
               onToggle={onToggleGroup}
               onAddQualifier={onAddQualifier}
             />
-            {!stale && view?.hasMore && (
-              <div className="hub-more">
-                <button type="button" className="hub-more-btn" disabled={view.loadingMore} onClick={onLoadMore}>
-                  {view.loadingMore && <Spinner size={12} />}
-                  {view.loadingMore ? "Loading…" : "Show more"}
-                </button>
-              </div>
-            )}
+          </div>
+        )}
+        {!stale && view?.hasMore && (hasItems || showEmpty) && (
+          <div className="hub-more">
+            <button type="button" className="hub-more-btn" disabled={view.loadingMore} onClick={onLoadMore}>
+              {view.loadingMore && <Spinner size={12} />}
+              {view.loadingMore ? "Loading…" : "Show more"}
+            </button>
           </div>
         )}
       </div>
