@@ -9,7 +9,8 @@ import { OWNER_RE, REPO_RE, assertRepoRef, assertRunId, isSafePositiveInt, isVal
 import { GH_HOST, githubCliBinary, resolveGitHubAccount, withGitHubAccount, type AccountResolution } from "./githubAccount.js";
 import { defaultGitHubAccounts } from "./GitHubAccounts.js";
 import { DETAIL_QUERY, HEAD_QUERY, INBOX_MAX_PAGES, INBOX_QUERY, INBOX_SEARCH_LIMIT, inboxSearchQueries } from "./prQueries.js";
-import { parseDetail, parseHead, parseInbox, prKey, type PrHeadInfo } from "./prParsers.js";
+import { combineInboxQueries, fetchInboxPages } from "./inboxPages.js";
+import { parseDetail, parseHead, prKey, type PrHeadInfo } from "./prParsers.js";
 import type { PrInboxResult } from "./results.js";
 
 const INBOX_CACHE_TTL_MS = 30_000;
@@ -130,37 +131,19 @@ export class PullRequestService {
     const env = authenticatedEnvironment(account.host, token);
     const binary = this.githubCliBinary();
     const accountInfo = { host: account.host, login: account.login };
-    const fetchPage = async (q: string, after: string | null) =>
-      parseInbox(
-        await execText(
-          binary,
-          ["api", "graphql", "-f", `query=${INBOX_QUERY}`, "-f", `q=${q}`, ...(after !== null ? ["-f", `after=${after}`] : [])],
-          homedir(),
-          REQUEST_TIMEOUT_MS,
-          env
-        )
+    const fetchPage = (q: string) => (after: string | null) =>
+      execText(
+        binary,
+        ["api", "graphql", "-f", `query=${INBOX_QUERY}`, "-f", `q=${q}`, ...(after !== null ? ["-f", `after=${after}`] : [])],
+        homedir(),
+        REQUEST_TIMEOUT_MS,
+        env
       );
-    const fetchQuery = async (q: string) => {
-      let page = await fetchPage(q, null);
-      const items = [...page.items];
-      for (let pages = 1; pages < INBOX_MAX_PAGES && page.viewer !== null && page.nextCursor !== null; pages += 1) {
-        page = await fetchPage(q, page.nextCursor);
-        items.push(...page.items);
-      }
-      return { viewer: page.viewer, items, truncated: page.nextCursor !== null };
-    };
-    try {
-      const parsed = await Promise.all(inboxSearchQueries(fetchedAt).map(fetchQuery));
-      if (parsed.some((entry) => entry.viewer === null)) {
-        return { account: accountInfo, items: [], fetchedAt, error: "Unexpected response from GitHub" };
-      }
-      const items = mergeInboxItems(parsed.map((entry) => entry.items));
-      for (const item of items) this.remember(item.ref, item.headRefOid, item.state, item.updatedAt);
-      const truncated = parsed.some((entry) => entry.truncated);
-      return { account: accountInfo, items, fetchedAt, error: null, truncated, limit: INBOX_SEARCH_LIMIT };
-    } catch (error) {
-      return { account: accountInfo, items: [], fetchedAt, error: (error as Error).message || "GitHub CLI error" };
-    }
+    const results = await Promise.all(inboxSearchQueries(fetchedAt).map((q) => fetchInboxPages(fetchPage(q), INBOX_MAX_PAGES)));
+    const combined = combineInboxQueries(results);
+    const items = mergeInboxItems(combined.items);
+    for (const item of items) this.remember(item.ref, item.headRefOid, item.state, item.updatedAt);
+    return { account: accountInfo, items, fetchedAt, error: combined.error, truncated: combined.truncated, limit: INBOX_SEARCH_LIMIT };
   }
 
   async detail(ref: PrRef): Promise<PrDetail> {

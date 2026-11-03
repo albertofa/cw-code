@@ -140,7 +140,7 @@ function createHarness() {
     inbox: null as PrInboxResult | null,
     prs: [] as PrSummary[],
     prPages: null as PrSummary[][] | null,
-    pageError: null as string | null,
+    failCursor: null as string | null,
     issues: [] as IssueSummary[],
     runs: [] as WorkflowRunSummary[],
     hold: null as Deferred | null
@@ -171,7 +171,7 @@ function createHarness() {
       calls.prs.push({ query, force });
       calls.prCursors.push(after);
       await held();
-      if (after !== null && state.pageError !== null) return { ...searchResult<PrSummary>([]), error: state.pageError };
+      if (after !== null && after === state.failCursor) return { ...searchResult<PrSummary>([]), error: "gh: HTTP 502" };
       return state.prPages ? pagedResult(state.prPages, after) : searchResult(state.prs);
     },
     searchIssues: async (query) => {
@@ -413,7 +413,7 @@ describe("GitHubViews", () => {
   it("keeps the loaded rows and the cursor when the next page fails", async () => {
     const h = createHarness();
     h.state.prPages = [[pr(1)], [pr(2)]];
-    h.state.pageError = "gh: HTTP 502";
+    h.state.failCursor = "page-1";
     const topic = githubViewTopic("pr", "is:pr involves:@me");
     h.subscribe(topic);
     await flush();
@@ -422,7 +422,7 @@ describe("GitHubViews", () => {
     expect(rows(h.view(topic))).toHaveLength(1);
     expect(h.view(topic).view).toMatchObject({ error: "gh: HTTP 502", hasMore: true, loadingMore: false });
 
-    h.state.pageError = null;
+    h.state.failCursor = null;
     await h.views.loadMore(topic);
     await flush();
     expect(rows(h.view(topic))).toHaveLength(2);
@@ -430,6 +430,34 @@ describe("GitHubViews", () => {
     h.calls.prCursors.length = 0;
     await h.views.refresh(topic, true);
     expect(h.calls.prCursors).toEqual([null, "page-1"]);
+  });
+
+  it("keeps the page depth equal to the loaded pages after a refresh fails partway", async () => {
+    const h = createHarness();
+    h.state.prPages = [[pr(1)], [pr(2)], [pr(3)], [pr(4)]];
+    const topic = githubViewTopic("pr", "is:pr involves:@me");
+    h.subscribe(topic);
+    await flush();
+    await h.views.loadMore(topic);
+    await h.views.loadMore(topic);
+    await flush();
+    expect(rows(h.view(topic))).toHaveLength(3);
+
+    h.state.failCursor = "page-2";
+    await h.views.refresh(topic, true);
+    await flush();
+    expect(rows(h.view(topic))).toHaveLength(2);
+    expect(h.view(topic).view.error).toBe("gh: HTTP 502");
+
+    h.state.failCursor = null;
+    h.calls.prCursors.length = 0;
+    await h.views.refresh(topic, true);
+    expect(h.calls.prCursors).toEqual([null, "page-1"]);
+
+    await h.views.loadMore(topic);
+    h.calls.prCursors.length = 0;
+    await h.views.refresh(topic, true);
+    expect(h.calls.prCursors).toEqual([null, "page-1", "page-2"]);
   });
 
   it("rejects load more for a topic that is not subscribed", async () => {

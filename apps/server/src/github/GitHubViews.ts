@@ -86,7 +86,7 @@ interface FetchMeta {
   error: string | null;
 }
 
-type SearchFetched = ({ kind: "pr"; items: PrSummary[] } | { kind: "issue"; items: IssueSummary[] }) & FetchMeta;
+type SearchFetched = ({ kind: "pr"; items: PrSummary[] } | { kind: "issue"; items: IssueSummary[] }) & FetchMeta & { pages: number };
 type Fetched = SearchFetched | ({ kind: "run"; items: WorkflowRunSummary[] } & FetchMeta);
 type SearchPageSpec = Extract<SearchSpec, { kind: "pr" | "issue" }>;
 
@@ -198,8 +198,9 @@ function fromRuns(result: RunsResult): Fetched {
 
 function appendPage(previous: SearchFetched, next: SearchFetched): SearchFetched {
   if (next.error !== null) return { ...previous, error: next.error };
-  if (previous.kind === "pr" && next.kind === "pr") return { ...next, items: [...previous.items, ...next.items] };
-  if (previous.kind === "issue" && next.kind === "issue") return { ...next, items: [...previous.items, ...next.items] };
+  const pages = previous.pages + next.pages;
+  if (previous.kind === "pr" && next.kind === "pr") return { ...next, items: [...previous.items, ...next.items], pages };
+  if (previous.kind === "issue" && next.kind === "issue") return { ...next, items: [...previous.items, ...next.items], pages };
   return next;
 }
 
@@ -511,7 +512,7 @@ export class GitHubViews {
       .then(
         (fetched) => {
           if (!isCurrent()) return;
-          if (more && fetched.error === null) entry.pages += 1;
+          if (fetched.kind !== "run" && fetched.pages > 0) entry.pages = fetched.pages;
           entry.result = fetched.kind === "run" ? { ...fetched, items: reconcileRuns(fetched.items, this.knownRuns()) } : fetched;
           entry.error = fetched.error;
           if (fetched.account) this.searchViewer = fetched.account.login;
@@ -545,8 +546,12 @@ export class GitHubViews {
   }
 
   private async fetchPage(spec: SearchPageSpec, force: boolean, after: string | null): Promise<SearchFetched> {
-    if (spec.kind === "pr") return { ...(await this.deps.searchPrs(spec.query, spec.countBase, force, after)), kind: "pr" };
-    return { ...(await this.deps.searchIssues(spec.query, spec.countBase, force, after)), kind: "issue" };
+    if (spec.kind === "pr") {
+      const result = await this.deps.searchPrs(spec.query, spec.countBase, force, after);
+      return { ...result, kind: "pr", pages: result.error === null ? 1 : 0 };
+    }
+    const result = await this.deps.searchIssues(spec.query, spec.countBase, force, after);
+    return { ...result, kind: "issue", pages: result.error === null ? 1 : 0 };
   }
 
   private knownRuns(): WorkflowRunSummary[] {
