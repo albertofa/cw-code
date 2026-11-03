@@ -5,8 +5,7 @@ export interface GitHubSearchResult<T> {
   items: T[];
   openCount: number | null;
   closedCount: number | null;
-  truncated: boolean;
-  limit: number;
+  nextCursor: string | null;
   fetchedAt: number;
   error: string | null;
 }

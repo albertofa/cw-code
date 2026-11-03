@@ -13,6 +13,7 @@ import { GitHubHeader } from "./GitHubHeader.js";
 import { GitHubResults } from "./GitHubResults.js";
 import { GitHubListSkeleton } from "./GitHubSkeletons.js";
 import { GitHubToolbar } from "./GitHubToolbar.js";
+import { Spinner } from "./Loading.js";
 import { GitHubViewMenu } from "./GitHubViewMenu.js";
 import { KIND_NOUNS, buildSuggestionSource, currentViewOf, githubProjectRepos, isViewEdited, type TabBadge } from "./githubViewModel.js";
 import { useGitHubBadges, useGitHubMetaContext, useGitHubViews } from "./useGitHubMeta.js";
@@ -67,6 +68,7 @@ export function GitHubView() {
   const setGroup = useGitHubStore((s) => s.setGroup);
   const toggleCollapsed = useGitHubStore((s) => s.toggleCollapsed);
   const refresh = useGitHubStore((s) => s.refresh);
+  const loadMore = useGitHubStore((s) => s.loadMore);
   const selectView = useGitHubStore((s) => s.selectView);
   const clearError = useGitHubStore((s) => s.clearError);
 
@@ -141,6 +143,7 @@ export function GitHubView() {
   const onToggleGroup = useCallback((groupId: string) => toggleCollapsed(kind, groupId), [kind, toggleCollapsed]);
   const onGroupChange = useCallback((group: GitHubViewGroup) => setGroup(kind, group), [kind, setGroup]);
   const onRefresh = useCallback(() => void refresh(topic, true), [refresh, topic]);
+  const onLoadMore = useCallback(() => void loadMore(topic), [loadMore, topic]);
   const openViews = useCallback((saving: boolean) => {
     const button = viewButtonRef.current;
     if (button) setViewsMenu({ anchor: anchorRectOf(button), saving });
@@ -203,7 +206,6 @@ export function GitHubView() {
           visibleCount={rows.length}
           problems={problems}
           refreshing={loading && hasItems}
-          truncatedLimit={counted && view.truncated ? view.limit : null}
           onQueryChange={onQueryChange}
           onGroupChange={onGroupChange}
         />
@@ -211,7 +213,7 @@ export function GitHubView() {
         {showLoading && <GitHubListSkeleton label={`Loading ${KIND_NOUNS[kind]}`} />}
         {showEmpty && (
           <div className="pr-view-empty">
-            No {KIND_NOUNS[kind]} match <code>{normalizeQuery(tab.query)}</code>.
+            No {view.hasMore ? `loaded ${KIND_NOUNS[kind]}` : KIND_NOUNS[kind]} match <code>{normalizeQuery(tab.query)}</code>.
             {currentView && edited && (
               <>
                 {" "}
@@ -234,6 +236,14 @@ export function GitHubView() {
               onToggle={onToggleGroup}
               onAddQualifier={onAddQualifier}
             />
+          </div>
+        )}
+        {!stale && view?.hasMore && (hasItems || showEmpty) && (
+          <div className="hub-more">
+            <button type="button" className="hub-more-btn" disabled={view.loadingMore} onClick={onLoadMore}>
+              {view.loadingMore && <Spinner size={12} />}
+              {view.loadingMore ? "Loading…" : "Show more"}
+            </button>
           </div>
         )}
       </div>

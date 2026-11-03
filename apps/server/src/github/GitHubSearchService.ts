@@ -4,7 +4,7 @@ import { authenticatedEnvironment, execText, execWithStatus, type ExecStatusResu
 import { githubCliBinary, resolveGitHubAccount } from "./githubAccount.js";
 import { ISSUE_DETAIL_QUERY, ISSUE_SEARCH_QUERY, MAX_COUNT_QUERIES, countsQuery } from "./issueQueries.js";
 import { parseCounts, parseIssueDetail, parseIssueSearch } from "./issueParsers.js";
-import { INBOX_SEARCH_LIMIT, PR_SEARCH_QUERY } from "./prQueries.js";
+import { PR_SEARCH_QUERY } from "./prQueries.js";
 import { graphqlOutcome, graphqlPartialFailure, parsePrSearch } from "./prParsers.js";
 import { assertIssueRef } from "./githubRefs.js";
 import type { GitHubSearchResult } from "./results.js";
@@ -45,10 +45,10 @@ function normalizeQuery(query: string): string {
   return query.trim().replace(/\s+/g, " ");
 }
 
-export type SearchResponseOutcome = Pick<GitHubSearchResult<PrSummary | IssueSummary>, "items" | "openCount" | "closedCount" | "truncated" | "error">;
+export type SearchResponseOutcome = Pick<GitHubSearchResult<PrSummary | IssueSummary>, "items" | "openCount" | "closedCount" | "nextCursor" | "error">;
 
 export function interpretSearchResponse(kind: SearchKind, response: ExecStatusResult): SearchResponseOutcome {
-  const failed = { items: [], openCount: null, closedCount: null, truncated: false };
+  const failed = { items: [], openCount: null, closedCount: null, nextCursor: null };
   const { hasData, message } = graphqlOutcome(response.stdout);
   if (!hasData) return { ...failed, error: message || response.stderr.trim() || `GitHub CLI exited with code ${response.code}` };
   const parsed = kind === "pr" ? parsePrSearch(response.stdout) : parseIssueSearch(response.stdout);
@@ -57,9 +57,14 @@ export function interpretSearchResponse(kind: SearchKind, response: ExecStatusRe
     items: parsed.items,
     openCount: parsed.openCount,
     closedCount: parsed.closedCount,
-    truncated: parsed.truncated,
+    nextCursor: parsed.nextCursor,
     error: graphqlPartialFailure(response.stdout, "results")
   };
+}
+
+export interface SearchPageOptions {
+  force?: boolean;
+  after?: string | null;
 }
 
 export class GitHubSearchService {
@@ -68,20 +73,22 @@ export class GitHubSearchService {
 
   constructor(private settings: () => AppSettings) {}
 
-  search(kind: "pr", query: string, countBase: string, force?: boolean): Promise<GitHubSearchResult<PrSummary>>;
-  search(kind: "issue", query: string, countBase: string, force?: boolean): Promise<GitHubSearchResult<IssueSummary>>;
-  async search(kind: SearchKind, query: string, countBase: string, force = false): Promise<GitHubSearchResult<PrSummary | IssueSummary>> {
+  search(kind: "pr", query: string, countBase: string, options?: SearchPageOptions): Promise<GitHubSearchResult<PrSummary>>;
+  search(kind: "issue", query: string, countBase: string, options?: SearchPageOptions): Promise<GitHubSearchResult<IssueSummary>>;
+  async search(kind: SearchKind, query: string, countBase: string, options: SearchPageOptions = {}): Promise<GitHubSearchResult<PrSummary | IssueSummary>> {
     assertSearchKind(kind);
     assertSearchQuery(query);
     assertCountBase(countBase);
+    const after = options.after ?? null;
+    if (after !== null && (typeof after !== "string" || after.length === 0 || after.length > MAX_QUERY_LENGTH)) throw new Error("invalid search cursor");
     const remote = withTypeQualifier(kind, normalizeQuery(query));
     const base = withTypeQualifier(kind, normalizeQuery(countBase));
-    const key = `${kind}\n${remote}\n${base}`;
+    const key = `${kind}\n${remote}\n${base}\n${after ?? ""}`;
     const cached = this.cache.get(key);
-    if (!force && cached && cached.expiresAt > Date.now()) return cached.value;
+    if (!options.force && cached && cached.expiresAt > Date.now()) return cached.value;
     const pending = this.inFlight.get(key);
     if (pending) return pending;
-    const promise = this.compute(kind, remote, base)
+    const promise = this.compute(kind, remote, base, after)
       .then((value) => {
         if (value.error === null) this.remember(key, value);
         return value;
@@ -101,9 +108,9 @@ export class GitHubSearchService {
     this.cache.set(key, { expiresAt: now + SEARCH_CACHE_TTL_MS, value });
   }
 
-  private async compute(kind: SearchKind, remote: string, base: string): Promise<GitHubSearchResult<PrSummary | IssueSummary>> {
+  private async compute(kind: SearchKind, remote: string, base: string, after: string | null): Promise<GitHubSearchResult<PrSummary | IssueSummary>> {
     const fetchedAt = Date.now();
-    const empty = { items: [], openCount: null, closedCount: null, truncated: false, limit: INBOX_SEARCH_LIMIT, fetchedAt };
+    const empty = { items: [], openCount: null, closedCount: null, nextCursor: null, fetchedAt };
     const resolution = await resolveGitHubAccount(this.settings);
     if ("error" in resolution) return { ...empty, account: null, error: resolution.error };
     const { account, token } = resolution;
@@ -121,13 +128,14 @@ export class GitHubSearchService {
           "-f",
           `open=${base} is:open`,
           "-f",
-          `closed=${base} is:closed`
+          `closed=${base} is:closed`,
+          ...(after !== null ? ["-f", `after=${after}`] : [])
         ],
         homedir(),
         REQUEST_TIMEOUT_MS,
         authenticatedEnvironment(account.host, token)
       );
-      return { ...interpretSearchResponse(kind, response), account: accountInfo, limit: INBOX_SEARCH_LIMIT, fetchedAt };
+      return { ...interpretSearchResponse(kind, response), account: accountInfo, fetchedAt };
     } catch (error) {
       return { ...empty, account: accountInfo, error: (error as Error).message || "GitHub CLI error" };
     }

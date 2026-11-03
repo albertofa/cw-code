@@ -1,7 +1,7 @@
 import type { PrLinkSnapshot, PrRef, PrSummary } from "@cw-code/contracts";
 
 export const PR_TRACKER_TICK_MS = 60_000;
-export const PR_TRACKER_BATCH = 25;
+export const PR_TRACKER_BATCH = 15;
 export const PR_IDLE_AFTER_MS = 30 * 60_000;
 export const PR_IDLE_INTERVAL_MS = 5 * 60_000;
 export const PR_CLOSED_INTERVAL_MS = 15 * 60_000;

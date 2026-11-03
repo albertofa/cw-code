@@ -272,6 +272,7 @@ export function createCwApi(
     getPrDiff: (ref) => call<string>("prs.diff", { ref }),
     getPrCheckLog: (ref, runId) => call<string>("prs.checkLog", { ref, runId }),
     refreshGitHubView: (topic, force) => callVoid("github.refresh", { topic, force }),
+    loadMoreGitHubView: (topic) => callVoid("github.loadMore", { topic }),
     githubViewCounts: (kind) => call<Record<string, number | null>>("github.viewCounts", { kind }),
     saveGitHubView: (input) => call<SavedGitHubView>("github.saveView", input),
     renameGitHubView: (id, name) => callVoid("github.renameView", { id, name }),

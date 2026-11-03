@@ -2,8 +2,9 @@ import { describe, expect, it } from "bun:test";
 import type { PrSummary } from "@cw-code/contracts";
 import { actorLoginOf, bucketFor, ciFromRollup, graphqlOutcome, graphqlPartialFailure, parseDetail, parseHead, parseInbox, parsePrSearch, parseTrackedPrs, prKey, prRefFromUrl, withBotSuffix } from "./prParsers.js";
 
-function rollupNode(state: string) {
-  return { __typename: "CheckRun", conclusion: state };
+function rollup(checkRuns: Record<string, number>, statusContexts: Record<string, number> = {}) {
+  const entries = (counts: Record<string, number>) => Object.entries(counts).map(([state, count]) => ({ state, count }));
+  return { contexts: { checkRunCountsByState: entries(checkRuns), statusContextCountsByState: entries(statusContexts) } };
 }
 
 function summaryNode(overrides: Record<string, unknown> = {}) {
@@ -29,7 +30,7 @@ function summaryNode(overrides: Record<string, unknown> = {}) {
     labels: { nodes: [] },
     updatedAt: "2024-01-01T00:00:00Z",
     reviewRequests: { nodes: [] },
-    ciCommits: { nodes: [{ commit: { statusCheckRollup: { contexts: { nodes: [] } } } }] },
+    ciCommits: { nodes: [{ commit: { statusCheckRollup: rollup({}) } }] },
     ...overrides
   };
 }
@@ -60,14 +61,14 @@ describe("parseInbox", () => {
               mergeable: "CONFLICTING",
               mergeStateStatus: "SOMETHING_NEW",
               reviewDecision: "APPROVED",
-              ciCommits: { nodes: [{ commit: { statusCheckRollup: { contexts: { nodes: [rollupNode("SUCCESS")] } } } }] }
+              ciCommits: { nodes: [{ commit: { statusCheckRollup: rollup({ SUCCESS: 1 }) } }] }
             }),
             summaryNode({
               number: 13,
               url: "https://github.com/acme/widgets/pull/13",
               viewerDidAuthor: true,
               reviewDecision: "APPROVED",
-              ciCommits: { nodes: [{ commit: { statusCheckRollup: { contexts: { nodes: [rollupNode("FAILURE")] } } } }] }
+              ciCommits: { nodes: [{ commit: { statusCheckRollup: rollup({ FAILURE: 1 }) } }] }
             })
           ]
         }
@@ -180,17 +181,26 @@ describe("parseInbox", () => {
   });
 
   it("returns an empty result for malformed JSON", () => {
-    expect(parseInbox("not-json")).toEqual({ viewer: null, items: [], truncated: false });
+    expect(parseInbox("not-json")).toEqual({ viewer: null, items: [], nextCursor: null });
   });
 
-  it("flags a search that returned a full page as truncated", () => {
-    const nodes = Array.from({ length: 50 }, (_, index) =>
-      summaryNode({ number: index + 1, url: `https://github.com/acme/widgets/pull/${index + 1}` })
-    );
-    const full = JSON.stringify({ data: { viewer: { login: "octocat" }, search: { nodes } } });
-    const partial = JSON.stringify({ data: { viewer: { login: "octocat" }, search: { nodes: nodes.slice(0, 49) } } });
-    expect(parseInbox(full).truncated).toBe(true);
-    expect(parseInbox(partial).truncated).toBe(false);
+  it("returns the end cursor only when GitHub reports a next page", () => {
+    const page = (pageInfo: unknown) => JSON.stringify({ data: { viewer: { login: "octocat" }, search: { pageInfo, nodes: [summaryNode()] } } });
+    expect(parseInbox(page({ hasNextPage: true, endCursor: "Y3Vyc29yOjE1" })).nextCursor).toBe("Y3Vyc29yOjE1");
+    expect(parseInbox(page({ hasNextPage: false, endCursor: "Y3Vyc29yOjE1" })).nextCursor).toBeNull();
+    expect(parseInbox(page({ hasNextPage: true, endCursor: null })).nextCursor).toBeNull();
+    expect(parseInbox(page(undefined)).nextCursor).toBeNull();
+  });
+
+  it("counts checks from the rollup aggregates, including status contexts", () => {
+    const parseCi = (statusCheckRollup: unknown) =>
+      parseInbox(JSON.stringify({ data: { viewer: null, search: { nodes: [summaryNode({ ciCommits: { nodes: [{ commit: { statusCheckRollup } }] } })] } } })).items[0];
+    const mixed = parseCi(rollup({ SUCCESS: 3, SKIPPED: 1, IN_PROGRESS: 2, FAILURE: 0 }, { SUCCESS: 1, PENDING: 0 }));
+    expect(mixed.ci).toBe("pending");
+    expect(mixed.checks).toEqual({ total: 7, passed: 5, failed: 0, pending: 2 });
+    expect(parseCi(rollup({ SUCCESS: 2, STARTUP_FAILURE: 1 })).checks).toEqual({ total: 3, passed: 2, failed: 1, pending: 0 });
+    expect(parseCi(rollup({}, { ERROR: 1 })).ci).toBe("failing");
+    expect(parseCi(null).ci).toBe("none");
   });
 
   it("drops nodes whose url does not parse into a PR ref", () => {
@@ -268,11 +278,11 @@ describe("reviewers and assignees", () => {
 });
 
 describe("parsePrSearch", () => {
-  function searchJson(nodes: unknown[], issueCount: number | null) {
+  function searchJson(nodes: unknown[], pageInfo?: unknown) {
     return JSON.stringify({
       data: {
         viewer: { login: "octocat" },
-        results: issueCount === null ? { nodes } : { issueCount, nodes },
+        results: { issueCount: 80, pageInfo, nodes },
         open: { issueCount: 7 },
         closed: { issueCount: 3 }
       }
@@ -280,29 +290,28 @@ describe("parsePrSearch", () => {
   }
 
   it("parses items, counts and the viewer", () => {
-    const result = parsePrSearch(searchJson([summaryNode()], 1));
+    const result = parsePrSearch(searchJson([summaryNode()], { hasNextPage: false, endCursor: "abc" }));
     expect(result.viewer).toBe("octocat");
     expect(result.items).toHaveLength(1);
     expect(result.openCount).toBe(7);
     expect(result.closedCount).toBe(3);
-    expect(result.truncated).toBe(false);
+    expect(result.nextCursor).toBeNull();
   });
 
-  it("flags truncation when the total exceeds the returned page", () => {
-    expect(parsePrSearch(searchJson([summaryNode()], 80)).truncated).toBe(true);
+  it("returns the end cursor when there is a next page", () => {
+    expect(parsePrSearch(searchJson([summaryNode()], { hasNextPage: true, endCursor: "abc" })).nextCursor).toBe("abc");
   });
 
-  it("falls back to the page size when the total is missing", () => {
-    const nodes = Array.from({ length: 50 }, (_, index) => summaryNode({ number: index + 1, url: `https://github.com/acme/widgets/pull/${index + 1}` }));
-    expect(parsePrSearch(searchJson(nodes, null)).truncated).toBe(true);
-    expect(parsePrSearch(searchJson(nodes.slice(0, 3), null)).truncated).toBe(false);
+  it("does not infer more pages from the total or the page size without pageInfo", () => {
+    const nodes = Array.from({ length: 15 }, (_, index) => summaryNode({ number: index + 1, url: `https://github.com/acme/widgets/pull/${index + 1}` }));
+    expect(parsePrSearch(searchJson(nodes)).nextCursor).toBeNull();
   });
 
   it("returns null counts when the aliases are missing and an empty result for malformed JSON", () => {
     const missing = parsePrSearch(JSON.stringify({ data: { viewer: { login: "octocat" }, results: { nodes: [] } } }));
     expect(missing.openCount).toBeNull();
     expect(missing.closedCount).toBeNull();
-    expect(parsePrSearch("not-json")).toEqual({ viewer: null, items: [], openCount: null, closedCount: null, truncated: false });
+    expect(parsePrSearch("not-json")).toEqual({ viewer: null, items: [], openCount: null, closedCount: null, nextCursor: null });
   });
 });
 
@@ -498,7 +507,7 @@ describe("parseDetail", () => {
           messageHeadline: "Fix bug",
           committedDate: "2024-01-02T00:00:00Z",
           author: { name: "Alice", avatarUrl: "https://avatars.githubusercontent.com/u/7?s=48", user: { login: "alice" } },
-          statusCheckRollup: { contexts: { nodes: [rollupNode("SUCCESS")] } }
+          statusCheckRollup: rollup({ SUCCESS: 1 })
         }
       },
       {

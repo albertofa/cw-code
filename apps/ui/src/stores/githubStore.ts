@@ -27,6 +27,7 @@ export interface GitHubStore {
   setGroup(kind: GitHubKind, group: GitHubViewGroup): void;
   toggleCollapsed(kind: GitHubKind, groupId: string): void;
   refresh(topic: string, force: boolean): Promise<void>;
+  loadMore(topic: string): Promise<void>;
   saveView(name: string): Promise<void>;
   renameView(id: string, name: string): Promise<void>;
   deleteView(id: string): Promise<void>;
@@ -121,6 +122,14 @@ export const useGitHubStore = create<GitHubStore>((set, get) => {
         await window.cw.refreshGitHubView(topic, force);
       } catch (err) {
         fail("refresh failed", err);
+      }
+    },
+
+    async loadMore(topic: string) {
+      try {
+        await window.cw.loadMoreGitHubView(topic);
+      } catch (err) {
+        fail("loading more failed", err);
       }
     },
 

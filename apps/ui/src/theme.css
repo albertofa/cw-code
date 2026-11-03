@@ -13212,6 +13212,31 @@ button.gitbar-checkout:hover {
   opacity: calc(1 - 0.45 * var(--fade-strength));
 }
 
+.hub-more {
+  display: flex;
+  justify-content: center;
+  padding: 12px 0 20px;
+}
+
+.hub-more-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 12px;
+  background: var(--raised);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  color: var(--text);
+  font-family: var(--sans);
+  font-size: var(--t-sm);
+  cursor: pointer;
+}
+
+.hub-more-btn:disabled {
+  color: var(--faint);
+  cursor: default;
+}
+
 .pr-inbox-group-icon.tone-bad {
   color: var(--danger);
 }

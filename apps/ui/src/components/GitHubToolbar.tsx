@@ -47,7 +47,6 @@ export function GitHubToolbar({
   visibleCount,
   problems,
   refreshing,
-  truncatedLimit,
   onQueryChange,
   onGroupChange
 }: {
@@ -60,7 +59,6 @@ export function GitHubToolbar({
   visibleCount: number;
   problems: string[];
   refreshing: boolean;
-  truncatedLimit: number | null;
   onQueryChange: (query: string) => void;
   onGroupChange: (group: GitHubViewGroup) => void;
 }) {
@@ -93,11 +91,6 @@ export function GitHubToolbar({
           <span className="hub-updating" role="status">
             <Spinner size={12} />
             Updating…
-          </span>
-        )}
-        {truncatedLimit !== null && (
-          <span className="hub-src" title={`GitHub search returns at most ${truncatedLimit} results per query; older ones may be missing`}>
-            at most {truncatedLimit} per search
           </span>
         )}
         <span className="hub-src">

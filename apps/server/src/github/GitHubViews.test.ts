@@ -110,8 +110,13 @@ function session(overrides: Partial<SessionMeta> = {}): SessionMeta {
   };
 }
 
-function searchResult<T>(items: T[]): GitHubSearchResult<T> {
-  return { account: ACCOUNT, items, openCount: items.length, closedCount: 0, truncated: false, limit: 100, fetchedAt: 10, error: null };
+function searchResult<T>(items: T[], nextCursor: string | null = null): GitHubSearchResult<T> {
+  return { account: ACCOUNT, items, openCount: items.length, closedCount: 0, nextCursor, fetchedAt: 10, error: null };
+}
+
+function pagedResult<T>(pages: T[][], after: string | null): GitHubSearchResult<T> {
+  const index = after === null ? 0 : Number(after.slice("page-".length));
+  return searchResult(pages[index] ?? [], index + 1 < pages.length ? `page-${index + 1}` : null);
 }
 
 interface Deferred {
@@ -134,11 +139,19 @@ function createHarness() {
     context: { viewer: "me", org: null, projectRepos: [] } as GitHubContext,
     inbox: null as PrInboxResult | null,
     prs: [] as PrSummary[],
+    prPages: null as PrSummary[][] | null,
+    failCursor: null as string | null,
     issues: [] as IssueSummary[],
     runs: [] as WorkflowRunSummary[],
     hold: null as Deferred | null
   };
-  const calls = { prs: [] as Array<{ query: string; force: boolean }>, issues: [] as string[], runs: [] as RunSources[], counts: [] as string[][] };
+  const calls = {
+    prs: [] as Array<{ query: string; force: boolean }>,
+    prCursors: [] as Array<string | null>,
+    issues: [] as string[],
+    runs: [] as RunSources[],
+    counts: [] as string[][]
+  };
   const watched: RunRef[][] = [];
   const active: boolean[] = [];
   const stores = new Map<string, TopicStore<Record<string, unknown>>>();
@@ -154,10 +167,12 @@ function createHarness() {
     summaryLookup: () => new Map(),
     ensureContext: async () => undefined,
     refreshInbox: async () => undefined,
-    searchPrs: async (query, _countBase, force) => {
+    searchPrs: async (query, _countBase, force, after) => {
       calls.prs.push({ query, force });
+      calls.prCursors.push(after);
       await held();
-      return searchResult(state.prs);
+      if (after !== null && after === state.failCursor) return { ...searchResult<PrSummary>([]), error: "gh: HTTP 502" };
+      return state.prPages ? pagedResult(state.prPages, after) : searchResult(state.prs);
     },
     searchIssues: async (query) => {
       calls.issues.push(query);
@@ -359,6 +374,96 @@ describe("GitHubViews", () => {
     await flush();
     await h.views.refresh(topic, true);
     expect(h.calls.prs.at(-1)?.force).toBe(true);
+  });
+
+  it("loads the next page on demand and keeps every loaded page on refresh", async () => {
+    const h = createHarness();
+    h.state.prPages = [[pr(1), pr(2)], [pr(2), pr(3)], [pr(4)]];
+    const topic = githubViewTopic("pr", "is:pr involves:@me");
+    h.subscribe(topic);
+    await flush();
+    expect(rows(h.view(topic)).map((row) => (row.subject.kind === "pr" ? row.subject.pr.ref.number : null))).toEqual([1, 2]);
+    expect(h.view(topic).view).toMatchObject({ hasMore: true, loadingMore: false });
+
+    h.state.hold = deferred();
+    const loading = h.views.loadMore(topic);
+    await flush();
+    expect(h.view(topic).view).toMatchObject({ loading: false, loadingMore: true });
+    h.state.hold.resolve();
+    h.state.hold = null;
+    await loading;
+    await flush();
+    expect(rows(h.view(topic)).map((row) => (row.subject.kind === "pr" ? row.subject.pr.ref.number : null))).toEqual([1, 2, 3]);
+    expect(h.view(topic).view).toMatchObject({ hasMore: true, loadingMore: false });
+
+    h.calls.prCursors.length = 0;
+    await h.views.refresh(topic, true);
+    expect(h.calls.prCursors).toEqual([null, "page-1"]);
+    expect(rows(h.view(topic))).toHaveLength(3);
+
+    await h.views.loadMore(topic);
+    await flush();
+    expect(rows(h.view(topic))).toHaveLength(4);
+    expect(h.view(topic).view.hasMore).toBe(false);
+    const fetches = h.calls.prs.length;
+    await h.views.loadMore(topic);
+    expect(h.calls.prs).toHaveLength(fetches);
+  });
+
+  it("keeps the loaded rows and the cursor when the next page fails", async () => {
+    const h = createHarness();
+    h.state.prPages = [[pr(1)], [pr(2)]];
+    h.state.failCursor = "page-1";
+    const topic = githubViewTopic("pr", "is:pr involves:@me");
+    h.subscribe(topic);
+    await flush();
+    await h.views.loadMore(topic);
+    await flush();
+    expect(rows(h.view(topic))).toHaveLength(1);
+    expect(h.view(topic).view).toMatchObject({ error: "gh: HTTP 502", hasMore: true, loadingMore: false });
+
+    h.state.failCursor = null;
+    await h.views.loadMore(topic);
+    await flush();
+    expect(rows(h.view(topic))).toHaveLength(2);
+    expect(h.view(topic).view).toMatchObject({ error: null, hasMore: false });
+    h.calls.prCursors.length = 0;
+    await h.views.refresh(topic, true);
+    expect(h.calls.prCursors).toEqual([null, "page-1"]);
+  });
+
+  it("keeps the page depth equal to the loaded pages after a refresh fails partway", async () => {
+    const h = createHarness();
+    h.state.prPages = [[pr(1)], [pr(2)], [pr(3)], [pr(4)]];
+    const topic = githubViewTopic("pr", "is:pr involves:@me");
+    h.subscribe(topic);
+    await flush();
+    await h.views.loadMore(topic);
+    await h.views.loadMore(topic);
+    await flush();
+    expect(rows(h.view(topic))).toHaveLength(3);
+
+    h.state.failCursor = "page-2";
+    await h.views.refresh(topic, true);
+    await flush();
+    expect(rows(h.view(topic))).toHaveLength(2);
+    expect(h.view(topic).view.error).toBe("gh: HTTP 502");
+
+    h.state.failCursor = null;
+    h.calls.prCursors.length = 0;
+    await h.views.refresh(topic, true);
+    expect(h.calls.prCursors).toEqual([null, "page-1"]);
+
+    await h.views.loadMore(topic);
+    h.calls.prCursors.length = 0;
+    await h.views.refresh(topic, true);
+    expect(h.calls.prCursors).toEqual([null, "page-1", "page-2"]);
+  });
+
+  it("rejects load more for a topic that is not subscribed", async () => {
+    const h = createHarness();
+    const [result] = await Promise.allSettled([h.views.loadMore(githubViewTopic("pr", "is:pr author:@me"))]);
+    expect(result.status).toBe("rejected");
   });
 
   it("force-refreshes only open run views on CI activity", async () => {

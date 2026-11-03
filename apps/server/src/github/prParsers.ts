@@ -17,12 +17,11 @@ import type {
   PrTimelineItem
 } from "@cw-code/contracts";
 import { prKey, prRefFromUrl } from "@cw-code/shared/prRef";
-import { INBOX_SEARCH_LIMIT } from "./prQueries.js";
 
 export { prKey, prRefFromUrl };
 
 const PASSING_STATES = new Set(["SUCCESS", "NEUTRAL", "SKIPPED"]);
-const FAILING_STATES = new Set(["FAILURE", "ERROR", "CANCELLED", "TIMED_OUT", "ACTION_REQUIRED", "STALE"]);
+const FAILING_STATES = new Set(["FAILURE", "ERROR", "CANCELLED", "TIMED_OUT", "ACTION_REQUIRED", "STALE", "STARTUP_FAILURE"]);
 const REVIEW_TIMELINE_STATES = new Set(["APPROVED", "CHANGES_REQUESTED", "COMMENTED", "DISMISSED"]);
 const REVIEWER_STATES = new Set(["APPROVED", "CHANGES_REQUESTED", "COMMENTED", "PENDING"]);
 const MERGE_STATE_STATUSES: ReadonlySet<string> = new Set<PrMergeStateStatus>([
@@ -76,23 +75,36 @@ export function actorLoginOf(actor: unknown): { login: string; isBot: boolean } 
   return { login: isBot ? withBotSuffix(login) : login, isBot };
 }
 
-function rollupStates(statusCheckRollup: unknown): string[] {
-  return asNodes(asRecord(statusCheckRollup).contexts).map((context) => asString(context.conclusion) || asString(context.status) || asString(context.state));
+type StateCount = readonly [state: string, count: number];
+
+function asList(value: unknown): Record<string, unknown>[] {
+  return Array.isArray(value) ? value.map(asRecord) : [];
 }
 
-export function ciFromRollup(states: string[]): { ci: PrCiState; checks: GitPullRequestChecks } {
+function rollupCounts(statusCheckRollup: unknown): StateCount[] {
+  const contexts = asRecord(asRecord(statusCheckRollup).contexts);
+  return [...asList(contexts.checkRunCountsByState), ...asList(contexts.statusContextCountsByState)].map(
+    (entry) => [asString(entry.state), Math.max(0, asNumber(entry.count))] as const
+  );
+}
+
+function ciFromCounts(counts: StateCount[]): { ci: PrCiState; checks: GitPullRequestChecks } {
   let passed = 0;
   let failed = 0;
   let pending = 0;
-  for (const raw of states) {
+  for (const [raw, count] of counts) {
     const state = raw.toUpperCase();
-    if (PASSING_STATES.has(state)) passed += 1;
-    else if (FAILING_STATES.has(state)) failed += 1;
-    else pending += 1;
+    if (PASSING_STATES.has(state)) passed += count;
+    else if (FAILING_STATES.has(state)) failed += count;
+    else pending += count;
   }
-  const total = states.length;
+  const total = passed + failed + pending;
   const ci: PrCiState = total === 0 ? "none" : failed > 0 ? "failing" : pending > 0 ? "pending" : "passing";
   return { ci, checks: { total, passed, failed, pending } };
+}
+
+export function ciFromRollup(states: string[]): { ci: PrCiState; checks: GitPullRequestChecks } {
+  return ciFromCounts(states.map((state) => [state, 1] as const));
 }
 
 export function bucketFor(pr: PrSummary): PrBucket {
@@ -180,7 +192,7 @@ export function parseSummaryNode(node: Record<string, unknown>, viewer: string |
   const requested = asNodes(node.reviewRequests).map((request) => request.requestedReviewer);
   const reviewerLogins = requested.map((reviewer) => asString(asRecord(reviewer).login)).filter(Boolean);
   const ciCommit = asNodes(node.ciCommits)[0];
-  const { ci, checks } = ciFromRollup(rollupStates(asRecord(ciCommit?.commit).statusCheckRollup));
+  const { ci, checks } = ciFromCounts(rollupCounts(asRecord(ciCommit?.commit).statusCheckRollup));
   return {
     ref,
     url,
@@ -254,26 +266,29 @@ function issueCountOf(value: unknown): number | null {
   return typeof count === "number" && Number.isFinite(count) ? count : null;
 }
 
+function nextCursorOf(connection: unknown): string | null {
+  const pageInfo = asRecord(asRecord(connection).pageInfo);
+  return pageInfo.hasNextPage === true ? asString(pageInfo.endCursor) || null : null;
+}
+
 export interface SearchPage {
   viewer: string | null;
   nodes: Record<string, unknown>[];
   openCount: number | null;
   closedCount: number | null;
-  truncated: boolean;
+  nextCursor: string | null;
 }
 
 export function parseSearchPage(json: string): SearchPage {
   const root = parseJsonObject(json);
-  if (!root) return { viewer: null, nodes: [], openCount: null, closedCount: null, truncated: false };
+  if (!root) return { viewer: null, nodes: [], openCount: null, closedCount: null, nextCursor: null };
   const data = asRecord(root.data);
-  const nodes = asNodes(data.results);
-  const total = issueCountOf(data.results);
   return {
     viewer: asString(asRecord(data.viewer).login) || null,
-    nodes,
+    nodes: asNodes(data.results),
     openCount: issueCountOf(data.open),
     closedCount: issueCountOf(data.closed),
-    truncated: total !== null ? total > nodes.length : nodes.length >= INBOX_SEARCH_LIMIT
+    nextCursor: nextCursorOf(data.results)
   };
 }
 
@@ -282,7 +297,7 @@ export function parsePrSearch(json: string): {
   items: PrSummary[];
   openCount: number | null;
   closedCount: number | null;
-  truncated: boolean;
+  nextCursor: string | null;
 } {
   const { nodes, ...page } = parseSearchPage(json);
   const items: PrSummary[] = [];
@@ -293,12 +308,12 @@ export function parsePrSearch(json: string): {
   return { ...page, items };
 }
 
-export function parseInbox(json: string): { viewer: string | null; items: PrSummary[]; truncated: boolean } {
+export function parseInbox(json: string): { viewer: string | null; items: PrSummary[]; nextCursor: string | null } {
   let root: Record<string, unknown>;
   try {
     root = JSON.parse(json) as Record<string, unknown>;
   } catch {
-    return { viewer: null, items: [], truncated: false };
+    return { viewer: null, items: [], nextCursor: null };
   }
   const data = asRecord(root.data);
   const viewer = asString(asRecord(data.viewer).login) || null;
@@ -308,7 +323,7 @@ export function parseInbox(json: string): { viewer: string | null; items: PrSumm
     const summary = parseSummaryNode(node, viewer);
     if (summary) items.push(summary);
   }
-  return { viewer, items, truncated: nodes.length >= INBOX_SEARCH_LIMIT };
+  return { viewer, items, nextCursor: nextCursorOf(data.search) };
 }
 
 function commentAuthor(commit: Record<string, unknown>): string {
@@ -318,7 +333,7 @@ function commentAuthor(commit: Record<string, unknown>): string {
 
 function parseCommitNode(node: Record<string, unknown>): PrCommit {
   const commit = asRecord(node.commit);
-  const { ci } = ciFromRollup(rollupStates(commit.statusCheckRollup));
+  const { ci } = ciFromCounts(rollupCounts(commit.statusCheckRollup));
   const authorAvatarUrl = asString(asRecord(commit.author).avatarUrl);
   return {
     oid: asString(commit.oid),

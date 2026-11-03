@@ -64,7 +64,7 @@ export function parseIssueSearch(json: string): {
   items: IssueSummary[];
   openCount: number | null;
   closedCount: number | null;
-  truncated: boolean;
+  nextCursor: string | null;
 } {
   const { nodes, ...page } = parseSearchPage(json);
   const items: IssueSummary[] = [];

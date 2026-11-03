@@ -17,6 +17,12 @@ export function registerGitHubHandlers(router: Router, app: ServerApp): void {
     const { topic, force } = parseArgs(args, "github.refresh");
     return services().githubViews.refresh(parseGitHubTopic(topic), parseOptionalBoolean(force, "force") === true);
   });
+  handle(router, "github.loadMore", (args) => {
+    const { topic } = parseArgs(args, "github.loadMore");
+    const parsed = parseGitHubTopic(topic);
+    if (parsed === GITHUB_META_TOPIC) throw Object.assign(new Error("topic must be a github/view topic"), { code: "invalid-topic" });
+    return services().githubViews.loadMore(parsed);
+  });
   handle(router, "github.viewCounts", (args) => {
     const { kind } = parseArgs(args, "github.viewCounts");
     assertGitHubKind(kind);
