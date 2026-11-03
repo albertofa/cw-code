@@ -142,6 +142,7 @@ export class PullRequestService {
     const results = await Promise.all(inboxSearchQueries(fetchedAt).map((q) => fetchInboxPages(fetchPage(q), INBOX_MAX_PAGES)));
     const combined = combineInboxQueries(results);
     const items = mergeInboxItems(combined.items);
+    if (combined.error !== null) console.warn(`[pr-inbox] ${combined.error}`);
     for (const item of items) this.remember(item.ref, item.headRefOid, item.state, item.updatedAt);
     return { account: accountInfo, items, fetchedAt, error: combined.error, truncated: combined.truncated, limit: INBOX_SEARCH_LIMIT };
   }

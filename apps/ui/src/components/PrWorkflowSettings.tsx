@@ -324,13 +324,15 @@ function PromptPreview({
   );
   const value = preview.current ? preview.value : null;
   const loadError = value?.error ?? preview.error;
+  const showInboxError = inboxError !== null && !inboxLoading;
+  const retryInbox = () => void window.cw.refreshPrInbox(true).catch((err: unknown) => console.warn(`[pr] inbox refresh failed: ${errorMessage(err)}`));
 
   if (prs.length === 0) {
     return (
       <div className="sp-code sp-preview-empty" role={inboxError ? "alert" : undefined}>
         {inboxLoading ? <InlineLoading label="Loading pull requests" /> : inboxError ? `Could not load pull requests: ${inboxError}` : "No pull requests to preview with"}
-        {inboxError && !inboxLoading && (
-          <button type="button" className="btn sp-btn-sm" onClick={() => void window.cw.refreshPrInbox(true).catch((err: unknown) => console.warn(`[pr] inbox refresh failed: ${errorMessage(err)}`))}>
+        {showInboxError && (
+          <button type="button" className="btn sp-btn-sm" onClick={retryInbox}>
             <RefreshCw size={12} aria-hidden="true" /> Retry
           </button>
         )}
@@ -361,6 +363,14 @@ function PromptPreview({
         />
         <span className="sp-hint">Harness: {harness}</span>
       </div>
+      {showInboxError && (
+        <div className="settings-error sp-preview-error" role="alert">
+          Some pull requests may be missing: {inboxError}
+          <button type="button" className="btn sp-btn-sm" onClick={retryInbox}>
+            <RefreshCw size={12} aria-hidden="true" /> Retry
+          </button>
+        </div>
+      )}
       {loadError && (
         <div className="settings-error sp-preview-error" role="alert">
           Could not load the pull request: {loadError}
