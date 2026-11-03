@@ -64,8 +64,8 @@ export interface GitHubViewsDeps {
   summaryLookup(): ReadonlyMap<string, PrSummary>;
   ensureContext(): Promise<unknown>;
   refreshInbox(force: boolean): Promise<void>;
-  searchPrs(query: string, countBase: string, force: boolean): Promise<GitHubSearchResult<PrSummary>>;
-  searchIssues(query: string, countBase: string, force: boolean): Promise<GitHubSearchResult<IssueSummary>>;
+  searchPrs(query: string, countBase: string, force: boolean, after: string | null): Promise<GitHubSearchResult<PrSummary>>;
+  searchIssues(query: string, countBase: string, force: boolean, after: string | null): Promise<GitHubSearchResult<IssueSummary>>;
   fetchRuns(sources: RunSources, force: boolean): Promise<RunsResult>;
   counts(kind: "pr" | "issue", queries: string[]): Promise<Array<number | null>>;
   watchRuns(refs: RunRef[]): void;
@@ -81,13 +81,14 @@ interface FetchMeta {
   account: GitHubAccountRef | null;
   openCount: number | null;
   closedCount: number | null;
-  truncated: boolean;
-  limit: number | null;
+  nextCursor: string | null;
   fetchedAt: number;
   error: string | null;
 }
 
-type Fetched = ({ kind: "pr"; items: PrSummary[] } | { kind: "issue"; items: IssueSummary[] } | { kind: "run"; items: WorkflowRunSummary[] }) & FetchMeta;
+type SearchFetched = ({ kind: "pr"; items: PrSummary[] } | { kind: "issue"; items: IssueSummary[] }) & FetchMeta;
+type Fetched = SearchFetched | ({ kind: "run"; items: WorkflowRunSummary[] } & FetchMeta);
+type SearchPageSpec = Extract<SearchSpec, { kind: "pr" | "issue" }>;
 
 interface SearchTarget {
   key: string;
@@ -98,7 +99,9 @@ interface SearchEntry extends SearchTarget {
   result: Fetched | null;
   error: string | null;
   loading: boolean;
-  request: { promise: Promise<void>; force: boolean } | null;
+  loadingMore: boolean;
+  pages: number;
+  request: { promise: Promise<void>; force: boolean; more: boolean } | null;
   completedAt: number;
   lastUsed: number;
 }
@@ -190,7 +193,14 @@ function searchTarget(kind: GitHubKind, query: string, context: GitHubContext): 
 }
 
 function fromRuns(result: RunsResult): Fetched {
-  return { ...result, kind: "run", openCount: null, closedCount: null, truncated: false, limit: null };
+  return { ...result, kind: "run", openCount: null, closedCount: null, nextCursor: null };
+}
+
+function appendPage(previous: SearchFetched, next: SearchFetched): SearchFetched {
+  if (next.error !== null) return { ...previous, error: next.error };
+  if (previous.kind === "pr" && next.kind === "pr") return { ...next, items: [...previous.items, ...next.items] };
+  if (previous.kind === "issue" && next.kind === "issue") return { ...next, items: [...previous.items, ...next.items] };
+  return next;
 }
 
 function badgeTargets(context: GitHubContext): SearchTarget[] {
@@ -245,6 +255,13 @@ export class GitHubViews {
     if (!state) throw new Error(`topic is not subscribed: ${topic}`);
     const entry = state.key ? this.entries.get(state.key) : undefined;
     if (entry) await this.fetchEntry(entry, force);
+  }
+
+  async loadMore(topic: string): Promise<void> {
+    const state = this.topics.get(topic);
+    if (!state) throw new Error(`topic is not subscribed: ${topic}`);
+    const entry = state.key ? this.entries.get(state.key) : undefined;
+    if (entry) await this.loadMoreEntry(entry);
   }
 
   viewCounts(kind: GitHubKind): Promise<Record<string, number | null>> {
@@ -328,6 +345,7 @@ export class GitHubViews {
     for (const entry of this.entries.values()) {
       entry.request = null;
       entry.loading = false;
+      entry.loadingMore = false;
     }
     this.counts.clear();
     this.watchSignature = null;
@@ -448,7 +466,7 @@ export class GitHubViews {
   private use(target: SearchTarget): SearchEntry {
     let entry = this.entries.get(target.key);
     if (!entry) {
-      entry = { ...target, result: null, error: null, loading: false, request: null, completedAt: 0, lastUsed: 0 };
+      entry = { ...target, result: null, error: null, loading: false, loadingMore: false, pages: 1, request: null, completedAt: 0, lastUsed: 0 };
       this.entries.set(target.key, entry);
     }
     entry.lastUsed = ++this.clock;
@@ -470,13 +488,30 @@ export class GitHubViews {
       if (!force || running.force) return running.promise;
       return running.promise.then(() => this.fetchEntry(entry, true));
     }
+    return this.track(entry, force, false, () => this.runFetch(entry.spec, force, entry.pages));
+  }
+
+  private loadMoreEntry(entry: SearchEntry): Promise<void> {
+    if (this.disposed) return Promise.resolve();
+    const running = entry.request;
+    if (running) return running.more ? running.promise : running.promise.then(() => this.loadMoreEntry(entry));
+    const previous = entry.result;
+    const spec = entry.spec;
+    if (previous === null || previous.kind === "run" || previous.nextCursor === null || spec.kind === "run") return Promise.resolve();
+    const cursor = previous.nextCursor;
+    return this.track(entry, false, true, async () => appendPage(previous, await this.fetchPage(spec, false, cursor)));
+  }
+
+  private track(entry: SearchEntry, force: boolean, more: boolean, run: () => Promise<Fetched>): Promise<void> {
     const generation = this.generation;
     const isCurrent = () => generation === this.generation && this.entries.get(entry.key) === entry;
-    entry.loading = true;
-    const promise = this.runFetch(entry.spec, force)
+    entry.loading = !more;
+    entry.loadingMore = more;
+    const promise = run()
       .then(
         (fetched) => {
           if (!isCurrent()) return;
+          if (more && fetched.error === null) entry.pages += 1;
           entry.result = fetched.kind === "run" ? { ...fetched, items: reconcileRuns(fetched.items, this.knownRuns()) } : fetched;
           entry.error = fetched.error;
           if (fetched.account) this.searchViewer = fetched.account.login;
@@ -491,18 +526,27 @@ export class GitHubViews {
         if (!isCurrent()) return;
         entry.completedAt = Date.now();
         entry.loading = false;
+        entry.loadingMore = false;
         if (entry.request?.promise === promise) entry.request = null;
         this.invalidate();
       });
-    entry.request = { promise, force };
+    entry.request = { promise, force, more };
     this.invalidate();
     return promise;
   }
 
-  private async runFetch(spec: SearchSpec, force: boolean): Promise<Fetched> {
+  private async runFetch(spec: SearchSpec, force: boolean, pages: number): Promise<Fetched> {
     if (spec.kind === "run") return fromRuns(await this.deps.fetchRuns(spec.sources, force));
-    if (spec.kind === "pr") return { ...(await this.deps.searchPrs(spec.query, spec.countBase, force)), kind: "pr" };
-    return { ...(await this.deps.searchIssues(spec.query, spec.countBase, force)), kind: "issue" };
+    let result = await this.fetchPage(spec, force, null);
+    for (let page = 1; page < pages && result.error === null && result.nextCursor !== null; page += 1) {
+      result = appendPage(result, await this.fetchPage(spec, force, result.nextCursor));
+    }
+    return result;
+  }
+
+  private async fetchPage(spec: SearchPageSpec, force: boolean, after: string | null): Promise<SearchFetched> {
+    if (spec.kind === "pr") return { ...(await this.deps.searchPrs(spec.query, spec.countBase, force, after)), kind: "pr" };
+    return { ...(await this.deps.searchIssues(spec.query, spec.countBase, force, after)), kind: "issue" };
   }
 
   private knownRuns(): WorkflowRunSummary[] {
@@ -637,8 +681,8 @@ export class GitHubViews {
       openCount: result?.openCount ?? null,
       closedCount: result?.closedCount ?? null,
       countsUnavailable: (state.split?.local.length ?? 0) > 0,
-      truncated: result?.truncated ?? false,
-      limit: result?.limit ?? null,
+      hasMore: (result?.nextCursor ?? null) !== null,
+      loadingMore: entry?.loadingMore ?? false,
       fetchedAt: result?.fetchedAt ?? null
     };
     const subjects = this.subjects(state, env);

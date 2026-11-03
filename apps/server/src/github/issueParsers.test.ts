@@ -48,7 +48,7 @@ describe("parseIssueSearch", () => {
     expect(result.viewer).toBe("octocat");
     expect(result.openCount).toBe(4);
     expect(result.closedCount).toBe(9);
-    expect(result.truncated).toBe(false);
+    expect(result.nextCursor).toBeNull();
     expect(result.items).toEqual([
       {
         ref: { host: "github.com", owner: "acme", repo: "widgets", number: 5 },
@@ -106,15 +106,15 @@ describe("parseIssueSearch", () => {
     expect(result.items[1].author).toEqual({ login: "ghost", isBot: false });
   });
 
-  it("drops nodes that are not issues and reports truncation from the total", () => {
+  it("drops nodes that are not issues and returns the next page cursor", () => {
     const nodes = [{}, issueNode({ url: "https://github.com/acme/widgets/pull/5" }), issueNode()];
-    const result = parseIssueSearch(searchJson(nodes, { issueCount: 120, nodes }));
+    const result = parseIssueSearch(searchJson(nodes, { issueCount: 120, pageInfo: { hasNextPage: true, endCursor: "next" }, nodes }));
     expect(result.items).toHaveLength(1);
-    expect(result.truncated).toBe(true);
+    expect(result.nextCursor).toBe("next");
   });
 
   it("returns an empty result for malformed JSON", () => {
-    expect(parseIssueSearch("not-json")).toEqual({ viewer: null, items: [], openCount: null, closedCount: null, truncated: false });
+    expect(parseIssueSearch("not-json")).toEqual({ viewer: null, items: [], openCount: null, closedCount: null, nextCursor: null });
   });
 });
 

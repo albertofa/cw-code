@@ -155,6 +155,7 @@ function installBridge(): void {
     getDefaultPrWorkflows: async () => [],
     refreshPrInbox: async () => {},
     refreshGitHubView: async () => {},
+    loadMoreGitHubView: async () => {},
     githubViewCounts: async () => ({}),
     markSessionRunSeen: async (sessionId: string) => makeSession({ id: sessionId }),
     refreshGit: async () => {},

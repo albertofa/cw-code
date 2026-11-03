@@ -7,6 +7,7 @@ const mocks = {
 };
 
 const actualGitService = { ...(await import("../fs/GitService.js")) };
+const actualGitHubAccount = { ...(await import("./githubAccount.js")) };
 
 mock.module("../fs/GitService.js", () => ({
   ...actualGitService,
@@ -14,6 +15,7 @@ mock.module("../fs/GitService.js", () => ({
   execWithStatus: mocks.execWithStatus
 }));
 mock.module("./githubAccount.js", () => ({
+  ...actualGitHubAccount,
   githubCliBinary: () => "gh",
   resolveGitHubAccount: mocks.resolveGitHubAccount
 }));

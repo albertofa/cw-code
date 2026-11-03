@@ -1,7 +1,21 @@
 import type { PrRef } from "@cw-code/contracts";
 import { isSafePositiveInt } from "./githubRefs.js";
 
-export const INBOX_SEARCH_LIMIT = 50;
+export const PR_SEARCH_PAGE_SIZE = 15;
+export const INBOX_MAX_PAGES = 4;
+export const INBOX_SEARCH_LIMIT = PR_SEARCH_PAGE_SIZE * INBOX_MAX_PAGES;
+
+const ROLLUP_COUNT_FIELDS = `
+contexts(first: 0) {
+  checkRunCountsByState {
+    state
+    count
+  }
+  statusContextCountsByState {
+    state
+    count
+  }
+}`;
 
 const PR_SUMMARY_FIELDS = `
   number
@@ -66,18 +80,7 @@ const PR_SUMMARY_FIELDS = `
     nodes {
       commit {
         statusCheckRollup {
-          contexts(first: 100) {
-            nodes {
-              __typename
-              ... on CheckRun {
-                conclusion
-                status
-              }
-              ... on StatusContext {
-                state
-              }
-            }
-          }
+${ROLLUP_COUNT_FIELDS}
         }
       }
     }
@@ -85,11 +88,15 @@ const PR_SUMMARY_FIELDS = `
 `;
 
 export const INBOX_QUERY = `
-query($q: String!) {
+query($q: String!, $after: String) {
   viewer {
     login
   }
-  search(type: ISSUE, first: ${INBOX_SEARCH_LIMIT}, query: $q) {
+  search(type: ISSUE, first: ${PR_SEARCH_PAGE_SIZE}, after: $after, query: $q) {
+    pageInfo {
+      hasNextPage
+      endCursor
+    }
     nodes {
       ... on PullRequest {
         __typename
@@ -106,12 +113,16 @@ ${PR_SUMMARY_FIELDS}
 `;
 
 export const PR_SEARCH_QUERY = `
-query($q: String!, $open: String!, $closed: String!) {
+query($q: String!, $open: String!, $closed: String!, $after: String) {
   viewer {
     login
   }
-  results: search(type: ISSUE, first: ${INBOX_SEARCH_LIMIT}, query: $q) {
+  results: search(type: ISSUE, first: ${PR_SEARCH_PAGE_SIZE}, after: $after, query: $q) {
     issueCount
+    pageInfo {
+      hasNextPage
+      endCursor
+    }
     nodes {
       ... on PullRequest {
         __typename
@@ -171,18 +182,7 @@ ${PR_SUMMARY_FIELDS}
                 }
               }
               statusCheckRollup {
-                contexts(first: 100) {
-                  nodes {
-                    __typename
-                    ... on CheckRun {
-                      conclusion
-                      status
-                    }
-                    ... on StatusContext {
-                      state
-                    }
-                  }
-                }
+${ROLLUP_COUNT_FIELDS}
               }
             }
           }
@@ -275,18 +275,7 @@ ${PR_SUMMARY_FIELDS}
               }
             }
             statusCheckRollup {
-              contexts(first: 100) {
-                nodes {
-                  __typename
-                  ... on CheckRun {
-                    conclusion
-                    status
-                  }
-                  ... on StatusContext {
-                    state
-                  }
-                }
-              }
+${ROLLUP_COUNT_FIELDS}
             }
           }
         }

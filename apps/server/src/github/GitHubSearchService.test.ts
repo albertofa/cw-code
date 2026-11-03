@@ -27,6 +27,12 @@ describe("GitHubSearchService input validation", () => {
     await expect(service.search("pr", "is:open", "a".repeat(513))).rejects.toThrow("count base");
     await expect((service.counts as (...args: unknown[]) => Promise<unknown>)("run", ["is:open"])).rejects.toThrow("invalid search kind");
   });
+
+  it("rejects an empty, non-string or oversized cursor", async () => {
+    await expect(service.search("pr", "is:open", "", { after: "" })).rejects.toThrow("invalid search cursor");
+    await expect(service.search("pr", "is:open", "", { after: 5 as unknown as string })).rejects.toThrow("invalid search cursor");
+    await expect(service.search("pr", "is:open", "", { after: "a".repeat(513) })).rejects.toThrow("invalid search cursor");
+  });
 });
 
 describe("assertSearchQuery", () => {
@@ -83,7 +89,7 @@ describe("interpretSearchResponse", () => {
       items: [],
       openCount: null,
       closedCount: null,
-      truncated: false,
+      nextCursor: null,
       error: "Bad credentials"
     });
     expect(interpretSearchResponse("pr", response("", 1, "gh: not logged in\n")).error).toBe("gh: not logged in");

@@ -642,6 +642,7 @@ export interface CwApi {
   getPrDiff(ref: PrRef): Promise<string>;
   getPrCheckLog(ref: PrRef, runId: number): Promise<string>;
   refreshGitHubView(topic: string, force?: boolean): Promise<void>;
+  loadMoreGitHubView(topic: string): Promise<void>;
   githubViewCounts(kind: GitHubKind): Promise<Record<string, number | null>>;
   saveGitHubView(input: SaveGitHubViewInput): Promise<SavedGitHubView>;
   renameGitHubView(id: string, name: string): Promise<void>;

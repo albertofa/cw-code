@@ -1,6 +1,5 @@
-import { INBOX_SEARCH_LIMIT } from "./prQueries.js";
-
 export const MAX_RUN_REPOS = 20;
+const RUN_PR_LIMIT = 50;
 export const MAX_RUN_ORGS = 5;
 const SUITES_PER_COMMIT = 20;
 const CHECK_RUNS_PER_SUITE = 50;
@@ -66,7 +65,7 @@ query($q: String!) {
   viewer {
     login
   }
-  search(type: ISSUE, first: ${INBOX_SEARCH_LIMIT}, query: $q) {
+  search(type: ISSUE, first: ${RUN_PR_LIMIT}, query: $q) {
     nodes {
       ... on PullRequest {
         __typename

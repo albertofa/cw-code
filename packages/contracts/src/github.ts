@@ -176,8 +176,8 @@ export interface GitHubViewState {
   openCount: number | null;
   closedCount: number | null;
   countsUnavailable: boolean;
-  truncated: boolean;
-  limit: number | null;
+  hasMore: boolean;
+  loadingMore: boolean;
   fetchedAt: number | null;
 }
 

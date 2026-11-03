@@ -1,6 +1,5 @@
-import { INBOX_SEARCH_LIMIT } from "./prQueries.js";
-
 export const MAX_COUNT_QUERIES = 20;
+export const ISSUE_SEARCH_PAGE_SIZE = 50;
 
 const ISSUE_SUMMARY_FIELDS = `
   number
@@ -43,12 +42,16 @@ const ISSUE_SUMMARY_FIELDS = `
 `;
 
 export const ISSUE_SEARCH_QUERY = `
-query($q: String!, $open: String!, $closed: String!) {
+query($q: String!, $open: String!, $closed: String!, $after: String) {
   viewer {
     login
   }
-  results: search(type: ISSUE, first: ${INBOX_SEARCH_LIMIT}, query: $q) {
+  results: search(type: ISSUE, first: ${ISSUE_SEARCH_PAGE_SIZE}, after: $after, query: $q) {
     issueCount
+    pageInfo {
+      hasNextPage
+      endCursor
+    }
     nodes {
       ... on Issue {
         __typename

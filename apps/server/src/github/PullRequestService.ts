@@ -8,7 +8,7 @@ import { expandHome } from "../skills/skillPaths.js";
 import { OWNER_RE, REPO_RE, assertRepoRef, assertRunId, isSafePositiveInt, isValidHost } from "./githubRefs.js";
 import { GH_HOST, githubCliBinary, resolveGitHubAccount, withGitHubAccount, type AccountResolution } from "./githubAccount.js";
 import { defaultGitHubAccounts } from "./GitHubAccounts.js";
-import { DETAIL_QUERY, HEAD_QUERY, INBOX_QUERY, INBOX_SEARCH_LIMIT, inboxSearchQueries } from "./prQueries.js";
+import { DETAIL_QUERY, HEAD_QUERY, INBOX_MAX_PAGES, INBOX_QUERY, INBOX_SEARCH_LIMIT, inboxSearchQueries } from "./prQueries.js";
 import { parseDetail, parseHead, parseInbox, prKey, type PrHeadInfo } from "./prParsers.js";
 import type { PrInboxResult } from "./results.js";
 
@@ -130,13 +130,27 @@ export class PullRequestService {
     const env = authenticatedEnvironment(account.host, token);
     const binary = this.githubCliBinary();
     const accountInfo = { host: account.host, login: account.login };
-    try {
-      const results = await Promise.all(
-        inboxSearchQueries(fetchedAt).map((q) =>
-          execText(binary, ["api", "graphql", "-f", `query=${INBOX_QUERY}`, "-f", `q=${q}`], homedir(), REQUEST_TIMEOUT_MS, env)
+    const fetchPage = async (q: string, after: string | null) =>
+      parseInbox(
+        await execText(
+          binary,
+          ["api", "graphql", "-f", `query=${INBOX_QUERY}`, "-f", `q=${q}`, ...(after !== null ? ["-f", `after=${after}`] : [])],
+          homedir(),
+          REQUEST_TIMEOUT_MS,
+          env
         )
       );
-      const parsed = results.map((json) => parseInbox(json));
+    const fetchQuery = async (q: string) => {
+      let page = await fetchPage(q, null);
+      const items = [...page.items];
+      for (let pages = 1; pages < INBOX_MAX_PAGES && page.viewer !== null && page.nextCursor !== null; pages += 1) {
+        page = await fetchPage(q, page.nextCursor);
+        items.push(...page.items);
+      }
+      return { viewer: page.viewer, items, truncated: page.nextCursor !== null };
+    };
+    try {
+      const parsed = await Promise.all(inboxSearchQueries(fetchedAt).map(fetchQuery));
       if (parsed.some((entry) => entry.viewer === null)) {
         return { account: accountInfo, items: [], fetchedAt, error: "Unexpected response from GitHub" };
       }
