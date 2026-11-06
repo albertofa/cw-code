@@ -158,17 +158,17 @@
   text-transform: lowercase;
 }
 
-/* Labels with a GitHub color: tint fill, border and text from it so they stay legible on any theme. */
+/* Labels with a GitHub color: solid fill with the black/white ink labelChipStyle picks, legible on any theme. */
 .pr-inbox-label[style*="--label-color"],
 .pr-detail-label[style*="--label-color"] {
-  border: 1px solid color-mix(in srgb, var(--label-color) 50%, transparent);
-  background: color-mix(in srgb, var(--label-color) 20%, transparent);
-  color: color-mix(in srgb, var(--label-color) 65%, var(--text));
+  border: 1px solid var(--label-color);
+  background: var(--label-color);
+  color: var(--label-ink);
 }
 
 .hub-row button.pr-inbox-label[style*="--label-color"]:hover {
-  border-color: var(--label-color);
-  color: color-mix(in srgb, var(--label-color) 45%, var(--text));
+  border-color: var(--text);
+  color: var(--label-ink);
 }
 
 .pr-inbox-view .pr-inbox-meta-line {
