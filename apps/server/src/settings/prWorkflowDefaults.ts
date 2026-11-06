@@ -106,7 +106,7 @@ Apply each change or explain why not. One commit per thread on {{pr.head}}.`,
       startPrompt: `Review pull request #{{pr.number}} "{{pr.title}}" in {{pr.repo}}.
 Base {{pr.base}} ← head {{pr.head}} @ {{pr.sha}}
 
-Pull the latest changes of this PR so your checkout is at {{pr.sha}}, then read the full diff (\`gh pr diff {{pr.number}}\`) and the code around it. Come back to me with your findings on:
+Read the PR description and existing review threads (\`gh pr view {{pr.number}} --comments\`). Pull the latest changes of this PR so your checkout is at {{pr.sha}}, then read the full diff (\`gh pr diff {{pr.number}}\`) and the code around it. Come back to me with your findings on:
 - Scope and purpose: does the change do what it sets out to do, and nothing unrelated?
 - Architecture and design: does it fit the existing structure, or does it add coupling, duplication or a new pattern without need?
 - Quality: readability, naming, error handling and test coverage.
