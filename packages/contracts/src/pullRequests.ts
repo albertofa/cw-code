@@ -47,6 +47,8 @@ export interface PrSummary {
   mergeable: PrMergeable;
   mergeStateStatus: PrMergeStateStatus;
   labels: string[];
+  /** Label colors (`#rrggbb`) keyed by label name; labels without a valid color are absent. */
+  labelColors?: Record<string, string>;
   reviewers: PrReviewer[];
   assignees: string[];
   /** Avatar image URLs keyed by lowercased login. */

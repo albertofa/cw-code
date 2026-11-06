@@ -1,4 +1,4 @@
-import { memo, useMemo, type ReactNode } from "react";
+import { memo, useMemo, type CSSProperties, type ReactNode } from "react";
 import { ChevronRight, GitBranch, MessageSquare, Timer } from "lucide-react";
 import type { GitHubRow as GitHubRowData } from "@cw-code/contracts";
 import type { PrWorkflow, RepoRef, Session } from "../cw.js";
@@ -28,6 +28,7 @@ import { subjectRepoOf } from "./githubViewModel.js";
 import { formatRelativeAge } from "./prInboxModel.js";
 import { useNow } from "./usageFormat.js";
 import { useAppSettings, useAppSettingsError } from "./useAppSettings.js";
+import { labelChipStyle } from "./labelColor.js";
 
 const LIVE_TICK_MS = 1000;
 const NO_WORKFLOWS: PrWorkflow[] = [];
@@ -55,18 +56,21 @@ function QualifierButton({
   qualifier,
   value,
   onAdd,
+  style,
   children
 }: {
   className: string;
   qualifier: string;
   value: string;
   onAdd: (key: string, value: string) => void;
+  style?: CSSProperties;
   children: ReactNode;
 }) {
   return (
     <button
       type="button"
       className={className}
+      style={style}
       title={`Add ${qualifier}:${value} to the query`}
       onClick={(e) => {
         e.stopPropagation();
@@ -310,6 +314,7 @@ export const GitHubRow = memo(function GitHubRow({ row, viewer, isCloned, onAddQ
   const delta = deltaLabel(relations.delta, now);
   const state = stateGlyph(subject);
   const labels = subject.kind === "pr" ? subject.pr.labels : subject.kind === "issue" ? subject.issue.labels : [];
+  const labelColors = subject.kind === "pr" ? subject.pr.labelColors : subject.kind === "issue" ? subject.issue.labelColors : undefined;
   const title = subject.kind === "pr" ? subject.pr.title : subject.kind === "issue" ? subject.issue.title : subject.run.title;
 
   const open = () => {
@@ -338,7 +343,7 @@ export const GitHubRow = memo(function GitHubRow({ row, viewer, isCloned, onAddQ
             {title}
           </button>
           {labels.map((label) => (
-            <QualifierButton key={label} className="pr-inbox-label" qualifier="label" value={label} onAdd={onAddQualifier}>
+            <QualifierButton key={label} className="pr-inbox-label" qualifier="label" value={label} onAdd={onAddQualifier} style={labelChipStyle(labelColors, label)}>
               {label}
             </QualifierButton>
           ))}

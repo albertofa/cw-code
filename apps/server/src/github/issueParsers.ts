@@ -1,5 +1,5 @@
 import type { IssueComment, IssueDetail, IssueLinkedPr, IssueRef, IssueSummary } from "@cw-code/contracts";
-import { actorLoginOf, asBool, avatarUrlsOf, asEpochMs, asNodes, asNumber, asRecord, asString, parseJsonObject, parseSearchPage } from "./prParsers.js";
+import { actorLoginOf, asBool, avatarUrlsOf, labelColorsOf, asEpochMs, asNodes, asNumber, asRecord, asString, parseJsonObject, parseSearchPage } from "./prParsers.js";
 
 const ISSUE_URL_RE = /^https?:\/\/([^/]+)\/([^/]+)\/([^/]+)\/issues\/(\d+)/i;
 const STATE_REASONS = new Set(["COMPLETED", "NOT_PLANNED", "REOPENED"]);
@@ -50,6 +50,7 @@ function parseIssueNode(node: Record<string, unknown>): IssueSummary | null {
     author: { login: author.login || GHOST_LOGIN, isBot: author.isBot },
     assignees: asNodes(node.assignees).map((assignee) => asString(assignee.login)).filter(Boolean),
     labels: asNodes(node.labels).map((label) => asString(label.name)).filter(Boolean),
+    labelColors: labelColorsOf(node.labels),
     milestone: milestone || null,
     commentsCount: asNumber(asRecord(node.commentCount).totalCount),
     linkedPrs: parseLinkedPrs(node.closedByPullRequestsReferences),

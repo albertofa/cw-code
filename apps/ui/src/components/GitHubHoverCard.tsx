@@ -39,6 +39,7 @@ import {
 } from "./githubRowModel.js";
 import { formatRelativeAge } from "./prInboxModel.js";
 import { prRefFromUrl } from "@cw-code/shared/prRef";
+import { labelChipStyle } from "./labelColor.js";
 
 const SHOW_DELAY_MS = 280;
 const SWITCH_DELAY_MS = 60;
@@ -414,7 +415,7 @@ function IssueStatusCard({ issue, now }: { issue: IssueSummary; now: number }) {
         {issue.labels.length > 0 && (
           <div className="hub-card-line hub-card-wrap">
             {issue.labels.map((label) => (
-              <span key={label} className="pr-inbox-label">
+              <span key={label} className="pr-inbox-label" style={labelChipStyle(issue.labelColors, label)}>
                 {label}
               </span>
             ))}

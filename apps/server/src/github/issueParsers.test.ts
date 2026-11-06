@@ -37,7 +37,7 @@ describe("parseIssueSearch", () => {
     const result = parseIssueSearch(
       searchJson([
         issueNode({
-          labels: { nodes: [{ name: "bug" }, { name: "p1" }] },
+          labels: { nodes: [{ name: "bug", color: "D73A4A" }, { name: "p1", color: "not-a-color" }] },
           author: { login: "octocat", __typename: "User", avatarUrl: "https://a.test/octocat" },
           assignees: { nodes: [{ login: "Alice", avatarUrl: "https://a.test/alice" }, { login: "bob" }] },
           milestone: { title: "v2" },
@@ -59,6 +59,7 @@ describe("parseIssueSearch", () => {
         author: { login: "octocat", isBot: false },
         assignees: ["Alice", "bob"],
         labels: ["bug", "p1"],
+        labelColors: { bug: "#d73a4a" },
         milestone: "v2",
         commentsCount: 3,
         linkedPrs: [],

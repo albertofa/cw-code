@@ -35,6 +35,7 @@ import { groupCommitsByDay, linkedBarState, mergeBoxState, relativeTime, threadQ
 import { linkFor } from "./sessionPrLinks.js";
 import { requestPrDetail, usePrDetail, usePrRelations, usePrsTopicError, watchPrDetail } from "./usePrs.js";
 import { useConnectionEpoch } from "../server/topics.js";
+import { labelChipStyle } from "./labelColor.js";
 
 const MAX_LOG_LINES = 2000;
 
@@ -944,7 +945,7 @@ function SideColumn({
         <div className="pr-detail-labels">
           {detail.labels.length === 0 && <span className="faint">None</span>}
           {detail.labels.map((label) => (
-            <span className="pr-detail-label" key={label}>{label}</span>
+            <span className="pr-detail-label" key={label} style={labelChipStyle(detail.labelColors, label)}>{label}</span>
           ))}
         </div>
       </div>
