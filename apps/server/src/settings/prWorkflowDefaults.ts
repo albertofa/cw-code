@@ -18,6 +18,24 @@ Base {{pr.base}} ← head {{pr.head}} @ {{pr.sha}}
 
 Read the diff with \`gh pr diff {{pr.number}}\`. Report findings as Critical / Important / Minor with file:line.
 {{attribution}}`
+  },
+  {
+    id: "review",
+    field: "startPrompt",
+    text: `Review pull request #{{pr.number}} "{{pr.title}}" in {{pr.repo}}.
+Base {{pr.base}} ← head {{pr.head}} @ {{pr.sha}}
+
+{{pr.body}}
+{{pr.threads}}
+
+Pull the latest changes of this PR so your checkout is at {{pr.sha}}, then read the full diff (\`gh pr diff {{pr.number}}\`) and the code around it. Come back to me with your findings on:
+- Scope and purpose: does the change do what it sets out to do, and nothing unrelated?
+- Architecture and design: does it fit the existing structure, or does it add coupling, duplication or a new pattern without need?
+- Quality: readability, naming, error handling and test coverage.
+- Problems and regressions: bugs, unhandled edge cases, and behavior that changes for existing callers or users.
+
+Cite file:line for each finding and rank it Critical, Important or Minor. Report here only; do not change code.
+{{attribution}}`
   }
 ];
 
@@ -88,10 +106,7 @@ Apply each change or explain why not. One commit per thread on {{pr.head}}.`,
       startPrompt: `Review pull request #{{pr.number}} "{{pr.title}}" in {{pr.repo}}.
 Base {{pr.base}} ← head {{pr.head}} @ {{pr.sha}}
 
-{{pr.body}}
-{{pr.threads}}
-
-Pull the latest changes of this PR so your checkout is at {{pr.sha}}, then read the full diff (\`gh pr diff {{pr.number}}\`) and the code around it. Come back to me with your findings on:
+Read the PR description (\`gh pr view {{pr.number}}\`) and existing review threads (\`gh api --paginate repos/{{pr.repo}}/pulls/{{pr.number}}/comments\`). Pull the latest changes of this PR so your checkout is at {{pr.sha}}, then read the full diff (\`gh pr diff {{pr.number}}\`) and the code around it. Come back to me with your findings on:
 - Scope and purpose: does the change do what it sets out to do, and nothing unrelated?
 - Architecture and design: does it fit the existing structure, or does it add coupling, duplication or a new pattern without need?
 - Quality: readability, naming, error handling and test coverage.

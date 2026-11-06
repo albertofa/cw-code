@@ -414,6 +414,18 @@ describe("SettingsStore", () => {
     expect(byId.get("fix-ci")?.startPrompt).toBe("my own prompt");
   });
 
+  it("upgrades every retired review prompt to the current default without the PR body or threads", () => {
+    const current = defaultPrWorkflows().find((w) => w.id === "review")!.startPrompt;
+    expect(current).not.toContain("{{pr.body}}");
+    expect(current).not.toContain("{{pr.threads}}");
+    for (const retired of RETIRED_BUILT_IN_PROMPTS.filter((prompt) => prompt.id === "review")) {
+      const filePath = tempFilePath();
+      const saved = DEFAULT_SETTINGS.prWorkflows.map((w) => (w.id === "review" ? { ...w, startPrompt: retired.text } : w));
+      writeFileSync(filePath, JSON.stringify({ schemaVersion: SETTINGS_SCHEMA_VERSION, prWorkflows: saved }), "utf8");
+      expect(new SettingsStore(filePath).get().prWorkflows.find((w) => w.id === "review")?.startPrompt).toBe(current);
+    }
+  });
+
   it("turns on automatic follow-ups for babysit only, and keeps a saved opt-out", () => {
     const filePath = tempFilePath();
     const saved = DEFAULT_SETTINGS.prWorkflows.map(({ autoFollowUp: _auto, ...w }) => w);
