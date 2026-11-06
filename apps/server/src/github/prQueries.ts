@@ -47,6 +47,7 @@ const PR_SUMMARY_FIELDS = `
   labels(first: 20) {
     nodes {
       name
+      color
     }
   }
   updatedAt

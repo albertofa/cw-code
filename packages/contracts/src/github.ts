@@ -47,6 +47,8 @@ export interface IssueSummary {
   author: { login: string; isBot: boolean };
   assignees: string[];
   labels: string[];
+  /** Label colors (`#rrggbb`) keyed by label name; labels without a valid color are absent. */
+  labelColors?: Record<string, string>;
   milestone: string | null;
   commentsCount: number;
   linkedPrs: IssueLinkedPr[];

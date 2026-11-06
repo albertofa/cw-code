@@ -21,6 +21,7 @@ const ISSUE_SUMMARY_FIELDS = `
   labels(first: 20) {
     nodes {
       name
+      color
     }
   }
   milestone {

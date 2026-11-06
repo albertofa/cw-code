@@ -2,6 +2,7 @@ import { Activity, CircleDot, GitPullRequest } from "lucide-react";
 import type { IssueDetail, PrSummary, RunRef, WorkflowRunSummary } from "../cw.js";
 import { prChip } from "./prChip.js";
 import { runVerdict } from "./githubRowModel.js";
+import { labelChipStyle } from "./labelColor.js";
 
 const SHORT_SHA_LENGTH = 7;
 
@@ -43,7 +44,7 @@ export function IssueCard({ issue }: { issue: IssueDetail }) {
         <div className="wf-run-pr-meta">
           <span>{issue.ref.owner}/{issue.ref.repo}</span>
           {issue.labels.map((label) => (
-            <span key={label} className="pr-inbox-label">{label}</span>
+            <span key={label} className="pr-inbox-label" style={labelChipStyle(issue.labelColors, label)}>{label}</span>
           ))}
         </div>
       </div>

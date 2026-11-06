@@ -184,6 +184,17 @@ export function avatarUrlsOf(actors: unknown[]): Record<string, string> {
   return urls;
 }
 
+/** Label name → `#rrggbb`, for labels whose GitHub color is a valid hex. */
+export function labelColorsOf(labels: unknown): Record<string, string> {
+  const colors: Record<string, string> = {};
+  for (const label of asNodes(labels)) {
+    const name = asString(label.name);
+    const color = asString(label.color);
+    if (name && /^[0-9a-f]{6}$/i.test(color)) colors[name] = `#${color.toLowerCase()}`;
+  }
+  return colors;
+}
+
 export function parseSummaryNode(node: Record<string, unknown>, viewer: string | null): PrSummary | null {
   const url = asString(node.url);
   const ref = prRefFromUrl(url);
@@ -216,6 +227,7 @@ export function parseSummaryNode(node: Record<string, unknown>, viewer: string |
     mergeable: mergeableFrom(node.mergeable),
     mergeStateStatus: mergeStateStatusFrom(node.mergeStateStatus),
     labels: asNodes(node.labels).map((label) => asString(label.name)).filter(Boolean),
+    labelColors: labelColorsOf(node.labels),
     reviewers: mergeReviewers(parseReviewers(node.latestReviews), reviewerLogins),
     assignees: asNodes(node.assignees).map((assignee) => asString(assignee.login)).filter(Boolean),
     avatarUrls: avatarUrlsOf([

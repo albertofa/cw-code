@@ -158,6 +158,19 @@
   text-transform: lowercase;
 }
 
+/* Labels with a GitHub color: solid fill with the black/white ink labelChipStyle picks, legible on any theme. */
+.pr-inbox-label[style*="--label-color"],
+.pr-detail-label[style*="--label-color"] {
+  border: 1px solid var(--label-color);
+  background: var(--label-color);
+  color: var(--label-ink);
+}
+
+.hub-row button.pr-inbox-label[style*="--label-color"]:hover {
+  border-color: var(--text);
+  color: var(--label-ink);
+}
+
 .pr-inbox-view .pr-inbox-meta-line {
   display: flex;
   align-items: center;
