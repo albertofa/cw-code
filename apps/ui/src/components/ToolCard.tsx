@@ -225,7 +225,8 @@ export const ToolCard = memo(function ToolCard({
         ? formatText(summary.subject)
         : summary?.subject;
   const previewPath = summary?.subject ? stripMentionMarker(summary.subject) : undefined;
-  const output = (message.toolOutput ?? "").slice(0, 2000);
+  const isSkill = lowerName === "skill";
+  const output = isSkill ? (message.toolOutput ?? "") : (message.toolOutput ?? "").slice(0, 2000);
   const spanMs = done ? toolSpanMs([message]) : undefined;
   const duration =
     status === "waiting"
@@ -345,7 +346,9 @@ export const ToolCard = memo(function ToolCard({
           )}
           {summary && done && output && (
             <>
-              <div className={`tool-output-label${isError ? " error" : ""}`}>{isError ? "error" : "output"}</div>
+              <div className={`tool-output-label${isError ? " error" : ""}`}>
+                {isError ? "error" : isSkill ? "skill content" : "output"}
+              </div>
               <pre className="tool-output">{output}</pre>
             </>
           )}

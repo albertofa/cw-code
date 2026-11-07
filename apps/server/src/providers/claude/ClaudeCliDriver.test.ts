@@ -412,6 +412,31 @@ describe("ClaudeCliDriver persistent process", () => {
     driver.dispose();
   });
 
+  it("shows the skill body the CLI injects after a Skill call as that call's output", async () => {
+    const { driver, events, children } = makeDriver();
+    driver.startTurn({ sessionId: "s1", cwd: "C:\\proj", prompt: "go" });
+    await settle();
+    const body = "Base directory for this skill: C:\\Users\\dev\\.claude\\skills\\demo\n\n# Demo";
+    const synthetic = (text: string) =>
+      JSON.stringify({ type: "user", parent_tool_use_id: null, isSynthetic: true, message: { role: "user", content: [{ type: "text", text }] } });
+    await feedLines(children[0], [
+      JSON.stringify({ type: "assistant", message: { content: [{ type: "tool_use", id: "toolu_skill", name: "Skill", input: { skill: "demo" } }] } }),
+      JSON.stringify({
+        type: "user",
+        message: { content: [{ type: "tool_result", tool_use_id: "toolu_skill", content: "Launching skill: demo" }] },
+        tool_use_result: { success: true, commandName: "demo" }
+      }),
+      synthetic(body),
+      JSON.stringify({ type: "assistant", message: { content: [{ type: "text", text: "OK" }] } }),
+      synthetic("unrelated reminder")
+    ]);
+    expect(toolResults(events).map((event) => [event.toolCallId, event.output])).toEqual([
+      ["toolu_skill", "Launching skill: demo"],
+      ["toolu_skill", body]
+    ]);
+    driver.dispose();
+  });
+
   it("releaseBinary stops settled processes and never reuses busy ones afterwards", async () => {
     const { driver, children, spawnCalls, killed } = makeDriver();
     driver.startTurn({ sessionId: "idle", cwd: "C:\\proj", prompt: "first" });
