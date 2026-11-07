@@ -4,7 +4,9 @@ import {
   ChevronRight,
   CircleDashed,
   CircleHelp,
+  GraduationCap,
   Monitor,
+  Puzzle,
   ShieldAlert,
   Square,
   Wrench,
@@ -28,7 +30,7 @@ import {
   stripToolNamePrefix,
   toolSpanMs
 } from "./toolSummaries.js";
-import { formatFileSubject, looksLikeFileMention, shortenHomeInText, stripMentionMarker } from "./pathDisplay.js";
+import { agentResourceFile, formatFileSubject, looksLikeFileMention, shortenHomeInText, stripMentionMarker } from "./pathDisplay.js";
 import { FileIcon } from "./fileIcons.js";
 import { isPreviewablePath } from "./Markdown.js";
 import { useElapsed } from "./useElapsed.js";
@@ -218,8 +220,13 @@ export const ToolCard = memo(function ToolCard({
       </div>
     );
   }
+  const fileSubject = summary?.subject && (summary.subjectKind === "file" || looksLikeFileMention(summary.subject));
+  const resourceFile = fileSubject && summary?.subject ? agentResourceFile(summary.subject) : null;
+  const ResourceIcon = resourceFile?.kind === "plugin" ? Puzzle : GraduationCap;
   const displaySubject =
-    summary?.subject && (summary.subjectKind === "file" || looksLikeFileMention(summary.subject))
+    resourceFile
+      ? resourceFile.path
+      : fileSubject && summary?.subject
       ? formatFileSubject(summary.subject, basePath, home)
       : summary?.subject && summary.subjectKind !== "file" && isShell
         ? formatText(summary.subject)
@@ -258,6 +265,12 @@ export const ToolCard = memo(function ToolCard({
           <span className="tool-subject file" title={summary.subject}>
             <FileIcon name={baseName(displaySubject ?? summary.subject)} size={12} />
             <span className="tool-subject-text">{displaySubject}</span>
+            {resourceFile && (
+              <span className="tool-resource-tag" title={`File from the ${resourceFile.name} ${resourceFile.kind}`}>
+                <ResourceIcon size={10} aria-hidden="true" />
+                {resourceFile.name}
+              </span>
+            )}
           </span>
         )}
         {summary.subject && summary.subjectKind !== "file" && (

@@ -2934,6 +2934,20 @@ body.session-dragging * {
   white-space: nowrap;
 }
 
+.tool-resource-tag {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 0 5px;
+  border: 1px solid var(--skill-line);
+  border-radius: var(--r-sm);
+  background: var(--skill-fill);
+  color: var(--skill-ink);
+  font-size: var(--t-xs);
+  line-height: 1.4;
+}
+
 .tool-stat {
   flex: none;
   font-family: var(--mono);
