@@ -12,6 +12,7 @@ import { shutdownReservedError } from "../shutdown/shutdownReservation.js";
 import { sanitizedChildEnv } from "../shellEnvironment.js";
 import { detachProcessGroup, killProcessTreeByPid } from "../processTree.js";
 import { LatestClientSize, type PtySize } from "./ptySize.js";
+import { withBunPtyReader } from "./bunPtyReadStream.js";
 
 export type PtyKind = "claude" | "opencode" | "codex" | "shell";
 
@@ -70,8 +71,8 @@ function bundledPtyEntry(): string | null {
 
 async function importPty(): Promise<PtyModule> {
   const entry = bundledPtyEntry();
-  if (entry) return createRequire(entry)(entry) as PtyModule;
-  return (await import("node-pty")) as unknown as PtyModule;
+  const mod = entry ? (createRequire(entry)(entry) as PtyModule) : ((await import("node-pty")) as unknown as PtyModule);
+  return process.platform === "win32" ? mod : withBunPtyReader(mod);
 }
 
 export async function loadPty(): Promise<PtyModule> {
