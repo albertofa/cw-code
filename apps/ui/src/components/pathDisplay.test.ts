@@ -1,5 +1,63 @@
 import { describe, expect, it } from "bun:test";
-import { expandHome, formatFileSubject, looksLikeFileMention, shortenHome, shortenHomeInText, stripMentionMarker } from "./pathDisplay.js";
+import { agentResourceFile, type AgentResourceFile, expandHome, formatFileSubject, looksLikeFileMention, shortenHome, shortenHomeInText, stripMentionMarker } from "./pathDisplay.js";
+
+describe("agentResourceFile", () => {
+  const plugin = (name: string, path: string): AgentResourceFile => ({ kind: "plugin", name, path });
+  const skill = (name: string, path: string): AgentResourceFile => ({ kind: "skill", name, path });
+
+  it("names the plugin and its relative path for org-synced plugins", () => {
+    expect(agentResourceFile("/home/dev/.claude/plugins/synced/1c61a03e-041c_0ace48ba-3b48/ndk~g2/ARCHITECTURE.md")).toEqual(
+      plugin("ndk", "ARCHITECTURE.md")
+    );
+    expect(agentResourceFile("~/.claude/plugins/synced/abc/ndk/skills/plan/SKILL.md")).toEqual(
+      plugin("ndk", "skills/plan/SKILL.md")
+    );
+  });
+
+  it("drops the marketplace and version for cached installs", () => {
+    expect(agentResourceFile("/home/dev/.claude/plugins/cache/official/code-review/1.2.0/commands/review.md")).toEqual(
+      plugin("code-review", "commands/review.md")
+    );
+  });
+
+  it("handles marketplace checkouts and Windows paths", () => {
+    expect(
+      agentResourceFile("C:\\Users\\dev\\.claude\\plugins\\marketplaces\\claude-plugins-official\\plugins\\clangd-lsp\\README.md")
+    ).toEqual(plugin("clangd-lsp", "README.md"));
+    expect(agentResourceFile("/home/dev/.claude/plugins/marketplaces/official/external_plugins/foo/a/b.md")).toEqual(
+      plugin("foo", "a/b.md")
+    );
+  });
+
+  it("names cw-code's own plugin and skills under any home", () => {
+    expect(agentResourceFile("/home/dev/.cw-code/userdata/harness/claude-plugin/skills/cw-code/SKILL.md")).toEqual(
+      plugin("cw-code", "skills/cw-code/SKILL.md")
+    );
+    expect(agentResourceFile("C:\\Users\\dev\\.cw-code-dev\\userdata\\harness\\skills\\cw-code-prs\\SKILL.md")).toEqual(
+      skill("cw-code-prs", "SKILL.md")
+    );
+    expect(agentResourceFile("/srv/cw-home/userdata/harness/claude-plugin/.mcp.json")).toEqual(plugin("cw-code", ".mcp.json"));
+    expect(agentResourceFile("/home/dev/.cw-code/userdata/skills/review/SKILL.md")).toEqual(skill("review", "SKILL.md"));
+  });
+
+  it("names user and project skills for every harness", () => {
+    expect(agentResourceFile("/home/dev/.claude/skills/deploy/SKILL.md")).toEqual(skill("deploy", "SKILL.md"));
+    expect(agentResourceFile("/repo/.claude/skills/deploy/refs/steps.md")).toEqual(skill("deploy", "refs/steps.md"));
+    expect(agentResourceFile("~/.agents/skills/lint/SKILL.md")).toEqual(skill("lint", "SKILL.md"));
+    expect(agentResourceFile("/home/dev/.codex/skills/lint/SKILL.md")).toEqual(skill("lint", "SKILL.md"));
+    expect(agentResourceFile("/home/dev/.config/opencode/skills/fmt/SKILL.md")).toEqual(skill("fmt", "SKILL.md"));
+    expect(agentResourceFile("/repo/.opencode/skill/fmt/SKILL.md")).toEqual(skill("fmt", "SKILL.md"));
+  });
+
+  it("leaves other paths alone", () => {
+    expect(agentResourceFile("/home/dev/.claude/plugins/known_marketplaces.json")).toBeNull();
+    expect(agentResourceFile("/home/dev/.claude/plugins/synced/abc/manifest.json")).toBeNull();
+    expect(agentResourceFile("/home/dev/project/plugins/synced/abc/ndk/x.md")).toBeNull();
+    expect(agentResourceFile("/home/dev/.claude/skills/README.md")).toBeNull();
+    expect(agentResourceFile("/home/dev/project/userdata/skills/x/SKILL.md")).toBeNull();
+    expect(agentResourceFile("/home/dev/project/src/skills/x/SKILL.md")).toBeNull();
+  });
+});
 
 describe("shortenHome", () => {
   it("shortens posix home prefixes to ~/", () => {

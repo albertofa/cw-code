@@ -4,6 +4,7 @@ import type { ContextCompactionInfo, HistoryMessage, TaskSnapshot } from "@cw-co
 import { TaskTable, type TaskObservation } from "../../tasks/TaskTable.js";
 import { todosFromToolCall } from "../todos.js";
 import { claudeCommandText } from "./claudeCommands.js";
+import { claudeTranscriptToolContent, isClaudeSkillTool } from "./claudeSkillContent.js";
 import { claudeTranscriptProjectDir } from "./claudeSessions.js";
 import {
   claudeCallObservation,
@@ -25,6 +26,7 @@ interface TranscriptLine {
   subtype?: string;
   isSidechain?: boolean;
   isMeta?: boolean;
+  sourceToolUseID?: unknown;
   isCompactSummary?: boolean;
   isVisibleInTranscriptOnly?: boolean;
   compactMetadata?: unknown;
@@ -545,6 +547,8 @@ export function readClaudeHistoryFile(file: string, resumeCursor: string, limit 
         }
         lastStamp.set(msgId, Math.max(lastStamp.get(msgId) ?? 0, stamp));
       }
+      const toolContent = claudeTranscriptToolContent(parsed);
+      if (toolContent) attachSkillBody(out, toolContent.toolUseId, toolContent.text);
       for (const msg of parseClaudeTranscriptLine(parsed)) {
         if (msg.role === "reasoning" && msgId) {
           const group = reasoningByMsgId.get(msgId);
@@ -571,6 +575,26 @@ export function readClaudeHistoryFile(file: string, resumeCursor: string, limit 
     if (task) message.task = task;
   }
   return trimmed;
+}
+
+const SKILL_BODY_SCAN = 50;
+
+/** Shows the skill body the CLI loaded as the Skill call's output instead of its "Launching skill" stub. */
+export function attachSkillBody(messages: HistoryMessage[], toolUseId: string, text: string): void {
+  const resultId = `${toolUseId}-r`;
+  const stop = Math.max(0, messages.length - SKILL_BODY_SCAN);
+  let result: HistoryMessage | undefined;
+  for (let i = messages.length - 1; i >= stop; i--) {
+    const message = messages[i];
+    if (message.id === resultId) result = message;
+    else if (message.id === toolUseId) {
+      if (result && !result.isError && isClaudeSkillTool(message.toolName)) {
+        result.text = text;
+        result.toolOutputEmpty = false;
+      }
+      return;
+    }
+  }
 }
 
 export function mapAgentCalls(messages: HistoryMessage[]): Map<string, string> {

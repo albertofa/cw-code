@@ -44,6 +44,7 @@ import { describeClaudeExit } from "./claudeExit.js";
 import { claudeTranscriptProjectDir, listClaudeSessions, listNativeClaudeSessions } from "./claudeSessions.js";
 import { readClaudeHistory, readSidecarAgent, readClaudeTaskResult, findSidecarModel, type SidecarAgent } from "./claudeHistory.js";
 import { buildClaudeUserContent, claudePromptText } from "./claudeUserContent.js";
+import { isClaudeSkillTool, parseClaudeSyntheticUserText } from "./claudeSkillContent.js";
 import { ActivityNotifier } from "../ActivityNotifier.js";
 import { previewText, traceHarnessCall, truncateError } from "../../debug/harnessTrace.js";
 import type { ClaudeModelUsageSnapshot } from "./claudeUsage.js";
@@ -159,6 +160,10 @@ interface ClaudeProcessState {
   childCalls: Map<string, string[]>;
   turnStartedAt: number;
   shellResults: Map<string, string>;
+  /** Top-level Skill calls without a result yet. */
+  skillCalls: Set<string>;
+  /** Skill calls whose result arrived, in order, waiting for the CLI's synthetic message with the skill body. */
+  skillBodiesPending: string[];
   permissionMode: PermissionMode;
   reportedPermissionMode?: string;
   idleTimer?: NodeJS.Timeout;
@@ -424,6 +429,7 @@ export class ClaudeCliDriver implements CliDriver {
       this.observeTask(state, claudeHandbackObservation(handback.toolCallId, handback.output, Date.now()));
       return;
     }
+    if (isClaudeSkillTool(event.name) && !event.parentToolCallId) state.skillCalls.add(event.toolCallId);
     const call = claudeCallObservation(event.name, event.toolCallId, event.input, Date.now());
     const obs =
       call?.kind === "call" && event.parentToolCallId && call.taskKind === "agent" && call.background === undefined
@@ -447,6 +453,7 @@ export class ClaudeCliDriver implements CliDriver {
     line: string
   ): void {
     if (state.suppressedCallIds.delete(event.toolCallId)) return;
+    if (state.skillCalls.delete(event.toolCallId) && !event.isError) state.skillBodiesPending.push(event.toolCallId);
     this.emit(this.attributeSubagentResult(state, attributeClaudeSubagentEvent(event, state.agentByCall)));
     const kind = state.tasks.get(event.toolCallId)?.kind;
     const endsTaskStartedByThisCall = kind === "agent" || (kind === "shell" && event.isError);
@@ -483,8 +490,17 @@ export class ClaudeCliDriver implements CliDriver {
         state.apiErrorMessage = text || "Claude reported an API error with no output.";
         return;
       }
+      if (message?.type === "assistant" && !message.parent_tool_use_id) state.skillBodiesPending = [];
     } catch {
       // Non-JSON output is handled by the stream parser below.
+    }
+    if (state.skillBodiesPending.length > 0) {
+      const skillBody = parseClaudeSyntheticUserText(line);
+      const toolCallId = skillBody === null ? undefined : state.skillBodiesPending.shift();
+      if (skillBody !== null && toolCallId) {
+        this.emit({ type: "tool.result", turnId: state.activeTurnId, toolCallId, output: skillBody, isError: false });
+        return;
+      }
     }
     const compactBoundary = parseClaudeCompactBoundary(line);
     if (compactBoundary) {
@@ -858,6 +874,8 @@ export class ClaudeCliDriver implements CliDriver {
       childCalls: new Map(),
       turnStartedAt: start,
       shellResults: new Map(),
+      skillCalls: new Set(),
+      skillBodiesPending: [],
       permissionMode: request.permissionMode ?? "auto",
       modelUsage: {}
     };

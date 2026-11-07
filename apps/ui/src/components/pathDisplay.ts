@@ -65,6 +65,54 @@ function relativizeOrNull(basePath: string, path: string): string | null {
   return null;
 }
 
+export interface AgentResourceFile {
+  kind: "plugin" | "skill";
+  /** Plugin or skill name. */
+  name: string;
+  /** Path inside the plugin's or skill's root, slash-separated. */
+  path: string;
+}
+
+type ResourceLayout = { kind: AgentResourceFile["kind"]; pattern: RegExp; name?: string };
+
+/**
+ * Folders that hold plugins and skills, whose ids, hashes and versions say nothing to a reader. Each pattern
+ * captures the path inside the resource, plus the name unless the layout has a fixed one. Matching is
+ * display-only: an unknown layout keeps the full path. Plugin layouts come first so a plugin's bundled skills
+ * show as that plugin's files.
+ */
+const RESOURCE_LAYOUTS: ResourceLayout[] = [
+  // Claude: cache/<marketplace>/<plugin>/<version>/...
+  { kind: "plugin", pattern: /\/\.claude\/plugins\/cache\/[^/]+\/([^/]+)\/[^/]+\/(.+)$/i },
+  // Claude: marketplaces/<marketplace>/(plugins|external_plugins)/<plugin>/...
+  { kind: "plugin", pattern: /\/\.claude\/plugins\/marketplaces\/[^/]+\/(?:plugins|external_plugins)\/([^/]+)\/(.+)$/i },
+  // Claude: synced/<org sync id>/<plugin>[~generation]/...
+  { kind: "plugin", pattern: /\/\.claude\/plugins\/synced\/[^/]+\/([^/~]+)(?:~[^/]*)?\/(.+)$/i },
+  // cw-code's own Claude plugin, written under its userdata (any CW_CODE_HOME).
+  { kind: "plugin", name: "cw-code", pattern: /\/userdata\/harness\/claude-plugin\/(.+)$/i },
+  // cw-code skills handed to Codex as extra roots, and cw-code's skill library.
+  { kind: "skill", pattern: /\/userdata\/harness\/skills\/([^/]+)\/(.+)$/i },
+  { kind: "skill", pattern: /\/\.cw-code(?:-dev)?\/userdata\/skills\/([^/]+)\/(.+)$/i },
+  // User and project skills: Claude, Codex (current and legacy) and opencode.
+  { kind: "skill", pattern: /\/\.claude\/skills\/([^/]+)\/(.+)$/i },
+  { kind: "skill", pattern: /\/\.(?:agents|codex)\/skills\/([^/]+)\/(.+)$/i },
+  { kind: "skill", pattern: /\/(?:\.config\/opencode|\.opencode)\/skills?\/([^/]+)\/(.+)$/i }
+];
+
+export function agentResourceFile(path: string): AgentResourceFile | null {
+  if (!path || typeof path !== "string") return null;
+  const normalized = toSlashes(stripMentionMarker(path.trim()));
+  const anchored = normalized.startsWith("~/") ? normalized.slice(1) : normalized;
+  for (const layout of RESOURCE_LAYOUTS) {
+    const match = layout.pattern.exec(anchored);
+    if (!match) continue;
+    const name = layout.name ?? match[1];
+    const inner = layout.name ? match[1] : match[2];
+    if (name && inner) return { kind: layout.kind, name, path: inner };
+  }
+  return null;
+}
+
 export function formatFileSubject(subject: string, basePath?: string, homeDir?: string): string {
   if (!subject || typeof subject !== "string") return subject;
   const raw = stripMentionMarker(subject);
