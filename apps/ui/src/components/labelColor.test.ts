@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { labelChipStyle, labelInk } from "./labelColor.js";
+import { labelChipStyle, labelDarkSurface, labelDarkText, labelInk } from "./labelColor.js";
 
 function contrast(a: string, b: string): number {
   const lum = (hex: string) => {
@@ -33,9 +33,39 @@ describe("labelInk", () => {
   });
 });
 
+function colorRange(): string[] {
+  const colors: string[] = [];
+  for (let r = 0; r <= 255; r += 17) {
+    for (let g = 0; g <= 255; g += 17) {
+      for (let b = 0; b <= 255; b += 17) colors.push(`#${[r, g, b].map((v) => v.toString(16).padStart(2, "0")).join("")}`);
+    }
+  }
+  return colors;
+}
+
+describe("labelDarkText", () => {
+  it("keeps bright labels as they are and lightens dark ones, GitHub-style", () => {
+    expect(labelDarkText("#00ff00")).toBe("#00ff00");
+    expect(labelDarkText("#ffffff")).toBe("#ffffff");
+    const dark = labelDarkText("#430568");
+    expect(dark).not.toBe("#430568");
+    expect(parseInt(dark.slice(1, 3), 16)).toBeGreaterThan(0x43);
+  });
+
+  it("keeps at least 4.5:1 contrast on the tinted dark surface across the color range", () => {
+    for (const color of colorRange()) {
+      expect(contrast(labelDarkText(color), labelDarkSurface(color))).toBeGreaterThanOrEqual(4.5);
+    }
+  });
+});
+
 describe("labelChipStyle", () => {
-  it("sets color and ink for a known label and nothing otherwise", () => {
-    expect(labelChipStyle({ bug: "#430568" }, "bug")).toEqual({ "--label-color": "#430568", "--label-ink": "#ffffff" } as never);
+  it("sets color, ink and dark text for a known label and nothing otherwise", () => {
+    expect(labelChipStyle({ bug: "#430568" }, "bug")).toEqual({
+      "--label-color": "#430568",
+      "--label-ink": "#ffffff",
+      "--label-text": labelDarkText("#430568"),
+    } as never);
     expect(labelChipStyle({ bug: "#d73a4a" }, "p1")).toBeUndefined();
     expect(labelChipStyle(undefined, "bug")).toBeUndefined();
     expect(labelChipStyle({ bug: "red" }, "bug")).toBeUndefined();
