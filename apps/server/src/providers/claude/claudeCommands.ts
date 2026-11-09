@@ -5,7 +5,7 @@ import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "
 import { dirname, normalize, win32 } from "node:path";
 import type { CommandOption } from "@cw-code/contracts";
 import { detachProcessGroup, killProcessTree } from "../../processTree.js";
-import { sanitizedChildEnv } from "../../shellEnvironment.js";
+import { claudeChildEnv } from "./claudeEnv.js";
 import { spawnCli } from "../../cli/spawnCli.js";
 import { describeClaudeExit } from "./claudeExit.js";
 import { traceHarnessCall, truncateError } from "../../debug/harnessTrace.js";
@@ -250,7 +250,7 @@ export function probeClaudeCommands(
 ): Promise<unknown[]> {
   return new Promise((resolve, reject) => {
     const requestId = randomUUID();
-    const child = spawnFn(binary, args, { cwd, windowsHide: true, detached: detachProcessGroup, env: sanitizedChildEnv(process.env, process.platform) }) as ChildProcessWithoutNullStreams;
+    const child = spawnFn(binary, args, { cwd, windowsHide: true, detached: detachProcessGroup, env: claudeChildEnv(process.env, process.platform) }) as ChildProcessWithoutNullStreams;
     let settled = false;
     let stderr = "";
     const timer = setTimeout(() => {

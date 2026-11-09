@@ -45,7 +45,7 @@ describe("resolveClaudeModels", () => {
     expect(resolveClaudeModels(DEFAULT_SETTINGS, CLAUDE_CURATED_MODELS)).toEqual([
       { id: "claude-opus-5-5", label: "Opus 5.5", source: "curated" },
       { id: "claude-sonnet-5-5", label: "Sonnet 5.5", source: "curated" },
-      { id: "fable", label: "Fable 5.1", source: "curated" },
+      { id: "fable", label: "Fable 5.2", source: "curated" },
       { id: "claude-haiku-5-5", label: "Haiku 5.5", source: "curated" }
     ]);
   });
