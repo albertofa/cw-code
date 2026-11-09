@@ -9853,12 +9853,20 @@ button.gitbar-checkout:hover {
   gap: 5px;
 }
 
+/* Clips with an ellipsis so a long label stays inside the 270px side column. */
 .pr-detail-label {
-  padding: 2px 8px;
-  border-radius: 999px;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  padding: 0 7px;
+  border: 1px solid var(--border);
+  border-radius: 2em;
   background: var(--raised);
   color: var(--dim);
   font-size: var(--t-2xs);
+  font-weight: 500;
+  line-height: 18px;
+  white-space: nowrap;
 }
 
 .pr-detail-detail-row {
@@ -11891,7 +11899,6 @@ button.gitbar-checkout:hover {
 
 .hub-row button.pr-inbox-label {
   font-family: var(--sans);
-  line-height: normal;
   cursor: pointer;
 }
 

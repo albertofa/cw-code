@@ -146,27 +146,48 @@
   border-radius: var(--r-sm);
 }
 
+/* Long labels (GitHub allows 50 characters) clip with an ellipsis instead of spilling out, like GitHub's. */
 .pr-inbox-label {
+  display: inline-block;
   flex: none;
-  padding: 1px 7px;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  padding: 0 7px;
   border: 1px solid var(--border);
-  border-radius: 999px;
+  border-radius: 2em;
   background: var(--raised);
   color: var(--muted);
-  font-size: var(--t-3xs);
-  font-weight: 600;
-  text-transform: lowercase;
+  font-size: var(--t-2xs);
+  font-weight: 500;
+  line-height: 16px;
+  white-space: nowrap;
 }
 
-/* Labels with a GitHub color: solid fill with the black/white ink labelChipStyle picks, legible on any theme. */
+/*
+ * Labels with a GitHub color, drawn the way GitHub draws them. Dark themes: the label color as a
+ * translucent tint, with the lightened text labelChipStyle computes and a faint border in that text color.
+ * Light themes: a solid fill with black or white ink and a slightly darker edge so pale labels stay visible.
+ */
 .pr-inbox-label[style*="--label-color"],
 .pr-detail-label[style*="--label-color"] {
-  border: 1px solid var(--label-color);
+  border-color: color-mix(in srgb, var(--label-text) 30%, transparent);
+  background: color-mix(in srgb, var(--label-color) 18%, transparent);
+  color: var(--label-text);
+}
+
+:root[data-theme="light"] :is(.pr-inbox-label, .pr-detail-label)[style*="--label-color"] {
+  border-color: color-mix(in srgb, var(--label-color), var(--text) 12%);
   background: var(--label-color);
   color: var(--label-ink);
 }
 
 .hub-row button.pr-inbox-label[style*="--label-color"]:hover {
+  border-color: var(--label-text);
+  color: var(--label-text);
+}
+
+:root[data-theme="light"] .hub-row button.pr-inbox-label[style*="--label-color"]:hover {
   border-color: var(--text);
   color: var(--label-ink);
 }
@@ -200,17 +221,14 @@
   color: var(--danger);
 }
 
+/* An icon next to the repo name (tooltip explains it), so it never reads as one of the PR's labels. */
 .pr-inbox-view .pr-inbox-not-cloned {
   display: inline-flex;
+  flex: none;
   align-items: center;
-  height: 16px;
-  padding: 0 6px;
-  border: 1px solid color-mix(in srgb, var(--warning) 40%, transparent);
-  border-radius: var(--r-sm);
-  background: color-mix(in srgb, var(--warning) 12%, transparent);
+  margin-left: -2px;
   color: var(--warning);
-  font-size: var(--t-3xs);
-  white-space: nowrap;
+  cursor: help;
 }
 
 .pr-inbox-popover {
