@@ -9853,7 +9853,11 @@ button.gitbar-checkout:hover {
   gap: 5px;
 }
 
+/* Clips with an ellipsis so a long label stays inside the 270px side column. */
 .pr-detail-label {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
   padding: 0 7px;
   border: 1px solid var(--border);
   border-radius: 2em;

@@ -44,7 +44,7 @@ export function IssueCard({ issue }: { issue: IssueDetail }) {
         <div className="wf-run-pr-meta">
           <span>{issue.ref.owner}/{issue.ref.repo}</span>
           {issue.labels.map((label) => (
-            <span key={label} className="pr-inbox-label" style={labelChipStyle(issue.labelColors, label)}>{label}</span>
+            <span key={label} className="pr-inbox-label" title={label} style={labelChipStyle(issue.labelColors, label)}>{label}</span>
           ))}
         </div>
       </div>

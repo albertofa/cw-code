@@ -2,8 +2,12 @@ import type { CSSProperties } from "react";
 
 type Rgb = readonly [number, number, number];
 
-/** Representative dark surface a label chip sits on (`--card` of the default dark theme). */
-const DARK_SURFACE: Rgb = [0x1b, 0x20, 0x2b];
+/**
+ * The lightest dark surface a label chip sits on: `--raised` of the default dark theme, the background of a
+ * hovered inbox row. Text that clears the contrast target here also clears it on the darker `--bg-deep`,
+ * `--card` and `--overlay` (hover card); only lighter custom-theme surfaces are approximate.
+ */
+const DARK_SURFACE: Rgb = [0x26, 0x2a, 0x36];
 /** Opacity of the label color in a dark-theme chip's background, as GitHub draws it. */
 const DARK_TINT_ALPHA = 0.18;
 /** GitHub lightens dark-theme label text by how far its perceived lightness falls below this. */

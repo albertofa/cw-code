@@ -415,7 +415,7 @@ function IssueStatusCard({ issue, now }: { issue: IssueSummary; now: number }) {
         {issue.labels.length > 0 && (
           <div className="hub-card-line hub-card-wrap">
             {issue.labels.map((label) => (
-              <span key={label} className="pr-inbox-label" style={labelChipStyle(issue.labelColors, label)}>
+              <span key={label} className="pr-inbox-label" title={label} style={labelChipStyle(issue.labelColors, label)}>
                 {label}
               </span>
             ))}

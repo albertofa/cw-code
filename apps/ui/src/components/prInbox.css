@@ -146,8 +146,13 @@
   border-radius: var(--r-sm);
 }
 
+/* Long labels (GitHub allows 50 characters) clip with an ellipsis instead of spilling out, like GitHub's. */
 .pr-inbox-label {
+  display: inline-block;
   flex: none;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
   padding: 0 7px;
   border: 1px solid var(--border);
   border-radius: 2em;

@@ -57,6 +57,21 @@ describe("labelDarkText", () => {
       expect(contrast(labelDarkText(color), labelDarkSurface(color))).toBeGreaterThanOrEqual(4.5);
     }
   });
+
+  // Default dark theme surfaces under a chip: inbox row (--bg-deep), card (--card), hover card (--overlay)
+  // and hovered row (--raised). The 18% tint composites over whichever one is behind it.
+  it("keeps at least 4.5:1 contrast on every default dark surface a chip renders on", () => {
+    const tintOver = (color: string, surface: string) =>
+      `#${[1, 3, 5]
+        .map((i) => Math.round(parseInt(color.slice(i, i + 2), 16) * 0.18 + parseInt(surface.slice(i, i + 2), 16) * 0.82))
+        .map((v) => v.toString(16).padStart(2, "0"))
+        .join("")}`;
+    for (const surface of ["#151922", "#1b202b", "#1f2330", "#262a36"]) {
+      for (const color of colorRange()) {
+        expect(contrast(labelDarkText(color), tintOver(color, surface))).toBeGreaterThanOrEqual(4.5);
+      }
+    }
+  });
 });
 
 describe("labelChipStyle", () => {
