@@ -216,17 +216,14 @@
   color: var(--danger);
 }
 
+/* An icon next to the repo name (tooltip explains it), so it never reads as one of the PR's labels. */
 .pr-inbox-view .pr-inbox-not-cloned {
   display: inline-flex;
+  flex: none;
   align-items: center;
-  height: 16px;
-  padding: 0 6px;
-  border: 1px solid color-mix(in srgb, var(--warning) 40%, transparent);
-  border-radius: var(--r-sm);
-  background: color-mix(in srgb, var(--warning) 12%, transparent);
+  margin-left: -2px;
   color: var(--warning);
-  font-size: var(--t-3xs);
-  white-space: nowrap;
+  cursor: help;
 }
 
 .pr-inbox-popover {

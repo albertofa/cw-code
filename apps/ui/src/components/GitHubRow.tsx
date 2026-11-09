@@ -1,5 +1,5 @@
 import { memo, useMemo, type CSSProperties, type ReactNode } from "react";
-import { ChevronRight, GitBranch, MessageSquare, Timer } from "lucide-react";
+import { ChevronRight, FolderX, GitBranch, MessageSquare, Timer } from "lucide-react";
 import type { GitHubRow as GitHubRowData } from "@cw-code/contracts";
 import type { PrWorkflow, RepoRef, Session } from "../cw.js";
 import { useAppStore } from "../stores/appStore.js";
@@ -155,6 +155,11 @@ function MetaLine({ subject, delta, cloned, now, onAdd }: { subject: RowSubject;
         <span className="pr-inbox-repo-owner">{repo.slice(0, slash)}</span>
         <span className="pr-inbox-repo-name">{repo.slice(slash)}</span>
       </QualifierButton>
+      {subject.kind === "pr" && !cloned && (
+        <span className="pr-inbox-not-cloned" role="img" aria-label="Not cloned: no cw-code project uses this repository" title="Not cloned: no cw-code project uses this repository">
+          <FolderX size={12} aria-hidden />
+        </span>
+      )}
       <Sep />
       {rest}
       {delta && (
@@ -163,7 +168,6 @@ function MetaLine({ subject, delta, cloned, now, onAdd }: { subject: RowSubject;
           <span className="pr-inbox-delta">{delta}</span>
         </>
       )}
-      {subject.kind === "pr" && !cloned && <span className="pr-inbox-not-cloned">not cloned</span>}
     </div>
   );
 }
