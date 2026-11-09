@@ -26,7 +26,7 @@ import type {
 import { agentTokenFingerprint, claudePluginArgs } from "../../agent/claudePlugin.js";
 import { parseExtraArgs } from "../../settings/settingsUtils.js";
 import { detachProcessGroup, hasExited, killProcessTree, waitForExit } from "../../processTree.js";
-import { sanitizedChildEnv } from "../../shellEnvironment.js";
+import { claudeChildEnv } from "./claudeEnv.js";
 import { spawnCli } from "../../cli/spawnCli.js";
 import { TaskTable, type TaskObservation } from "../../tasks/TaskTable.js";
 import { SYNTHETIC_FULL_ACCESS_DESCRIPTION } from "../permissions.js";
@@ -849,7 +849,7 @@ export class ClaudeCliDriver implements CliDriver {
       cwd: request.cwd,
       windowsHide: true,
       detached: detachProcessGroup,
-      env: sanitizedChildEnv(request.env ?? process.env, process.platform)
+      env: claudeChildEnv(request.env ?? process.env, process.platform)
     });
     const state: ClaudeProcessState = {
       sessionId: request.sessionId,
