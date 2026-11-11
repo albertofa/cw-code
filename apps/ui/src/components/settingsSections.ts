@@ -71,6 +71,7 @@ const SETTING_OWNER: Record<DraftSettingKey, SettingsNavId> = {
   autoTitleDriver: "general",
   autoTitleModel: "general",
   autoTitleEffort: "general",
+  autoTitleInstructions: "general",
   prRefreshIntervalSeconds: "prWorkflows",
   prCloneRoot: "prWorkflows",
   prCloneIncludeOwner: "prWorkflows",

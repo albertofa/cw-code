@@ -45,6 +45,7 @@ function settingsFixture(overrides: Partial<AppSettings> = {}): AppSettings {
     autoTitleDriver: "claude",
     autoTitleModel: "",
     autoTitleEffort: "low",
+    autoTitleInstructions: "",
     prRefreshIntervalSeconds: 120,
     prCloneRoot: "",
     prCloneIncludeOwner: true,

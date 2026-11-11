@@ -106,6 +106,27 @@ describe("project metadata instructions", () => {
     expect(prompt).not.toContain("branch");
   });
 
+  it("adds the general title instructions and lets them win over the built-in rules", () => {
+    const prompt = buildTitlePrompt("Corrigir o login", { generalTitle: " Write titles in English " });
+    expect(prompt).toContain("\nTitle instructions: Write titles in English\n");
+    expect(prompt).toContain("Where these instructions conflict with the rules above, follow the instructions.");
+    expect(prompt).not.toContain("Project title instructions");
+    expect(prompt.indexOf("Rules:")).toBeLessThan(prompt.indexOf("Title instructions:"));
+  });
+
+  it("puts the project's title instructions after the general ones and gives them precedence", () => {
+    const prompt = buildTitlePrompt("Fix ABC-12 login", { generalTitle: "Write titles in English", title: "Start with the ticket key", branch: "feat/<summary>" });
+    expect(prompt.indexOf("Title instructions: Write titles in English")).toBeLessThan(prompt.indexOf("Project title instructions: Start with the ticket key"));
+    expect(prompt).toContain("project instructions win over the general ones");
+    expect(prompt.indexOf("project instructions win")).toBeLessThan(prompt.indexOf("Branch rules:"));
+  });
+
+  it("adds no instruction lines when both are blank", () => {
+    const prompt = buildTitlePrompt("hi", { generalTitle: "  ", title: "" });
+    expect(prompt).toBe(buildTitlePrompt("hi"));
+    expect(prompt).not.toContain("instructions");
+  });
+
   it("asks for a title and a branch name when the project has branch instructions", () => {
     const prompt = buildTitlePrompt("Fix the login flow", { branch: "feat/<summary>" });
     expect(prompt).toContain("Project branch instructions: feat/<summary>");

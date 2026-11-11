@@ -108,6 +108,44 @@ export function SettingsRow({
   );
 }
 
+export function TextSetting({
+  id,
+  label,
+  hint,
+  value,
+  placeholder,
+  maxLength,
+  code,
+  onChange
+}: {
+  id: string;
+  label: string;
+  hint: string;
+  value: string | undefined;
+  placeholder: string;
+  maxLength: number;
+  code?: boolean;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <div className="sp-stack">
+      <span className="sp-lab sp-lab-help">
+        <label htmlFor={id}>{label}</label>
+        <HelpTip label={label}>{hint}</HelpTip>
+      </span>
+      <textarea
+        id={id}
+        className={`sp-code sp-template sp-code-sm${code ? "" : " sp-prose"}`}
+        value={value ?? ""}
+        placeholder={placeholder}
+        maxLength={maxLength}
+        spellCheck={!code}
+        onChange={(e) => onChange(e.target.value)}
+      />
+    </div>
+  );
+}
+
 export function SettingsSwitch({
   checked,
   onChange,

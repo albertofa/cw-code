@@ -4743,12 +4743,13 @@ describe("SessionManager project settings", () => {
 
   it("names the worktree branch from the project's branch instructions and cleans it up like its own", async () => {
     const { manager, fake, project, repository } = makeGitSandboxManager("cw-project-branch-");
-    manager.setSettings({ autoTitleEnabled: true });
+    manager.setSettings({ autoTitleEnabled: true, autoTitleInstructions: "Write titles in English" });
     manager.updateProjectSettings(project.id, { titleInstructions: "Keep it short", branchInstructions: "Use feat/<summary>" });
     const session = await manager.createSession(project.id, "claude", { baseBranch: "main" });
 
     await manager.startTurn(session.id, "fix the login flow");
     const titlePrompt = String(fake.lastRequest?.prompt);
+    expect(titlePrompt).toContain("Title instructions: Write titles in English");
     expect(titlePrompt).toContain("Project title instructions: Keep it short");
     expect(titlePrompt).toContain("Project branch instructions: Use feat/<summary>");
     fake.completeTitle("Fix login flow\nfeat/login-flow");

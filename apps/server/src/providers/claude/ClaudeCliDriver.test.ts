@@ -43,6 +43,7 @@ const SETTINGS: AppSettings = {
   autoTitleDriver: "claude",
   autoTitleModel: "claude-sonnet-5",
   autoTitleEffort: "low",
+  autoTitleInstructions: "",
   prRefreshIntervalSeconds: 120,
   prCloneRoot: "~/.cw-code/repos",
   prCloneIncludeOwner: true,
