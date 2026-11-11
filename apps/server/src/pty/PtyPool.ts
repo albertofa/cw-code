@@ -31,6 +31,19 @@ export interface PtyInstance {
   kill(): void;
 }
 
+/**
+ * node-pty's Windows (ConPTY) kill forks `conpty_console_list_agent` without `windowsHide` to find
+ * the processes attached to the console, which flashes a console window from a server that has no
+ * console of its own. `killPty` already kills the whole tree with a hidden `taskkill /T`, so the list
+ * is not needed; replace it with an empty one. Unknown node-pty shapes keep the default behavior.
+ */
+function skipConsoleListAgent(proc: PtyInstance): void {
+  const agent = (proc as { _agent?: { _getConsoleProcessList?: unknown } })._agent;
+  if (agent && typeof agent._getConsoleProcessList === "function") {
+    agent._getConsoleProcessList = () => Promise.resolve([]);
+  }
+}
+
 export interface PtyModule {
   spawn(file: string, args: string[] | string, opts: { name: string; cols: number; rows: number; cwd: string; env?: NodeJS.ProcessEnv }): PtyInstance;
 }
@@ -367,6 +380,13 @@ export class PtyPool {
     this.applySize(entry, entry.sizes.resize(clientId, { cols, rows }));
   }
 
+  /** Closes a session's terminal for every client, including one that is still spawning. */
+  close(sessionId: string, kind: PtyKind): void {
+    const ptyId = `${sessionId}:${kind}`;
+    if (this.openings.has(ptyId)) this.pendingKills.add(ptyId);
+    this.kill(ptyId);
+  }
+
   kill(ptyId: string): void {
     const entry = this.ptys.get(ptyId);
     if (!entry) return;
@@ -383,6 +403,10 @@ export class PtyPool {
   }
 
   private killPty(proc: PtyInstance): void {
+    if (process.platform === "win32") {
+      killProcessTreeByPid(proc.pid);
+      skipConsoleListAgent(proc);
+    }
     try {
       proc.kill();
     } catch {

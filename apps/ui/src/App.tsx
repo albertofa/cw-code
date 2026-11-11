@@ -18,6 +18,7 @@ import { UsageView } from "./components/UsageView.js";
 import { WorkflowRunModal } from "./components/WorkflowRunModal.js";
 import { ShutdownDialog } from "./components/ShutdownDialog.js";
 import { FolderBrowserHost } from "./components/FolderBrowserDialog.js";
+import { GlobalConfirmHost } from "./components/GlobalConfirm.js";
 import { handleQuitRequest, handleShutdownExpired } from "./stores/shutdownFlow.js";
 import { RightPanelBody } from "./components/RightPanelBody.js";
 import { ToolRail } from "./components/ToolRail.js";
@@ -327,6 +328,7 @@ export function App() {
           <ShutdownDialog />
           {confirmDialog}
           <FolderBrowserHost />
+          <GlobalConfirmHost />
         </>
       )}
     </div>

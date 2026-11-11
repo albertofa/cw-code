@@ -10,6 +10,7 @@ import { useDockDrop } from "./useDockDrop.js";
 import { resolveMainTab } from "../stores/panelLayout.js";
 import { useAppStore } from "../stores/appStore.js";
 import { selectSessionPanel, usePanelStore } from "../stores/panelStore.js";
+import { closeDockTab } from "./closeDockTab.js";
 
 export function MainTabStrip({
   sessionId,
@@ -22,7 +23,6 @@ export function MainTabStrip({
 }) {
   const { mainOrder, activeMain, dockByTab } = usePanelStore((s) => selectSessionPanel(s, sessionId));
   const setActive = usePanelStore((s) => s.setActive);
-  const moveTab = usePanelStore((s) => s.moveTab);
   const dropMain = useDockDrop("main", sessionId);
   const tabMenu = useTabMenu(sessionId);
   const draggingTab = usePanelStore((s) => s.draggingTab);
@@ -63,7 +63,7 @@ export function MainTabStrip({
               active={effectiveActive === id}
               onActivate={() => setActive(sessionId, "main", id)}
               onContextMenu={tabMenu.onTabContextMenu(id)}
-              onClose={() => moveTab(sessionId, id, "closed")}
+              onClose={() => void closeDockTab(sessionId, id)}
             />
           );
         })}

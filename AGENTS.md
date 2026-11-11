@@ -83,7 +83,8 @@ Core behaviors:
   each channel to the topic whose subscribers receive it. A channel mapped to no topic
   (settings, startup/shutdown, `app.notice`) goes to every client, filtered by client kind
   (`eventAudience.ts`). Terminals are the exception: attach only through
-  `pty.open`/`pty.reattach`/`pty.detach`; `topics.*` reject `pty/` topics.
+  `pty.open`/`pty.reattach`/`pty.detach`; `topics.*` reject `pty/` topics. Closing a terminal tab
+  calls `pty.close`, which kills that terminal for every client (also one still spawning).
   `pty.write`/`pty.resize` from a client that is not attached are ignored. The PTY size
   follows the client that most recently typed; resizes from other clients are recorded and
   applied when that client becomes the latest or is the first.

@@ -318,6 +318,7 @@ export function createCwApi(
     writePty: (ptyId, data) => client.send("pty.write", { ptyId, data }),
     resizePty: (ptyId, cols, rows) => client.send("pty.resize", { ptyId, cols, rows }),
     detachPty: (ptyId) => ptyAttachments.detach(ptyId),
+    closePty: (sessionId, kind) => call<void>("pty.close", { sessionId, kind }),
     onPtyData: (cb) => subscribe("pty.data", cb),
     onPtyExit: (cb) => subscribe("pty.exit", cb),
     openExternal: async (url) => {

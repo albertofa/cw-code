@@ -8,6 +8,7 @@ import { paneDiffSummary } from "./railTools.js";
 import { focusSiblingTab } from "./tabStripKeys.js";
 import { useGitStatus } from "./useGit.js";
 import "./toolRail.css";
+import { closeDockTab } from "./closeDockTab.js";
 
 interface ScrollEdges {
   start: boolean;
@@ -86,7 +87,6 @@ export function PaneTabsHeader({
   onTabContextMenu: (tab: DockableTabId) => (e: ReactMouseEvent<HTMLElement>) => void;
 }) {
   const setActive = usePanelStore((s) => s.setActive);
-  const moveTab = usePanelStore((s) => s.moveTab);
   const setRightVisible = usePanelStore((s) => s.setRightVisible);
   const summary = usePaneSummary(top, sessionId);
   const strip = useScrollEdges(tabs.join(","));
@@ -111,7 +111,7 @@ export function PaneTabsHeader({
             controls={panelId}
             onActivate={() => (id === top ? setRightVisible(sessionId, false) : setActive(sessionId, "right", id))}
             onContextMenu={onTabContextMenu(id)}
-            onClose={() => moveTab(sessionId, id, "closed")}
+            onClose={() => void closeDockTab(sessionId, id)}
           />
         ))}
       </div>

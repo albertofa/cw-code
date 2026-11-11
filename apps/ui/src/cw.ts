@@ -683,6 +683,8 @@ export interface CwApi {
   writePty(ptyId: string, data: string): void;
   resizePty(ptyId: string, cols: number, rows: number): void;
   detachPty(ptyId: string): void;
+  /** Ends a session's terminal process for every client. */
+  closePty(sessionId: string, kind: DriverName | "shell"): Promise<void>;
   onPtyData(cb: (msg: { ptyId: string; data: string }) => void): () => void;
   onPtyExit(cb: (msg: { ptyId: string; token: string; exitCode: number }) => void): () => void;
   openExternal(url: string): Promise<void>;
