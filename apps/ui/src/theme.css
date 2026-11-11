@@ -3581,9 +3581,15 @@ body.session-dragging * {
   animation: cw-pop-in var(--dur-fast) var(--ease-out);
 }
 
+.project-picker-pop.up {
+  top: auto;
+  bottom: calc(100% + 6px);
+}
+
 .project-picker-pop .mp {
   width: 100%;
 }
+
 
 .project-picker-listbox {
   display: flex;
@@ -3696,15 +3702,26 @@ body.session-dragging * {
   padding: 6px;
   display: flex;
   flex-direction: column;
-  max-height: 240px;
+  max-height: min(240px, var(--fit-max, 240px));
   overflow-y: auto;
 }
 
 .menu-panel:has(.menu-row.has-desc) {
-  max-height: min(440px, 70vh);
+  max-height: min(440px, 70vh, var(--fit-max, 440px));
 }
 
 .menu-panel-down {
+  top: calc(100% + 6px);
+  bottom: auto;
+}
+
+/* Set by MenuSelect when its preferred side has too little room left in the window. */
+.menu-panel.menu-panel-flip-up {
+  top: auto;
+  bottom: calc(100% + 6px);
+}
+
+.menu-panel.menu-panel-flip-down {
   top: calc(100% + 6px);
   bottom: auto;
 }
