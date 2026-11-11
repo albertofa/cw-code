@@ -2,7 +2,7 @@ import type { DockableTabId } from "@cw-code/contracts";
 import { usePanelStore } from "../stores/panelStore.js";
 import { useNotifs } from "./Notifications.js";
 import { confirmGlobally } from "./GlobalConfirm.js";
-import { isPtyLive } from "./ptyLiveness.js";
+import { isPtyLive, markPtyLive } from "./ptyLiveness.js";
 import { harnessLabel } from "./toolTabs.js";
 
 type PtyTabKind = "claude" | "opencode" | "codex" | "shell";
@@ -31,6 +31,7 @@ export async function closeDockTab(sessionId: string | undefined, tab: DockableT
   }
   usePanelStore.getState().moveTab(sessionId, tab, "closed");
   if (!isPtyTab(tab)) return;
+  markPtyLive(sessionId, tab, false);
   window.cw.closePty(sessionId, tab).catch((err: unknown) => {
     useNotifs.getState().push({
       kind: "error",
