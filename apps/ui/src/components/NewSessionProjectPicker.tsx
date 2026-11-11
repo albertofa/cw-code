@@ -1,8 +1,9 @@
-import { useId, useLayoutEffect, useRef, useState, type KeyboardEvent, type MouseEvent as ReactMouseEvent } from "react";
+import { useEffect, useId, useRef, useState, type KeyboardEvent, type MouseEvent as ReactMouseEvent } from "react";
 import { Check, ChevronDown, ChevronUp, Folder, Plus, Search } from "lucide-react";
 import type { Project } from "../cw.js";
 import { useAppStore } from "../stores/appStore.js";
 import { ProjectMonogram } from "./ProjectMonogram.js";
+import { usePopoverFit } from "./popoverFit.js";
 import { shortenHome } from "./pathDisplay.js";
 import { useNotifs } from "./Notifications.js";
 import "./modelPicker.css";
@@ -15,6 +16,9 @@ function byRecency(projects: Project[], recency: string[]): Project[] {
     .sort((a, b) => a.rank - b.rank || a.index - b.index)
     .map((entry) => entry.project);
 }
+
+const MAX_LIST = 420;
+const MIN_POP = 180;
 
 export function NewSessionProjectPicker({ project }: { project: Project | undefined }) {
   const projects = useAppStore((s) => s.projects);
@@ -29,6 +33,7 @@ export function NewSessionProjectPicker({ project }: { project: Project | undefi
   const [adding, setAdding] = useState(false);
   const listId = useId();
   const triggerRef = useRef<HTMLButtonElement>(null);
+  const popRef = useRef<HTMLDivElement>(null);
 
   const close = () => {
     setOpen(false);
@@ -47,10 +52,17 @@ export function NewSessionProjectPicker({ project }: { project: Project | undefi
   const hasTarget = visible.length > 0 || navigated;
   const optionId = (index: number) => `${listId}-opt-${index}`;
 
-  useLayoutEffect(() => {
+  // Cap the popup to the room left in the window (opening upward when below is too tight), so it
+  // never runs past the window edge and scrolls the page behind it; the list shrinks and scrolls.
+  const fit = usePopoverFit(open, triggerRef, popRef, false, [visible.length], (pop) => {
+    const list = pop.querySelector<HTMLElement>(".mp-list");
+    return pop.offsetHeight - (list?.offsetHeight ?? 0) + Math.min(list?.scrollHeight ?? 0, MAX_LIST);
+  });
+
+  useEffect(() => {
     if (!open) return;
     document.getElementById(optionId(active))?.scrollIntoView({ block: "nearest" });
-  }, [open, active, query, visible.length]);
+  }, [open, active, query, visible.length, fit]);
 
   const pick = (id: string) => {
     close();
@@ -119,8 +131,14 @@ export function NewSessionProjectPicker({ project }: { project: Project | undefi
       {open && (
         <>
           <div className="menu-backdrop" onClick={close} />
-          <div className="project-picker-pop" role="dialog" aria-label="Choose project" onKeyDown={onPopKeyDown}>
-            <div className="mp">
+          <div
+            ref={popRef}
+            className={`project-picker-pop${fit?.up ? " up" : ""}`}
+            role="dialog"
+            aria-label="Choose project"
+            onKeyDown={onPopKeyDown}
+          >
+            <div className="mp" style={fit ? { maxHeight: Math.max(MIN_POP, fit.maxHeight) } : undefined}>
               <div className="mp-search">
                 <Search size={14} aria-hidden="true" />
                 <input
