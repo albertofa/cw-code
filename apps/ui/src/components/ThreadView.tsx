@@ -394,6 +394,22 @@ export function ThreadView({ hidden = false }: { hidden?: boolean }) {
       if (!focusInside && !(focusOnPage && pressedInside)) return;
       if (el.scrollTop > 0 && !nestedScrollerTakesUpward(target, el)) release();
     };
+    // The composer keeps focus most of the time, so PageUp/PageDown typed there page the thread
+    // instead of moving the caret in a few lines of text.
+    const onComposerPage = (e: KeyboardEvent) => {
+      if ((e.key !== "PageUp" && e.key !== "PageDown") || e.defaultPrevented || e.isComposing) return;
+      if (e.altKey || e.ctrlKey || e.metaKey || e.shiftKey || hiddenRef.current) return;
+      const target = e.target;
+      if (!(target instanceof HTMLTextAreaElement) || !composerWrapRef.current?.contains(target)) return;
+      e.preventDefault();
+      const step = Math.max(40, el.clientHeight * 0.85);
+      if (e.key === "PageUp") {
+        if (el.scrollTop > 0) release();
+        el.scrollBy({ top: -step });
+      } else {
+        el.scrollBy({ top: step });
+      }
+    };
     const ro = new ResizeObserver(() => {
       if (!hiddenRef.current && stickRef.current) pinToBottom(el);
     });
@@ -404,7 +420,9 @@ export function ThreadView({ hidden = false }: { hidden?: boolean }) {
     el.addEventListener("touchmove", onTouchMove, { passive: true });
     document.addEventListener("pointerdown", trackPress, { capture: true, passive: true });
     document.addEventListener("keydown", onKeyDown, { passive: true });
+    document.addEventListener("keydown", onComposerPage);
     return () => {
+      document.removeEventListener("keydown", onComposerPage);
       ro.disconnect();
       el.removeEventListener("wheel", onWheel);
       el.removeEventListener("pointerdown", onPointerDown);
