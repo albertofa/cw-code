@@ -166,6 +166,9 @@ export function PtyTab({ sessionId, kind }: { sessionId: string; kind: DriverNam
         if (msg.ptyId === ptyIdRef.current && msg.token === ptyTokenRef.current) markExited(msg.exitCode);
       });
 
+      // Live from the moment the spawn starts: pty.close also kills a terminal that is still spawning.
+      // Not cleared on unmount, because moving a tab between panels keeps the process running.
+      markPtyLive(sessionId, kind, true);
       window.cw.openPty(sessionId, kind).then(({ ptyId, token, replay }) => {
         if (disposed) {
           window.cw.detachPty(ptyId);
@@ -173,11 +176,11 @@ export function PtyTab({ sessionId, kind }: { sessionId: string; kind: DriverNam
         }
         ptyIdRef.current = ptyId;
         ptyTokenRef.current = token;
-        markPtyLive(sessionId, kind, true);
         showAttached(ptyId, replay);
         const exited = pendingExit.find((entry) => entry.ptyId === ptyId && entry.token === token);
         if (exited) markExited(exited.exitCode);
       }).catch((err: Error) => {
+        markPtyLive(sessionId, kind, false);
         if (disposed) return;
         openFailedRef.current = true;
         setError(err.message);
