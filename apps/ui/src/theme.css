@@ -1055,6 +1055,24 @@ button.session-resolved-toggle:hover {
   color: var(--text);
 }
 
+.side-sec-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.side-sec-toggle:hover {
+  color: var(--text);
+}
+
 .side-sec-chev {
   flex: none;
   color: var(--faint);
