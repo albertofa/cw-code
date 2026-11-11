@@ -192,7 +192,8 @@ export function createCwApi(
     importLegacyPrefs: (legacy: LegacyPreferences) => callVoid("prefs.importLegacy", legacy),
     reorderSidebar: (request: SidebarReorderRequest) => callVoid("sidebar.reorder", request),
     pushRecentModel: (driver, model) => callVoid("prefs.pushRecentModel", { driver, model }),
-    setComposerDraft: (key, text, attachments) => callVoid("prefs.setDraft", { key, text, attachments }),
+    setComposerDraft: (key, text, attachments, quotes) =>
+      callVoid("prefs.setDraft", { key, text, attachments, ...(quotes && quotes.length > 0 ? { quotes } : {}) }),
     discoverBinaries: (binaries?: CliBinary[]) => call<CliDiscoverResult>("cli.discover", { binaries }),
     verifyBinaryPath: (binary, path) => call<CliDiscoveredCandidate>("cli.verifyPath", { binary, path }),
     isDev: desktop?.isDev ?? import.meta.env.DEV === true,

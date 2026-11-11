@@ -114,6 +114,14 @@ describe("PreferencesStore", () => {
       expect(changes).toEqual([{ kind: "draft", key: "k", draft: null }]);
     });
 
+    test("a draft with only quotes is kept, and dropping the quotes deletes it", () => {
+      const store = open();
+      store.setDraft("k", "", [], ["quoted"]);
+      expect(store.drafts()).toEqual({ k: { text: "", attachments: [], quotes: ["quoted"], updatedAt: 1_000 } });
+      store.setDraft("k", "", [], []);
+      expect(store.drafts()).toEqual({});
+    });
+
     test("a draft with only attachments is kept", () => {
       const store = open();
       store.setDraft("k", "", ["a"]);

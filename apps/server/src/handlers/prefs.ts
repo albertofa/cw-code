@@ -9,6 +9,8 @@ export const MAX_SIDEBAR_ID_LENGTH = 200;
 export const MAX_DRAFT_TEXT_LENGTH = 200_000;
 export const MAX_DRAFT_ATTACHMENTS = 50;
 export const MAX_ATTACHMENT_LENGTH = 4_096;
+export const MAX_DRAFT_QUOTES = 20;
+export const MAX_QUOTE_LENGTH = 20_000;
 export const MAX_MODEL_LENGTH = 200;
 export const MAX_ORDER_ENTRIES = 10_000;
 
@@ -69,6 +71,7 @@ export function registerPrefsHandlers(router: Router, app: ServerApp): void {
     if (!key) throw new Error("key must not be empty");
     const text = parseBoundedString(params.text, "text", MAX_DRAFT_TEXT_LENGTH);
     const attachments = parseStringList(params.attachments, "attachments", MAX_DRAFT_ATTACHMENTS, MAX_ATTACHMENT_LENGTH);
-    preferences().setDraft(key, text, attachments);
+    const quotes = params.quotes === undefined ? [] : parseStringList(params.quotes, "quotes", MAX_DRAFT_QUOTES, MAX_QUOTE_LENGTH);
+    preferences().setDraft(key, text, attachments, quotes);
   });
 }

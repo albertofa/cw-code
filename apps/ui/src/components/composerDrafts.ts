@@ -8,6 +8,7 @@ import { useNotifs } from "./Notifications.js";
 export interface ComposerDraft {
   text: string;
   attachments: string[];
+  quotes: string[];
 }
 
 const SAVE_DEBOUNCE_MS = 500;
@@ -26,21 +27,25 @@ const unsent = new Map<string, Unsent>();
 const baseline = new Map<string, ComposerDraft>();
 
 function isEmpty(draft: ComposerDraft): boolean {
-  return !draft.text.trim() && draft.attachments.length === 0;
+  return !draft.text.trim() && draft.attachments.length === 0 && draft.quotes.length === 0;
 }
 
 function sameDraft(a: ComposerDraft | undefined, b: ComposerDraft): boolean {
   if (!a) return isEmpty(b);
-  return a.text === b.text && a.attachments.length === b.attachments.length && a.attachments.every((item, index) => item === b.attachments[index]);
+  return a.text === b.text && sameList(a.attachments, b.attachments) && sameList(a.quotes, b.quotes);
+}
+
+function sameList(a: readonly string[], b: readonly string[]): boolean {
+  return a.length === b.length && a.every((item, index) => item === b[index]);
 }
 
 function copy(draft: ComposerDraft): ComposerDraft {
-  return { text: draft.text, attachments: [...draft.attachments] };
+  return { text: draft.text, attachments: [...draft.attachments], quotes: [...draft.quotes] };
 }
 
 function storedDraft(key: string): ComposerDraft | null {
   const entry = peekTopic<Partial<AppTopicData>>(APP_TOPIC)?.data[`draft/${key}`];
-  return entry ? { text: entry.text, attachments: entry.attachments } : null;
+  return entry ? { text: entry.text, attachments: entry.attachments, quotes: entry.quotes ?? [] } : null;
 }
 
 function remember(key: string, draft: ComposerDraft): void {
@@ -71,7 +76,7 @@ export function flushComposerDraft(key: string): void {
   entry.sent = true;
   entry.attempts += 1;
   remember(key, entry.draft);
-  window.cw.setComposerDraft(key, entry.draft.text, entry.draft.attachments).then(
+  window.cw.setComposerDraft(key, entry.draft.text, entry.draft.attachments, entry.draft.quotes).then(
     () => {
       if (unsent.get(key) === entry) unsent.delete(key);
     },
@@ -116,8 +121,8 @@ export function flushAllComposerDrafts(): void {
   for (const key of [...unsent.keys()]) flushComposerDraft(key);
 }
 
-export function saveComposerDraft(key: string, text: string, attachments: readonly string[]): void {
-  const draft = { text, attachments: [...attachments] };
+export function saveComposerDraft(key: string, text: string, attachments: readonly string[], quotes: readonly string[] = []): void {
+  const draft = { text, attachments: [...attachments], quotes: [...quotes] };
   const previous = unsent.get(key);
   if (previous && !previous.sent) {
     cancelTimer(previous);

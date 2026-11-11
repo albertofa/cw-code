@@ -8,6 +8,7 @@ import {
   LockOpen,
   Pencil,
   Plus,
+  Reply,
   Package,
   Slash,
   Square,
@@ -61,6 +62,9 @@ import { harnessLabel } from "./toolTabs.js";
 import { ipcErrorMessage } from "./ipcError.js";
 import { useThreadVisible } from "./threadVisibility.js";
 import { useComposerAutoFocus } from "./composerFocus.js";
+import { formatQuotedReply } from "./replyQuotes.js";
+import { QuoteDialog } from "./QuoteDialog.js";
+import { selectReplyQuotes, useReplyQuotesStore } from "../stores/replyQuotesStore.js";
 
 export interface BranchGuard {
   mismatch: BranchMismatch | null;
@@ -194,6 +198,11 @@ export function ComposerView({
   commandsKeyRef.current = commandsKey;
   const mountedRef = useRef(true);
   const visible = useThreadVisible();
+  const quotes = useReplyQuotesStore((s) => selectReplyQuotes(s, resetKey));
+  const quoteTexts = useMemo(() => quotes.map((quote) => quote.text), [quotes]);
+  const quoteTextsRef = useRef(quoteTexts);
+  quoteTextsRef.current = quoteTexts;
+  const [openQuote, setOpenQuote] = useState<string | null>(null);
   const commandAvailability = {
     newSession: backend.newSession !== undefined,
     rename: backend.rename !== undefined,
@@ -239,6 +248,7 @@ export function ComposerView({
 
   useEffect(() => {
     const saved = loadComposerDraft(resetKey);
+    useReplyQuotesStore.getState().replace(resetKey, saved?.quotes ?? []);
     setAttachments(saved?.attachments ?? []);
     setDraft(saved?.text ?? "");
     setCaret(saved?.text.length ?? 0);
@@ -249,14 +259,14 @@ export function ComposerView({
     setPickerOpen(false);
     invalidateBranchChoice();
     return () => {
-      saveComposerDraft(resetKey, draftRef.current, attachmentsRef.current);
+      saveComposerDraft(resetKey, draftRef.current, attachmentsRef.current, quoteTextsRef.current);
       flushComposerDraft(resetKey);
     };
   }, [resetKey]);
 
   useEffect(() => {
-    saveComposerDraft(resetKeyRef.current, draft, attachments);
-  }, [draft, attachments]);
+    saveComposerDraft(resetKeyRef.current, draft, attachments, quoteTexts);
+  }, [draft, attachments, quoteTexts]);
 
   useEffect(() => {
     setShowCustom(false);
@@ -463,6 +473,7 @@ export function ComposerView({
     draftRef.current = "";
     attachmentsRef.current = [];
     clearComposerDraft(resetKeyRef.current);
+    useReplyQuotesStore.getState().clear(resetKeyRef.current);
     setDraft("");
     setCaret(0);
     setAttachments([]);
@@ -646,7 +657,10 @@ export function ComposerView({
       })
       .then(() => {
         if (isCurrent(key)) clearComposer();
-        else clearComposerDraft(resetKey);
+        else {
+          clearComposerDraft(resetKey);
+          useReplyQuotesStore.getState().clear(resetKey);
+        }
       })
       .catch((err: unknown) => handleSendFailure(err, key, (next) => dispatchPlain(body, key, skills, next)))
       .finally(() => {
@@ -691,8 +705,9 @@ export function ComposerView({
   };
 
   const send = () => {
-    const body = draft.trim();
-    if ((!body && attachments.length === 0) || busy || sending || blockedReason) return;
+    const typed = draft.trim();
+    if ((!typed && attachments.length === 0 && quotes.length === 0) || busy || sending || blockedReason) return;
+    const body = formatQuotedReply(quoteTexts, typed);
     const restore = backendRef.current.restore;
     if (!restore) {
       void sendMessage(body);
@@ -996,7 +1011,28 @@ export function ComposerView({
           onCancel={cancelBranchChoice}
         />
       )}
+      {openQuote !== null && <QuoteDialog text={openQuote} onClose={() => setOpenQuote(null)} />}
       <div className="composer-card">
+        {quotes.length > 0 && (
+          <div className="reply-quotes">
+            {quotes.map((quote) => (
+              <div key={quote.id} className="reply-quote">
+                <Reply size={14} aria-hidden="true" />
+                <button type="button" className="reply-quote-text" onClick={() => setOpenQuote(quote.text)} aria-label="Show quoted text">
+                  {quote.text}
+                </button>
+                <button
+                  type="button"
+                  className="chip-x"
+                  aria-label="Remove quoted text"
+                  onClick={() => useReplyQuotesStore.getState().remove(resetKey, quote.id)}
+                >
+                  <X aria-hidden="true" size={14} />
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
         {attachments.length > 0 && (
           <div className="attach-chips">
             {attachments.map((a) => (
@@ -1065,7 +1101,7 @@ export function ComposerView({
               onPaste={(e) => {
                 void pasteFiles(e.clipboardData);
               }}
-              placeholder={blockedReason ?? (busy ? "Agent is working — keep writing, you can send when it finishes" : "Ask cw-code — @ files, / commands, $ skills")}
+              placeholder={blockedReason ?? (busy ? "Agent is working — keep writing, you can send when it finishes" : quotes.length > 0 ? "Reply" : "Ask cw-code — @ files, / commands, $ skills")}
               className={`composer-input${highlightMentions ? " has-mentions" : ""}`}
               rows={3}
               disabled={sending || blockedReason !== undefined}
@@ -1176,7 +1212,7 @@ export function ComposerView({
             type="button"
             className="composer-action composer-send"
             onClick={send}
-            disabled={busy || sending || blockedReason !== undefined || (!draft.trim() && attachments.length === 0)}
+            disabled={busy || sending || blockedReason !== undefined || (!draft.trim() && attachments.length === 0 && quotes.length === 0)}
             title={busy ? "Locked while the agent is working" : (blockedReason ?? "Send")}
             aria-label="Send"
           >

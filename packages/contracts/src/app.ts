@@ -25,6 +25,8 @@ export interface HarnessAvailability {
 export interface ComposerDraft {
   text: string;
   attachments: string[];
+  /** Excerpts picked with "Reply" that go out as blockquotes with the next send; omitted when none. */
+  quotes?: string[];
   updatedAt: number;
 }
 
