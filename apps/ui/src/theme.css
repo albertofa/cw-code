@@ -4315,6 +4315,30 @@ body.session-dragging * {
   flex-direction: column;
 }
 
+.attach-list .file-row {
+  display: block;
+  flex: none;
+  padding: 6px 8px;
+  border-radius: var(--r-md);
+  color: var(--dim);
+  font-size: var(--t-xs);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+
+.attach-list .file-row:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+
+.attach-list .file-row svg {
+  margin-right: 6px;
+  vertical-align: -2px;
+  color: var(--faint);
+}
+
 .gitbar {
   max-width: calc(864px * 0.9);
   margin: 6px auto 0;
@@ -12726,6 +12750,33 @@ button.gitbar-checkout:hover {
 .hub-seg button.on {
   background: var(--raised);
   color: var(--text);
+}
+
+.hub-sort-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 26px;
+  box-sizing: border-box;
+  padding: 0 8px;
+  background: var(--bg);
+  border: 1px solid var(--border-soft);
+  border-radius: 7px;
+  color: var(--muted);
+  font-family: var(--sans);
+  font-size: var(--t-2xs);
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.hub-sort-btn:hover,
+.hub-sort-btn.open {
+  color: var(--text);
+}
+
+.hub-sort-btn.open {
+  background: var(--raised);
 }
 
 .hub-menu-head-right {
