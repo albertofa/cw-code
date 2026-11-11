@@ -36,7 +36,7 @@ import { visibleLayerOpen } from "./openLayer.js";
 import { signOutOfBrowser } from "../server/webGate.js";
 import appIcon from "../assets/console-c.svg";
 import { version as appVersion, description as appDescription } from "../../package.json";
-import { SettingsGroup, SettingsPageHead, SettingsRow, SettingsSwitch, type BinaryPickHandler } from "./SettingsLayout.js";
+import { SettingsGroup, SettingsPageHead, SettingsRow, SettingsSwitch, TextSetting, type BinaryPickHandler } from "./SettingsLayout.js";
 import "./settingsPage.css";
 
 const PANEL_OPTIONS: Array<{ id: PanelId; label: string }> = [
@@ -44,6 +44,8 @@ const PANEL_OPTIONS: Array<{ id: PanelId; label: string }> = [
   { id: "right", label: "Right panel" },
   { id: "bottom", label: "Bottom panel" }
 ];
+
+const MAX_TITLE_INSTRUCTION_CHARS = 4_000;
 
 const TEXT_INPUT_TYPES = new Set(["text", "search", "email", "number", "url", "tel", "password"]);
 
@@ -173,6 +175,15 @@ function GeneralSettings() {
                   : "Harnesses that aren't installed or fail '--version' can't be picked. Models come from the selected harness.")}
           </div>
         </div>
+        <TextSetting
+          id="sp-auto-title-instructions"
+          label="Title instructions"
+          hint="Extra guidance sent with every title request, in every project. It wins over the built-in rules (3-6 words, same language as the message); a project's own title instructions are added after it. Titles are still cut to 60 characters."
+          value={draft.autoTitleInstructions}
+          placeholder="Write titles in English, starting with a verb"
+          maxLength={MAX_TITLE_INSTRUCTION_CHARS}
+          onChange={(value) => set({ autoTitleInstructions: value })}
+        />
       </SettingsGroup>
 
       <SettingsGroup title="Workspace tabs">

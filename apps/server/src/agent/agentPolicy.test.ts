@@ -107,7 +107,7 @@ describe("agentTurnPermissionMode", () => {
 });
 
 describe("AGENT_WRITABLE_SETTINGS", () => {
-  test.each(["autoTitleEnabled", "autoTitleDriver", "autoTitleModel", "autoTitleEffort"] as const)("excludes %s", (key) => {
+  test.each(["autoTitleEnabled", "autoTitleDriver", "autoTitleModel", "autoTitleEffort", "autoTitleInstructions"] as const)("excludes %s", (key) => {
     expect(AGENT_WRITABLE_SETTINGS.has(key)).toBe(false);
     expect(() => assertAgentSettingsPatch({ [key]: "x" })).toThrow(key);
   });

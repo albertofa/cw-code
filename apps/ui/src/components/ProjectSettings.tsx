@@ -22,7 +22,7 @@ import {
 import { useNotifs } from "./Notifications.js";
 import { shortenHome } from "./pathDisplay.js";
 import { HARNESS_IDS, HARNESS_NAMES, sameValue } from "./settingsSections.js";
-import { HelpTip, SettingsGroup, SettingsPageHead, SettingsRow } from "./SettingsLayout.js";
+import { SettingsGroup, SettingsPageHead, SettingsRow, TextSetting } from "./SettingsLayout.js";
 import { chooseProjectFolder } from "../platform/chooseProjectFolder.js";
 
 const MAX_SCRIPT_CHARS = 20_000;
@@ -297,44 +297,6 @@ function SessionDefaults({ project, settings, onChange }: { project: Project; se
   );
 }
 
-function TextSetting({
-  id,
-  label,
-  hint,
-  value,
-  placeholder,
-  maxLength,
-  code,
-  onChange
-}: {
-  id: string;
-  label: string;
-  hint: string;
-  value: string | undefined;
-  placeholder: string;
-  maxLength: number;
-  code?: boolean;
-  onChange: (value: string) => void;
-}) {
-  return (
-    <div className="sp-stack">
-      <span className="sp-lab sp-lab-help">
-        <label htmlFor={id}>{label}</label>
-        <HelpTip label={label}>{hint}</HelpTip>
-      </span>
-      <textarea
-        id={id}
-        className={`sp-code sp-template sp-code-sm${code ? "" : " sp-prose"}`}
-        value={value ?? ""}
-        placeholder={placeholder}
-        maxLength={maxLength}
-        spellCheck={!code}
-        onChange={(e) => onChange(e.target.value)}
-      />
-    </div>
-  );
-}
-
 function RepositorySettings({ project }: { project: Project }) {
   const repoDraft = useSettingsDraftStore((s) => s.repoDraft);
   const setRepo = useSettingsDraftStore((s) => s.setRepo);
@@ -492,7 +454,7 @@ function ProjectDetail({ project }: { project: Project }) {
         <TextSetting
           id="sp-project-title-instructions"
           label="Title instructions"
-          hint="Extra guidance for generated session titles."
+          hint="Extra guidance for this project's generated session titles. Added to the title instructions in General settings and wins over them on a conflict."
           value={settings.titleInstructions}
           placeholder="Start with the Jira key when the message mentions one, e.g. ABC-123 Fix login redirect"
           maxLength={MAX_INSTRUCTION_CHARS}

@@ -264,6 +264,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   autoTitleDriver: "claude",
   autoTitleModel: "claude-sonnet-5-5",
   autoTitleEffort: "low",
+  autoTitleInstructions: "",
   prRefreshIntervalSeconds: 120,
   prCloneRoot: "~/.cw-code/repos",
   prCloneIncludeOwner: true,
@@ -298,6 +299,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
 };
 
 const FONT_FAMILY_MAX_LENGTH = 200;
+export const MAX_TITLE_INSTRUCTION_CHARS = 4_000;
 const BIND_HOST_PATTERN = /^[A-Za-z0-9.:\-\[\]]{0,255}$/;
 
 export function bindHostOr(value: unknown, fallback: string): string {
@@ -441,6 +443,9 @@ function sanitize(patch: SettingsPatch): SettingsPatch {
       patch.autoTitleEffort === "minimal" || patch.autoTitleEffort === "low" || patch.autoTitleEffort === "medium" || patch.autoTitleEffort === "high" || patch.autoTitleEffort === "xhigh" || patch.autoTitleEffort === "max"
         ? patch.autoTitleEffort
         : DEFAULT_SETTINGS.autoTitleEffort;
+  }
+  if (patch.autoTitleInstructions !== undefined) {
+    out.autoTitleInstructions = trimmedOr(patch.autoTitleInstructions, DEFAULT_SETTINGS.autoTitleInstructions).slice(0, MAX_TITLE_INSTRUCTION_CHARS).trim();
   }
   if (patch.prRefreshIntervalSeconds !== undefined) {
     const value = Math.round(Number(patch.prRefreshIntervalSeconds));

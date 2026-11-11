@@ -2648,7 +2648,7 @@ export class SessionManager {
     try {
       handle = driver.startTurn({
         sessionId: titleSessionId,
-        prompt: buildTitlePrompt(prompt, { title: titleInstructions, branch: branchInstructions }),
+        prompt: buildTitlePrompt(prompt, { generalTitle: settings.autoTitleInstructions, title: titleInstructions, branch: branchInstructions }),
         cwd: titleRoot,
         model: settings.autoTitleModel.trim() || undefined,
         effort: settings.autoTitleEffort,

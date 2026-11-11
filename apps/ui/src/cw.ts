@@ -498,6 +498,7 @@ export interface AppSettings {
   autoTitleDriver: DriverName;
   autoTitleModel: string;
   autoTitleEffort: EffortLevel;
+  autoTitleInstructions: string;
   prRefreshIntervalSeconds: number;
   prCloneRoot: string;
   /** Append the repository owner as a folder under the clone root. */

@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it, vi } from "bun:test";
 import type { AppSettings, DriverKind, EffortLevel, PrFinishedSessionStatus, PrWorkflow, SavedGitHubView } from "@cw-code/contracts";
 import { MetadataError } from "../storage/metadataDocument.js";
-import { DEFAULT_SETTINGS, SETTINGS_SCHEMA_VERSION, SettingsStore } from "./SettingsStore.js";
+import { DEFAULT_SETTINGS, MAX_TITLE_INSTRUCTION_CHARS, SETTINGS_SCHEMA_VERSION, SettingsStore } from "./SettingsStore.js";
 import { defaultPrWorkflows, RETIRED_BUILT_IN_PROMPTS } from "./prWorkflowDefaults.js";
 
 const FIXTURE = readFileSync(fileURLToPath(new URL("../storage/__fixtures__/settings-v0.json", import.meta.url)));
@@ -330,6 +330,14 @@ describe("SettingsStore", () => {
     expect(settings.autoTitleDriver).toBe("claude");
     expect(settings.autoTitleModel).toBe("claude-sonnet-5-5");
     expect(settings.autoTitleEffort).toBe("low");
+    expect(settings.autoTitleInstructions).toBe("");
+  });
+
+  it("trims and caps the auto-title instructions", () => {
+    const store = new SettingsStore(tempFilePath());
+    expect(store.set({ autoTitleInstructions: "  Write titles in English\nStart with a verb  " }).autoTitleInstructions).toBe("Write titles in English\nStart with a verb");
+    expect(store.set({ autoTitleInstructions: "x".repeat(MAX_TITLE_INSTRUCTION_CHARS + 10) }).autoTitleInstructions).toHaveLength(MAX_TITLE_INSTRUCTION_CHARS);
+    expect(store.set({ autoTitleInstructions: 5 as unknown as string }).autoTitleInstructions).toBe("");
   });
 
   it("sanitizes auto-title settings", () => {

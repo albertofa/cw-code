@@ -10,6 +10,9 @@ const LINE_LABEL = /^\s*[*_]*(?:title|branch(?:\s+name)?)[*_]*\s*[:=]\s*/i;
 export const AUTO_TITLE_TIMEOUT_MS = 45_000;
 
 export interface MetadataInstructions {
+  /** App-wide title instructions (`autoTitleInstructions`). */
+  generalTitle?: string;
+  /** The project's title instructions. */
   title?: string;
   branch?: string;
 }
@@ -21,13 +24,21 @@ export interface GeneratedMetadata {
 
 export function buildTitlePrompt(firstMessage: string, instructions: MetadataInstructions = {}): string {
   const message = firstMessage.trim().slice(0, MAX_PROMPT_MESSAGE_CHARS);
+  const generalTitle = instructions.generalTitle?.trim();
   const title = instructions.title?.trim();
   const branch = instructions.branch?.trim();
+  const titleInstructions = [
+    ...(generalTitle ? [`Title instructions: ${generalTitle}`] : []),
+    ...(title ? [`Project title instructions: ${title}`] : []),
+    ...(generalTitle || title
+      ? [`Where these instructions conflict with the rules above, follow the instructions${generalTitle && title ? "; project instructions win over the general ones" : ""}.`]
+      : [])
+  ];
   const lines = branch
     ? [
         "Classify the work in the user's first message and answer with a short session title and a git branch name.",
         "Title rules: 3-6 words, no quotes, no markdown, no trailing punctuation, same language as the message.",
-        ...(title ? [`Project title instructions: ${title}`] : []),
+        ...titleInstructions,
         "Branch rules: a valid git branch name with no spaces.",
         `Project branch instructions: ${branch}`,
         "Reply with exactly two lines and no labels: the title on the first line, the branch name on the second."
@@ -35,7 +46,7 @@ export function buildTitlePrompt(firstMessage: string, instructions: MetadataIns
     : [
         "Classify the work in the user's first message and answer with a short session title.",
         "Rules: 3-6 words, no quotes, no markdown, no trailing punctuation, same language as the message.",
-        ...(title ? [`Project title instructions: ${title}`] : []),
+        ...titleInstructions,
         "Reply with the title only."
       ];
   return [...lines, "", "User's first message:", message].join("\n");
