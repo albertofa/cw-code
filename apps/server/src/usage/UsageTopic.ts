@@ -14,6 +14,10 @@ import { sinceDayFor, totals, usageReport } from "./usageReport.js";
 import type { UsageLedgerQuery, UsageLedgerRow } from "./ledgerTypes.js";
 
 export const ACCOUNT_REFRESH_MS = 5 * 60 * 1000;
+/** A finished turn changes plan usage; refresh that harness shortly after, batching back-to-back turns. */
+export const TURN_REFRESH_DELAY_MS = 3000;
+/** Turn-triggered refreshes of one harness are at most this often (the CLIs' usage endpoints are rate limited). */
+export const TURN_REFRESH_MIN_GAP_MS = 30_000;
 
 const DRIVERS: readonly DriverKind[] = ["claude", "codex", "opencode"];
 
@@ -21,6 +25,7 @@ export interface UsageTopicDeps {
   accountUsage: { get(drivers: DriverKind[], force: boolean): Promise<AccountUsageSnapshot[]> };
   ledgerRows(query: UsageLedgerQuery): UsageLedgerRow[];
   onUsageRecorded(cb: (sessionId: string) => void): () => void;
+  driverOfSession?(sessionId: string): DriverKind | null;
   now?: () => number;
 }
 
@@ -44,12 +49,17 @@ export class UsageTopic implements TopicProvider {
   private store: UsageStore | null = null;
   private timer: ReturnType<typeof setInterval> | null = null;
   private disposed = false;
+  private turnTimers = new Map<DriverKind, ReturnType<typeof setTimeout>>();
+  private lastTurnRefresh = new Map<DriverKind, number>();
 
   constructor(
     private readonly hub: TopicHub,
     private readonly deps: UsageTopicDeps
   ) {
-    deps.onUsageRecorded(() => this.recordTurn());
+    deps.onUsageRecorded((sessionId) => {
+      this.recordTurn();
+      this.scheduleTurnRefresh(sessionId);
+    });
   }
 
   owns(topic: string): boolean {
@@ -65,6 +75,7 @@ export class UsageTopic implements TopicProvider {
 
   release(): void {
     this.stopTimer();
+    this.clearTurnTimers();
     this.store = null;
   }
 
@@ -79,6 +90,7 @@ export class UsageTopic implements TopicProvider {
   dispose(): void {
     this.disposed = true;
     this.stopTimer();
+    this.clearTurnTimers();
   }
 
   resume(): void {
@@ -110,6 +122,29 @@ export class UsageTopic implements TopicProvider {
   private recordTurn(): void {
     this.data = { ...this.data, ledgerRev: this.data.ledgerRev + 1 };
     this.store?.upsert("ledgerRev", this.data.ledgerRev);
+  }
+
+  /** Only while someone is subscribed: a later subscriber refreshes on its own. */
+  private scheduleTurnRefresh(sessionId: string): void {
+    if (this.disposed || !this.store) return;
+    const driver = this.deps.driverOfSession?.(sessionId) ?? null;
+    if (!driver || this.turnTimers.has(driver)) return;
+    const now = (this.deps.now ?? Date.now)();
+    const sinceLast = now - (this.lastTurnRefresh.get(driver) ?? Number.NEGATIVE_INFINITY);
+    const delay = Math.max(TURN_REFRESH_DELAY_MS, TURN_REFRESH_MIN_GAP_MS - sinceLast);
+    const timer = setTimeout(() => {
+      this.turnTimers.delete(driver);
+      if (this.disposed || !this.store) return;
+      this.lastTurnRefresh.set(driver, (this.deps.now ?? Date.now)());
+      void this.refreshAccount(true, [driver]);
+    }, delay);
+    timer.unref?.();
+    this.turnTimers.set(driver, timer);
+  }
+
+  private clearTurnTimers(): void {
+    for (const timer of this.turnTimers.values()) clearTimeout(timer);
+    this.turnTimers.clear();
   }
 
   private ensureRefreshing(): void {

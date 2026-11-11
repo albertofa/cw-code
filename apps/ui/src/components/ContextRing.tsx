@@ -3,6 +3,7 @@ import type { DriverName } from "../cw.js";
 import { usePrStore } from "../stores/prStore.js";
 import { DriverIcon } from "./DriverIcon.js";
 import { PlanMeters } from "./PlanMeters.js";
+import { PlanRefreshButton } from "./PlanRefreshButton.js";
 import { unavailableTitle } from "./UsagePlanCard.js";
 import { useNow, formatCostUsd } from "./usageFormat.js";
 import { formatRelativeAge } from "./prInboxModel.js";
@@ -171,8 +172,17 @@ export function ContextRing({ sessionId, driver }: { sessionId: string; driver: 
             )}
           </section>
           <div className="context-dock-foot">
-            <span className="usage-pulse" aria-hidden="true" />
-            <span>{snapshot ? `Updated ${formatRelativeAge(snapshot.fetchedAt, now)} ago` : "Not refreshed yet"}</span>
+            <span className={`usage-pulse${accountLoading ? " is-busy" : ""}`} aria-hidden="true" />
+            <span aria-live="polite">
+              {accountLoading && snapshot
+                ? "Refreshing…"
+                : snapshot
+                  ? now - snapshot.fetchedAt < 5000
+                    ? "Updated just now"
+                    : `Updated ${formatRelativeAge(snapshot.fetchedAt, now)} ago`
+                  : "Not refreshed yet"}
+            </span>
+            <PlanRefreshButton driver={driver} loading={accountLoading} />
             <a
               className="context-dock-link"
               href="#"
