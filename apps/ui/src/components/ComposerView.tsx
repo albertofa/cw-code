@@ -60,6 +60,7 @@ import { parseBranchMismatchError, type BranchMismatch } from "./sessionBranch.j
 import { harnessLabel } from "./toolTabs.js";
 import { ipcErrorMessage } from "./ipcError.js";
 import { useThreadVisible } from "./threadVisibility.js";
+import { useComposerAutoFocus } from "./composerFocus.js";
 
 export interface BranchGuard {
   mismatch: BranchMismatch | null;
@@ -234,16 +235,7 @@ export function ComposerView({
     return () => window.removeEventListener("resize", onResize);
   }, []);
 
-  useEffect(() => {
-    if (!visible || backendRef.current.busy) return;
-    const frame = requestAnimationFrame(() => {
-      try {
-        composerRef.current?.focus({ preventScroll: true });
-      } catch {
-      }
-    });
-    return () => cancelAnimationFrame(frame);
-  }, [resetKey, visible]);
+  useComposerAutoFocus(composerRef, visible, sending || blockedReason !== undefined, resetKey);
 
   useEffect(() => {
     const saved = loadComposerDraft(resetKey);

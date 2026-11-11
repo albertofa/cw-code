@@ -23,6 +23,8 @@ import { peekTopic } from "../server/topics.js";
 import { useMenuPosition } from "./menuPosition.js";
 import { useConfirm } from "./ConfirmDialog.js";
 import { ARCHIVE_CONFIRM, restoreConfirm } from "./sessionLifecycle.js";
+import { requestComposerFocus } from "./composerFocus.js";
+import { SidebarToggle } from "./SidebarToggle.js";
 import appIcon from "../assets/console-c.svg";
 
 const IDLE_LIMIT = 4;
@@ -491,6 +493,7 @@ export function Sidebar({ onOpenSkills, skillsOpen = false, hidden = false }: { 
   const selectSession = (sessionId: string) => {
     openSessionView();
     selectStoreSession(sessionId);
+    requestComposerFocus();
   };
   const hoverSession = hover ? (source.find((s) => s.id === hover.id) ?? null) : null;
   const hoverBabysit = hoverSession ? babysitOf(hoverSession) : null;
@@ -969,6 +972,7 @@ export function Sidebar({ onOpenSkills, skillsOpen = false, hidden = false }: { 
           <span>cw-code</span>
         </div>
         <DebugMenu />
+        <SidebarToggle />
       </div>
       <div className="brand">
         <button
