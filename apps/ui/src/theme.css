@@ -11873,6 +11873,12 @@ button.gitbar-checkout:hover {
   margin-bottom: 2px;
 }
 
+.plan-refresh-btn {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px;
+}
+
 .context-dock-foot {
   display: flex;
   align-items: center;

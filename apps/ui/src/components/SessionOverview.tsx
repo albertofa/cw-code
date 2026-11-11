@@ -8,6 +8,7 @@ import { useSkillsStore } from "../stores/skillsStore.js";
 import { DriverIcon } from "./DriverIcon.js";
 import { PrChipBadge } from "./PrChipBadge.js";
 import { PlanMeters } from "./PlanMeters.js";
+import { PlanRefreshButton } from "./PlanRefreshButton.js";
 import { unavailableTitle } from "./UsagePlanCard.js";
 import { formatRelativeAge } from "./prInboxModel.js";
 import { collectSubagents, formatTokensShort, isSubagentMessage, subagentStateLabel } from "./subagents.js";
@@ -244,7 +245,13 @@ function PlanSection({ driver }: { driver: DriverName }) {
       title={title}
       open={open}
       onOpenChange={setOpen}
-      summary={fetchedAt !== undefined ? <span className="ov-faint">Updated {formatRelativeAge(fetchedAt, now)} ago</span> : undefined}
+      summary={
+        loading && snapshot ? (
+          <span className="ov-faint">Refreshing…</span>
+        ) : fetchedAt !== undefined ? (
+          <span className="ov-faint">Updated {now - fetchedAt < 5000 ? "just now" : `${formatRelativeAge(fetchedAt, now)} ago`}</span>
+        ) : undefined
+      }
     >
       <div className={`ov-plan ${driver}`}>
         {shownState && <PlanLimits driver={driver} state={shownState} stale={state?.status === "error"} />}
@@ -270,9 +277,12 @@ function PlanSection({ driver }: { driver: DriverName }) {
         ) : (
           <Note>Plan limits not loaded yet.</Note>
         )}
-        <button type="button" className="ov-link" onClick={openUsage}>
-          Open usage →
-        </button>
+        <div className="ov-plan-actions">
+          <button type="button" className="ov-link" onClick={openUsage}>
+            Open usage →
+          </button>
+          <PlanRefreshButton driver={driver} loading={loading} />
+        </div>
       </div>
     </Section>
   );
