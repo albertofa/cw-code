@@ -3,14 +3,13 @@ import type { ServerApp } from "../app/ServerApp.js";
 import { DRIVER_KINDS, type LegacyImportField } from "../prefs/PreferencesStore.js";
 import type { Router } from "../transport/Router.js";
 import { handle, parseArgs, parseString } from "./shared.js";
+import { MAX_DRAFT_QUOTES, MAX_QUOTE_LENGTH } from "@cw-code/shared/draftQuotes";
 
 export const MAX_DRAFT_KEY_LENGTH = 200;
 export const MAX_SIDEBAR_ID_LENGTH = 200;
 export const MAX_DRAFT_TEXT_LENGTH = 200_000;
 export const MAX_DRAFT_ATTACHMENTS = 50;
 export const MAX_ATTACHMENT_LENGTH = 4_096;
-export const MAX_DRAFT_QUOTES = 20;
-export const MAX_QUOTE_LENGTH = 20_000;
 export const MAX_MODEL_LENGTH = 200;
 export const MAX_ORDER_ENTRIES = 10_000;
 

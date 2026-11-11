@@ -4,6 +4,8 @@ import { Reply } from "lucide-react";
 import { useReplyQuotesStore } from "../stores/replyQuotesStore.js";
 import { requestComposerFocus } from "./composerFocus.js";
 import { cleanQuote } from "./replyQuotes.js";
+import { useNotifs } from "./Notifications.js";
+import { MAX_DRAFT_QUOTES } from "@cw-code/shared/draftQuotes";
 
 const QUOTABLE = ".msg-assistant";
 const BUTTON_GAP = 8;
@@ -99,7 +101,14 @@ export function SelectionReply({ sessionId, scrollRef }: { sessionId: string; sc
       style={{ top: pick.top, left: pick.left }}
       onMouseDown={(e) => e.preventDefault()}
       onClick={() => {
-        useReplyQuotesStore.getState().add(sessionId, pick.text);
+        if (!useReplyQuotesStore.getState().add(sessionId, pick.text)) {
+          useNotifs.getState().push({
+            kind: "warning",
+            title: "Quote not added",
+            message: `A message can carry up to ${MAX_DRAFT_QUOTES} quotes. Remove one to add another.`
+          });
+          return;
+        }
         window.getSelection()?.removeAllRanges();
         setPick(null);
         requestComposerFocus();
