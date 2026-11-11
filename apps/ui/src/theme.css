@@ -631,6 +631,34 @@ body {
   -webkit-app-region: no-drag;
 }
 
+.side-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  padding: 4px 6px;
+  -webkit-app-region: no-drag;
+}
+
+.side-seg .side-toggle {
+  margin-left: auto;
+}
+
+.side-toggle-float {
+  position: absolute;
+  top: 6px;
+  left: 8px;
+  z-index: 5;
+}
+
+.app-shell.side-collapsed .main-col .main-seg > .head-col.col-left:first-child {
+  padding-left: 48px;
+}
+
+.app-shell.side-collapsed .usage-head {
+  padding-left: 52px;
+}
+
 .titlebar-menu .menu-panel {
   top: calc(100% + 6px);
   bottom: auto;
