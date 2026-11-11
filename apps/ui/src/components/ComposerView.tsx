@@ -672,16 +672,17 @@ export function ComposerView({
   const mentionedSkills = (body: string, list: CommandOption[]): string[] =>
     skillMentionNames(body, new Set(skillCommands(list).map((skill) => skill.name)));
 
-  const sendMessage = async (body: string): Promise<void> => {
+  // `typed` is what the user wrote: skill mentions are read from it, never from quoted assistant text.
+  const sendMessage = async (body: string, typed: string = body): Promise<void> => {
     const key = commandsKey;
     const slash = body.startsWith("/");
     if (slash) {
       const immediate = parseSlashInput(body, commandList);
       if (immediate) return runCommand(immediate.command, immediate.args, key);
     }
-    const needsList = driverCommands === null && (slash || hasSkillCandidate(body));
+    const needsList = driverCommands === null && (slash || hasSkillCandidate(typed));
     if (!needsList) {
-      sendPlain(body, key, mentionedSkills(body, commandList));
+      sendPlain(body, key, mentionedSkills(typed, commandList));
       return;
     }
     setSending(true);
@@ -701,7 +702,7 @@ export function ComposerView({
     const list = mergeCommands(driver, result.list, commandAvailability);
     const parsed = slash ? parseSlashInput(body, list) : null;
     if (parsed) return runCommand(parsed.command, parsed.args, key);
-    sendPlain(body, key, mentionedSkills(body, list));
+    sendPlain(body, key, mentionedSkills(typed, list));
   };
 
   const send = () => {
@@ -710,13 +711,13 @@ export function ComposerView({
     const body = formatQuotedReply(quoteTexts, typed);
     const restore = backendRef.current.restore;
     if (!restore) {
-      void sendMessage(body);
+      void sendMessage(body, typed);
       return;
     }
-    void restoreThenSend(restore, body);
+    void restoreThenSend(restore, body, typed);
   };
 
-  const restoreThenSend = async (restore: NonNullable<ComposerBackend["restore"]>, body: string): Promise<void> => {
+  const restoreThenSend = async (restore: NonNullable<ComposerBackend["restore"]>, body: string, typed: string): Promise<void> => {
     const key = commandsKey;
     if (restore.confirm && !(await confirm(restore.confirm))) return;
     if (!isCurrent(key)) return;
@@ -729,7 +730,7 @@ export function ComposerView({
     } finally {
       setSending(false);
     }
-    if (isCurrent(key)) await sendMessage(body);
+    if (isCurrent(key)) await sendMessage(body, typed);
   };
 
   const openBranchChoice = (action: HeldSend) => {
