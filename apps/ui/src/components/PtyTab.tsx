@@ -7,6 +7,7 @@ import type { DriverName } from "../cw.js";
 import { useConnectionEpoch } from "../server/topics.js";
 import { useAppStore } from "../stores/appStore.js";
 import { terminalTheme, useTerminalColors } from "./terminalTheme.js";
+import { markPtyLive } from "./ptyLiveness.js";
 
 function forceCellRemeasure(term: Terminal, font: { family: string; size: number }): void {
   term.options.fontFamily = "monospace";
@@ -93,6 +94,7 @@ export function PtyTab({ sessionId, kind }: { sessionId: string; kind: DriverNam
 
     const markExited = (code: number | null) => {
       exitedRef.current = true;
+      markPtyLive(sessionId, kind, false);
       setExit({ code });
     };
 
@@ -171,6 +173,7 @@ export function PtyTab({ sessionId, kind }: { sessionId: string; kind: DriverNam
         }
         ptyIdRef.current = ptyId;
         ptyTokenRef.current = token;
+        markPtyLive(sessionId, kind, true);
         showAttached(ptyId, replay);
         const exited = pendingExit.find((entry) => entry.ptyId === ptyId && entry.token === token);
         if (exited) markExited(exited.exitCode);

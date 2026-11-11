@@ -47,5 +47,9 @@ export function registerPtyHandlers(router: Router, app: ServerApp): void {
     if (attached(ctx, args.ptyId)) services().ptys.resize(args.ptyId, ctx.clientId, args.cols, args.rows);
   });
   handle<{ ptyId: string }>(router, "pty.detach", (args, ctx) => app.topics.unsubscribe(ctx, [ptyTopic(args.ptyId)]));
+  handle(router, "pty.close", (raw) => {
+    const args = parseArgs(raw, "pty.close");
+    services().ptys.close(parseString(args.sessionId, "sessionId"), parsePtyKind(args.kind));
+  });
   handle<{ ptyId: string }>(router, "pty.kill", (args) => services().ptys.kill(args.ptyId));
 }
