@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { MAX_DRAFT_QUOTES, MAX_QUOTE_LENGTH } from "@cw-code/shared/draftQuotes";
+import { MAX_DRAFT_QUOTES, MAX_QUOTE_LENGTH } from "@cw-code/shared/composerDraftLimits";
 
 export interface ReplyQuote {
   id: number;

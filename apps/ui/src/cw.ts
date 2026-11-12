@@ -573,7 +573,13 @@ export interface CwApi {
   importLegacyPrefs(legacy: LegacyPreferences): Promise<void>;
   reorderSidebar(request: SidebarReorderRequest): Promise<void>;
   pushRecentModel(driver: DriverName, model: string): Promise<void>;
-  setComposerDraft(key: string, text: string, attachments: readonly string[], quotes?: readonly string[]): Promise<void>;
+  setComposerDraft(
+    key: string,
+    text: string,
+    attachments: readonly string[],
+    quotes?: readonly string[],
+    pastes?: readonly string[]
+  ): Promise<void>;
   discoverBinaries(binaries?: CliBinary[]): Promise<CliDiscoverResult>;
   verifyBinaryPath(binary: CliBinary, path: string): Promise<CliDiscoveredCandidate>;
   isDev: boolean;
