@@ -192,7 +192,14 @@ export function createCwApi(
     importLegacyPrefs: (legacy: LegacyPreferences) => callVoid("prefs.importLegacy", legacy),
     reorderSidebar: (request: SidebarReorderRequest) => callVoid("sidebar.reorder", request),
     pushRecentModel: (driver, model) => callVoid("prefs.pushRecentModel", { driver, model }),
-    setComposerDraft: (key, text, attachments) => callVoid("prefs.setDraft", { key, text, attachments }),
+    setComposerDraft: (key, text, attachments, quotes, pastes) =>
+      callVoid("prefs.setDraft", {
+        key,
+        text,
+        attachments,
+        ...(quotes && quotes.length > 0 ? { quotes } : {}),
+        ...(pastes && pastes.length > 0 ? { pastes } : {})
+      }),
     discoverBinaries: (binaries?: CliBinary[]) => call<CliDiscoverResult>("cli.discover", { binaries }),
     verifyBinaryPath: (binary, path) => call<CliDiscoveredCandidate>("cli.verifyPath", { binary, path }),
     isDev: desktop?.isDev ?? import.meta.env.DEV === true,
@@ -318,6 +325,7 @@ export function createCwApi(
     writePty: (ptyId, data) => client.send("pty.write", { ptyId, data }),
     resizePty: (ptyId, cols, rows) => client.send("pty.resize", { ptyId, cols, rows }),
     detachPty: (ptyId) => ptyAttachments.detach(ptyId),
+    closePty: (sessionId, kind) => call<void>("pty.close", { sessionId, kind }),
     onPtyData: (cb) => subscribe("pty.data", cb),
     onPtyExit: (cb) => subscribe("pty.exit", cb),
     openExternal: async (url) => {

@@ -27,7 +27,7 @@ export interface SidebarLayout {
   workingSet: string[];
   main: string[];
   resolved: string[];
-  quickCounts: { pr: number; prAttention: number };
+  quickCounts: { pr: number; noPr: number; prAttention: number };
 }
 
 export interface SidebarDefaults {

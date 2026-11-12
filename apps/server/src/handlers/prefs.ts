@@ -3,6 +3,7 @@ import type { ServerApp } from "../app/ServerApp.js";
 import { DRIVER_KINDS, type LegacyImportField } from "../prefs/PreferencesStore.js";
 import type { Router } from "../transport/Router.js";
 import { handle, parseArgs, parseString } from "./shared.js";
+import { MAX_DRAFT_PASTES, MAX_DRAFT_QUOTES, MAX_PASTE_LENGTH, MAX_QUOTE_LENGTH } from "@cw-code/shared/composerDraftLimits";
 
 export const MAX_DRAFT_KEY_LENGTH = 200;
 export const MAX_SIDEBAR_ID_LENGTH = 200;
@@ -69,6 +70,8 @@ export function registerPrefsHandlers(router: Router, app: ServerApp): void {
     if (!key) throw new Error("key must not be empty");
     const text = parseBoundedString(params.text, "text", MAX_DRAFT_TEXT_LENGTH);
     const attachments = parseStringList(params.attachments, "attachments", MAX_DRAFT_ATTACHMENTS, MAX_ATTACHMENT_LENGTH);
-    preferences().setDraft(key, text, attachments);
+    const quotes = params.quotes === undefined ? [] : parseStringList(params.quotes, "quotes", MAX_DRAFT_QUOTES, MAX_QUOTE_LENGTH);
+    const pastes = params.pastes === undefined ? [] : parseStringList(params.pastes, "pastes", MAX_DRAFT_PASTES, MAX_PASTE_LENGTH);
+    preferences().setDraft(key, text, attachments, quotes, pastes);
   });
 }

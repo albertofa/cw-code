@@ -98,7 +98,7 @@ export function GitHubToolbar({
         </span>
         <button
           type="button"
-          className={`side-filter-btn${sortAnchor ? " open" : ""}`}
+          className={`hub-sort-btn${sortAnchor ? " open" : ""}`}
           aria-haspopup="menu"
           aria-expanded={sortAnchor !== null}
           onClick={(event) => setSortAnchor(sortAnchor ? null : anchorRectOf(event.currentTarget))}

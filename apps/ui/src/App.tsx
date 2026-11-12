@@ -18,6 +18,7 @@ import { UsageView } from "./components/UsageView.js";
 import { WorkflowRunModal } from "./components/WorkflowRunModal.js";
 import { ShutdownDialog } from "./components/ShutdownDialog.js";
 import { FolderBrowserHost } from "./components/FolderBrowserDialog.js";
+import { GlobalConfirmHost } from "./components/GlobalConfirm.js";
 import { handleQuitRequest, handleShutdownExpired } from "./stores/shutdownFlow.js";
 import { RightPanelBody } from "./components/RightPanelBody.js";
 import { ToolRail } from "./components/ToolRail.js";
@@ -41,6 +42,9 @@ import { startSidebarBridge } from "./server/sidebarBridge.js";
 import { useConnectionEpoch } from "./server/topics.js";
 import { useHoldGit } from "./components/useGit.js";
 import { useBrowserAttentionTitle } from "./platform/attentionTitle.js";
+import { useSidebarStore } from "./stores/sidebarStore.js";
+import { SidebarToggle } from "./components/SidebarToggle.js";
+import { requestComposerFocus } from "./components/composerFocus.js";
 
 const RIGHT_WIDTH_DEFAULT = 520;
 const SIDE_WIDTH_DEFAULT = 320;
@@ -86,6 +90,8 @@ export function App() {
   const [skillsOpen, setSkillsOpen] = useState(false);
   const { confirm, dialog: confirmDialog } = useConfirm();
   const settingsActive = mainView.kind === "settings";
+  const sideCollapsed = useSidebarStore((s) => s.collapsed);
+  const sideHidden = settingsActive || sideCollapsed;
 
   const leaveSettings = useCallback(
     async (go: () => void) => {
@@ -103,6 +109,7 @@ export function App() {
         useSettingsDraftStore.getState().discard();
       }
       go();
+      requestComposerFocus();
     },
     [confirm]
   );
@@ -144,6 +151,18 @@ export function App() {
         if (!sessionId || visibleLayerOpen()) return;
         e.preventDefault();
         usePanelStore.getState().requestFilesCommand(sessionId, e.key.toLowerCase() === "p" ? "quickOpen" : "search");
+      } else if (e.key.toLowerCase() === "b" && !e.shiftKey && !visibleLayerOpen()) {
+        if (usePrStore.getState().mainView.kind === "settings") return;
+        e.preventDefault();
+        const sidebar = useSidebarStore.getState();
+        const focusInSidebar = document.activeElement?.closest(".app-body > .side") != null;
+        sidebar.toggle();
+        if (!sidebar.collapsed && focusInSidebar) requestComposerFocus();
+      } else if (e.key.toLowerCase() === "k" && !e.shiftKey && useSidebarStore.getState().collapsed && !visibleLayerOpen()) {
+        if (usePrStore.getState().mainView.kind === "settings") return;
+        e.preventDefault();
+        useSidebarStore.getState().setCollapsed(false);
+        requestAnimationFrame(() => window.dispatchEvent(new Event("cw:focus-search")));
       } else if (e.key.toLowerCase() === "t" && !e.shiftKey && !visibleLayerOpen()) {
         e.preventDefault();
         void leaveSettingsRef.current(() => {
@@ -211,7 +230,7 @@ export function App() {
 
   return (
     <div
-      className={`app-shell${rightShown && !settingsActive ? "" : " right-hidden"}${settingsActive ? " rail-hidden" : ""}`}
+      className={`app-shell${rightShown && !settingsActive ? "" : " right-hidden"}${settingsActive ? " rail-hidden" : ""}${sideCollapsed && !settingsActive ? " side-collapsed" : ""}`}
       data-driver={driver ?? "none"}
       style={shellStyle}
     >
@@ -221,11 +240,11 @@ export function App() {
       {!preloadError && (
         <>
           <div className="app-body">
-          <Sidebar onOpenSkills={() => setSkillsOpen(true)} skillsOpen={skillsOpen} hidden={settingsActive} />
+          <Sidebar onOpenSkills={() => setSkillsOpen(true)} skillsOpen={skillsOpen} hidden={sideHidden} />
           {mainView.kind === "settings" && (
             <SettingsNav active={navIdOf(mainView.section, mainView.harness)} onBack={() => void leaveSettings(() => usePrStore.getState().openSessionView())} />
           )}
-          {!settingsActive && (
+          {!sideHidden && (
             <div className="side-resizer-slot">
               <div
                 className="side-resizer"
@@ -262,6 +281,9 @@ export function App() {
             ) : null}
             <ThreadView hidden={mainView.kind !== "session"} />
             <Notifications />
+            {/* Last in the column: Electron applies app-region rects in DOM order, so a no-drag button
+                placed before the header's drag region would be swallowed by it. */}
+            {sideCollapsed && !settingsActive && <SidebarToggle className="side-toggle-float" />}
           </div>
           {rightPresence.mounted && topTool !== null && activeSessionId !== null && (
             <aside
@@ -306,6 +328,7 @@ export function App() {
           <ShutdownDialog />
           {confirmDialog}
           <FolderBrowserHost />
+          <GlobalConfirmHost />
         </>
       )}
     </div>

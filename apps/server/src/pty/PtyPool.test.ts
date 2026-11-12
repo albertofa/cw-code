@@ -252,6 +252,30 @@ describe("PtyPool shutdown support", () => {
   });
 });
 
+describe("PtyPool close", () => {
+  it("kills only the closed session terminal and drops it from the list", async () => {
+    const { pool, spawned } = makePool();
+    await pool.open("sess_a", ".", "shell", "", undefined, noData);
+    await pool.open("sess_a", ".", "claude", "", undefined, noData);
+    pool.close("sess_a", "shell");
+    expect(spawned.map((pty) => pty.kills)).toEqual([1, 0]);
+    expect(pool.list()).toEqual([{ ptyId: "sess_a:claude", sessionId: "sess_a", kind: "claude" }]);
+    pool.close("sess_b", "shell");
+    expect(spawned.map((pty) => pty.kills)).toEqual([1, 0]);
+  });
+
+  it("kills a terminal closed while it was still spawning", async () => {
+    const { pool, spawned, holdLoads, release } = makePool();
+    holdLoads();
+    const pending = pool.open("sess_a", ".", "shell", "", undefined, noData);
+    pool.close("sess_a", "shell");
+    release();
+    await pending;
+    expect(spawned.map((pty) => pty.kills)).toEqual([1]);
+    expect(pool.list()).toEqual([]);
+  });
+});
+
 describe("PtyPool reattach", () => {
   it("reattaches only the terminal with the same token and replays its output", async () => {
     const { pool, spawned } = makePool();

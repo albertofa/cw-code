@@ -574,7 +574,13 @@ export interface CwApi {
   importLegacyPrefs(legacy: LegacyPreferences): Promise<void>;
   reorderSidebar(request: SidebarReorderRequest): Promise<void>;
   pushRecentModel(driver: DriverName, model: string): Promise<void>;
-  setComposerDraft(key: string, text: string, attachments: readonly string[]): Promise<void>;
+  setComposerDraft(
+    key: string,
+    text: string,
+    attachments: readonly string[],
+    quotes?: readonly string[],
+    pastes?: readonly string[]
+  ): Promise<void>;
   discoverBinaries(binaries?: CliBinary[]): Promise<CliDiscoverResult>;
   verifyBinaryPath(binary: CliBinary, path: string): Promise<CliDiscoveredCandidate>;
   isDev: boolean;
@@ -684,6 +690,8 @@ export interface CwApi {
   writePty(ptyId: string, data: string): void;
   resizePty(ptyId: string, cols: number, rows: number): void;
   detachPty(ptyId: string): void;
+  /** Ends a session's terminal process for every client. */
+  closePty(sessionId: string, kind: DriverName | "shell"): Promise<void>;
   onPtyData(cb: (msg: { ptyId: string; data: string }) => void): () => void;
   onPtyExit(cb: (msg: { ptyId: string; token: string; exitCode: number }) => void): () => void;
   openExternal(url: string): Promise<void>;

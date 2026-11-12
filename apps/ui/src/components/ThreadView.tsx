@@ -1,5 +1,5 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { Check, ChevronDown, Copy, Sparkles, TriangleAlert } from "lucide-react";
+import { Check, ChevronDown, Copy, Reply, Sparkles, TriangleAlert } from "lucide-react";
 import type { DockableTabId } from "@cw-code/contracts";
 import { useAppStore, type ChatMessage } from "../stores/appStore.js";
 import { useNotifs } from "./Notifications.js";
@@ -11,6 +11,9 @@ import { GitPanelBar } from "./GitPanelBar.js";
 import { ToolContent } from "./ToolContent.js";
 import { useDockDrop } from "./useDockDrop.js";
 import { Composer } from "./Composer.js";
+import { SelectionReply } from "./SelectionReply.js";
+import { splitQuotedReply } from "./replyQuotes.js";
+import { QuoteDialog } from "./QuoteDialog.js";
 import { isBottomOpen, resolveMainTab } from "../stores/panelLayout.js";
 import { ToolCard } from "./ToolCard.js";
 import { ToolGroupCard } from "./ToolGroupCard.js";
@@ -110,13 +113,22 @@ const UserMessage = memo(function UserMessage({
       });
   };
 
+  const quoted = useMemo(() => splitQuotedReply(message.text), [message.text]);
+  const [openQuote, setOpenQuote] = useState<string | null>(null);
   const date = message.timestamp === undefined ? undefined : new Date(message.timestamp);
   const validDate = date && Number.isFinite(date.getTime()) ? date : undefined;
 
   return (
     <div className="msg-user-wrap" data-prompt-id={message.id}>
+      {openQuote !== null && <QuoteDialog text={openQuote} onClose={() => setOpenQuote(null)} />}
       <div className="msg-user">
-        {splitImageMentions(message.text).map((seg, i) =>
+        {quoted.quotes.map((quote, i) => (
+          <button key={`quote-${i}`} type="button" className="msg-user-quote" onClick={() => setOpenQuote(quote)} aria-label="Show quoted text">
+            <Reply size={13} aria-hidden="true" />
+            <span>{quote}</span>
+          </button>
+        ))}
+        {splitImageMentions(quoted.body).map((seg, i) =>
           seg.kind === "image" ? (
             <ImageThumb
               key={i}
@@ -382,6 +394,22 @@ export function ThreadView({ hidden = false }: { hidden?: boolean }) {
       if (!focusInside && !(focusOnPage && pressedInside)) return;
       if (el.scrollTop > 0 && !nestedScrollerTakesUpward(target, el)) release();
     };
+    // The composer keeps focus most of the time, so PageUp/PageDown typed there page the thread
+    // instead of moving the caret in a few lines of text.
+    const onComposerPage = (e: KeyboardEvent) => {
+      if ((e.key !== "PageUp" && e.key !== "PageDown") || e.defaultPrevented || e.isComposing) return;
+      if (e.altKey || e.ctrlKey || e.metaKey || e.shiftKey || hiddenRef.current) return;
+      const target = e.target;
+      if (!(target instanceof HTMLTextAreaElement) || !composerWrapRef.current?.contains(target)) return;
+      e.preventDefault();
+      const step = Math.max(40, el.clientHeight * 0.85);
+      if (e.key === "PageUp") {
+        if (el.scrollTop > 0) release();
+        el.scrollBy({ top: -step });
+      } else {
+        el.scrollBy({ top: step });
+      }
+    };
     const ro = new ResizeObserver(() => {
       if (!hiddenRef.current && stickRef.current) pinToBottom(el);
     });
@@ -392,7 +420,9 @@ export function ThreadView({ hidden = false }: { hidden?: boolean }) {
     el.addEventListener("touchmove", onTouchMove, { passive: true });
     document.addEventListener("pointerdown", trackPress, { capture: true, passive: true });
     document.addEventListener("keydown", onKeyDown, { passive: true });
+    document.addEventListener("keydown", onComposerPage);
     return () => {
+      document.removeEventListener("keydown", onComposerPage);
       ro.disconnect();
       el.removeEventListener("wheel", onWheel);
       el.removeEventListener("pointerdown", onPointerDown);
@@ -675,6 +705,7 @@ export function ThreadView({ hidden = false }: { hidden?: boolean }) {
         revision={messages}
       />
       <ThreadFindBar find={find} />
+      {!threadHidden && <SelectionReply sessionId={session.id} scrollRef={scrollRef} />}
       {!atBottom && (
         <button className="jump-bottom" onClick={scrollToBottom} title="Scroll to bottom" aria-label="Scroll to bottom">
           <ChevronDown size={14} aria-hidden="true" />

@@ -470,7 +470,8 @@ export function createServices(stores: { sessionStore: SessionStore; settingsSto
   const usageTopic = new UsageTopic(hooks.topics, {
     accountUsage,
     ledgerRows: (query) => sessions.queryUsageLedger(query),
-    onUsageRecorded: (cb) => sessions.onUsageRecorded(cb)
+    onUsageRecorded: (cb) => sessions.onUsageRecorded(cb),
+    driverOfSession: (sessionId) => sessions.findSession(sessionId)?.driver ?? null
   });
   const filesTopic = new FilesTopic(hooks.topics, {
     ensureWorktree: (sessionId) => sessions.ensureWorktree(sessionId),

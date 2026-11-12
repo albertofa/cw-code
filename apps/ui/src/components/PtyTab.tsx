@@ -7,6 +7,7 @@ import type { DriverName } from "../cw.js";
 import { useConnectionEpoch } from "../server/topics.js";
 import { useAppStore } from "../stores/appStore.js";
 import { terminalTheme, useTerminalColors } from "./terminalTheme.js";
+import { markPtyLive } from "./ptyLiveness.js";
 
 function forceCellRemeasure(term: Terminal, font: { family: string; size: number }): void {
   term.options.fontFamily = "monospace";
@@ -93,6 +94,7 @@ export function PtyTab({ sessionId, kind }: { sessionId: string; kind: DriverNam
 
     const markExited = (code: number | null) => {
       exitedRef.current = true;
+      markPtyLive(sessionId, kind, false);
       setExit({ code });
     };
 
@@ -164,6 +166,9 @@ export function PtyTab({ sessionId, kind }: { sessionId: string; kind: DriverNam
         if (msg.ptyId === ptyIdRef.current && msg.token === ptyTokenRef.current) markExited(msg.exitCode);
       });
 
+      // Live from the moment the spawn starts: pty.close also kills a terminal that is still spawning.
+      // Not cleared on unmount, because moving a tab between panels keeps the process running.
+      markPtyLive(sessionId, kind, true);
       window.cw.openPty(sessionId, kind).then(({ ptyId, token, replay }) => {
         if (disposed) {
           window.cw.detachPty(ptyId);
@@ -175,6 +180,7 @@ export function PtyTab({ sessionId, kind }: { sessionId: string; kind: DriverNam
         const exited = pendingExit.find((entry) => entry.ptyId === ptyId && entry.token === token);
         if (exited) markExited(exited.exitCode);
       }).catch((err: Error) => {
+        markPtyLive(sessionId, kind, false);
         if (disposed) return;
         openFailedRef.current = true;
         setError(err.message);
