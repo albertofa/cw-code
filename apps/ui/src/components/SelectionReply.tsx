@@ -5,7 +5,7 @@ import { useReplyQuotesStore } from "../stores/replyQuotesStore.js";
 import { requestComposerFocus } from "./composerFocus.js";
 import { cleanQuote } from "./replyQuotes.js";
 import { useNotifs } from "./Notifications.js";
-import { MAX_DRAFT_QUOTES } from "@cw-code/shared/draftQuotes";
+import { MAX_DRAFT_QUOTES } from "@cw-code/shared/composerDraftLimits";
 
 const QUOTABLE = ".msg-assistant";
 const BUTTON_GAP = 8;
