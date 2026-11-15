@@ -97,6 +97,8 @@ class FakeClient implements CodexAppServerLike {
         return { turn: { id: `turn_${id}` } } as T;
       case "turn/interrupt":
         return {} as T;
+      case "turn/steer":
+        return { turnId: (params as { expectedTurnId?: string } | undefined)?.expectedTurnId ?? "" } as T;
       case "thread/name/set":
         return {} as T;
       case "review/start":
@@ -234,6 +236,16 @@ class ReloadFailingSkillsClient extends FakeClient {
   override async request<T>(method: string, params?: unknown): Promise<T> {
     if (method === "skills/list" && (params as { forceReload?: boolean } | undefined)?.forceReload) {
       throw new Error("skills/list reload boom");
+    }
+    return super.request<T>(method, params);
+  }
+}
+
+class SteerRejectingClient extends FakeClient {
+  override async request<T>(method: string, params?: unknown): Promise<T> {
+    if (method === "turn/steer") {
+      this.requests.push({ method, params });
+      throw new Error("no active turn to steer");
     }
     return super.request<T>(method, params);
   }
@@ -598,6 +610,112 @@ describe("CodexCliDriver", () => {
     expect(client.requests.map((r) => r.method)).toEqual(["thread/resume", "turn/start"]);
     expect(client.requests[0].params).toMatchObject({ threadId: "thr_9", cwd: "C:\\proj" });
     expect(client.requests[1].params).toMatchObject({ threadId: "thr_resume" });
+    driver.dispose();
+  });
+
+  it("steers the running turn and emits user.message when the extra userMessage item arrives", async () => {
+    const { driver, events } = makeDriver(client);
+    const handle = driver.startTurn({ sessionId: "local-1", prompt: "work", cwd: "C:\\proj" });
+    await settle();
+    client.notify("item/started", {
+      threadId: "thr_1",
+      turnId: "turn_2",
+      item: { type: "userMessage", id: "u0", content: [{ type: "text", text: "work" }] }
+    });
+    await driver.injectMessage(handle.turnId, {
+      id: "m1",
+      prompt: "also check the docs",
+      cwd: "C:\\proj",
+      attachments: [],
+      skills: ["ship"]
+    });
+    const steer = client.requests.find((r) => r.method === "turn/steer");
+    expect(steer?.params).toEqual({
+      threadId: "thr_1",
+      expectedTurnId: "turn_2",
+      input: [
+        { type: "text", text: "also check the docs" },
+        { type: "skill", name: "ship", path: "/skills/ship" }
+      ],
+      clientUserMessageId: "m1"
+    });
+    expect(events.some((e) => e.type === "user.message")).toBe(false);
+    const item = { type: "userMessage", id: "u1", content: [{ type: "text", text: "also check the docs" }] };
+    client.notify("item/started", { threadId: "thr_1", turnId: "turn_2", item });
+    client.notify("item/completed", { threadId: "thr_1", turnId: "turn_2", item });
+    const delivered = events.filter((e) => e.type === "user.message");
+    expect(delivered).toEqual([
+      { type: "user.message", turnId: handle.turnId, messageId: "m1", text: "also check the docs", timestamp: expect.any(Number) }
+    ]);
+    driver.dispose();
+  });
+
+  it("matches injected messages in order and ignores the initial prompt item", async () => {
+    const { driver, events } = makeDriver(client);
+    const handle = driver.startTurn({ sessionId: "local-1", prompt: "work", cwd: "C:\\proj" });
+    await settle();
+    const base = { cwd: "C:\\proj", attachments: [] };
+    await driver.injectMessage(handle.turnId, { ...base, id: "m1", prompt: "one" });
+    await driver.injectMessage(handle.turnId, { ...base, id: "m2", prompt: "two" });
+    for (const [id, text] of [["u0", "work"], ["u1", "one"], ["u2", "two"], ["u3", "unknown"]] as const) {
+      client.notify("item/started", {
+        threadId: "thr_1",
+        turnId: "turn_2",
+        item: { type: "userMessage", id, content: [{ type: "text", text }] }
+      });
+    }
+    const delivered = events.filter((e) => e.type === "user.message");
+    expect(delivered.map((e) => (e as { messageId: string }).messageId)).toEqual(["m1", "m2"]);
+    driver.dispose();
+  });
+
+  it("prefers clientUserMessageId when the item carries it", async () => {
+    const { driver, events } = makeDriver(client);
+    const handle = driver.startTurn({ sessionId: "local-1", prompt: "work", cwd: "C:\\proj" });
+    await settle();
+    const base = { cwd: "C:\\proj", attachments: [] };
+    await driver.injectMessage(handle.turnId, { ...base, id: "m1", prompt: "one" });
+    await driver.injectMessage(handle.turnId, { ...base, id: "m2", prompt: "two" });
+    client.notify("item/started", {
+      threadId: "thr_1",
+      turnId: "turn_2",
+      item: { type: "userMessage", id: "u0", content: [{ type: "text", text: "work" }] }
+    });
+    client.notify("item/started", {
+      threadId: "thr_1",
+      turnId: "turn_2",
+      item: { type: "userMessage", id: "u2", clientUserMessageId: "m2", content: [{ type: "text", text: "two" }] }
+    });
+    const delivered = events.filter((e) => e.type === "user.message");
+    expect(delivered.map((e) => (e as { messageId: string }).messageId)).toEqual(["m2"]);
+    driver.dispose();
+  });
+
+  it("rejects injectMessage when there is no active turn", async () => {
+    const { driver } = makeDriver(client);
+    await expect(
+      driver.injectMessage("nope", { id: "m1", prompt: "hi", cwd: "C:\\proj", attachments: [] })
+    ).rejects.toThrow("no active turn to steer");
+    expect(client.requests.some((r) => r.method === "turn/steer")).toBe(false);
+    driver.dispose();
+  });
+
+  it("rejects injectMessage when turn/steer fails and does not emit user.message for it", async () => {
+    const rejecting = new SteerRejectingClient();
+    const { driver, events } = makeDriver(rejecting);
+    const handle = driver.startTurn({ sessionId: "local-1", prompt: "work", cwd: "C:\\proj" });
+    await settle();
+    await expect(
+      driver.injectMessage(handle.turnId, { id: "m1", prompt: "hi", cwd: "C:\\proj", attachments: [] })
+    ).rejects.toThrow("no active turn to steer");
+    for (const [id, text] of [["u0", "work"], ["u1", "hi"]] as const) {
+      rejecting.notify("item/started", {
+        threadId: "thr_1",
+        turnId: "turn_2",
+        item: { type: "userMessage", id, content: [{ type: "text", text }] }
+      });
+    }
+    expect(events.some((e) => e.type === "user.message")).toBe(false);
     driver.dispose();
   });
 
