@@ -1,3 +1,4 @@
+import type { QueuedMessage } from "./threads.js";
 import type { AutoFollowUpPause, SessionPrLink } from "./pullRequests.js";
 import type { SessionIssueLink, SessionRunLink } from "./github.js";
 import type { CommandInvocation } from "./commands.js";
@@ -136,6 +137,7 @@ export interface SessionMeta {
   autoFollowUp?: { paused?: AutoFollowUpPause; turns: number };
   /** Set on hidden child sessions dispatched by another session's agent. */
   subagent?: SubagentLink;
+  queuedMessages?: QueuedMessage[];
 }
 
 export type ResolvedCheckout = { kind: "worktree"; path: string } | { kind: "root" };

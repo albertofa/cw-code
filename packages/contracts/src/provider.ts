@@ -50,6 +50,14 @@ export interface TerminalLaunch {
   release(): void;
 }
 
+export interface InjectedMessage {
+  id: string;
+  prompt: string;
+  cwd: string;
+  attachments: string[];
+  skills?: string[];
+}
+
 export interface CliDriver {
   readonly kind: SessionMeta["driver"];
   listSessions(projectRoot: string, projectId?: string): Promise<SessionMeta[]>;
@@ -62,6 +70,10 @@ export interface CliDriver {
   liveTasks?(sessionId: string): TaskSnapshot[];
   startTurn(request: TurnRequest): TurnHandle;
   interrupt(turnId: string): void;
+  /** Delivers a message to the turn in flight. Rejects when no turn is active or the harness refused it. */
+  injectMessage?(turnId: string, message: InjectedMessage): Promise<void>;
+  /** Takes back an injected message the agent has not received. false when already delivered or not supported. */
+  retractMessage?(turnId: string, messageId: string): Promise<boolean>;
   /** Force-stop all work for a local session (kill the underlying process). Callers await the result before deleting session resources. */
   stopSession?(sessionId: string): void | Promise<void>;
   /** Re-establish the CLI connection for a session after a disconnect and refetch its state. */
