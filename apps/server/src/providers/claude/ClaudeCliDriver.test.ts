@@ -1818,3 +1818,94 @@ describe("ClaudeCliDriver compaction", () => {
     driver.dispose();
   });
 });
+
+describe("ClaudeCliDriver mid-turn messages", () => {
+  function replayLine(text: string): string {
+    return JSON.stringify({ type: "user", isReplay: true, session_id: "native-1", message: { role: "user", content: [{ type: "text", text }] } });
+  }
+
+  function modelUsage(inputTokens: number, outputTokens: number): Record<string, unknown> {
+    return {
+      "claude-sonnet-5": { inputTokens, outputTokens, cacheReadInputTokens: 0, cacheCreationInputTokens: 0, costUSD: 0.01, contextWindow: 200000 }
+    };
+  }
+
+  it("passes --replay-user-messages", () => {
+    expect(buildClaudeArgs({})).toContain("--replay-user-messages");
+  });
+
+  it("writes the injected message and emits user.message on its echo, ignoring the prompt echo", async () => {
+    const { driver, events, children } = makeDriver();
+    const handle = driver.startTurn({ sessionId: "s1", cwd: "C:\\proj", prompt: "run sleep" });
+    await settle();
+    children[0].stdout.write(`${replayLine("run sleep")}\n`);
+    await driver.injectMessage(handle.turnId, { id: "m1", prompt: "also say hi", cwd: "C:\\proj", attachments: [] });
+    const lines = children[0].written.split("\n").filter(Boolean);
+    expect(JSON.parse(lines[1])).toEqual({ type: "user", message: { role: "user", content: "also say hi" } });
+    children[0].stdout.write(`${JSON.stringify({ type: "user", message: { content: [{ type: "tool_result", tool_use_id: "call-1", content: "ok" }] } })}\n`);
+    children[0].stdout.write(`${replayLine("also say hi")}\n`);
+    children[0].stdout.write(`${resultLine()}\n`);
+    await settle();
+    const userMessages = events.filter((event) => event.type === "user.message");
+    expect(userMessages).toEqual([expect.objectContaining({ turnId: handle.turnId, messageId: "m1", text: "also say hi" })]);
+    expect(turnDones(events)).toHaveLength(1);
+    driver.dispose();
+  });
+
+  it("keeps the turn open across a result while an injected message is pending and sums usage", async () => {
+    const { driver, events, children } = makeDriver();
+    const handle = driver.startTurn({ sessionId: "s1", cwd: "C:\\proj", prompt: "go" });
+    await settle();
+    await driver.injectMessage(handle.turnId, { id: "m1", prompt: "next", cwd: "C:\\proj", attachments: [] });
+    children[0].stdout.write(`${replayLine("go")}\n`);
+    children[0].stdout.write(`${resultLine({ result: "first", modelUsage: modelUsage(100, 20) })}\n`);
+    await settle();
+    expect(turnDones(events)).toHaveLength(0);
+    children[0].stdout.write(`${JSON.stringify({ type: "system", subtype: "init", session_id: "native-1" })}\n`);
+    children[0].stdout.write(`${replayLine("next")}\n`);
+    children[0].stdout.write(`${resultLine({ result: "second", modelUsage: modelUsage(300, 50) })}\n`);
+    await settle();
+    const dones = turnDones(events);
+    expect(dones).toHaveLength(1);
+    expect(dones[0]).toMatchObject({ turnId: handle.turnId, resultText: "second", numTurns: 2 });
+    expect(dones[0].usage.reduce((sum, usage) => sum + usage.outputTokens, 0)).toBe(50);
+    expect(dones[0].usage.reduce((sum, usage) => sum + usage.inputTokens, 0)).toBe(300);
+    expect(events.find((event) => event.type === "user.message")).toMatchObject({ turnId: handle.turnId, messageId: "m1" });
+    driver.dispose();
+  });
+
+  it("terminates the process after an interrupt with an undelivered injected message", async () => {
+    const { driver, children, killed } = makeDriver();
+    const handle = driver.startTurn({ sessionId: "s1", cwd: "C:\\proj", prompt: "go" });
+    await settle();
+    await driver.injectMessage(handle.turnId, { id: "m1", prompt: "later", cwd: "C:\\proj", attachments: [] });
+    driver.interrupt(handle.turnId);
+    children[0].stdout.write(`${resultLine({ subtype: "error_during_execution", is_error: true })}\n`);
+    await settle();
+    expect(killed).toHaveLength(1);
+    expect(driver.activity().ownedProcesses).toBe(0);
+    driver.dispose();
+  });
+
+  it("keeps the process after an interrupt with no pending injection", async () => {
+    const { driver, children, killed } = makeDriver();
+    const handle = driver.startTurn({ sessionId: "s1", cwd: "C:\\proj", prompt: "go" });
+    await settle();
+    driver.interrupt(handle.turnId);
+    children[0].stdout.write(`${resultLine({ subtype: "error_during_execution", is_error: true })}\n`);
+    await settle();
+    expect(killed).toHaveLength(0);
+    driver.dispose();
+  });
+
+  it("rejects injection without an active turn", async () => {
+    const { driver, children } = makeDriver();
+    const handle = driver.startTurn({ sessionId: "s1", cwd: "C:\\proj", prompt: "go" });
+    await settle();
+    children[0].stdout.write(`${resultLine()}\n`);
+    await settle();
+    await expect(driver.injectMessage(handle.turnId, { id: "m1", prompt: "x", cwd: "C:\\proj", attachments: [] })).rejects.toThrow();
+    await expect(driver.injectMessage("unknown", { id: "m2", prompt: "x", cwd: "C:\\proj", attachments: [] })).rejects.toThrow();
+    driver.dispose();
+  });
+});

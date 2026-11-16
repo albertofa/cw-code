@@ -812,3 +812,24 @@ describe("readSidecarAgent", () => {
     expect(readSidecarAgent(dir, "not-an-id")).toBeUndefined();
   });
 });
+
+describe("queued_command history", () => {
+  it("maps a mid-turn queued user message to a user history message", () => {
+    const messages = parseClaudeTranscriptLine({
+      type: "attachment",
+      uuid: "att-1",
+      timestamp: "2026-11-15T10:00:00.000Z",
+      attachment: { type: "queued_command", prompt: [{ type: "text", text: "also say hi" }], commandMode: "prompt" }
+    } as Parameters<typeof parseClaudeTranscriptLine>[0]);
+    expect(messages).toEqual([expect.objectContaining({ id: "att-1", role: "user", text: "also say hi" })]);
+  });
+
+  it("leaves task-notification queued commands out of user messages", () => {
+    const messages = parseClaudeTranscriptLine({
+      type: "attachment",
+      uuid: "att-2",
+      attachment: { type: "queued_command", commandMode: "task-notification", prompt: "<task-notification>x</task-notification>" }
+    } as Parameters<typeof parseClaudeTranscriptLine>[0]);
+    expect(messages).toEqual([]);
+  });
+});

@@ -12,6 +12,7 @@ import type {
   DriverActivity,
   EffortLevel,
   HistoryMessage,
+  InjectedMessage,
   NativeSession,
   PermissionMode,
   PermissionOption,
@@ -30,7 +31,7 @@ import { claudeChildEnv } from "./claudeEnv.js";
 import { spawnCli } from "../../cli/spawnCli.js";
 import { TaskTable, type TaskObservation } from "../../tasks/TaskTable.js";
 import { SYNTHETIC_FULL_ACCESS_DESCRIPTION } from "../permissions.js";
-import { attributeClaudeSubagentEvent, buildClaudeAllowRule, claudeAllowResponse, claudeApprovalRequest, claudeQuestionRequest, claudeDenyResponse, claudeControlResponse, parseClaudeCompactBoundary, parseClaudeControlRequest, parseClaudeSubagentHandback, parseClaudeSystemInit, parseClaudeTaskNotificationLine, parseClaudeTaskSystemLine, parseClaudeToolUseResult, parseStreamLine, type ClaudeControlRequest, type ClaudeTaskNotificationLine, type ClaudeTaskSystemInfo, type TurnDoneInfo } from "./claudeStreamParser.js";
+import { attributeClaudeSubagentEvent, buildClaudeAllowRule, claudeAllowResponse, claudeApprovalRequest, claudeQuestionRequest, claudeDenyResponse, claudeControlResponse, parseClaudeCompactBoundary, parseClaudeControlRequest, parseClaudeReplayUserText, parseClaudeSubagentHandback, parseClaudeSystemInit, parseClaudeTaskNotificationLine, parseClaudeTaskSystemLine, parseClaudeToolUseResult, parseStreamLine, type ClaudeControlRequest, type ClaudeTaskNotificationLine, type ClaudeTaskSystemInfo, type TurnDoneInfo } from "./claudeStreamParser.js";
 import { claudeCallObservation, claudeHandbackObservation, claudeNotificationObservation, claudeSystemTaskObservation, claudeToolResultObservation, findClaudeTaskNotification } from "./claudeTasks.js";
 import {
   CLAUDE_COMMANDS_PROBE_ARGS,
@@ -81,7 +82,8 @@ export function buildClaudeArgs(request: Pick<TurnRequest, "resumeCursor" | "mod
     "--output-format", "stream-json",
     "--verbose",
     "--input-format", "stream-json",
-    "--permission-prompt-tool", "stdio"
+    "--permission-prompt-tool", "stdio",
+    "--replay-user-messages"
   ];
   if (request.resumeCursor) args.push("--resume", request.resumeCursor);
   if (request.model) args.push("--model", request.model);
@@ -173,6 +175,24 @@ interface ClaudeProcessState {
   apiErrorMessage?: string;
   lastWindowTokens?: number;
   stale?: boolean;
+  promptEcho?: string;
+  injected: PendingInjection[];
+  heldResult?: TurnDoneInfo;
+  terminateAfterInterrupt: boolean;
+}
+
+interface PendingInjection {
+  id: string;
+  text: string;
+}
+
+export function combineClaudeTurnDone(held: TurnDoneInfo, next: TurnDoneInfo): TurnDoneInfo {
+  return {
+    ...next,
+    resultText: next.resultText || held.resultText,
+    usage: [...held.usage, ...next.usage],
+    numTurns: held.numTurns + next.numTurns
+  };
 }
 
 export class ClaudeCliDriver implements CliDriver {
@@ -228,10 +248,40 @@ export class ClaudeCliDriver implements CliDriver {
     stdin.write(`${line}\n`);
   }
 
-  private writeUserMessage(state: ClaudeProcessState, request: TurnRequest): void {
+  private writeUserMessage(state: ClaudeProcessState, request: Pick<TurnRequest, "cwd" | "prompt" | "command" | "skills" | "attachments">): string {
+    const text = claudePromptText(request);
     state.child.stdin.write(
-      `${JSON.stringify({ type: "user", message: { role: "user", content: buildClaudeUserContent(request.cwd, claudePromptText(request), request.attachments) } })}\n`
+      `${JSON.stringify({ type: "user", message: { role: "user", content: buildClaudeUserContent(request.cwd, text, request.attachments) } })}\n`
     );
+    return text;
+  }
+
+  async injectMessage(turnId: string, message: InjectedMessage): Promise<void> {
+    const sessionId = this.turnToSession.get(turnId);
+    const state = sessionId ? this.processes.get(sessionId) : undefined;
+    if (!state || state.activeTurnId !== turnId || state.completedTurn || this.interruptedTurns.has(turnId) || !this.isProcessAlive(state)) {
+      throw new Error("Claude has no active turn to receive this message");
+    }
+    this.writeUserMessage(state, message);
+    state.injected.push({ id: message.id, text: message.prompt });
+    traceHarnessCall({
+      harness: "claude",
+      operation: "claude.injectMessage",
+      sessionId: state.sessionId,
+      turnId,
+      ok: true,
+      extra: { messageId: message.id, pending: state.injected.length }
+    });
+  }
+
+  private handleReplay(state: ClaudeProcessState, text: string): void {
+    if (state.promptEcho !== undefined && text === state.promptEcho) {
+      state.promptEcho = undefined;
+      return;
+    }
+    const injection = state.injected.shift();
+    if (!injection) return;
+    this.emit({ type: "user.message", turnId: state.activeTurnId, messageId: injection.id, text: injection.text, timestamp: Date.now() });
   }
 
   private isProcessAlive(state: ClaudeProcessState): boolean {
@@ -543,6 +593,11 @@ export class ClaudeCliDriver implements CliDriver {
       this.handleTaskNotificationLine(state, notificationLine);
       return;
     }
+    const replay = parseClaudeReplayUserText(line);
+    if (replay !== null) {
+      this.handleReplay(state, replay);
+      return;
+    }
     const events = parseStreamLine(
       line,
       state.activeTurnId,
@@ -621,6 +676,17 @@ export class ClaudeCliDriver implements CliDriver {
     }
     const turnId = state.activeTurnId;
     const interrupted = this.interruptedTurns.delete(turnId);
+    if (!interrupted && !state.completedTurn && state.injected.length > 0) {
+      state.heldResult = state.heldResult ? combineClaudeTurnDone(state.heldResult, info) : info;
+      state.modelUsage = info.modelUsage;
+      state.resumeCursor = info.resumeCursor;
+      if (info.windowTokens !== undefined) state.lastWindowTokens = info.windowTokens;
+      return;
+    }
+    if (state.heldResult) {
+      info = combineClaudeTurnDone(state.heldResult, info);
+      state.heldResult = undefined;
+    }
     const isTurnForeground = (task: TaskSnapshot) => !task.background && state.topLevelAgentCalls.has(task.id);
     if (interrupted) this.closeTasks(state, "interrupted", "interrupt", isTurnForeground);
     else this.closeTasks(state, "unknown", "no-record", isTurnForeground);
@@ -629,6 +695,10 @@ export class ClaudeCliDriver implements CliDriver {
       state.modelUsage = info.modelUsage;
       if (interrupted) {
         state.postCompletionOutputPending = false;
+        if (state.terminateAfterInterrupt) {
+          this.terminate(state);
+          return;
+        }
         this.armIdleTimer(state);
         return;
       }
@@ -821,9 +891,12 @@ export class ClaudeCliDriver implements CliDriver {
       existing.permissionMode = request.permissionMode ?? "auto";
       existing.compactedPostTokens = undefined;
       existing.apiErrorMessage = undefined;
+      existing.injected = [];
+      existing.heldResult = undefined;
+      existing.terminateAfterInterrupt = false;
       this.clearIdleTimer(existing);
       this.turnToSession.set(turnId, request.sessionId);
-      this.writeUserMessage(existing, request);
+      existing.promptEcho = this.writeUserMessage(existing, request);
       traceHarnessCall({
         harness: "claude",
         operation: "claude.startTurn",
@@ -877,7 +950,9 @@ export class ClaudeCliDriver implements CliDriver {
       skillCalls: new Set(),
       skillBodiesPending: [],
       permissionMode: request.permissionMode ?? "auto",
-      modelUsage: {}
+      modelUsage: {},
+      injected: [],
+      terminateAfterInterrupt: false
     };
     this.processes.set(request.sessionId, state);
     this.turnToSession.set(turnId, request.sessionId);
@@ -920,7 +995,7 @@ export class ClaudeCliDriver implements CliDriver {
       ok: true,
       extra: { reused: false }
     });
-    this.writeUserMessage(state, request);
+    state.promptEcho = this.writeUserMessage(state, request);
 
     return { turnId, events: (async function* () {})() };
   }
@@ -935,6 +1010,7 @@ export class ClaudeCliDriver implements CliDriver {
       return;
     }
     this.interruptedTurns.add(turnId);
+    if (state.injected.length > 0) state.terminateAfterInterrupt = true;
     const line = JSON.stringify({
       type: "control_request",
       request_id: randomUUID(),

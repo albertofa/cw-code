@@ -233,6 +233,7 @@ interface AssistantMsg {
 
 interface UserMsg {
   type: "user";
+  isReplay?: boolean;
   message?: {
     content?: unknown;
   };
@@ -264,6 +265,23 @@ export function parseClaudeTaskNotificationLine(line: string): ClaudeTaskNotific
   if (msg.origin?.kind !== "task-notification" && !text.trimStart().startsWith(TASK_NOTIFICATION_OPEN)) return null;
   const runId = str(msg.origin?.runId);
   return { text, ...(runId ? { runId } : {}) };
+}
+
+export function parseClaudeReplayUserText(line: string): string | null {
+  if (!line.includes('"isReplay"')) return null;
+  let msg: { type?: unknown; isReplay?: unknown; parent_tool_use_id?: unknown; message?: { content?: unknown } };
+  try {
+    msg = JSON.parse(line) as typeof msg;
+  } catch {
+    return null;
+  }
+  if (msg.type !== "user" || msg.isReplay !== true || msg.parent_tool_use_id) return null;
+  const content = msg.message?.content;
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  return content
+    .flatMap((block: { type?: unknown; text?: unknown }) => (block?.type === "text" && typeof block.text === "string" ? [block.text] : []))
+    .join("\n\n");
 }
 
 interface ResultMsg {
@@ -704,6 +722,7 @@ export function parseStreamLine(
   }
 
   if (msg.type === "user") {
+    if ((msg as UserMsg).isReplay === true) return [];
     const raw = (msg as UserMsg).message?.content;
     if (typeof raw === "string") return [];
     const out: ThreadEvent[] = [];
