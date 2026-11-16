@@ -14,6 +14,20 @@ CLIs as a fallback for anything the headless chat cannot render.
 Core behaviors:
 
 - One window multiplexes unlimited parallel sessions; one active turn per session.
+- Mid-turn messages: `turns.send` on a busy session queues the message (`SessionMeta.queuedMessages`,
+  published as `queuedMessages` on `session/<id>`) and injects it into the running turn through the
+  optional `CliDriver.injectMessage`; the driver emits `user.message` when the agent receives it,
+  which removes it from the queue and places it in the thread. Claude writes a stream-json user line
+  (delivery seen through `--replay-user-messages` echoes, matched exactly by prefix; a message the
+  CLI runs as its own run stays in the same cw turn), Codex uses `turn/steer` (`clientId` on the
+  `userMessage` item), opencode v2 posts to the session inbox (`session.inbox.delivered`; it alone
+  supports `retractMessage`). Messages still `sending` at a successful `turn.done` become one new
+  turn before auto follow-up and subagent wakes; Stop, a turn error (including `turn.done` with
+  `isError`) and restart turn them `held`, and they go out only through `turns.flushQueue`. A Stop
+  with an undelivered Claude injection restarts the Claude process (background tasks included) so
+  the CLI cannot run it on its own. A restart can show a message Claude or Codex already received
+  as `held`; sending it again duplicates it. Agents cannot call `turns.send`/`unqueue`/`flushQueue`,
+  and subagent sessions refuse them.
 - The CLI is always the source of truth. The app stores only its own metadata
   (projects, titles, resume cursors). The app manages only sessions it created or the user
   explicitly imported through the session importer; it never adopts CLI-native sessions on
