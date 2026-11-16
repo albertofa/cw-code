@@ -38,6 +38,17 @@ describe("groupTurns", () => {
     expect(turns.map((t) => t.turnId)).toEqual(["m0", "t1"]);
   });
 
+  it("keeps a mid-turn user message inside the running turn", () => {
+    const turns = groupTurns([
+      msg({ id: "u", role: "user", turnId: "t1" }),
+      msg({ id: "a1", role: "assistant", turnId: "t1" }),
+      msg({ id: "t1-q-m1", role: "user", turnId: "t1" }),
+      msg({ id: "a2", role: "assistant", turnId: "t1" }),
+      msg({ id: "next", role: "user", turnId: "t2" })
+    ]);
+    expect(turns.map((t) => t.messages.map((m) => m.id))).toEqual([["u", "a1", "t1-q-m1", "a2"], ["next"]]);
+  });
+
   it("returns no slices for no messages", () => {
     expect(groupTurns([])).toEqual([]);
   });

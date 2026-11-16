@@ -62,6 +62,12 @@ export function Composer({ sessionId, driver, top }: { sessionId: string; driver
       void useAppStore.getState().setComposerPrefs(sessionId, p);
     },
     send: (body, attachments, opts) => useAppStore.getState().sendPromptTo(sessionId, body, attachments, opts),
+    sendWhileBusy: async (body, attachments, skills) => {
+      await window.cw.sendMessage(sessionId, body, {
+        attachments,
+        ...(skills.length > 0 ? { skills } : {})
+      });
+    },
     ...(session?.status === "resolved"
       ? { restore: { confirm: restoreConfirm(session), run: () => useAppStore.getState().restoreSession(sessionId) } }
       : {}),

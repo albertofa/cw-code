@@ -27,6 +27,7 @@ import { QuestionDock } from "./QuestionDock.js";
 import { TodoDock } from "./TodoDock.js";
 import { BranchMismatchDock } from "./BranchMismatchNotice.js";
 import { PrUpdateDock } from "./PrUpdateDock.js";
+import { QueuedMessages } from "./QueuedMessages.js";
 import { WorkingDock } from "./WorkingDock.js";
 import { PrSessionChip } from "./PrSessionPanel.js";
 import { useMarkTurnSeen } from "./useTurnSeen.js";
@@ -695,6 +696,7 @@ export function ThreadView({ hidden = false }: { hidden?: boolean }) {
               <QuestionDock sessionId={session.id} />
               {!threadHidden && <SubagentRequestDocks sessionId={session.id} />}
               <WorkingDock key={`working-dock:${session.id}`} sessionId={session.id} sessionDriver={session.driver} basePath={basePath} />
+              <QueuedMessages sessionId={session.id} />
             </>
           }
         />

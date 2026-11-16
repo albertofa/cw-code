@@ -21,11 +21,18 @@ export interface TurnPieces {
   pinned?: ChatMessage[];
 }
 
+const MID_TURN_USER_ID = /-q-/;
+
+function isMidTurnUser(m: ChatMessage): boolean {
+  return m.role === "user" && MID_TURN_USER_ID.test(m.id);
+}
+
 export function groupTurns(messages: ChatMessage[]): TurnSlice[] {
   const out: TurnSlice[] = [];
   let anchor: TurnSlice | null = null;
   for (const m of messages) {
-    if (m.role === "user") {
+    const midTurn = isMidTurnUser(m) && out[out.length - 1]?.turnId === m.turnId;
+    if (m.role === "user" && !midTurn) {
       anchor = { turnId: m.turnId, messages: [m] };
       out.push(anchor);
       continue;

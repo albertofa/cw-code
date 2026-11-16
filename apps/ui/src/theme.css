@@ -3359,7 +3359,7 @@ body.session-dragging * {
   min-width: 0;
 }
 
-.composer-top:has(> :is(.todo-dock, .pr-dock, .approval-dock, .question-dock, .working-dock)) {
+.composer-top:has(> :is(.todo-dock, .pr-dock, .approval-dock, .question-dock, .working-dock, .queued-messages)) {
   padding-bottom: 6px;
 }
 
@@ -6284,6 +6284,80 @@ select.field option {
   clip-path: inset(50%);
   white-space: nowrap;
   border: 0;
+}
+
+.queued-messages {
+  box-sizing: border-box;
+  width: 100%;
+  margin: 0;
+  padding: 0 2px;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  animation: cw-reveal var(--dur-fast) var(--ease-out);
+}
+
+.queued-message {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+  height: 30px;
+  padding: 0 8px;
+  box-sizing: border-box;
+  border-radius: var(--r-md);
+  color: var(--muted);
+  font-size: var(--t-desc);
+  white-space: nowrap;
+}
+
+.queued-message-state {
+  flex: none;
+  color: var(--dim);
+  font-weight: 600;
+}
+
+.queued-message.held .queued-message-state {
+  color: var(--warning);
+}
+
+.queued-message-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.queued-message-files {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 3px;
+  color: var(--faint);
+  font-size: var(--t-2xs);
+}
+
+.queued-message-action {
+  flex: none;
+  padding: 2px 8px;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--dim);
+  font-family: var(--sans);
+  font-size: var(--t-2xs);
+  cursor: pointer;
+}
+
+.queued-message-action:hover:not(:disabled) {
+  background: var(--hover);
+  color: var(--text);
+}
+
+.queued-message-action:disabled {
+  opacity: calc(1 - 0.6 * var(--fade-strength));
+  cursor: default;
 }
 
 .approval-panel {
