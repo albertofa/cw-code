@@ -226,12 +226,13 @@ function wireServiceEvents(
 ): void {
   sessions.setEmitter((sessionId, event) => {
     if (event.type === "task.updated") assessmentChanged();
+    if (event.type === "user.message") turns.messageEvent(sessionId, event);
     try {
       threads.onDriverEvent(sessionId, event);
     } catch (error) {
       console.warn(`[threads] ${event.type} for session ${sessionId} failed: ${error instanceof Error ? error.message : String(error)}`);
     }
-    if (event.type === "user.message" || event.type === "turn.interrupted") turns.messageEvent(sessionId, event);
+    if (event.type === "turn.interrupted") turns.messageEvent(sessionId, event);
     if (event.type === "turn.interrupted") autoFollowUp.turnInterrupted(sessionId, event.reason, event.turnId);
     sourceControl.onThreadEvent(sessionId, event);
   });
@@ -395,10 +396,13 @@ export function createServices(stores: { sessionStore: SessionStore; settingsSto
     sessions: () => sessions.listAllSessions(),
     runtime: (sessionId) => threads.runtime(sessionId),
     startTurn: async (sessionId, prompt) => {
-      const pending = turns.sendPending(sessionId);
+      const pending = turns.sendPending(sessionId, { ignoreWait: true });
       if (pending) {
-        await pending;
-        throw new SessionBusyError("queued messages sent first");
+        const sent = await pending.then(
+          () => true,
+          () => false
+        );
+        if (sent) throw new SessionBusyError("queued messages sent first");
       }
       return turns.start(sessionId, prompt, { auto: true, origin: "subagent-wake" });
     },

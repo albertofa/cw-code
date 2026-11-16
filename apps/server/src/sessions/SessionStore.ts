@@ -170,9 +170,11 @@ function resetRuntimeStatuses(sessions: SessionMeta[]): boolean {
     }
     if (session.queuedMessages !== undefined) {
       const held = heldQueuedMessages(session);
-      if (held.length === 0) delete session.queuedMessages;
-      else session.queuedMessages = held;
-      changed = true;
+      if (JSON.stringify(held) !== JSON.stringify(session.queuedMessages)) {
+        if (held.length === 0) delete session.queuedMessages;
+        else session.queuedMessages = held;
+        changed = true;
+      }
     }
     if (session.status === "idle" && session.idleSince === undefined && Number.isFinite(session.updatedAt)) {
       session.idleSince = session.updatedAt;

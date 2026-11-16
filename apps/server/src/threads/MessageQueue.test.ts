@@ -13,6 +13,7 @@ import { TurnService, type TurnServiceDeps } from "./TurnService.js";
 type Sessions = TurnServiceDeps["sessions"];
 
 function setup(options: { retractable?: boolean; injectFails?: boolean } = {}) {
+  let waitSince: number | null = null;
   const dbPath = join(mkdtempSync(join(tmpdir(), "cw-queue-")), "test.db");
   const store = new SessionStore(dbPath);
   const project = store.addProject("C:/proj");
@@ -39,12 +40,17 @@ function setup(options: { retractable?: boolean; injectFails?: boolean } = {}) {
       threads.onDriverEvent(id, { type: "turn.started", turnId, sessionId: id, startedAt: 1, prompt });
       return turnId;
     },
-    interrupt: () => {},
+    interrupt: (turnId) => {
+      const index = active.findIndex((turn) => turn.turnId === turnId);
+      if (index >= 0) active.splice(index, 1);
+      threads.onDriverEvent(sessionId, { type: "turn.interrupted", turnId, sessionId });
+      turns.messageEvent(sessionId, { type: "turn.interrupted", turnId, sessionId });
+    },
     listActiveTurns: () => [...active],
     listSubagents: () => [],
     endSubagentWait: () => false,
     findSession: (id) => store.getSession(id),
-    subagentWaitSince: () => null,
+    subagentWaitSince: () => waitSince,
     injectMessage: async (_id, message) => {
       if (options.injectFails) throw new Error("no active turn to steer");
       injected.push(message.id);
@@ -60,12 +66,16 @@ function setup(options: { retractable?: boolean; injectFails?: boolean } = {}) {
       const index = active.findIndex((turn) => turn.turnId === event.turnId);
       if (index >= 0) active.splice(index, 1);
     }
+    if (event.type === "user.message") turns.messageEvent(sessionId, event);
     threads.onDriverEvent(sessionId, event);
-    if (event.type === "user.message" || event.type === "turn.interrupted") turns.messageEvent(sessionId, event);
+    if (event.type === "turn.interrupted") turns.messageEvent(sessionId, event);
   };
-  const done = (turnId: string) =>
-    emit({ type: "turn.done", turnId, sessionId, resumeCursor: "cursor", resultText: "", usage: [], numTurns: 1, isError: false, backgroundTasks: 0 });
-  return { dbPath, store, sessionId, turns, queue, prompts, injected, emit, done };
+  const done = (turnId: string, isError = false) =>
+    emit({ type: "turn.done", turnId, sessionId, resumeCursor: "cursor", resultText: "", usage: [], numTurns: 1, isError, backgroundTasks: 0 });
+  const setWait = (since: number | null) => {
+    waitSince = since;
+  };
+  return { dbPath, store, sessionId, turns, queue, prompts, injected, emit, done, setWait };
 }
 
 describe("MessageQueue", () => {
@@ -138,5 +148,51 @@ describe("MessageQueue", () => {
     const items = orderedItems(state);
     expect(items.map((item) => item.role)).toEqual(["user", "assistant", "user", "assistant"]);
     expect(items[2]).toMatchObject({ id: "t1-q-m1", text: "also this", turnId: "t1" });
+  });
+
+  test("a message sent while idle starts a turn and leaves held messages alone", async () => {
+    const ctx = setup({ retractable: true });
+    await ctx.turns.send(ctx.sessionId, "first");
+    await ctx.turns.send(ctx.sessionId, "pending");
+    ctx.turns.stop(ctx.sessionId);
+    expect(ctx.queue.list(ctx.sessionId)).toMatchObject([{ text: "pending", state: "held" }]);
+
+    const result = await ctx.turns.send(ctx.sessionId, "new");
+
+    expect(result.disposition).toBe("started");
+    expect(ctx.prompts).toEqual(["first", "new"]);
+    expect(ctx.queue.list(ctx.sessionId)).toMatchObject([{ text: "pending", state: "held" }]);
+  });
+
+  test("turn.done with isError holds what is left", async () => {
+    const ctx = setup({ injectFails: true });
+    await ctx.turns.send(ctx.sessionId, "first");
+    await ctx.turns.send(ctx.sessionId, "later");
+
+    ctx.done("turn-1", true);
+    await Promise.resolve();
+
+    expect(ctx.prompts).toEqual(["first"]);
+    expect(ctx.queue.list(ctx.sessionId)).toMatchObject([{ text: "later", state: "held", removable: true }]);
+  });
+
+  test("a subagent wait keeps messages queued and sends them before the wake turn", async () => {
+    const ctx = setup({ injectFails: true });
+    await ctx.turns.send(ctx.sessionId, "first");
+    await ctx.turns.send(ctx.sessionId, "user text");
+    ctx.setWait(1);
+    ctx.done("turn-1");
+    await Promise.resolve();
+    expect(ctx.prompts).toEqual(["first"]);
+    expect(ctx.turns.sendPending(ctx.sessionId)).toBeNull();
+
+    const pending = ctx.turns.sendPending(ctx.sessionId, { ignoreWait: true });
+    ctx.setWait(null);
+    expect(await pending).toBe("turn-2");
+    ctx.done("turn-2");
+    await ctx.turns.start(ctx.sessionId, "wake", { origin: "subagent-wake" });
+
+    expect(ctx.prompts).toEqual(["first", "user text", "wake"]);
+    expect(ctx.queue.list(ctx.sessionId)).toEqual([]);
   });
 });

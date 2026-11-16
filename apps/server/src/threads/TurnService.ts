@@ -61,6 +61,7 @@ export class TurnService {
   private readonly startedListeners = new Set<TurnStartedListener>();
   private readonly stoppedListeners = new Set<(sessionId: string) => void>();
   private readonly injected = new Set<string>();
+  private readonly lastTurns = new Map<string, string>();
 
   constructor(private readonly deps: TurnServiceDeps) {}
 
@@ -82,7 +83,9 @@ export class TurnService {
       if (this.starting.get(sessionId) === starting) this.starting.delete(sessionId);
     }
     this.deps.threads.commitTurn(sessionId, begun.pendingId, turnId);
+    this.lastTurns.set(sessionId, turnId);
     notifyAll(this.startedListeners, "[turns] turn started", sessionId, auto, { turnId, ...(origin ? { origin } : {}) });
+    if (!starting.stopRequested) this.injectPending(sessionId);
     if (starting.stopRequested) {
       this.deps.sessions.interrupt(turnId);
       this.notifyStopped(sessionId);
@@ -97,9 +100,14 @@ export class TurnService {
     if (session.status === "resolved" || session.status === "archived") {
       throw new Error(`session is ${session.status}; reopen it before sending a message`);
     }
-    if (!this.busy(sessionId) && this.deps.queue.list(sessionId).length === 0) {
-      const turnId = await this.start(sessionId, prompt, { attachments: input.attachments, skills: input.skills });
-      return { disposition: "started", turnId };
+    if (!this.busy(sessionId)) {
+      if (!this.hasSending(sessionId)) {
+        const turnId = await this.start(sessionId, prompt, { attachments: input.attachments, skills: input.skills });
+        return { disposition: "started", turnId };
+      }
+      this.deps.queue.add(sessionId, { text: prompt, attachments: input.attachments, skills: input.skills });
+      const pending = this.sendPending(sessionId);
+      if (pending) return { disposition: "started", turnId: await pending };
     }
     const message = this.deps.queue.add(sessionId, { text: prompt, attachments: input.attachments, skills: input.skills });
     await this.inject(sessionId, message);
@@ -125,8 +133,8 @@ export class TurnService {
     return this.startQueued(sessionId, messages);
   }
 
-  sendPending(sessionId: string): Promise<string> | null {
-    if (this.busy(sessionId)) return null;
+  sendPending(sessionId: string, options: { ignoreWait?: boolean } = {}): Promise<string> | null {
+    if (this.busy(sessionId, options.ignoreWait)) return null;
     const sending = this.deps.queue.list(sessionId).filter((message) => message.state === "sending");
     if (sending.length === 0) return null;
     const started = this.startQueued(sessionId, sending);
@@ -137,7 +145,8 @@ export class TurnService {
   }
 
   turnSettled(sessionId: string, event: SettledTurnEvent): void {
-    if (event.type === "turn.error") {
+    if (this.isStale(sessionId, event.turnId)) return;
+    if (event.type === "turn.error" || event.isError) {
       this.holdQueue(sessionId);
       return;
     }
@@ -148,7 +157,7 @@ export class TurnService {
     if (event.type === "user.message") {
       this.injected.delete(event.messageId);
       this.deps.queue.remove(sessionId, [event.messageId]);
-    } else if (event.type === "turn.interrupted") {
+    } else if (event.type === "turn.interrupted" && !this.isStale(sessionId, event.turnId)) {
       this.holdQueue(sessionId);
     }
   }
@@ -181,6 +190,21 @@ export class TurnService {
     });
   }
 
+  private hasSending(sessionId: string): boolean {
+    return this.deps.queue.list(sessionId).some((message) => message.state === "sending");
+  }
+
+  private isStale(sessionId: string, turnId: string): boolean {
+    const last = this.lastTurns.get(sessionId);
+    return last !== undefined && last !== turnId;
+  }
+
+  private injectPending(sessionId: string): void {
+    for (const message of this.deps.queue.list(sessionId)) {
+      if (message.state === "sending" && !this.injected.has(message.id)) void this.inject(sessionId, message);
+    }
+  }
+
   private async inject(sessionId: string, message: QueuedMessage): Promise<void> {
     if (this.starting.has(sessionId) || this.deps.sessions.subagentWaitSince(sessionId) !== null) return;
     if (!this.deps.sessions.listActiveTurns().some((turn) => turn.sessionId === sessionId)) return;
@@ -196,8 +220,9 @@ export class TurnService {
     }
   }
 
-  private busy(sessionId: string): boolean {
-    if (this.starting.has(sessionId) || this.deps.sessions.subagentWaitSince(sessionId) !== null) return true;
+  private busy(sessionId: string, ignoreWait = false): boolean {
+    if (this.starting.has(sessionId)) return true;
+    if (!ignoreWait && this.deps.sessions.subagentWaitSince(sessionId) !== null) return true;
     if (this.deps.sessions.listActiveTurns().some((turn) => turn.sessionId === sessionId)) return true;
     return this.deps.threads.runtime(sessionId).busy;
   }
