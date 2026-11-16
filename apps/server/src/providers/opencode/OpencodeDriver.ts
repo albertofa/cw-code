@@ -1,7 +1,7 @@
 ﻿import { randomBytes, randomUUID } from "node:crypto";
 import { rm } from "node:fs/promises";
 import { homedir } from "node:os";
-import type { AccountUsageState, AppSettings, ApprovalDecision, CliDriver, CommandOption, ContextUsage, DriverActivity, HistoryMessage, ModelOption, NativeSession, PermissionMode, PermissionOption, QuestionInfo, QuestionRequest, RetryConnectionRequest, RetryConnectionResult, SessionMeta, TaskEndReason, TaskSnapshot, TerminalLaunch, ThreadEvent, TurnHandle, TurnModelUsage, TurnRequest } from "@cw-code/contracts";
+import type { AccountUsageState, AppSettings, ApprovalDecision, CliDriver, CommandOption, ContextUsage, DriverActivity, HistoryMessage, InjectedMessage, ModelOption, NativeSession, PermissionMode, PermissionOption, QuestionInfo, QuestionRequest, RetryConnectionRequest, RetryConnectionResult, SessionMeta, TaskEndReason, TaskSnapshot, TerminalLaunch, ThreadEvent, TurnHandle, TurnModelUsage, TurnRequest } from "@cw-code/contracts";
 import { isAbsolute, join } from "node:path";
 import { harnessDir, opencodeConfigDir, opencodePluginDir } from "../../paths/appPaths.js";
 import { tokensEqual } from "../../transport/ownerToken.js";
@@ -83,6 +83,11 @@ interface TurnInput {
   admitted?: string | "any";
 }
 
+interface InjectedEntry {
+  messageId: string;
+  text: string;
+}
+
 function protocolOf(version: OpencodeProtocolVersion | undefined): OpencodeProtocol {
   return version === "v2" ? opencodeV2Protocol : opencodeV1Protocol;
 }
@@ -130,6 +135,9 @@ export class OpencodeDriver implements CliDriver {
       compactionTrigger?: "manual" | "auto";
       holding?: boolean;
       input: TurnInput;
+      injected: Map<string, InjectedEntry>;
+      injecting: number;
+      deliveredWhileInjecting: Set<string>;
       agent: boolean;
     }
   >();
@@ -485,6 +493,9 @@ export class OpencodeDriver implements CliDriver {
       pollWarned: false,
       startedPort: params.port,
       input: { delivered: params.inputDelivered === true, seen: null },
+      injected: new Map(),
+      injecting: 0,
+      deliveredWhileInjecting: new Set(),
       agent: params.agent
     });
     this.watchInfo.set(params.turnId, {
@@ -872,6 +883,7 @@ export class OpencodeDriver implements CliDriver {
         return;
       case "input.delivered":
         if (!known || event.sessionID !== known) return;
+        if (this.noteInjectedDelivered(turnId, event.inboxID)) return;
         this.noteInputDelivered(turnId, event.inboxID);
         return;
       case "question.resolved": {
@@ -1013,6 +1025,78 @@ export class OpencodeDriver implements CliDriver {
     if (!input || input.delivered || !input.seen) return;
     input.seen.add(inboxID);
     if (input.admitted === "any" || input.admitted === inboxID) input.delivered = true;
+  }
+
+  private noteInjectedDelivered(turnId: string, inboxID: string): boolean {
+    const meta = this.turnMeta.get(turnId);
+    if (!meta) return false;
+    const entry = meta.injected.get(inboxID);
+    if (!entry) {
+      if (meta.injecting > 0) meta.deliveredWhileInjecting.add(inboxID);
+      return false;
+    }
+    meta.injected.delete(inboxID);
+    this.emitInjectedDelivered(turnId, entry);
+    return true;
+  }
+
+  private emitInjectedDelivered(turnId: string, entry: InjectedEntry): void {
+    this.emit({ type: "user.message", turnId, messageId: entry.messageId, text: entry.text, timestamp: Date.now() });
+  }
+
+  async injectMessage(turnId: string, message: InjectedMessage): Promise<void> {
+    const meta = this.turnMeta.get(turnId);
+    const serverSessionId = this.sessionIds.get(turnId);
+    const info = this.watchInfo.get(turnId);
+    if (!meta || !serverSessionId || !info) throw new Error("No active opencode turn to send to");
+    const protocol = protocolOf(info.protocol);
+    if (!protocol.inject) throw new Error("This opencode server cannot take messages while a turn is running");
+    if (!meta.input.delivered && meta.input.admitted === undefined) {
+      throw new Error("The opencode turn has not accepted its prompt yet");
+    }
+    const client = this.clientFor(info);
+    const files = attachmentFilesOf(message.cwd, message.attachments);
+    const signal = this.sends.get(turnId)?.signal ?? new AbortController().signal;
+    meta.injecting++;
+    try {
+      const { inboxId } = await protocol.inject(client, serverSessionId, {
+        prompt: message.prompt,
+        ...(message.skills?.length ? { skills: message.skills } : {}),
+        files,
+        signal
+      });
+      if (this.turnMeta.get(turnId) !== meta) {
+        await protocol.retractInput?.(client, serverSessionId, inboxId).catch(() => false);
+        throw new Error("The opencode turn ended before the message was delivered");
+      }
+      const entry: InjectedEntry = { messageId: message.id, text: message.prompt };
+      if (meta.deliveredWhileInjecting.delete(inboxId)) this.emitInjectedDelivered(turnId, entry);
+      else meta.injected.set(inboxId, entry);
+      traceHarnessCall({
+        harness: "opencode",
+        operation: "opencode.injectMessage",
+        turnId,
+        ok: true,
+        extra: { serverSessionId, inboxId }
+      });
+    } finally {
+      meta.injecting--;
+      if (meta.injecting === 0) meta.deliveredWhileInjecting.clear();
+    }
+  }
+
+  async retractMessage(turnId: string, messageId: string): Promise<boolean> {
+    const meta = this.turnMeta.get(turnId);
+    const serverSessionId = this.sessionIds.get(turnId);
+    const info = this.watchInfo.get(turnId);
+    if (!meta || !serverSessionId || !info) return false;
+    const protocol = protocolOf(info.protocol);
+    if (!protocol.retractInput) return false;
+    const inboxId = [...meta.injected].find(([, entry]) => entry.messageId === messageId)?.[0];
+    if (!inboxId) return false;
+    const retracted = await protocol.retractInput(this.clientFor(info), serverSessionId, inboxId);
+    if (retracted) meta.injected.delete(inboxId);
+    return retracted;
   }
 
   private dismissUnsupportedForm(turnId: string, sessionID: string, formId: string, title: string): void {
@@ -1672,7 +1756,14 @@ export class OpencodeDriver implements CliDriver {
       const protocol = protocolOf(info.protocol);
       const client = this.clientFor(info);
       const children = protocol.version === "v2" ? this.knownChildren(turnId, serverSessionId) : [];
-      const abort = Promise.all(children.map((child) => protocol.interrupt(client, child).catch(() => undefined)))
+      const pendingInbox = [...(this.turnMeta.get(turnId)?.injected.keys() ?? [])];
+      const retractions = pendingInbox.map((inboxId) =>
+        (protocol.retractInput?.(client, serverSessionId, inboxId) ?? Promise.resolve(false)).catch(() => false)
+      );
+      const abort = Promise.all([
+        ...children.map((child) => protocol.interrupt(client, child).catch(() => undefined)),
+        ...retractions
+      ])
         .then(() => protocol.interrupt(client, serverSessionId))
         .then(
           (res) => {
