@@ -6,6 +6,8 @@ import type { TurnOrigin } from "../threads/TurnService.js";
 export const LIMIT_RESUME_NOTICE_ID = "limit-resume";
 export const LIMIT_RESUME_PROMPT =
   "The usage limit that stopped your previous turn has reset. Continue the work you were doing from where it stopped.";
+export const LIMIT_SWITCH_PROMPT =
+  "Your previous turn stopped because its model reached a usage limit, so this turn runs on another model. Continue the work you were doing from where it stopped.";
 /** Waited after the advertised reset so the first request does not land on the boundary. */
 export const LIMIT_RESUME_MARGIN_MS = 60_000;
 /** Automatic continuations in a row that may end on a limit again before cw-code stops trying. */
@@ -16,7 +18,7 @@ const MAX_TIMER_MS = 2 ** 31 - 1;
 
 export interface LimitResumeDeps {
   sessions(): SessionMeta[];
-  settings(): Pick<AppSettings, "limitAutoResume">;
+  settings(): Pick<AppSettings, "limitAutoResume" | "claudeDefaultModel">;
   runtime(sessionId: string): Pick<SessionRuntime, "busy" | "approvals" | "questions">;
   waitingOnSubagents(sessionId: string): boolean;
   startTurn(sessionId: string, prompt: string): Promise<string>;
@@ -35,14 +37,17 @@ function isClosed(session: SessionMeta): boolean {
   return session.status === "resolved" || session.status === "archived";
 }
 
-/** Continues a session on its own once the plan limit that ended its turn resets. */
+/**
+ * Continues a session after a plan limit ended its turn: on its own once the limit resets, or right away
+ * on another model when only the session's model was limited and the user picks one.
+ */
 export class LimitResume {
   private readonly timers = new Map<string, ReturnType<typeof setTimeout>>();
   /** Attempts count of the continuation being started, until its turn id is known. */
   private readonly firing = new Map<string, number>();
   /** The running continuation turn per session and how many attempts it represents. */
   private readonly resumed = new Map<string, { turnId: string; attempts: number }>();
-  private readonly published = new Map<string, number>();
+  private readonly published = new Map<string, string>();
   private disposed = false;
 
   constructor(private readonly deps: LimitResumeDeps) {}
@@ -56,9 +61,20 @@ export class LimitResume {
   }
 
   extras(sessionId: string): { limitResume: ThreadLimitResume | null } {
-    const pending = this.find(sessionId)?.limitResume;
-    if (!pending) return { limitResume: null };
-    return { limitResume: { resetsAt: pending.resetsAt, ...(pending.window ? { window: pending.window } : {}) } };
+    const session = this.find(sessionId);
+    const pending = session?.limitResume;
+    if (!session || !pending) return { limitResume: null };
+    const model = session.model?.trim() || undefined;
+    const fallback = session.driver === "claude" ? this.deps.settings().claudeDefaultModel.trim() : "";
+    return {
+      limitResume: {
+        ...(pending.resetsAt !== undefined ? { resetsAt: pending.resetsAt } : {}),
+        ...(pending.window ? { window: pending.window } : {}),
+        ...(pending.scope ? { scope: pending.scope } : {}),
+        ...(model ? { model } : {}),
+        ...(pending.scope && fallback && fallback !== model ? { fallbackModel: fallback } : {})
+      }
+    };
   }
 
   turnStarted(sessionId: string, turn: { turnId: string; origin?: TurnOrigin }): void {
@@ -80,8 +96,12 @@ export class LimitResume {
     const resumed = this.resumed.get(sessionId);
     const attempts = resumed?.turnId === turnId ? resumed.attempts : 0;
     if (resumed?.turnId === turnId) this.resumed.delete(sessionId);
-    const hit = event.type === "turn.done" ? event.usageLimit : undefined;
-    if (!hit || !this.deps.settings().limitAutoResume) return;
+    const found = event.type === "turn.done" ? event.usageLimit : undefined;
+    const autoResume = this.deps.settings().limitAutoResume;
+    // With auto resume off, a model limit still offers to continue on another model, without the scheduled wait.
+    const hit = found && !autoResume ? (found.scope === "model" ? { ...found, resetsAt: undefined } : undefined) : found;
+    if (!hit) return;
+    if (hit.resetsAt === undefined && hit.scope !== "model") return;
     const session = this.find(sessionId);
     if (!session || session.subagent || isClosed(session)) return;
     if (attempts >= LIMIT_RESUME_MAX_ATTEMPTS) {
@@ -92,7 +112,12 @@ export class LimitResume {
       });
       return;
     }
-    this.deps.setLimitResume(sessionId, { resetsAt: hit.resetsAt, ...(hit.window ? { window: hit.window } : {}), attempts });
+    this.deps.setLimitResume(sessionId, {
+      ...(hit.resetsAt !== undefined ? { resetsAt: hit.resetsAt } : {}),
+      ...(hit.window ? { window: hit.window } : {}),
+      ...(hit.scope ? { scope: hit.scope } : {}),
+      attempts
+    });
     this.arm(sessionId);
   }
 
@@ -103,22 +128,66 @@ export class LimitResume {
     return true;
   }
 
+  /**
+   * Continues a limited session now instead of waiting for the reset. The caller has already switched the
+   * session's model; this starts the continuation turn on it.
+   */
+  async continueNow(sessionId: string): Promise<string> {
+    const session = this.find(sessionId);
+    if (!session?.limitResume) throw new Error("This session is not waiting on a usage limit.");
+    if (session.subagent || isClosed(session)) throw new Error("This session can't be continued.");
+    if (this.firing.has(sessionId)) throw new Error("The session is already continuing.");
+    const timer = this.timers.get(sessionId);
+    if (timer) clearTimeout(timer);
+    this.timers.delete(sessionId);
+    this.firing.set(sessionId, 0);
+    let turnId: string;
+    try {
+      turnId = await this.deps.startTurn(sessionId, LIMIT_SWITCH_PROMPT);
+    } catch (error) {
+      this.arm(sessionId);
+      throw error;
+    } finally {
+      this.firing.delete(sessionId);
+    }
+    this.clear(sessionId);
+    return turnId;
+  }
+
   sessionChanged(session: SessionMeta): void {
     if (session.limitResume && isClosed(session)) {
       this.clear(session.id);
       return;
     }
-    const resetsAt = session.limitResume?.resetsAt;
-    if (this.published.get(session.id) === resetsAt) return;
-    if (resetsAt === undefined) this.published.delete(session.id);
-    else this.published.set(session.id, resetsAt);
+    const pending = session.limitResume;
+    const key = pending ? `${pending.resetsAt ?? ""}|${pending.scope ?? ""}|${session.model ?? ""}` : undefined;
+    if (this.published.get(session.id) === key) return;
+    if (key === undefined) this.published.delete(session.id);
+    else this.published.set(session.id, key);
     this.deps.refresh(session.id);
   }
 
   settingsChanged(): void {
-    if (this.deps.settings().limitAutoResume) return;
+    const settings = this.deps.settings();
+    if (!settings.limitAutoResume) {
+      for (const session of this.deps.sessions()) {
+        const pending = session.limitResume;
+        if (!pending) continue;
+        if (!pending.scope) {
+          this.clear(session.id);
+          continue;
+        }
+        if (pending.resetsAt === undefined) continue;
+        const timer = this.timers.get(session.id);
+        if (timer) clearTimeout(timer);
+        this.timers.delete(session.id);
+        const { resetsAt: _dropped, ...offer } = pending;
+        this.deps.setLimitResume(session.id, offer);
+      }
+      return;
+    }
     for (const session of this.deps.sessions()) {
-      if (session.limitResume) this.clear(session.id);
+      if (session.limitResume?.scope) this.deps.refresh(session.id);
     }
   }
 
@@ -148,9 +217,9 @@ export class LimitResume {
     const existing = this.timers.get(sessionId);
     if (existing) clearTimeout(existing);
     this.timers.delete(sessionId);
-    const pending = this.find(sessionId)?.limitResume;
-    if (!pending || this.disposed) return;
-    const delay = Math.min(MAX_TIMER_MS, Math.max(0, pending.resetsAt - this.now()) + LIMIT_RESUME_MARGIN_MS);
+    const resetsAt = this.find(sessionId)?.limitResume?.resetsAt;
+    if (resetsAt === undefined || this.disposed) return;
+    const delay = Math.min(MAX_TIMER_MS, Math.max(0, resetsAt - this.now()) + LIMIT_RESUME_MARGIN_MS);
     const timer = setTimeout(() => {
       if (this.timers.get(sessionId) !== timer) return;
       this.timers.delete(sessionId);
@@ -164,7 +233,7 @@ export class LimitResume {
     if (this.disposed || this.firing.has(sessionId)) return;
     const session = this.find(sessionId);
     const pending = session?.limitResume;
-    if (!session || !pending) return;
+    if (!session || !pending || pending.resetsAt === undefined) return;
     const overdue = this.now() - pending.resetsAt;
     if (session.subagent || isClosed(session) || !this.deps.settings().limitAutoResume || overdue > LIMIT_RESUME_STALE_MS) {
       this.clear(sessionId);

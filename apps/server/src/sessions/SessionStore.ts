@@ -224,7 +224,9 @@ function isAutoFollowUpMeta(value: unknown): value is AutoFollowUpMeta {
 function isLimitResume(value: unknown): value is LimitResume {
   if (!value || typeof value !== "object") return false;
   const meta = value as Partial<Record<keyof LimitResume, unknown>>;
-  if (typeof meta.resetsAt !== "number" || !Number.isFinite(meta.resetsAt)) return false;
+  if (meta.resetsAt !== undefined && (typeof meta.resetsAt !== "number" || !Number.isFinite(meta.resetsAt))) return false;
+  if (meta.scope !== undefined && meta.scope !== "model") return false;
+  if (meta.resetsAt === undefined && meta.scope !== "model") return false;
   if (typeof meta.attempts !== "number" || !Number.isInteger(meta.attempts) || meta.attempts < 0) return false;
   return meta.window === undefined || typeof meta.window === "string";
 }
@@ -502,7 +504,14 @@ export class SessionStore {
     const current = this.getSession(id);
     if (!current) return false;
     const previous = current.limitResume;
-    if (previous?.resetsAt === next?.resetsAt && previous?.window === next?.window && previous?.attempts === next?.attempts) return false;
+    if (
+      previous?.resetsAt === next?.resetsAt &&
+      previous?.window === next?.window &&
+      previous?.scope === next?.scope &&
+      previous?.attempts === next?.attempts
+    ) {
+      return false;
+    }
     if (next === undefined) delete current.limitResume;
     else current.limitResume = { ...next };
     this.persist();

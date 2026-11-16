@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, jest } from "bun:test";
-import type { LimitResume as LimitResumeMeta, SessionMeta, ThreadEvent } from "@cw-code/contracts";
+import type { LimitResume as LimitResumeMeta, SessionMeta, ThreadEvent, UsageLimitHit } from "@cw-code/contracts";
 import { SHUTDOWN_RESERVED_MESSAGE } from "../shutdown/shutdownReservation.js";
 import type { ThreadNotice } from "../threads/ThreadService.js";
 import {
@@ -7,6 +7,7 @@ import {
   LIMIT_RESUME_MAX_ATTEMPTS,
   LIMIT_RESUME_PROMPT,
   LIMIT_RESUME_STALE_MS,
+  LIMIT_SWITCH_PROMPT,
   LimitResume
 } from "./LimitResume.js";
 
@@ -16,7 +17,8 @@ function session(id: string, extra: Partial<SessionMeta> = {}): SessionMeta {
   return { id, projectId: "p1", driver: "claude", title: id, status: "done", resumeCursor: "c", createdAt: 0, updatedAt: 0, ...extra };
 }
 
-function done(turnId: string, resetsAt?: number): Extract<ThreadEvent, { type: "turn.done" }> {
+function done(turnId: string, resetsAt?: number, hit?: UsageLimitHit): Extract<ThreadEvent, { type: "turn.done" }> {
+  const usageLimit = hit ?? (resetsAt !== undefined ? { resetsAt, window: "five_hour" } : undefined);
   return {
     type: "turn.done",
     turnId,
@@ -25,9 +27,9 @@ function done(turnId: string, resetsAt?: number): Extract<ThreadEvent, { type: "
     resultText: "",
     usage: [],
     numTurns: 1,
-    isError: resetsAt !== undefined,
+    isError: usageLimit !== undefined,
     backgroundTasks: 0,
-    ...(resetsAt !== undefined ? { usageLimit: { resetsAt, window: "five_hour" } } : {})
+    ...(usageLimit ? { usageLimit } : {})
   };
 }
 
@@ -36,10 +38,10 @@ function harness(initial: SessionMeta[] = [session("s1")]) {
   const started: Array<{ sessionId: string; prompt: string }> = [];
   const notices: Array<{ sessionId: string; notice: ThreadNotice }> = [];
   const refreshed: string[] = [];
-  const state = { enabled: true, busy: false, waiting: false, reserved: false, startError: null as unknown, turns: 0 };
+  const state = { enabled: true, defaultModel: "", busy: false, waiting: false, reserved: false, startError: null as unknown, turns: 0 };
   const engine: LimitResume = new LimitResume({
     sessions: () => [...sessions.values()],
-    settings: () => ({ limitAutoResume: state.enabled }),
+    settings: () => ({ limitAutoResume: state.enabled, claudeDefaultModel: state.defaultModel }),
     runtime: () => ({ busy: state.busy, approvals: [], questions: [] }),
     waitingOnSubagents: () => state.waiting,
     startTurn: async (sessionId, prompt) => {
@@ -131,6 +133,20 @@ describe("LimitResume", () => {
     expect(harness().engine.cancel("s1")).toBe(false);
   });
 
+  it("keeps offering another model when the setting is off, without the scheduled wait", async () => {
+    const h = harness();
+    h.state.enabled = false;
+    h.engine.turnSettled("s1", "t1", done("t1", undefined, { scope: "model", window: "seven_day_overage_included", resetsAt: Date.now() + HOUR }));
+    expect(h.pending()).toEqual({ scope: "model", window: "seven_day_overage_included", attempts: 0 });
+    h.state.enabled = true;
+    h.engine.turnSettled("s1", "t2", done("t2", undefined, { scope: "model", resetsAt: Date.now() + HOUR }));
+    h.state.enabled = false;
+    h.engine.settingsChanged();
+    expect(h.pending()).toEqual({ scope: "model", attempts: 0 });
+    await h.advance(2 * HOUR);
+    expect(h.started).toEqual([]);
+  });
+
   it("drops every pending continuation when the setting is turned off", async () => {
     const h = harness();
     h.engine.turnSettled("s1", "t1", done("t1", Date.now() + HOUR));
@@ -209,6 +225,61 @@ describe("LimitResume", () => {
     h.engine.reactivate();
     await h.advance(LIMIT_RESUME_MARGIN_MS);
     expect(h.started).toHaveLength(1);
+  });
+
+  it("keeps a model limit with no reset for the user to act on, without scheduling anything", async () => {
+    const h = harness([session("s1", { model: "fable" })]);
+    h.state.defaultModel = "claude-sonnet-5-5";
+    h.engine.turnSettled("s1", "t1", done("t1", undefined, { scope: "model" }));
+    expect(h.pending()).toEqual({ scope: "model", attempts: 0 });
+    expect(h.engine.extras("s1")).toEqual({ limitResume: { scope: "model", model: "fable", fallbackModel: "claude-sonnet-5-5" } });
+    await h.advance(30 * 24 * HOUR);
+    expect(h.started).toEqual([]);
+    expect(h.pending()).toBeDefined();
+  });
+
+  it("does not offer the default model when it is the limited one", () => {
+    const h = harness([session("s1", { model: "claude-sonnet-5-5" })]);
+    h.state.defaultModel = "claude-sonnet-5-5";
+    h.engine.turnSettled("s1", "t1", done("t1", undefined, { scope: "model", window: "seven_day_sonnet", resetsAt: Date.now() + HOUR }));
+    expect(h.engine.extras("s1").limitResume?.fallbackModel).toBeUndefined();
+    expect(h.engine.extras("s1").limitResume).toMatchObject({ scope: "model", window: "seven_day_sonnet" });
+  });
+
+  it("ignores an account limit that names no reset", () => {
+    const h = harness();
+    h.engine.turnSettled("s1", "t1", done("t1", undefined, { window: "five_hour" }));
+    expect(h.pending()).toBeUndefined();
+  });
+
+  it("continues now on another model and drops the scheduled wait", async () => {
+    const h = harness([session("s1", { model: "fable" })]);
+    h.engine.turnSettled("s1", "t1", done("t1", undefined, { scope: "model", window: "seven_day_overage_included", resetsAt: Date.now() + 72 * HOUR }));
+    await expect(h.engine.continueNow("s1")).resolves.toBe("resume-1");
+    expect(h.started).toEqual([{ sessionId: "s1", prompt: LIMIT_SWITCH_PROMPT }]);
+    expect(h.pending()).toBeUndefined();
+    await h.advance(80 * HOUR);
+    expect(h.started).toHaveLength(1);
+  });
+
+  it("schedules again when the model it switched to hits a limit too", async () => {
+    const h = harness();
+    h.engine.turnSettled("s1", "t1", done("t1", undefined, { scope: "model" }));
+    await h.engine.continueNow("s1");
+    h.engine.turnSettled("s1", "resume-1", done("resume-1", Date.now() + HOUR));
+    expect(h.pending()).toEqual({ resetsAt: Date.now() + HOUR, window: "five_hour", attempts: 0 });
+  });
+
+  it("refuses to continue now when nothing is pending, and keeps the wait when the turn cannot start", async () => {
+    const h = harness();
+    await expect(h.engine.continueNow("s1")).rejects.toThrow(/not waiting/);
+    h.engine.turnSettled("s1", "t1", done("t1", undefined, { scope: "model", resetsAt: Date.now() + HOUR }));
+    h.state.startError = new Error("claude is updating");
+    await expect(h.engine.continueNow("s1")).rejects.toThrow("claude is updating");
+    expect(h.pending()).toBeDefined();
+    h.state.startError = null;
+    await h.advance(HOUR + LIMIT_RESUME_MARGIN_MS);
+    expect(h.started).toEqual([{ sessionId: "s1", prompt: LIMIT_RESUME_PROMPT }]);
   });
 
   it("tells the user when the continuation could not start", async () => {

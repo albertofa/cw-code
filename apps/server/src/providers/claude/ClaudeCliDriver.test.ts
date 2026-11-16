@@ -427,14 +427,60 @@ describe("ClaudeCliDriver persistent process", () => {
     driver.dispose();
   });
 
+  it("reports Fable's weekly limit as a model limit", async () => {
+    const { driver, events, children } = makeDriver();
+    driver.startTurn({ sessionId: "s1", cwd: "C:\\proj", prompt: "go" });
+    await settle();
+    children[0].stdout.write(`${JSON.stringify({
+      type: "assistant", is_api_error_message: true, error: "rate_limit", api_error: "usage_limit_reached",
+      api_error_params: { rate_limit_info: { status: "rejected", resetsAt: 1793724600, rateLimitType: "seven_day_overage_included" } },
+      message: { content: [{ type: "text", text: "You've hit your Fable limit" }] }
+    })}\n`);
+    children[0].stdout.write(`${resultLine({ result: "" })}\n`);
+    await settle();
+    expect(turnDones(events).at(-1)?.usageLimit).toEqual({ resetsAt: 1793724600000, window: "seven_day_overage_included", scope: "model" });
+    driver.dispose();
+  });
+
+  it("reports a model that now needs usage credits as a model limit, with or without a reset", async () => {
+    const { driver, events, children } = makeDriver();
+    driver.startTurn({ sessionId: "s1", cwd: "C:\\proj", prompt: "go" });
+    await settle();
+    children[0].stdout.write(`${JSON.stringify({
+      type: "assistant", is_api_error_message: true, error: "rate_limit", api_error: "model_requires_usage_credits",
+      message: { content: [{ type: "text", text: "Fable requires usage credits. Switch to another model to continue." }] }
+    })}\n`);
+    children[0].stdout.write(`${resultLine({ result: "" })}\n`);
+    await settle();
+    expect(turnDones(events).at(-1)?.usageLimit).toEqual({ scope: "model" });
+    driver.dispose();
+  });
+
+  it("shows a notice when the CLI switches the session to another model on its own", async () => {
+    const { driver, events, children } = makeDriver();
+    const { turnId } = driver.startTurn({ sessionId: "s1", cwd: "C:\\proj", prompt: "go" });
+    await settle();
+    children[0].stdout.write(`${JSON.stringify({
+      type: "system", subtype: "model_consent_fallback", choice: "switch_default",
+      original_model: "fable", fallback_model: "claude-sonnet-5-5",
+      content: "Switched to Sonnet 5.5 for this session \u00b7 Fable requires usage credits"
+    })}\n`);
+    await settle();
+    expect(events).toContainEqual({
+      type: "session.notice", turnId, sessionId: "s1", noticeId: `model-fallback:${turnId}`,
+      text: "Switched to Sonnet 5.5 for this session \u00b7 Fable requires usage credits", severity: "warning"
+    });
+    driver.dispose();
+  });
+
   it("does not report a plan limit for other API errors", async () => {
     const { driver, events, children } = makeDriver();
     driver.startTurn({ sessionId: "s1", cwd: "C:\\proj", prompt: "go" });
     await settle();
     children[0].stdout.write(`${JSON.stringify({ type: "rate_limit_event", rate_limit_info: { status: "rejected", resetsAt: 1793724600, rateLimitType: "five_hour" } })}\n`);
     children[0].stdout.write(`${JSON.stringify({
-      type: "assistant", is_api_error_message: true, error: "rate_limit", api_error: "model_requires_usage_credits",
-      message: { content: [{ type: "text", text: "This model requires usage credits." }] }
+      type: "assistant", is_api_error_message: true, error: "rate_limit", api_error: "workspace_rate_limited",
+      message: { content: [{ type: "text", text: "Your organization is rate limited." }] }
     })}\n`);
     children[0].stdout.write(`${resultLine({ result: "" })}\n`);
     await settle();

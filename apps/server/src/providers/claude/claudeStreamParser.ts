@@ -597,12 +597,41 @@ interface ClaudeRateLimitInfo {
   rateLimitType?: unknown;
 }
 
-function claudeRejectedLimit(info: unknown): UsageLimitHit | undefined {
+/**
+ * Windows that limit one model family rather than the whole account. The CLI labels
+ * `seven_day_overage_included` "Fable limit": Fable's own weekly allowance.
+ */
+export const CLAUDE_MODEL_LIMIT_WINDOWS: ReadonlySet<string> = new Set(["seven_day_opus", "seven_day_sonnet", "seven_day_overage_included"]);
+
+/** API error kinds that refuse only the session's model; another model can still run. */
+const CLAUDE_MODEL_LIMIT_ERRORS: ReadonlySet<string> = new Set(["model_requires_usage_credits", "consent_unanswered"]);
+
+function epochMs(value: unknown): number | undefined {
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) return undefined;
+  return value < 1e12 ? value * 1000 : value;
+}
+
+function claudeLimitInfo(info: unknown): { resetsAt?: number; window?: string; status?: unknown } | undefined {
   if (info === null || typeof info !== "object" || Array.isArray(info)) return undefined;
   const { status, resetsAt, rateLimitType } = info as ClaudeRateLimitInfo;
-  if (status !== "rejected" || typeof resetsAt !== "number" || !Number.isFinite(resetsAt) || resetsAt <= 0) return undefined;
+  const ms = epochMs(resetsAt);
   const window = str(rateLimitType);
-  return { resetsAt: resetsAt < 1e12 ? resetsAt * 1000 : resetsAt, ...(window ? { window } : {}) };
+  return { status, ...(ms !== undefined ? { resetsAt: ms } : {}), ...(window ? { window } : {}) };
+}
+
+function withScope(hit: { resetsAt?: number; window?: string }, model: boolean): UsageLimitHit {
+  const scoped = model || (hit.window !== undefined && CLAUDE_MODEL_LIMIT_WINDOWS.has(hit.window));
+  return {
+    ...(hit.resetsAt !== undefined ? { resetsAt: hit.resetsAt } : {}),
+    ...(hit.window ? { window: hit.window } : {}),
+    ...(scoped ? { scope: "model" as const } : {})
+  };
+}
+
+function claudeRejectedLimit(info: unknown): UsageLimitHit | undefined {
+  const parsed = claudeLimitInfo(info);
+  if (parsed?.status !== "rejected" || parsed.resetsAt === undefined) return undefined;
+  return withScope(parsed, false);
 }
 
 /** `undefined` when the message is not a rate limit event; `null` when it reports a window that is not exhausted. */
@@ -640,14 +669,31 @@ export function isClaudeApiErrorMessage(message: unknown): boolean {
 export function parseClaudeUsageLimit(message: unknown): { hit?: UsageLimitHit } | undefined {
   if (message === null || typeof message !== "object") return undefined;
   const fields = message as ClaudeApiErrorFields;
-  if (fields.error !== "rate_limit") return undefined;
   const kind = fields.api_error ?? fields.apiError;
+  if (typeof kind === "string" && CLAUDE_MODEL_LIMIT_ERRORS.has(kind)) {
+    const info = claudeLimitInfo(fields.api_error_params?.rate_limit_info) ?? claudeLimitInfo(fields.apiErrorParams?.rate_limit_info) ?? {};
+    return { hit: withScope(info, true) };
+  }
+  if (fields.error !== "rate_limit") return undefined;
   if (kind !== undefined && kind !== "usage_limit_reached") return undefined;
   const hit =
     claudeRejectedLimit(fields.api_error_params?.rate_limit_info) ??
     claudeRejectedLimit(fields.apiErrorParams?.rate_limit_info) ??
     claudeRejectedLimit(fields.quotaLimits);
   return hit ? { hit } : {};
+}
+
+/** The CLI swapped the session to another model on its own (e.g. when Fable's weekly limit ran out). */
+export function parseClaudeModelFallback(message: unknown): { text: string; from?: string; to?: string } | null {
+  if (message === null || typeof message !== "object") return null;
+  const msg = message as Record<string, unknown>;
+  if (msg["type"] !== "system" || msg["subtype"] !== "model_consent_fallback") return null;
+  const from = str(msg["original_model"]) ?? str(msg["originalModel"]);
+  const to = str(msg["fallback_model"]) ?? str(msg["fallbackModel"]);
+  const fallbackText = to
+    ? `Claude switched this session to ${to}${from ? ` because ${from} is limited` : ""}.`
+    : "Claude switched this session to another model.";
+  return { text: str(msg["content"]) ?? fallbackText, ...(from ? { from } : {}), ...(to ? { to } : {}) };
 }
 
 export interface TurnDoneInfo {

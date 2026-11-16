@@ -87,11 +87,14 @@ export interface QuestionRequest {
   questions: QuestionInfo[];
 }
 
-/** A turn ended because the account's plan limit ran out; `resetsAt` is epoch milliseconds. */
+/** A turn ended because a plan limit ran out; `resetsAt` is epoch milliseconds. */
 export interface UsageLimitHit {
-  resetsAt: number;
-  /** The harness's own name for the exhausted window (e.g. `five_hour`); display only. */
+  /** Always set for an account-wide limit; a model's own limit may not name its reset. */
+  resetsAt?: number;
+  /** The harness's own name for the exhausted window (e.g. `five_hour`, `seven_day_overage_included`); display only. */
   window?: string;
+  /** `model` when only the session's model is limited, so another model can continue now; absent for the whole account. */
+  scope?: "model";
 }
 
 export type ThreadEvent =
