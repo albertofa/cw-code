@@ -21,7 +21,8 @@ import type {
   TaskState,
   ThreadEvent,
   TurnHandle,
-  TurnRequest
+  TurnRequest,
+  UsageLimitHit
 } from "@cw-code/contracts";
 import { agentTokenFingerprint, claudePluginArgs } from "../../agent/claudePlugin.js";
 import { parseExtraArgs } from "../../settings/settingsUtils.js";
@@ -30,7 +31,7 @@ import { claudeChildEnv } from "./claudeEnv.js";
 import { spawnCli } from "../../cli/spawnCli.js";
 import { TaskTable, type TaskObservation } from "../../tasks/TaskTable.js";
 import { SYNTHETIC_FULL_ACCESS_DESCRIPTION } from "../permissions.js";
-import { attributeClaudeSubagentEvent, buildClaudeAllowRule, claudeAllowResponse, claudeApprovalRequest, claudeQuestionRequest, claudeDenyResponse, claudeControlResponse, parseClaudeCompactBoundary, parseClaudeControlRequest, parseClaudeSubagentHandback, parseClaudeSystemInit, parseClaudeTaskNotificationLine, parseClaudeTaskSystemLine, parseClaudeToolUseResult, parseStreamLine, type ClaudeControlRequest, type ClaudeTaskNotificationLine, type ClaudeTaskSystemInfo, type TurnDoneInfo } from "./claudeStreamParser.js";
+import { attributeClaudeSubagentEvent, buildClaudeAllowRule, claudeAllowResponse, claudeApprovalRequest, claudeQuestionRequest, claudeDenyResponse, claudeControlResponse, isClaudeApiErrorMessage, parseClaudeCompactBoundary, parseClaudeControlRequest, parseClaudeRateLimitEvent, parseClaudeSubagentHandback, parseClaudeSystemInit, parseClaudeTaskNotificationLine, parseClaudeTaskSystemLine, parseClaudeToolUseResult, parseClaudeUsageLimit, parseStreamLine, type ClaudeControlRequest, type ClaudeTaskNotificationLine, type ClaudeTaskSystemInfo, type TurnDoneInfo } from "./claudeStreamParser.js";
 import { claudeCallObservation, claudeHandbackObservation, claudeNotificationObservation, claudeSystemTaskObservation, claudeToolResultObservation, findClaudeTaskNotification } from "./claudeTasks.js";
 import {
   CLAUDE_COMMANDS_PROBE_ARGS,
@@ -171,6 +172,12 @@ interface ClaudeProcessState {
   mainModel?: string;
   compactedPostTokens?: number;
   apiErrorMessage?: string;
+  /** Latest exhausted plan window the CLI reported; cleared when it reports the window as usable again. */
+  rejectedLimit?: UsageLimitHit;
+  /** Plan limit behind `apiErrorMessage`, when that error is one. */
+  usageLimit?: UsageLimitHit;
+  /** `apiErrorMessage` is a plan limit that named no reset; `rejectedLimit` supplies it when the turn ends. */
+  usageLimitUnnamed?: boolean;
   lastWindowTokens?: number;
   stale?: boolean;
 }
@@ -481,13 +488,21 @@ export class ClaudeCliDriver implements CliDriver {
     this.noteProcessActivity(state, line);
     try {
       const message = JSON.parse(line);
-      if (message?.type === "assistant" && message.isApiErrorMessage === true && !message.parent_tool_use_id) {
+      const rateLimit = parseClaudeRateLimitEvent(message);
+      if (rateLimit !== undefined) {
+        state.rejectedLimit = rateLimit ?? undefined;
+        return;
+      }
+      if (message?.type === "assistant" && isClaudeApiErrorMessage(message) && !message.parent_tool_use_id) {
         const content = message.message?.content;
         const text = Array.isArray(content)
           ? content.filter((block) => block?.type === "text" && typeof block.text === "string")
             .map((block) => block.text).join("\n\n")
           : "";
         state.apiErrorMessage = text || "Claude reported an API error with no output.";
+        const limit = parseClaudeUsageLimit(message);
+        state.usageLimit = limit?.hit;
+        state.usageLimitUnnamed = limit !== undefined && limit.hit === undefined;
         return;
       }
       if (message?.type === "assistant" && !message.parent_tool_use_id) state.skillBodiesPending = [];
@@ -619,6 +634,7 @@ export class ClaudeCliDriver implements CliDriver {
     if (state.apiErrorMessage) {
       info = { ...info, isError: true, resultText: state.apiErrorMessage };
     }
+    const usageLimit = state.apiErrorMessage ? (state.usageLimit ?? (state.usageLimitUnnamed ? state.rejectedLimit : undefined)) : undefined;
     const turnId = state.activeTurnId;
     const interrupted = this.interruptedTurns.delete(turnId);
     const isTurnForeground = (task: TaskSnapshot) => !task.background && state.topLevelAgentCalls.has(task.id);
@@ -674,7 +690,8 @@ export class ClaudeCliDriver implements CliDriver {
         ...(context ? { context } : {}),
         numTurns: info.numTurns,
         isError: info.isError,
-        backgroundTasks
+        backgroundTasks,
+        ...(usageLimit ? { usageLimit } : {})
       });
     }
     state.resumeCursor = info.resumeCursor;
@@ -821,6 +838,8 @@ export class ClaudeCliDriver implements CliDriver {
       existing.permissionMode = request.permissionMode ?? "auto";
       existing.compactedPostTokens = undefined;
       existing.apiErrorMessage = undefined;
+      existing.usageLimit = undefined;
+      existing.usageLimitUnnamed = false;
       this.clearIdleTimer(existing);
       this.turnToSession.set(turnId, request.sessionId);
       this.writeUserMessage(existing, request);

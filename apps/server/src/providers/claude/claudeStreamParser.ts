@@ -1,4 +1,4 @@
-import type { ApprovalDecision, ApprovalRequest, ContextUsage, QuestionInfo, QuestionOption, QuestionRequest, ThreadEvent, ToolUsage, TurnModelUsage } from "@cw-code/contracts";
+import type { ApprovalDecision, ApprovalRequest, ContextUsage, QuestionInfo, QuestionOption, QuestionRequest, ThreadEvent, ToolUsage, TurnModelUsage, UsageLimitHit } from "@cw-code/contracts";
 import { todosFromToolCall } from "../todos.js";
 import { claudeTurnUsage, type ClaudeModelUsageSnapshot } from "./claudeUsage.js";
 
@@ -589,6 +589,65 @@ export function parseTaskNotificationUsage(text: string): ToolUsage | undefined 
   const durationMs = TASK_NOTIFY_USAGE_RE.durationMs.exec(text)?.[1];
   if (durationMs !== undefined) usage.durationMs = Number.parseInt(durationMs, 10);
   return Object.keys(usage).length > 0 ? usage : undefined;
+}
+
+interface ClaudeRateLimitInfo {
+  status?: unknown;
+  resetsAt?: unknown;
+  rateLimitType?: unknown;
+}
+
+function claudeRejectedLimit(info: unknown): UsageLimitHit | undefined {
+  if (info === null || typeof info !== "object" || Array.isArray(info)) return undefined;
+  const { status, resetsAt, rateLimitType } = info as ClaudeRateLimitInfo;
+  if (status !== "rejected" || typeof resetsAt !== "number" || !Number.isFinite(resetsAt) || resetsAt <= 0) return undefined;
+  const window = str(rateLimitType);
+  return { resetsAt: resetsAt < 1e12 ? resetsAt * 1000 : resetsAt, ...(window ? { window } : {}) };
+}
+
+/** `undefined` when the message is not a rate limit event; `null` when it reports a window that is not exhausted. */
+export function parseClaudeRateLimitEvent(message: unknown): UsageLimitHit | null | undefined {
+  if (message === null || typeof message !== "object") return undefined;
+  const event = message as { type?: unknown; rate_limit_info?: unknown };
+  if (event.type !== "rate_limit_event") return undefined;
+  return claudeRejectedLimit(event.rate_limit_info) ?? null;
+}
+
+interface ClaudeApiErrorFields {
+  error?: unknown;
+  is_api_error_message?: unknown;
+  isApiErrorMessage?: unknown;
+  api_error?: unknown;
+  apiError?: unknown;
+  api_error_params?: { rate_limit_info?: unknown } | null;
+  apiErrorParams?: { rate_limit_info?: unknown } | null;
+  quotaLimits?: unknown;
+}
+
+/** The stream spells the flag `is_api_error_message`; transcripts and older CLIs spell it `isApiErrorMessage`. */
+export function isClaudeApiErrorMessage(message: unknown): boolean {
+  if (message === null || typeof message !== "object") return false;
+  const fields = message as ClaudeApiErrorFields;
+  return fields.is_api_error_message === true || fields.isApiErrorMessage === true;
+}
+
+/**
+ * Whether an API error message is the account's plan limit, and the limit when the message carries it
+ * (`api_error_params.rate_limit_info` on the stream; the camelCase and `quotaLimits` spellings in transcripts).
+ * `hit` is missing on a plan-limit error that names no reset; the caller then falls back to the latest
+ * rejected `rate_limit_event`.
+ */
+export function parseClaudeUsageLimit(message: unknown): { hit?: UsageLimitHit } | undefined {
+  if (message === null || typeof message !== "object") return undefined;
+  const fields = message as ClaudeApiErrorFields;
+  if (fields.error !== "rate_limit") return undefined;
+  const kind = fields.api_error ?? fields.apiError;
+  if (kind !== undefined && kind !== "usage_limit_reached") return undefined;
+  const hit =
+    claudeRejectedLimit(fields.api_error_params?.rate_limit_info) ??
+    claudeRejectedLimit(fields.apiErrorParams?.rate_limit_info) ??
+    claudeRejectedLimit(fields.quotaLimits);
+  return hit ? { hit } : {};
 }
 
 export interface TurnDoneInfo {

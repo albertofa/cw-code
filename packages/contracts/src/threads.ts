@@ -51,6 +51,12 @@ export interface ThreadSubagentWait {
   since: number;
 }
 
+/** Set while cw-code waits for a plan limit to reset before continuing the session on its own. */
+export interface ThreadLimitResume {
+  resetsAt: number;
+  window?: string;
+}
+
 export interface ThreadTurnChanges {
   changes: TurnChanges | null;
   error: string | null;
@@ -74,4 +80,5 @@ export type ThreadTopicData = {
   turnChanges: ThreadTurnChanges | null;
   subagents: SubagentSummary[];
   subagentWait: ThreadSubagentWait | null;
+  limitResume: ThreadLimitResume | null;
 } &{ [key: `item/${string}`]: ThreadItem };

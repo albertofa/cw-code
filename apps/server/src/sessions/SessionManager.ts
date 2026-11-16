@@ -13,6 +13,7 @@ import type {
   DriverKind,
   GitStatus,
   HistoryMessage,
+  LimitResume,
   ImportableSession,
   ImportSessionRequest,
   ImportSessionResult,
@@ -1456,6 +1457,10 @@ export class SessionManager {
     const link = findLink(session.prs, ref);
     if (link) this.store.updateSession(sessionId, { prs: upsertLink(session.prs, markSeen(link, headSha, seenAt ?? Date.now())) });
     return this.emitSession(sessionId);
+  }
+
+  setLimitResume(sessionId: string, next: LimitResume | undefined): void {
+    if (this.store.setLimitResume(sessionId, next)) this.emitSession(sessionId);
   }
 
   updateAutoFollowUp(sessionId: string, update: (current: AutoFollowUpMeta | undefined) => AutoFollowUpMeta | undefined): SessionMeta | null {

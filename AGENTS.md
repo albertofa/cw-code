@@ -189,6 +189,16 @@ Core behaviors:
     An entry without models always has an `error`: no model matched, or the harness cannot run
     (message from the cached harness check, `harnessUnavailableReason`). `subagents.create` and
     `subagents.send` refuse such a harness with the same message before creating anything.
+- Limit resume: a `turn.done` may carry `usageLimit` (`resetsAt` in epoch ms), set by the driver when
+  the account's plan limit ended the turn. Only the Claude driver reports it, from the API error
+  message's quota or the last rejected `rate_limit_event`. With the `limitAutoResume` setting,
+  `LimitResume` (`apps/server/src/sessions/`) stores `SessionMeta.limitResume`, publishes it as the
+  thread topic entry `limitResume` and, one minute after the reset, starts one `auto` turn with
+  origin `limit-resume`. Any other turn start, a stop, `turns.cancelLimitResume`, turning the setting
+  off, or resolving/archiving the session drops it. It is persisted, so it survives a restart (a
+  reset more than 24 h past is dropped); three continuations in a row that end on a limit stop the
+  retries with a thread notice. Subagents are never resumed this way, and turns with an origin are
+  invisible to PR auto follow-up.
 - Browser entry: a browser opens the server's own address (`/`) and pairs with a device
   token. The owner creates one in Settings (`devices.create`) and gets a link
   `<serverPublicUrl>/#token=<token>`; the UI reads the hash, removes it from the address bar and

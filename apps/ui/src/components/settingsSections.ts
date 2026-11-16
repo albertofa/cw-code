@@ -65,6 +65,7 @@ const SETTING_OWNER: Record<DraftSettingKey, SettingsNavId> = {
   defaultUseWorktree: "sourceControl",
   holdingAutoExpireEnabled: "general",
   holdingHours: "general",
+  limitAutoResume: "general",
   prFinishedSessionStatus: "general",
   idleResolveAfterDays: "general",
   autoTitleEnabled: "general",
