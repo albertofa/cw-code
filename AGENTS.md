@@ -17,7 +17,13 @@ Core behaviors:
 - Mid-turn messages: `turns.send` on a busy session queues the message (`SessionMeta.queuedMessages`,
   published as `queuedMessages` on `session/<id>`) and injects it into the running turn through the
   optional `CliDriver.injectMessage`; the driver emits `user.message` when the agent receives it,
-  which removes it from the queue and places it in the thread. Claude writes a stream-json user line
+  which removes it from the queue and places it in the thread. For drivers without
+  `retractMessage` (Claude, Codex) `TurnService` holds the message until a tool is open in the turn
+  (tracked from `tool.call`/`tool.result`, reset at turn start and end): it injects on send when a
+  tool is already open, otherwise on the next `tool.call`, and a turn that ends with no new tool
+  sends it as the leftover turn. Until injected the message is `removable`, so the UI offers Edit
+  (unqueue, then append text and attachments to the composer draft) and Remove; once injected it
+  shows as Sending with no actions. opencode injects at once and stays removable through retract. Claude writes a stream-json user line
   (delivery seen through `--replay-user-messages` echoes, matched exactly by prefix; a message the
   CLI runs as its own run stays in the same cw turn), Codex uses `turn/steer` (`clientId` on the
   `userMessage` item), opencode v2 posts to the session inbox (`session.inbox.delivered`; it alone

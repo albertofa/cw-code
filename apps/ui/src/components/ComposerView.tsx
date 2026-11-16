@@ -17,7 +17,7 @@ import {
 } from "lucide-react";
 import type { CommandOption } from "@cw-code/contracts";
 import type { AppSettings, ComposerPrefs, DriverName, ModelOption, PermissionMode, PermissionOption } from "../cw.js";
-import { clearComposerDraft, flushComposerDraft, loadComposerDraft, saveComposerDraft } from "./composerDrafts.js";
+import { clearComposerDraft, flushComposerDraft, loadComposerDraft, mergeDrafts, onComposerDraftAppend, saveComposerDraft } from "./composerDrafts.js";
 import { getRecentModels, pushRecentModel, useRecentModels } from "./lastModel.js";
 import { EffortMenu } from "./EffortMenu.js";
 import { MenuSelect } from "./MenuSelect.js";
@@ -266,6 +266,18 @@ export function ComposerView({
   useEffect(() => {
     saveComposerDraft(resetKeyRef.current, draft, attachments);
   }, [draft, attachments]);
+
+  useEffect(
+    () =>
+      onComposerDraftAppend(resetKey, (added) => {
+        const merged = mergeDrafts({ text: draftRef.current, attachments: attachmentsRef.current }, added);
+        setDraft(merged.text);
+        setAttachments(merged.attachments);
+        setCaret(merged.text.length);
+        requestAnimationFrame(() => composerRef.current?.focus({ preventScroll: true }));
+      }),
+    [resetKey]
+  );
 
   useEffect(() => {
     setShowCustom(false);

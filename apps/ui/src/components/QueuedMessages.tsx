@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Paperclip } from "lucide-react";
 import type { QueuedMessage } from "@cw-code/contracts";
+import { appendToComposerDraft, untagAttachments } from "./composerDrafts.js";
 import { ipcErrorMessage } from "./ipcError.js";
 import { useNotifs } from "./Notifications.js";
 import { useThreadBusy, useThreadEntry } from "./useThread.js";
@@ -26,13 +27,20 @@ export function QueuedMessages({ sessionId }: { sessionId: string }) {
     }
   };
 
+  const edit = (message: QueuedMessage) =>
+    run("Could not edit the message", async () => {
+      await window.cw.unqueueMessage(sessionId, message.id);
+      appendToComposerDraft(sessionId, { text: untagAttachments(message.text, message.attachments), attachments: message.attachments });
+    });
+
   return (
     <ul className="queued-messages" aria-label="Queued messages">
       {messages.map((message) => {
         const held = message.state === "held";
+        const label = held ? "Not sent" : message.removable ? "Queued" : "Sending";
         return (
-          <li key={message.id} className={`queued-message${held ? " held" : ""}`}>
-            <span className="queued-message-state">{held ? "Not sent" : "Queued"}</span>
+          <li key={message.id} className={`queued-message${held ? " held" : ""}${message.removable ? "" : " sending"}`}>
+            <span className="queued-message-state">{label}</span>
             <span className="queued-message-text" title={message.text}>
               {message.text}
             </span>
@@ -51,6 +59,17 @@ export function QueuedMessages({ sessionId }: { sessionId: string }) {
                 onClick={() => void run("Could not send", () => window.cw.flushQueue(sessionId))}
               >
                 {heldCount > 1 ? "Send all now" : "Send now"}
+              </button>
+            )}
+            {message.removable && (
+              <button
+                type="button"
+                className="queued-message-action"
+                disabled={pending}
+                title="Remove the message and put it back in the composer"
+                onClick={() => void edit(message)}
+              >
+                Edit
               </button>
             )}
             {message.removable && (

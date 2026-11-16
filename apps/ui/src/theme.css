@@ -6323,6 +6323,10 @@ select.field option {
   color: var(--warning);
 }
 
+.queued-message.sending .queued-message-text {
+  color: var(--dim);
+}
+
 .queued-message-text {
   flex: 1;
   min-width: 0;
