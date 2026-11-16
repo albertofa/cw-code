@@ -57,6 +57,7 @@ import type {
   PermissionOption,
   Project,
   RetryConnectionResult,
+  SendMessageResult,
   StopTurnResult,
   Session,
   SessionCleanupResult,
@@ -226,6 +227,10 @@ export function createCwApi(
         prRefs: opts?.prRefs,
         acceptFolderHead: opts?.acceptFolderHead
       }),
+    sendMessage: (sessionId, prompt, opts) =>
+      call<SendMessageResult>("turns.send", { sessionId, prompt, attachments: opts?.attachments, skills: opts?.skills }),
+    unqueueMessage: (sessionId, messageId) => callVoid("turns.unqueue", { sessionId, messageId }),
+    flushQueue: (sessionId) => call<string>("turns.flushQueue", { sessionId }),
     stopTurn: (sessionId) => call<StopTurnResult>("turns.stop", { sessionId }),
     stopSubagent: (subagentId) => call<StopTurnResult>("subagents.stop", { subagentId }),
     reloadHistory: (sessionId) => callVoid("threads.reloadHistory", { sessionId }),

@@ -383,6 +383,8 @@ export interface StopTurnResult {
   stopped: boolean;
 }
 
+export type SendMessageResult = { disposition: "started"; turnId: string } | { disposition: "queued"; messageId: string };
+
 export interface RetryConnectionResult {
   status: "running" | "done";
 }
@@ -597,6 +599,9 @@ export interface CwApi {
   getSubagentTools(sessionId: string, agentId: string): Promise<SubagentToolsResult>;
   retryConnection(sessionId: string): Promise<RetryConnectionResult>;
   startTurn(sessionId: string, prompt: string, opts?: { prefs?: ComposerPrefs; attachments?: string[]; command?: CommandInvocation; skills?: string[]; prRefs?: PrRef[]; acceptFolderHead?: string }): Promise<string>;
+  sendMessage(sessionId: string, prompt: string, opts?: { attachments?: string[]; skills?: string[] }): Promise<SendMessageResult>;
+  unqueueMessage(sessionId: string, messageId: string): Promise<void>;
+  flushQueue(sessionId: string): Promise<string>;
   stopTurn(sessionId: string): Promise<StopTurnResult>;
   stopSubagent(subagentId: string): Promise<StopTurnResult>;
   reloadHistory(sessionId: string): Promise<void>;
