@@ -67,6 +67,7 @@ interface ServerState {
   interrupts: string[];
   deleteStatus: number;
   injectDelayMs: number;
+  initialWithoutId: boolean;
 }
 
 function stubServer(sse: ReturnType<typeof controllableSse>, state: ServerState): void {
@@ -81,6 +82,7 @@ function stubServer(sse: ReturnType<typeof controllableSse>, state: ServerState)
         state.prompts.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
         const index = state.prompts.length;
         if (index > 1 && state.injectDelayMs > 0) await sleep(state.injectDelayMs);
+        if (index === 1 && state.initialWithoutId) return json({ data: {} });
         return json({ data: { id: index === 1 ? "msg_u" : `inbox_${index}`, delivery: "steer" } });
       }
       if (method === "POST" && path.endsWith("/interrupt")) {
@@ -99,7 +101,7 @@ function stubServer(sse: ReturnType<typeof controllableSse>, state: ServerState)
 }
 
 function newState(): ServerState {
-  return { prompts: [], deletes: [], interrupts: [], deleteStatus: 204, injectDelayMs: 0 };
+  return { prompts: [], deletes: [], interrupts: [], deleteStatus: 204, injectDelayMs: 0, initialWithoutId: false };
 }
 
 function injection(id: string, prompt = "also do this") {
@@ -240,6 +242,78 @@ describe("OpencodeDriver mid-turn messages on opencode v2", () => {
       expect(state.deletes).toEqual([`/api/session/${SID}/inbox/inbox_3`]);
       await expect(driver.injectMessage(turnId, injection("cw-msg-3"))).rejects.toThrow("No active opencode turn");
     } finally {
+      driver.dispose();
+    }
+  });
+
+  it("keeps an in-flight injected delivery from counting as the initial prompt when its id is unknown", async () => {
+    const events: ThreadEvent[] = [];
+    const sse = controllableSse();
+    const state = newState();
+    state.initialWithoutId = true;
+    state.injectDelayMs = 200;
+    stubServer(sse, state);
+    const driver = startDriver(events);
+    try {
+      const turnId = await startRunning(driver, state);
+      const pending = driver.injectMessage(turnId, injection("cw-msg-1"));
+      await waitFor(() => state.prompts.length === 2);
+      sse.push("session.inbox.delivered", { sessionID: SID, inboxID: "inbox_2" });
+      await pending;
+      expect(userMessages(events)).toMatchObject([{ turnId, messageId: "cw-msg-1" }]);
+      sse.push("session.execution.succeeded", { sessionID: SID });
+      await sleep(2500);
+      expect(events.some((e) => e.type === "turn.done")).toBe(false);
+      sse.push("session.inbox.delivered", { sessionID: SID, inboxID: "msg_u" });
+      sse.push("session.execution.succeeded", { sessionID: SID });
+      await waitFor(() => events.some((e) => e.type === "turn.done"));
+      expect(events.filter((e) => e.type === "turn.done")).toHaveLength(1);
+    } finally {
+      driver.dispose();
+    }
+  }, 10_000);
+
+  it("retracts a message the server never delivered when the turn ends", async () => {
+    const events: ThreadEvent[] = [];
+    const sse = controllableSse();
+    const state = newState();
+    stubServer(sse, state);
+    const driver = startDriver(events);
+    try {
+      const turnId = await startRunning(driver, state);
+      sse.push("session.inbox.delivered", { sessionID: SID, inboxID: "msg_u" });
+      await driver.injectMessage(turnId, injection("cw-msg-1"));
+      await driver.injectMessage(turnId, injection("cw-msg-2"));
+      sse.push("session.inbox.delivered", { sessionID: SID, inboxID: "inbox_2" });
+      await waitFor(() => userMessages(events).length === 1);
+      sse.push("session.execution.succeeded", { sessionID: SID });
+      await waitFor(() => events.some((e) => e.type === "turn.done"));
+      await waitFor(() => state.deletes.length === 1);
+      expect(state.deletes).toEqual([`/api/session/${SID}/inbox/inbox_3`]);
+      expect(userMessages(events)).toHaveLength(1);
+    } finally {
+      driver.dispose();
+    }
+  });
+
+  it("warns when a leftover inbox item can no longer be retracted at turn end", async () => {
+    const events: ThreadEvent[] = [];
+    const sse = controllableSse();
+    const state = newState();
+    state.deleteStatus = 404;
+    stubServer(sse, state);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const driver = startDriver(events);
+    try {
+      const turnId = await startRunning(driver, state);
+      sse.push("session.inbox.delivered", { sessionID: SID, inboxID: "msg_u" });
+      await driver.injectMessage(turnId, injection("cw-msg-1"));
+      sse.push("session.execution.succeeded", { sessionID: SID });
+      await waitFor(() => events.some((e) => e.type === "turn.done"));
+      await waitFor(() => warn.mock.calls.some((call) => String(call[0]).includes("inbox_2")));
+      expect(String(warn.mock.calls.find((call) => String(call[0]).includes("inbox_2"))?.[0])).toContain(SID);
+    } finally {
+      warn.mockRestore();
       driver.dispose();
     }
   });

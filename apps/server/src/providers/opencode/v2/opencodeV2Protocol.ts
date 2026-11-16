@@ -383,6 +383,12 @@ export const opencodeV2Protocol: OpencodeProtocol = {
     let response = await postPrompt(client, sessionId, input);
     if (response.status === 400 && input.files.length > 0) {
       console.warn("opencode rejected the attachments of a mid-turn message; resending as text only");
+      traceHarnessCall({
+        harness: "opencode",
+        operation: "opencode.injectMessage.attachments",
+        ok: false,
+        error: `file parts rejected: ${response.status}, retried text-only`
+      });
       response = await postPrompt(client, sessionId, { ...input, files: [] });
     }
     if (!response.ok) throw new Error(await opencodeFailureText("opencode message send failed", response));

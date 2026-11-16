@@ -1032,8 +1032,9 @@ export class OpencodeDriver implements CliDriver {
     if (!meta) return false;
     const entry = meta.injected.get(inboxID);
     if (!entry) {
-      if (meta.injecting > 0) meta.deliveredWhileInjecting.add(inboxID);
-      return false;
+      if (meta.injecting === 0 || meta.input.admitted === inboxID) return false;
+      meta.deliveredWhileInjecting.add(inboxID);
+      return true;
     }
     meta.injected.delete(inboxID);
     this.emitInjectedDelivered(turnId, entry);
@@ -1549,6 +1550,23 @@ export class OpencodeDriver implements CliDriver {
     this.resolveApprovalsFor(turnId);
   }
 
+  private retractLeftovers(serverSessionId: string, info: WatchInfo, injected: Map<string, InjectedEntry>): void {
+    const protocol = protocolOf(info.protocol);
+    const inboxIds = [...injected.keys()];
+    injected.clear();
+    if (!protocol.retractInput) return;
+    const client = this.clientFor(info);
+    for (const inboxId of inboxIds) {
+      protocol.retractInput(client, serverSessionId, inboxId).then(
+        (retracted) => {
+          if (!retracted) console.warn(`opencode inbox item ${inboxId} of session ${serverSessionId} was not retracted at turn end`);
+        },
+        (err) =>
+          console.warn(`opencode inbox item ${inboxId} of session ${serverSessionId} could not be retracted at turn end: ${(err as Error).message}`)
+      );
+    }
+  }
+
   private takeTurn(turnId: string): {
     localSessionId: string;
     serverSessionId: string;
@@ -1567,6 +1585,7 @@ export class OpencodeDriver implements CliDriver {
     const serverSessionId = this.sessionIds.get(turnId);
     const info = this.watchInfo.get(turnId);
     if (!meta || !serverSessionId || !info) return null;
+    this.retractLeftovers(serverSessionId, info, meta.injected);
     const todosFromTools = this.protocolForTurn(turnId).todosFromTools;
     this.pool.endTurn(info.cwd);
     const timer = this.pollTimers.get(turnId);
@@ -1756,7 +1775,9 @@ export class OpencodeDriver implements CliDriver {
       const protocol = protocolOf(info.protocol);
       const client = this.clientFor(info);
       const children = protocol.version === "v2" ? this.knownChildren(turnId, serverSessionId) : [];
-      const pendingInbox = [...(this.turnMeta.get(turnId)?.injected.keys() ?? [])];
+      const injected = this.turnMeta.get(turnId)?.injected;
+      const pendingInbox = [...(injected?.keys() ?? [])];
+      injected?.clear();
       const retractions = pendingInbox.map((inboxId) =>
         (protocol.retractInput?.(client, serverSessionId, inboxId) ?? Promise.resolve(false)).catch(() => false)
       );
