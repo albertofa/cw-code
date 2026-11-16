@@ -2742,6 +2742,7 @@ body.session-dragging * {
 
 .turn-fold,
 .turn-errors,
+.turn-kept,
 .turn-pinned {
   display: flex;
   flex-direction: column;

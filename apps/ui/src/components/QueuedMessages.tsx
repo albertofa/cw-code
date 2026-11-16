@@ -11,6 +11,7 @@ export function QueuedMessages({ sessionId }: { sessionId: string }) {
   const messages = useThreadEntry(sessionId, "queuedMessages") ?? NO_MESSAGES;
   const busy = useThreadBusy(sessionId);
   const [pending, setPending] = useState(false);
+  const heldCount = messages.filter((message) => message.state === "held").length;
 
   if (messages.length === 0) return null;
 
@@ -46,10 +47,10 @@ export function QueuedMessages({ sessionId }: { sessionId: string }) {
                 type="button"
                 className="queued-message-action"
                 disabled={busy || pending}
-                title={busy ? "Available when the agent finishes" : "Send the queued messages now"}
+                title={busy ? "Available when the agent finishes" : (heldCount > 1 ? "Send all queued messages now" : "Send the queued message now")}
                 onClick={() => void run("Could not send", () => window.cw.flushQueue(sessionId))}
               >
-                Send now
+                {heldCount > 1 ? "Send all now" : "Send now"}
               </button>
             )}
             {message.removable && (

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { buildThreadNodes, countActivityTools, groupTurns, splitTurn } from "./turnGroups.js";
+import { buildThreadNodes, countActivityTools, groupTurns, isMidTurnNode, splitTurn } from "./turnGroups.js";
 import type { ChatMessage } from "../stores/appStore.js";
 
 function msg(partial: Partial<ChatMessage> & Pick<ChatMessage, "id" | "role" | "turnId">): ChatMessage {
@@ -345,5 +345,38 @@ describe("countActivityTools", () => {
     );
     expect(countActivityTools(nodes)).toBe(5);
     expect(countActivityTools([])).toBe(0);
+  });
+});
+
+describe("splitTurn with mid-turn messages", () => {
+  const messages = [
+    msg({ id: "u", role: "user", turnId: "t1" }),
+    msg({ id: "r1", role: "tool", turnId: "t1", toolName: "Read", toolDone: true, toolOutput: "x" }),
+    msg({ id: "t1-q-m1", role: "user", turnId: "t1" }),
+    msg({ id: "r2", role: "tool", turnId: "t1", toolName: "Read", toolDone: true, toolOutput: "y" }),
+    msg({ id: "a1", role: "assistant", turnId: "t1" })
+  ];
+
+  it("keeps the mid-turn message in the activity, in order, and out of the lead", () => {
+    const pieces = splitTurn(messages, new Set(), false);
+    expect(pieces.lead.map((m) => m.id)).toEqual(["u"]);
+    expect(pieces.pinned?.map((m) => m.id)).toEqual(["a1"]);
+    const ids = pieces.activity.flatMap((n) => (n.kind === "msg" ? [n.msg.id] : n.kind === "tools" ? n.items.map((i) => i.id) : []));
+    expect(ids).toEqual(["r1", "t1-q-m1", "r2"]);
+    expect(pieces.activity.filter(isMidTurnNode)).toHaveLength(1);
+  });
+
+  it("does not pin assistant text across a mid-turn message", () => {
+    const pieces = splitTurn(
+      [
+        msg({ id: "u", role: "user", turnId: "t1" }),
+        msg({ id: "a1", role: "assistant", turnId: "t1" }),
+        msg({ id: "t1-q-m1", role: "user", turnId: "t1" }),
+        msg({ id: "a2", role: "assistant", turnId: "t1" })
+      ],
+      new Set(),
+      false
+    );
+    expect(pieces.pinned?.map((m) => m.id)).toEqual(["a2"]);
   });
 });
