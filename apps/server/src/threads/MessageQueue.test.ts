@@ -28,6 +28,7 @@ function setup(options: { retractable?: boolean; injectFails?: boolean } = {}) {
   const active: Array<{ sessionId: string; turnId: string; startedAt: number }> = [];
   const prompts: string[] = [];
   const injected: string[] = [];
+  const retracted: string[] = [];
   const sessions: Sessions = {
     assertCanStartTurn: (id) => {
       if (active.some((turn) => turn.sessionId === id)) throw new Error("busy");
@@ -55,7 +56,10 @@ function setup(options: { retractable?: boolean; injectFails?: boolean } = {}) {
       if (options.injectFails) throw new Error("no active turn to steer");
       injected.push(message.id);
     },
-    retractMessage: async () => true,
+    retractMessage: async (_id, messageId) => {
+      retracted.push(messageId);
+      return true;
+    },
     canRetractMessages: () => options.retractable ?? false
   };
   const queue = new MessageQueue({ store, refresh: () => {} });
@@ -68,6 +72,7 @@ function setup(options: { retractable?: boolean; injectFails?: boolean } = {}) {
     }
     if (event.type === "turn.started") turns.noteTurnStarted(sessionId, event.turnId);
     if (event.type === "user.message") turns.messageEvent(sessionId, event);
+    if (event.type === "tool.call" || event.type === "tool.result") turns.toolEvent(sessionId, event);
     threads.onDriverEvent(sessionId, event);
     if (event.type === "turn.interrupted") turns.messageEvent(sessionId, event);
   };
@@ -80,7 +85,9 @@ function setup(options: { retractable?: boolean; injectFails?: boolean } = {}) {
     active.push({ sessionId, turnId, startedAt: 1 });
     emit({ type: "turn.started", turnId, sessionId, startedAt: 1, prompt: "" });
   };
-  return { dbPath, store, sessionId, turns, queue, prompts, injected, emit, done, setWait, startExternal };
+  const toolCall = (turnId: string, toolCallId: string) => emit({ type: "tool.call", turnId, toolCallId, name: "Read", input: {} });
+  const toolResult = (turnId: string, toolCallId: string) => emit({ type: "tool.result", turnId, toolCallId, output: "", isError: false });
+  return { dbPath, store, sessionId, turns, queue, prompts, injected, retracted, emit, done, setWait, startExternal, toolCall, toolResult };
 }
 
 describe("MessageQueue", () => {
@@ -103,6 +110,7 @@ describe("MessageQueue", () => {
   test("queues a message sent during a turn and drops it once delivered", async () => {
     const ctx = setup();
     await ctx.turns.send(ctx.sessionId, "first");
+    ctx.toolCall("turn-1", "tool-1");
     const result = await ctx.turns.send(ctx.sessionId, "more", { attachments: ["a.png"] });
     expect(result.disposition).toBe("queued");
     const messageId = result.disposition === "queued" ? result.messageId : "";
@@ -142,11 +150,106 @@ describe("MessageQueue", () => {
   test("unqueue refuses a message the harness cannot give back", async () => {
     const ctx = setup();
     await ctx.turns.send(ctx.sessionId, "first");
+    ctx.toolCall("turn-1", "tool-1");
     const result = await ctx.turns.send(ctx.sessionId, "stuck");
     const messageId = result.disposition === "queued" ? result.messageId : "";
 
     await expect(ctx.turns.unqueue(ctx.sessionId, messageId)).rejects.toThrow("cannot be removed");
     expect(ctx.queue.list(ctx.sessionId)).toHaveLength(1);
+  });
+
+  test("without an open tool a message stays queued, removable and not injected", async () => {
+    const ctx = setup();
+    await ctx.turns.send(ctx.sessionId, "first");
+    await ctx.turns.send(ctx.sessionId, "later");
+
+    expect(ctx.injected).toEqual([]);
+    expect(ctx.queue.list(ctx.sessionId)).toMatchObject([{ text: "later", state: "sending", removable: true }]);
+  });
+
+  test("tool.call injects every waiting message in order and marks them not removable", async () => {
+    const ctx = setup();
+    await ctx.turns.send(ctx.sessionId, "first");
+    const a = await ctx.turns.send(ctx.sessionId, "a");
+    const b = await ctx.turns.send(ctx.sessionId, "b");
+
+    ctx.toolCall("turn-1", "tool-1");
+    await Promise.resolve();
+
+    const ids = [a, b].map((result) => (result.disposition === "queued" ? result.messageId : ""));
+    expect(ctx.injected).toEqual(ids);
+    expect(ctx.queue.list(ctx.sessionId).map((message) => message.removable)).toEqual([false, false]);
+  });
+
+  test("a message sent while a tool runs is injected right away; a closed tool holds the next one", async () => {
+    const ctx = setup();
+    await ctx.turns.send(ctx.sessionId, "first");
+    ctx.toolCall("turn-1", "tool-1");
+    const now = await ctx.turns.send(ctx.sessionId, "now");
+    expect(ctx.injected).toEqual([now.disposition === "queued" ? now.messageId : ""]);
+
+    ctx.toolResult("turn-1", "tool-1");
+    await ctx.turns.send(ctx.sessionId, "later");
+
+    expect(ctx.injected).toHaveLength(1);
+    expect(ctx.queue.list(ctx.sessionId)).toMatchObject([
+      { text: "now", removable: false },
+      { text: "later", removable: true }
+    ]);
+  });
+
+  test("a message removed before tool.call is never injected", async () => {
+    const ctx = setup();
+    await ctx.turns.send(ctx.sessionId, "first");
+    const result = await ctx.turns.send(ctx.sessionId, "oops");
+    const messageId = result.disposition === "queued" ? result.messageId : "";
+
+    await ctx.turns.unqueue(ctx.sessionId, messageId);
+    ctx.toolCall("turn-1", "tool-1");
+    await Promise.resolve();
+
+    expect(ctx.injected).toEqual([]);
+    expect(ctx.retracted).toEqual([]);
+    expect(ctx.queue.list(ctx.sessionId)).toEqual([]);
+  });
+
+  test("a turn that ends without a tool sends the held message as a leftover turn", async () => {
+    const ctx = setup();
+    await ctx.turns.send(ctx.sessionId, "first");
+    await ctx.turns.send(ctx.sessionId, "after");
+
+    ctx.done("turn-1");
+    await Promise.resolve();
+
+    expect(ctx.injected).toEqual([]);
+    expect(ctx.prompts).toEqual(["first", "after"]);
+    expect(ctx.queue.list(ctx.sessionId)).toEqual([]);
+  });
+
+  test("a tool open in a finished turn does not inject into the next one", async () => {
+    const ctx = setup();
+    await ctx.turns.send(ctx.sessionId, "first");
+    ctx.toolCall("turn-1", "tool-1");
+    ctx.done("turn-1");
+    await Promise.resolve();
+    await ctx.turns.send(ctx.sessionId, "second");
+    await ctx.turns.send(ctx.sessionId, "during second");
+    ctx.toolCall("turn-1", "tool-2");
+
+    expect(ctx.injected).toEqual([]);
+    expect(ctx.queue.list(ctx.sessionId)).toMatchObject([{ text: "during second", removable: true }]);
+  });
+
+  test("a driver that can retract still injects right away", async () => {
+    const ctx = setup({ retractable: true });
+    await ctx.turns.send(ctx.sessionId, "first");
+    const result = await ctx.turns.send(ctx.sessionId, "now");
+    const messageId = result.disposition === "queued" ? result.messageId : "";
+
+    expect(ctx.injected).toEqual([messageId]);
+    expect(ctx.queue.list(ctx.sessionId)).toMatchObject([{ id: messageId, removable: true }]);
+    await ctx.turns.unqueue(ctx.sessionId, messageId);
+    expect(ctx.retracted).toEqual([messageId]);
   });
 
   test("the queue survives a store reload as held messages", async () => {

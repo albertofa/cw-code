@@ -62,6 +62,7 @@ export class TurnService {
   private readonly stoppedListeners = new Set<(sessionId: string) => void>();
   private readonly injected = new Set<string>();
   private readonly lastTurns = new Map<string, string>();
+  private readonly openTools = new Map<string, Set<string>>();
 
   constructor(private readonly deps: TurnServiceDeps) {}
 
@@ -83,7 +84,7 @@ export class TurnService {
       if (this.starting.get(sessionId) === starting) this.starting.delete(sessionId);
     }
     this.deps.threads.commitTurn(sessionId, begun.pendingId, turnId);
-    this.lastTurns.set(sessionId, turnId);
+    this.trackTurn(sessionId, turnId);
     notifyAll(this.startedListeners, "[turns] turn started", sessionId, auto, { turnId, ...(origin ? { origin } : {}) });
     if (!starting.stopRequested) this.injectPending(sessionId);
     if (starting.stopRequested) {
@@ -147,6 +148,7 @@ export class TurnService {
 
   turnSettled(sessionId: string, event: SettledTurnEvent): void {
     if (this.isStale(sessionId, event.turnId)) return;
+    this.openTools.delete(sessionId);
     if (event.type === "turn.error" || event.isError) {
       this.holdQueue(sessionId);
       return;
@@ -159,8 +161,24 @@ export class TurnService {
       this.injected.delete(event.messageId);
       this.deps.queue.remove(sessionId, [event.messageId]);
     } else if (event.type === "turn.interrupted" && !this.isStale(sessionId, event.turnId)) {
+      this.openTools.delete(sessionId);
       this.holdQueue(sessionId);
     }
+  }
+
+  toolEvent(sessionId: string, event: Extract<ThreadEvent, { type: "tool.call" | "tool.result" }>): void {
+    if (this.isStale(sessionId, event.turnId)) return;
+    if (event.type === "tool.result") {
+      this.openTools.get(sessionId)?.delete(event.toolCallId);
+      return;
+    }
+    let open = this.openTools.get(sessionId);
+    if (!open) {
+      open = new Set();
+      this.openTools.set(sessionId, open);
+    }
+    open.add(event.toolCallId);
+    this.injectPending(sessionId);
   }
 
   queueExtras(sessionId: string): { queuedMessages: QueuedMessage[] } {
@@ -176,11 +194,18 @@ export class TurnService {
     for (const message of this.deps.queue.list(sessionId)) this.injected.delete(message.id);
     this.deps.queue.clear(sessionId);
     this.lastTurns.delete(sessionId);
+    this.openTools.delete(sessionId);
   }
 
   /** Records every turn the session starts, including ones started outside this service (reconnect turns). */
   noteTurnStarted(sessionId: string, turnId: string): void {
+    this.trackTurn(sessionId, turnId);
+  }
+
+  private trackTurn(sessionId: string, turnId: string): void {
+    if (this.lastTurns.get(sessionId) === turnId) return;
     this.lastTurns.set(sessionId, turnId);
+    this.openTools.delete(sessionId);
   }
 
   private startQueued(sessionId: string, messages: QueuedMessage[]): Promise<string> {
@@ -216,6 +241,7 @@ export class TurnService {
     if (this.starting.has(sessionId) || this.deps.sessions.subagentWaitSince(sessionId) !== null) return;
     if (!this.deps.sessions.listActiveTurns().some((turn) => turn.sessionId === sessionId)) return;
     const removable = this.deps.sessions.canRetractMessages(sessionId);
+    if (!removable && !this.toolOpen(sessionId)) return;
     if (!removable) this.deps.queue.update(sessionId, message.id, { removable: false });
     this.injected.add(message.id);
     try {
@@ -225,6 +251,10 @@ export class TurnService {
       this.deps.queue.update(sessionId, message.id, { removable: true });
       console.warn(`[turns] message ${message.id} stays queued for session ${sessionId}: ${error instanceof Error ? error.message : String(error)}`);
     }
+  }
+
+  private toolOpen(sessionId: string): boolean {
+    return (this.openTools.get(sessionId)?.size ?? 0) > 0;
   }
 
   private busy(sessionId: string, ignoreWait = false): boolean {

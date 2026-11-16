@@ -228,6 +228,7 @@ function wireServiceEvents(
     if (event.type === "task.updated") assessmentChanged();
     if (event.type === "turn.started") turns.noteTurnStarted(sessionId, event.turnId);
     if (event.type === "user.message") turns.messageEvent(sessionId, event);
+    if (event.type === "tool.call" || event.type === "tool.result") turns.toolEvent(sessionId, event);
     try {
       threads.onDriverEvent(sessionId, event);
     } catch (error) {
