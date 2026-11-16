@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, jest } from "bun:test";
 import type { LimitResume as LimitResumeMeta, SessionMeta, ThreadEvent } from "@cw-code/contracts";
 import { SHUTDOWN_RESERVED_MESSAGE } from "../shutdown/shutdownReservation.js";
-import { SessionBusyError } from "./SessionBusyError.js";
+import { HARNESS_UPDATE_BUSY_DETAIL, SessionBusyError } from "./SessionBusyError.js";
 import type { ThreadNotice } from "../threads/ThreadService.js";
 import {
   LIMIT_RESUME_MARGIN_MS,
@@ -228,10 +228,25 @@ describe("LimitResume", () => {
     expect(h.notices).toHaveLength(1);
   });
 
+  it("does not start a fourth continuation when the capped one settles twice", async () => {
+    const h = harness();
+    h.engine.turnSettled("s1", "t1", done("t1", Date.now() + HOUR));
+    for (let attempt = 1; attempt <= LIMIT_RESUME_MAX_ATTEMPTS; attempt += 1) {
+      await h.advance(HOUR + LIMIT_RESUME_MARGIN_MS);
+      const turnId = `resume-${attempt}`;
+      h.engine.turnSettled("s1", turnId, done(turnId, Date.now() + HOUR));
+      h.engine.turnSettled("s1", turnId, done(turnId, Date.now() + HOUR));
+    }
+    expect(h.pending()).toBeUndefined();
+    await h.advance(3 * HOUR);
+    expect(h.started).toHaveLength(LIMIT_RESUME_MAX_ATTEMPTS);
+    expect(new Set(h.notices.map((entry) => entry.notice.noticeId)).size).toBe(1);
+  });
+
   it("retries after a harness update instead of dropping the continuation", async () => {
     const h = harness();
     h.engine.turnSettled("s1", "t1", done("t1", Date.now() + HOUR));
-    h.state.startError = new SessionBusyError("harness updating", "Claude is updating. Try again when the update finishes.");
+    h.state.startError = new SessionBusyError(HARNESS_UPDATE_BUSY_DETAIL, "Claude is updating. Try again when the update finishes.");
     await h.advance(HOUR + LIMIT_RESUME_MARGIN_MS);
     expect(h.pending()).toBeDefined();
     expect(h.notices).toEqual([]);
