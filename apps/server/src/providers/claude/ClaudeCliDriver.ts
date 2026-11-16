@@ -190,6 +190,19 @@ interface PendingInjection {
 
 export const CLAUDE_HELD_RESULT_TIMEOUT_MS = 10_000;
 
+function matchingEchoPrefix(pending: PendingInjection[], text: string): number {
+  const target = text.trimEnd();
+  let joined = "";
+  let matched = 0;
+  for (let k = 0; k < pending.length; k++) {
+    const echo = pending[k].echo.trimEnd();
+    if (!echo) break;
+    joined = k === 0 ? echo : `${joined}\n${echo}`;
+    if (joined === target) matched = k + 1;
+  }
+  return matched;
+}
+
 export function combineClaudeTurnDone(held: TurnDoneInfo, next: TurnDoneInfo): TurnDoneInfo {
   return {
     ...next,
@@ -281,11 +294,10 @@ export class ClaudeCliDriver implements CliDriver {
   private handleReplay(state: ClaudeProcessState, text: string): void {
     const firstReplay = state.promptEchoPending;
     state.promptEchoPending = false;
-    if (firstReplay && !state.injected.some((pending) => text.includes(pending.echo))) return;
-    const head = state.injected.shift();
-    if (!head) return;
-    const consumed = [head, ...state.injected.filter((pending) => text.includes(pending.echo))];
-    state.injected = state.injected.filter((pending) => !consumed.includes(pending));
+    const matched = matchingEchoPrefix(state.injected, text);
+    if (firstReplay && matched === 0) return;
+    if (state.injected.length === 0) return;
+    const consumed = state.injected.splice(0, Math.max(matched, 1));
     const timestamp = Date.now();
     for (const injection of consumed) {
       this.emit({ type: "user.message", turnId: state.activeTurnId, messageId: injection.id, text: injection.text, timestamp });
@@ -305,6 +317,7 @@ export class ClaudeCliDriver implements CliDriver {
       state.heldTimer = undefined;
       const held = state.heldResult;
       if (!held) return;
+      state.stale = true;
       traceHarnessCall({
         harness: "claude",
         operation: "claude.heldResultTimeout",
@@ -1083,6 +1096,7 @@ export class ClaudeCliDriver implements CliDriver {
     if (!state) return;
     traceHarnessCall({ harness: "claude", operation: "claude.stopSession", sessionId, ok: true });
     this.clearIdleTimer(state);
+    this.clearHeldTimer(state);
     this.processes.delete(sessionId);
     this.closeTasks(state, "interrupted", "process-exit");
     this.killChild(state);
