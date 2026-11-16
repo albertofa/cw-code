@@ -21,11 +21,20 @@ export interface TurnPieces {
   pinned?: ChatMessage[];
 }
 
+function isMidTurnUser(m: ChatMessage): boolean {
+  return m.role === "user" && m.id.startsWith(`${m.turnId}-q-`);
+}
+
+export function isMidTurnNode(node: ThreadNode): boolean {
+  return node.kind === "msg" && isMidTurnUser(node.msg);
+}
+
 export function groupTurns(messages: ChatMessage[]): TurnSlice[] {
   const out: TurnSlice[] = [];
   let anchor: TurnSlice | null = null;
   for (const m of messages) {
-    if (m.role === "user") {
+    const midTurn = isMidTurnUser(m) && out[out.length - 1]?.turnId === m.turnId;
+    if (m.role === "user" && !midTurn) {
       anchor = { turnId: m.turnId, messages: [m] };
       out.push(anchor);
       continue;
@@ -110,7 +119,7 @@ export function countActivityTools(nodes: ThreadNode[]): number {
  * tool call that returned something, or a compaction boundary, ends it.
  */
 function endsAnswer(m: ChatMessage): boolean {
-  if (m.compaction) return true;
+  if (m.compaction || isMidTurnUser(m)) return true;
   if (m.role !== "tool") return false;
   if (m.toolOutputEmpty === true) return false;
   return !(m.toolDone === true && (m.toolOutput ?? "").trim() === "");
@@ -127,7 +136,7 @@ export function splitTurn(messages: ChatMessage[], nestedIds: Set<string>, runni
   const system: ChatMessage[] = [];
   const rest: ChatMessage[] = [];
   for (const m of messages) {
-    if (m.role === "user") lead.push(m);
+    if (m.role === "user" && !isMidTurnUser(m)) lead.push(m);
     else if (m.role === "system" && !m.compaction) system.push(m);
     else rest.push(m);
   }

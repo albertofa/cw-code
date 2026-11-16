@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import type { ThreadTopicData, TopicOp } from "@cw-code/contracts";
 import { sessionTopic } from "@cw-code/shared/topics";
 import { TopicHub } from "../topics/TopicHub.js";
+import { MessageQueue } from "./MessageQueue.js";
 import { ThreadService } from "./ThreadService.js";
 import { createThreadTopicProvider } from "./threadTopic.js";
 import { TurnService, type TurnServiceDeps } from "./TurnService.js";
@@ -41,9 +42,15 @@ function setup(startTurn: Sessions["startTurn"], keptHeads: Record<string, strin
     },
     listActiveTurns: () => [...active],
     listSubagents: () => [],
-    endSubagentWait: () => false
+    endSubagentWait: () => false,
+    findSession: () => undefined,
+    subagentWaitSince: () => null,
+    injectMessage: async () => {},
+    retractMessage: async () => false,
+    messageCapabilities: () => ({ inject: true, retract: false })
   };
-  const turns = new TurnService({ sessions, threads, git: { keptFolderHead: (sessionId) => keptHeads[sessionId] ?? null } });
+  const queue = new MessageQueue({ store: { getSession: () => undefined, setQueuedMessages: () => {} }, refresh: () => {} });
+  const turns = new TurnService({ sessions, threads, git: { keptFolderHead: (sessionId) => keptHeads[sessionId] ?? null }, queue });
   const topic = sessionTopic("s1");
   hub.subscribe({ clientId: "c1", client: "web", auth: { kind: "owner" } }, [topic]);
   const snapshot = (): ThreadTopicData => hub.subscribe({ clientId: "c1", client: "web", auth: { kind: "owner" } }, [topic])[topic].data as ThreadTopicData;

@@ -133,3 +133,40 @@ export function clearComposerDraft(key: string): void {
   saveComposerDraft(key, "", []);
   flushComposerDraft(key);
 }
+
+type DraftAppendListener = (draft: ComposerDraft) => void;
+
+const appendListeners = new Map<string, DraftAppendListener>();
+
+export function untagAttachments(text: string, attachments: readonly string[]): string {
+  if (attachments.length === 0) return text;
+  const tags = attachments.map((attachment) => `@${attachment}`).join("\n");
+  if (text === tags) return "";
+  return text.endsWith(`\n${tags}`) ? text.slice(0, -(tags.length + 1)) : text;
+}
+
+export function mergeDrafts(current: ComposerDraft | null, added: ComposerDraft): ComposerDraft {
+  const base = current?.text.trimEnd() ?? "";
+  return {
+    text: base && added.text ? `${base}\n\n${added.text}` : base || added.text,
+    attachments: [...new Set([...(current?.attachments ?? []), ...added.attachments])]
+  };
+}
+
+export function onComposerDraftAppend(key: string, listener: DraftAppendListener): () => void {
+  appendListeners.set(key, listener);
+  return () => {
+    if (appendListeners.get(key) === listener) appendListeners.delete(key);
+  };
+}
+
+export function appendToComposerDraft(key: string, draft: ComposerDraft): void {
+  const listener = appendListeners.get(key);
+  if (listener) {
+    listener(copy(draft));
+    return;
+  }
+  const merged = mergeDrafts(loadComposerDraft(key), draft);
+  saveComposerDraft(key, merged.text, merged.attachments);
+  flushComposerDraft(key);
+}

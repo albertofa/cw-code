@@ -51,6 +51,19 @@ export interface ThreadSubagentWait {
   since: number;
 }
 
+/** A message the user sent while the session was busy that the harness has not received yet. */
+export interface QueuedMessage {
+  id: string;
+  text: string;
+  attachments: string[];
+  skills?: string[];
+  createdAt: number;
+  /** sending: delivered without user action. held: waits for "Send now" or "Remove". */
+  state: "sending" | "held";
+  /** false once it sits inside a harness that cannot take it back. */
+  removable: boolean;
+}
+
 export interface ThreadTurnChanges {
   changes: TurnChanges | null;
   error: string | null;
@@ -74,4 +87,5 @@ export type ThreadTopicData = {
   turnChanges: ThreadTurnChanges | null;
   subagents: SubagentSummary[];
   subagentWait: ThreadSubagentWait | null;
+  queuedMessages: QueuedMessage[];
 } &{ [key: `item/${string}`]: ThreadItem };

@@ -17,7 +17,7 @@ import {
   parseClaudeTaskSystemLine,
   parseClaudeToolUseResult,
   parseTaskNotificationUsage,
-  parseStreamLine,
+  parseClaudeReplayUserText, parseStreamLine,
   type TurnDoneInfo
 } from "./claudeStreamParser.js";
 
@@ -1063,5 +1063,14 @@ describe("buildClaudeAllowRule", () => {
     expect(buildClaudeAllowRule("Bash", { command: "rm -rf /" })).toBe("Bash");
     expect(buildClaudeAllowRule("Edit", { file_path: "src/a.ts" })).toBe("Edit");
     expect(buildClaudeAllowRule("  Read  ", null)).toBe("Read");
+  });
+});
+
+describe("parseClaudeReplayUserText", () => {
+  it("reads replayed user text and ignores other lines", () => {
+    const line = JSON.stringify({ type: "user", isReplay: true, message: { role: "user", content: [{ type: "text", text: "hi" }] } });
+    expect(parseClaudeReplayUserText(line)).toBe("hi");
+    expect(parseStreamLine(line, "t", "s", () => {})).toEqual([]);
+    expect(parseClaudeReplayUserText(JSON.stringify({ type: "user", message: { content: "hi" } }))).toBeNull();
   });
 });

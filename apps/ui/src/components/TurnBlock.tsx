@@ -18,6 +18,7 @@ export function TurnBlock({
   toolCount,
   lead,
   activity,
+  kept,
   system,
   pinned,
   footer
@@ -31,6 +32,7 @@ export function TurnBlock({
   toolCount?: number;
   lead: ReactNode[];
   activity: ReactNode[];
+  kept: ReactNode[];
   system: ReactNode[];
   pinned: ReactNode[];
   footer?: ReactNode;
@@ -122,6 +124,7 @@ export function TurnBlock({
           {activity}
         </div>
       )}
+      {kept.length > 0 && (!hasActivity || !open) && <div className="turn-kept">{kept}</div>}
       {system.length > 0 && <div className="turn-errors">{system}</div>}
       {pinned.length > 0 && <div className="turn-pinned">{pinned}</div>}
       {footer}
