@@ -53,6 +53,41 @@ function readRecords(): Array<Record<string, unknown>> {
 }
 
 describe("TracingCliDriver", () => {
+  it("forwards mid-turn message injection and retraction", async () => {
+    const calls: string[] = [];
+    const inner = Object.assign(new FakeDriver(), {
+      injectMessage: async (turnId: string, message: { id: string }) => {
+        calls.push(`inject:${turnId}:${message.id}`);
+      },
+      retractMessage: async (turnId: string, messageId: string) => {
+        calls.push(`retract:${turnId}:${messageId}`);
+        return true;
+      }
+    });
+    const tracing = new TracingCliDriver(inner);
+    await tracing.injectMessage!("t1", { id: "m1", prompt: "also this", cwd: "C:\\proj", attachments: [] });
+    expect(await tracing.retractMessage!("t1", "m1")).toBe(true);
+    expect(calls).toEqual(["inject:t1:m1", "retract:t1:m1"]);
+    expect(readRecords().map((record) => record["operation"])).toEqual(["claude.injectMessage", "claude.retractMessage"]);
+  });
+
+  it("leaves injection undefined for drivers without it", () => {
+    const tracing = new TracingCliDriver(new FakeDriver());
+    expect(tracing.injectMessage).toBeUndefined();
+    expect(tracing.retractMessage).toBeUndefined();
+  });
+
+  it("rethrows and traces a refused injection", async () => {
+    const inner = Object.assign(new FakeDriver(), {
+      injectMessage: async () => {
+        throw new Error("no active turn");
+      }
+    });
+    const tracing = new TracingCliDriver(inner);
+    await expect(tracing.injectMessage!("t1", { id: "m1", prompt: "x", cwd: "C:\\proj", attachments: [] })).rejects.toThrow("no active turn");
+    expect(readRecords()[0]).toMatchObject({ operation: "claude.injectMessage", ok: false });
+  });
+
   it("delegates startTurn and logs the dispatch", () => {
     const tracing = new TracingCliDriver(new FakeDriver());
     const handle = tracing.startTurn({ sessionId: "s1", prompt: "hello there", cwd: "C:\\proj" });
