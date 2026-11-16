@@ -12,7 +12,7 @@ import { TurnService, type TurnServiceDeps } from "./TurnService.js";
 
 type Sessions = TurnServiceDeps["sessions"];
 
-function setup(options: { retractable?: boolean; injectFails?: boolean; startGate?: Promise<void> } = {}) {
+function setup(options: { retractable?: boolean; injectable?: boolean; injectFails?: boolean; startGate?: Promise<void> } = {}) {
   let waitSince: number | null = null;
   let failures = 0;
   const dbPath = join(mkdtempSync(join(tmpdir(), "cw-queue-")), "test.db");
@@ -69,7 +69,7 @@ function setup(options: { retractable?: boolean; injectFails?: boolean; startGat
       retracted.push(messageId);
       return true;
     },
-    canRetractMessages: () => options.retractable ?? false
+    messageCapabilities: () => ({ inject: options.injectable ?? true, retract: options.retractable ?? false })
   };
   const queue = new MessageQueue({ store, refresh: () => {} });
   const turns = new TurnService({ sessions, threads, git: { keptFolderHead: () => null }, queue });
@@ -298,6 +298,45 @@ describe("MessageQueue", () => {
     expect(ctx.queue.list(ctx.sessionId)).toMatchObject([{ id: messageId, removable: true }]);
     await ctx.turns.unqueue(ctx.sessionId, messageId);
     expect(ctx.retracted).toEqual([messageId]);
+  });
+
+  test("a turn whose harness cannot inject never calls it and sends the message as the leftover turn", async () => {
+    const ctx = setup({ injectable: false, retractable: false });
+    await ctx.turns.send(ctx.sessionId, "first");
+    await ctx.turns.send(ctx.sessionId, "later");
+    ctx.toolCall("turn-1", "tool-1");
+    await Promise.resolve();
+
+    expect(ctx.injected).toEqual([]);
+    expect(ctx.queue.list(ctx.sessionId)).toMatchObject([{ text: "later", state: "sending", removable: true }]);
+
+    ctx.done("turn-1");
+    await Promise.resolve();
+
+    expect(ctx.injected).toEqual([]);
+    expect(ctx.prompts).toEqual(["first", "later"]);
+    expect(ctx.queue.list(ctx.sessionId)).toEqual([]);
+  });
+
+  test("parking a resolved session holds what is left instead of dropping it", async () => {
+    const ctx = setup();
+    await ctx.turns.send(ctx.sessionId, "first");
+    ctx.toolCall("turn-1", "tool-1");
+    await ctx.turns.send(ctx.sessionId, "injected");
+    await ctx.turns.send(ctx.sessionId, "waiting");
+    ctx.store.updateSession(ctx.sessionId, { status: "resolved" }, "resolve");
+
+    ctx.turns.parkQueue(ctx.sessionId);
+
+    expect(ctx.queue.list(ctx.sessionId)).toMatchObject([
+      { text: "injected", state: "held", removable: true },
+      { text: "waiting", state: "held", removable: true }
+    ]);
+    await expect(ctx.turns.send(ctx.sessionId, "more")).rejects.toThrow("resolved");
+    expect(new SessionStore(ctx.dbPath).getSession(ctx.sessionId)?.queuedMessages).toMatchObject([
+      { text: "injected", state: "held" },
+      { text: "waiting", state: "held" }
+    ]);
   });
 
   test("the queue survives a store reload as held messages", async () => {

@@ -17,8 +17,12 @@ Core behaviors:
 - Mid-turn messages: `turns.send` on a busy session queues the message (`SessionMeta.queuedMessages`,
   published as `queuedMessages` on `session/<id>`) and injects it into the running turn through the
   optional `CliDriver.injectMessage`; the driver emits `user.message` when the agent receives it,
-  which removes it from the queue and places it in the thread. For drivers without
-  `retractMessage` (Claude, Codex) `TurnService` holds the message until a tool is open in the turn
+  which removes it from the queue and places it in the thread. What a turn supports comes from
+  the optional `CliDriver.messageCapabilities(turnId)` (`{ inject, retract }`; absent means
+  `injectMessage`/`retractMessage` exist), resolved by `SessionManager.messageCapabilities` for the
+  session's active turn, so an opencode v1 turn reports neither. Without `inject` the message is
+  never injected: it stays `sending` and removable and goes out as the leftover turn. Without
+  `retract` (Claude, Codex) `TurnService` holds the message until a tool is open in the turn
   (tracked from `tool.call`/`tool.result`, reset at turn start and end): it injects on send when a
   tool is already open, otherwise on the next `tool.call`, and a turn that ends with no new tool
   sends it as the leftover turn. Until injected the message is `removable`, so the UI offers Edit
@@ -27,10 +31,13 @@ Core behaviors:
   (delivery seen through `--replay-user-messages` echoes, matched exactly by prefix; a message the
   CLI runs as its own run stays in the same cw turn), Codex uses `turn/steer` (`clientId` on the
   `userMessage` item), opencode v2 posts to the session inbox (`session.inbox.delivered`; it alone
-  supports `retractMessage`). Messages still `sending` at a successful `turn.done` become one new
+  supports `retractMessage`, which succeeds only when the item is listed in the inbox before the
+  DELETE and no message with its id exists after it, because the server answers 204 even for an
+  item already delivered). Messages still `sending` at a successful `turn.done` become one new
   turn before auto follow-up and subagent wakes; while a parent waits on subagents
   (`subagentWait`) messages stay queued and go out as their own turn before the wake turn. Stop, a
-  turn error (including `turn.done` with `isError`) and restart turn them `held`, and they go out
+  turn error (including `turn.done` with `isError`), restart, resolve and archive turn them `held`
+  (kept across reloads for resolved and archived sessions too, shown as Not sent on reopen), and they go out
   only through `turns.flushQueue`. Claude holds a message sent before the prompt echo and writes it
   right after; if a held Claude result sees no follow-up run within 10 s
   (`CLAUDE_HELD_RESULT_TIMEOUT_MS`) the driver ends the turn and the server re-sends the

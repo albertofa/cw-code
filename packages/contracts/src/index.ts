@@ -38,7 +38,7 @@ export type {
   WorktreePruneSummary
 } from "./session.js";
 export type { ThreadEvent, SessionEvent, HistoryMessage, TodoItem, SubagentToolActivity, SubagentToolSummary, ToolUsage, ApprovalDecision, ApprovalKind, ApprovalRequest, QuestionInfo, QuestionOption, QuestionRequest } from "./events.js";
-export type { CliDriver, DriverActivity, InjectedMessage, TurnHandle, RetryConnectionRequest, RetryConnectionResult, SubagentToolsResult, TerminalLaunch } from "./provider.js";
+export type { CliDriver, DriverActivity, InjectedMessage, MessageCapabilities, TurnHandle, RetryConnectionRequest, RetryConnectionResult, SubagentToolsResult, TerminalLaunch } from "./provider.js";
 export type { TaskEndReason, TaskKind, TaskSnapshot, TaskState } from "./tasks.js";
 export type {
   AppSettings,

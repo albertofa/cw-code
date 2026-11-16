@@ -225,6 +225,13 @@ async function loadMessages(
   return mapV2Messages(raw);
 }
 
+async function inboxPending(client: OpencodeClient, sessionId: string, inboxId: string): Promise<boolean> {
+  const res = await client.request(sessionPath(sessionId, "/inbox"), { timeoutMs: OPENCODE_LIST_TIMEOUT_MS });
+  if (!res.ok) return false;
+  const data = dataOf(await readJson(res, "opencode inbox lookup failed"));
+  return Array.isArray(data) && data.some((item) => asRecord(item)?.["id"] === inboxId);
+}
+
 async function revert(client: OpencodeClient, sessionId: string, name: "undo" | "redo", signal: AbortSignal): Promise<string> {
   const session = dataOf(await readJson(await client.request(sessionPath(sessionId), { signal }), "opencode session lookup failed"));
   const revertId = opencodeRevertMessageId(session);
@@ -398,11 +405,14 @@ export const opencodeV2Protocol: OpencodeProtocol = {
   },
 
   async retractInput(client, sessionId, inboxId): Promise<boolean> {
+    if (!(await inboxPending(client, sessionId, inboxId))) return false;
     const res = await client.request(sessionPath(sessionId, `/inbox/${encodeURIComponent(inboxId)}`), {
       method: "DELETE",
       timeoutMs: OPENCODE_LIST_TIMEOUT_MS
     });
-    return res.ok;
+    if (!res.ok) return false;
+    const recent = await loadMessages(client, sessionId, { label: "opencode message check failed", recent: true });
+    return !recent.some((message) => message.info?.id === inboxId);
   },
 
   interrupt(client, sessionId): Promise<Response> {

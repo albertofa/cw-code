@@ -47,7 +47,7 @@ function setup(startTurn: Sessions["startTurn"], keptHeads: Record<string, strin
     subagentWaitSince: () => null,
     injectMessage: async () => {},
     retractMessage: async () => false,
-    canRetractMessages: () => false
+    messageCapabilities: () => ({ inject: true, retract: false })
   };
   const queue = new MessageQueue({ store: { getSession: () => undefined, setQueuedMessages: () => {} }, refresh: () => {} });
   const turns = new TurnService({ sessions, threads, git: { keptFolderHead: (sessionId) => keptHeads[sessionId] ?? null }, queue });

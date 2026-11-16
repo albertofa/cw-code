@@ -34,7 +34,7 @@ export interface TurnServiceDeps {
     | "subagentWaitSince"
     | "injectMessage"
     | "retractMessage"
-    | "canRetractMessages"
+    | "messageCapabilities"
   >;
   threads: ThreadService;
   git: Pick<GitTopic, "keptFolderHead">;
@@ -190,9 +190,9 @@ export class TurnService {
     this.deps.queue.holdAll(sessionId);
   }
 
-  clearQueue(sessionId: string): void {
-    for (const message of this.deps.queue.list(sessionId)) this.injected.delete(message.id);
-    this.deps.queue.clear(sessionId);
+  /** Keeps what is left as held for a resolved or archived session and drops its per-turn tracking. */
+  parkQueue(sessionId: string): void {
+    this.holdQueue(sessionId);
     this.lastTurns.delete(sessionId);
     this.openTools.delete(sessionId);
   }
@@ -240,7 +240,9 @@ export class TurnService {
   private async inject(sessionId: string, message: QueuedMessage): Promise<void> {
     if (this.starting.has(sessionId) || this.deps.sessions.subagentWaitSince(sessionId) !== null) return;
     if (!this.deps.sessions.listActiveTurns().some((turn) => turn.sessionId === sessionId)) return;
-    const removable = this.deps.sessions.canRetractMessages(sessionId);
+    const capabilities = this.deps.sessions.messageCapabilities(sessionId);
+    if (!capabilities.inject) return;
+    const removable = capabilities.retract;
     if (!removable && !this.toolOpen(sessionId)) return;
     if (!removable) this.deps.queue.update(sessionId, message.id, { removable: false });
     this.injected.add(message.id);

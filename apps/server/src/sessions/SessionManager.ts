@@ -17,6 +17,7 @@ import type {
   ImportSessionRequest,
   ImportSessionResult,
   IssueRef,
+  MessageCapabilities,
   ModelOption,
   NativeSession,
   PermissionMode,
@@ -2876,9 +2877,14 @@ export class SessionManager {
     return driver.retractMessage(turnId, messageId);
   }
 
-  canRetractMessages(sessionId: string): boolean {
+  messageCapabilities(sessionId: string): MessageCapabilities {
     const session = this.store.getSession(sessionId);
-    return session !== undefined && typeof this.drivers[session.driver]?.retractMessage === "function";
+    const driver = session ? this.drivers[session.driver] : undefined;
+    if (!driver) return { inject: false, retract: false };
+    const turnId = [...this.activeTurns].find(([, entry]) => entry.sessionId === sessionId)?.[0];
+    if (turnId === undefined) return { inject: false, retract: false };
+    if (driver.messageCapabilities) return driver.messageCapabilities(turnId);
+    return { inject: typeof driver.injectMessage === "function", retract: typeof driver.retractMessage === "function" };
   }
 
   private activeTurnOf(sessionId: string): { session: SessionMeta; project: Project; turnId: string } {

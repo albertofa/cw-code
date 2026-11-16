@@ -7,6 +7,7 @@ import type {
   DriverKind,
   HistoryMessage,
   InjectedMessage,
+  MessageCapabilities,
   ModelOption,
   NativeSession,
   PermissionOption,
@@ -199,6 +200,12 @@ export class TracingCliDriver implements CliDriver {
       traceHarnessCall({ harness: this.kind, operation: `${this.kind}.retractMessage`, turnId, ok: true, extra: { messageId, retracted } });
       return retracted;
     };
+  }
+
+  get messageCapabilities(): ((turnId: string) => MessageCapabilities) | undefined {
+    const inner = this.inner;
+    if (typeof inner.messageCapabilities !== "function") return undefined;
+    return (turnId) => inner.messageCapabilities!(turnId);
   }
 
   get retryConnection(): ((request: RetryConnectionRequest) => Promise<RetryConnectionResult>) | undefined {

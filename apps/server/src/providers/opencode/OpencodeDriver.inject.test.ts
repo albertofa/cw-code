@@ -68,6 +68,9 @@ interface ServerState {
   deleteStatus: number;
   injectDelayMs: number;
   initialWithoutId: boolean;
+  inbox: Set<string>;
+  messages: Set<string>;
+  deliverOnDelete: boolean;
 }
 
 function stubServer(sse: ReturnType<typeof controllableSse>, state: ServerState): void {
@@ -83,7 +86,9 @@ function stubServer(sse: ReturnType<typeof controllableSse>, state: ServerState)
         const index = state.prompts.length;
         if (index > 1 && state.injectDelayMs > 0) await sleep(state.injectDelayMs);
         if (index === 1 && state.initialWithoutId) return json({ data: {} });
-        return json({ data: { id: index === 1 ? "msg_u" : `inbox_${index}`, delivery: "steer" } });
+        const id = index === 1 ? "msg_u" : `inbox_${index}`;
+        if (index > 1) state.inbox.add(id);
+        return json({ data: { id, delivery: "steer" } });
       }
       if (method === "POST" && path.endsWith("/interrupt")) {
         state.interrupts.push(path);
@@ -91,9 +96,14 @@ function stubServer(sse: ReturnType<typeof controllableSse>, state: ServerState)
       }
       if (method === "DELETE") {
         state.deletes.push(path);
-        return new Response(null, { status: state.deleteStatus });
+        if (state.deleteStatus !== 204) return new Response(null, { status: state.deleteStatus });
+        const id = decodeURIComponent(path.slice(path.lastIndexOf("/") + 1));
+        if (state.deliverOnDelete && state.inbox.has(id)) deliverOnServer(state, id);
+        state.inbox.delete(id);
+        return new Response(null, { status: 204 });
       }
-      if (path.endsWith("/message")) return json({ data: [], cursor: {} });
+      if (path.endsWith("/inbox")) return json({ data: [...state.inbox].map((id) => ({ id, type: "user" })) });
+      if (path.endsWith("/message")) return json({ data: [...state.messages].map((id) => ({ id, type: "user", text: "" })), cursor: {} });
       if (path.endsWith("/form") || path === "/api/permission/request") return json({ data: [] });
       return json({ data: { id: SID } });
     })
@@ -101,7 +111,22 @@ function stubServer(sse: ReturnType<typeof controllableSse>, state: ServerState)
 }
 
 function newState(): ServerState {
-  return { prompts: [], deletes: [], interrupts: [], deleteStatus: 204, injectDelayMs: 0, initialWithoutId: false };
+  return {
+    prompts: [],
+    deletes: [],
+    interrupts: [],
+    deleteStatus: 204,
+    injectDelayMs: 0,
+    initialWithoutId: false,
+    inbox: new Set(),
+    messages: new Set(),
+    deliverOnDelete: false
+  };
+}
+
+function deliverOnServer(state: ServerState, inboxId: string): void {
+  state.inbox.delete(inboxId);
+  state.messages.add(inboxId);
 }
 
 function injection(id: string, prompt = "also do this") {
@@ -195,6 +220,7 @@ describe("OpencodeDriver mid-turn messages on opencode v2", () => {
     const driver = startDriver(events);
     try {
       const turnId = await startRunning(driver, state);
+      expect(driver.messageCapabilities(turnId)).toEqual({ inject: true, retract: true });
       await driver.injectMessage(turnId, injection("cw-msg-1"));
       await driver.injectMessage(turnId, injection("cw-msg-2"));
       expect(await driver.retractMessage(turnId, "cw-msg-1")).toBe(true);
@@ -209,7 +235,44 @@ describe("OpencodeDriver mid-turn messages on opencode v2", () => {
     }
   });
 
-  it("reports false when the server no longer has the inbox item", async () => {
+  it("reports false without deleting when the server already delivered the inbox item", async () => {
+    const events: ThreadEvent[] = [];
+    const sse = controllableSse();
+    const state = newState();
+    stubServer(sse, state);
+    const driver = startDriver(events);
+    try {
+      const turnId = await startRunning(driver, state);
+      await driver.injectMessage(turnId, injection("cw-msg-1"));
+      deliverOnServer(state, "inbox_2");
+      expect(await driver.retractMessage(turnId, "cw-msg-1")).toBe(false);
+      expect(state.deletes).toEqual([]);
+    } finally {
+      driver.dispose();
+    }
+  });
+
+  it("reports false when the delete answers 204 but the item was delivered meanwhile, and keeps waiting for its delivery", async () => {
+    const events: ThreadEvent[] = [];
+    const sse = controllableSse();
+    const state = newState();
+    state.deliverOnDelete = true;
+    stubServer(sse, state);
+    const driver = startDriver(events);
+    try {
+      const turnId = await startRunning(driver, state);
+      await driver.injectMessage(turnId, injection("cw-msg-1"));
+      expect(await driver.retractMessage(turnId, "cw-msg-1")).toBe(false);
+      expect(state.deletes).toEqual([`/api/session/${SID}/inbox/inbox_2`]);
+      sse.push("session.inbox.delivered", { sessionID: SID, inboxID: "inbox_2" });
+      await waitFor(() => userMessages(events).length === 1);
+      expect(userMessages(events)).toMatchObject([{ turnId, messageId: "cw-msg-1" }]);
+    } finally {
+      driver.dispose();
+    }
+  });
+
+  it("reports false when the server refuses the delete", async () => {
     const events: ThreadEvent[] = [];
     const sse = controllableSse();
     const state = newState();
@@ -382,6 +445,7 @@ describe("OpencodeDriver mid-turn messages on opencode v1", () => {
     try {
       const { turnId } = driver.startTurn({ sessionId: "s1", cwd: CWD, prompt: "hello", resumeCursor: SID });
       await sleep(200);
+      expect(driver.messageCapabilities(turnId)).toEqual({ inject: false, retract: false });
       await expect(driver.injectMessage(turnId, injection("cw-msg-1"))).rejects.toThrow("cannot take messages");
       expect(await driver.retractMessage(turnId, "cw-msg-1")).toBe(false);
     } finally {

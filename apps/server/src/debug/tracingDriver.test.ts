@@ -75,6 +75,16 @@ describe("TracingCliDriver", () => {
     const tracing = new TracingCliDriver(new FakeDriver());
     expect(tracing.injectMessage).toBeUndefined();
     expect(tracing.retractMessage).toBeUndefined();
+    expect(tracing.messageCapabilities).toBeUndefined();
+  });
+
+  it("forwards the per-turn message capabilities", () => {
+    const inner = Object.assign(new FakeDriver(), {
+      messageCapabilities: (turnId: string) => ({ inject: turnId === "t1", retract: false })
+    });
+    const tracing = new TracingCliDriver(inner);
+    expect(tracing.messageCapabilities!("t1")).toEqual({ inject: true, retract: false });
+    expect(tracing.messageCapabilities!("t2")).toEqual({ inject: false, retract: false });
   });
 
   it("rethrows and traces a refused injection", async () => {

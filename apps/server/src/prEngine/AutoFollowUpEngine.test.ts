@@ -542,7 +542,7 @@ describe("AutoFollowUpEngine with the real thread and turn services", () => {
         subagentWaitSince: () => null,
         injectMessage: async () => {},
         retractMessage: async () => false,
-        canRetractMessages: () => false
+        messageCapabilities: () => ({ inject: true, retract: false })
       },
       threads,
       git: { keptFolderHead: () => null },

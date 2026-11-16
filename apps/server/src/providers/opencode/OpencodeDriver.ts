@@ -1,7 +1,7 @@
 ﻿import { randomBytes, randomUUID } from "node:crypto";
 import { rm } from "node:fs/promises";
 import { homedir } from "node:os";
-import type { AccountUsageState, AppSettings, ApprovalDecision, CliDriver, CommandOption, ContextUsage, DriverActivity, HistoryMessage, InjectedMessage, ModelOption, NativeSession, PermissionMode, PermissionOption, QuestionInfo, QuestionRequest, RetryConnectionRequest, RetryConnectionResult, SessionMeta, TaskEndReason, TaskSnapshot, TerminalLaunch, ThreadEvent, TurnHandle, TurnModelUsage, TurnRequest } from "@cw-code/contracts";
+import type { AccountUsageState, AppSettings, ApprovalDecision, CliDriver, CommandOption, ContextUsage, DriverActivity, HistoryMessage, InjectedMessage, MessageCapabilities, ModelOption, NativeSession, PermissionMode, PermissionOption, QuestionInfo, QuestionRequest, RetryConnectionRequest, RetryConnectionResult, SessionMeta, TaskEndReason, TaskSnapshot, TerminalLaunch, ThreadEvent, TurnHandle, TurnModelUsage, TurnRequest } from "@cw-code/contracts";
 import { isAbsolute, join } from "node:path";
 import { harnessDir, opencodeConfigDir, opencodePluginDir } from "../../paths/appPaths.js";
 import { tokensEqual } from "../../transport/ownerToken.js";
@@ -1093,6 +1093,13 @@ export class OpencodeDriver implements CliDriver {
     }
   }
 
+  messageCapabilities(turnId: string): MessageCapabilities {
+    const info = this.watchInfo.get(turnId);
+    if (!info || !this.turnMeta.has(turnId)) return { inject: false, retract: false };
+    const protocol = protocolOf(info.protocol);
+    return { inject: typeof protocol.inject === "function", retract: typeof protocol.retractInput === "function" };
+  }
+
   async retractMessage(turnId: string, messageId: string): Promise<boolean> {
     const meta = this.turnMeta.get(turnId);
     const serverSessionId = this.sessionIds.get(turnId);
@@ -1566,7 +1573,11 @@ export class OpencodeDriver implements CliDriver {
     for (const inboxId of inboxIds) {
       protocol.retractInput(client, serverSessionId, inboxId).then(
         (retracted) => {
-          if (!retracted) console.warn(`opencode inbox item ${inboxId} of session ${serverSessionId} was not retracted at turn end`);
+          if (!retracted) {
+            console.warn(
+              `opencode inbox item ${inboxId} of session ${serverSessionId} was no longer pending at turn end; the agent may have received it without a delivery event`
+            );
+          }
         },
         (err) =>
           console.warn(`opencode inbox item ${inboxId} of session ${serverSessionId} could not be retracted at turn end: ${(err as Error).message}`)

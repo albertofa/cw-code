@@ -94,11 +94,6 @@ export class MessageQueue {
     );
   }
 
-  clear(sessionId: string): void {
-    if (this.list(sessionId).length === 0) return;
-    this.write(sessionId, []);
-  }
-
   private write(sessionId: string, messages: QueuedMessage[]): void {
     this.deps.store.setQueuedMessages(sessionId, messages);
     this.deps.refresh(sessionId);

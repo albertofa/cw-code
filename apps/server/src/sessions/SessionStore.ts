@@ -198,7 +198,7 @@ function isQueuedMessage(value: unknown): value is QueuedMessage {
 }
 
 function heldQueuedMessages(session: SessionMeta): QueuedMessage[] {
-  if (session.status === "resolved" || session.status === "archived" || !Array.isArray(session.queuedMessages)) return [];
+  if (!Array.isArray(session.queuedMessages)) return [];
   return session.queuedMessages.filter(isQueuedMessage).map((message) => ({ ...message, state: "held", removable: true }));
 }
 

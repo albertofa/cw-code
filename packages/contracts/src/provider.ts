@@ -58,6 +58,11 @@ export interface InjectedMessage {
   skills?: string[];
 }
 
+export interface MessageCapabilities {
+  inject: boolean;
+  retract: boolean;
+}
+
 export interface CliDriver {
   readonly kind: SessionMeta["driver"];
   listSessions(projectRoot: string, projectId?: string): Promise<SessionMeta[]>;
@@ -74,6 +79,8 @@ export interface CliDriver {
   injectMessage?(turnId: string, message: InjectedMessage): Promise<void>;
   /** Takes back an injected message the agent has not received. false when already delivered or not supported. */
   retractMessage?(turnId: string, messageId: string): Promise<boolean>;
+  /** What the turn's harness supports mid-turn. Absent: inject when injectMessage exists, retract when retractMessage exists. */
+  messageCapabilities?(turnId: string): MessageCapabilities;
   /** Force-stop all work for a local session (kill the underlying process). Callers await the result before deleting session resources. */
   stopSession?(sessionId: string): void | Promise<void>;
   /** Re-establish the CLI connection for a session after a disconnect and refetch its state. */
