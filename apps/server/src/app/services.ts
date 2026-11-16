@@ -226,6 +226,7 @@ function wireServiceEvents(
 ): void {
   sessions.setEmitter((sessionId, event) => {
     if (event.type === "task.updated") assessmentChanged();
+    if (event.type === "turn.started") turns.noteTurnStarted(sessionId, event.turnId);
     if (event.type === "user.message") turns.messageEvent(sessionId, event);
     try {
       threads.onDriverEvent(sessionId, event);

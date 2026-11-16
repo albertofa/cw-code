@@ -66,6 +66,7 @@ function setup(options: { retractable?: boolean; injectFails?: boolean } = {}) {
       const index = active.findIndex((turn) => turn.turnId === event.turnId);
       if (index >= 0) active.splice(index, 1);
     }
+    if (event.type === "turn.started") turns.noteTurnStarted(sessionId, event.turnId);
     if (event.type === "user.message") turns.messageEvent(sessionId, event);
     threads.onDriverEvent(sessionId, event);
     if (event.type === "turn.interrupted") turns.messageEvent(sessionId, event);
@@ -75,10 +76,30 @@ function setup(options: { retractable?: boolean; injectFails?: boolean } = {}) {
   const setWait = (since: number | null) => {
     waitSince = since;
   };
-  return { dbPath, store, sessionId, turns, queue, prompts, injected, emit, done, setWait };
+  const startExternal = (turnId: string) => {
+    active.push({ sessionId, turnId, startedAt: 1 });
+    emit({ type: "turn.started", turnId, sessionId, startedAt: 1, prompt: "" });
+  };
+  return { dbPath, store, sessionId, turns, queue, prompts, injected, emit, done, setWait, startExternal };
 }
 
 describe("MessageQueue", () => {
+  test("leftovers of a turn started outside TurnService (reconnect) still go out at turn.done", async () => {
+    const ctx = setup({ injectFails: true });
+    await ctx.turns.send(ctx.sessionId, "first");
+    ctx.done("turn-1");
+    await Promise.resolve();
+    ctx.startExternal("retry:1");
+    await ctx.turns.send(ctx.sessionId, "during reconnect");
+    expect(ctx.queue.list(ctx.sessionId)).toMatchObject([{ text: "during reconnect", state: "sending" }]);
+
+    ctx.done("retry:1");
+    await Promise.resolve();
+
+    expect(ctx.prompts).toEqual(["first", "during reconnect"]);
+    expect(ctx.queue.list(ctx.sessionId)).toEqual([]);
+  });
+
   test("queues a message sent during a turn and drops it once delivered", async () => {
     const ctx = setup();
     await ctx.turns.send(ctx.sessionId, "first");

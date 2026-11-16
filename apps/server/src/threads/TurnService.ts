@@ -107,7 +107,8 @@ export class TurnService {
       }
       this.deps.queue.add(sessionId, { text: prompt, attachments: input.attachments, skills: input.skills });
       const pending = this.sendPending(sessionId);
-      if (pending) return { disposition: "started", turnId: await pending };
+      if (!pending) throw new Error("queued messages could not be sent");
+      return { disposition: "started", turnId: await pending };
     }
     const message = this.deps.queue.add(sessionId, { text: prompt, attachments: input.attachments, skills: input.skills });
     await this.inject(sessionId, message);
@@ -174,6 +175,12 @@ export class TurnService {
   clearQueue(sessionId: string): void {
     for (const message of this.deps.queue.list(sessionId)) this.injected.delete(message.id);
     this.deps.queue.clear(sessionId);
+    this.lastTurns.delete(sessionId);
+  }
+
+  /** Records every turn the session starts, including ones started outside this service (reconnect turns). */
+  noteTurnStarted(sessionId: string, turnId: string): void {
+    this.lastTurns.set(sessionId, turnId);
   }
 
   private startQueued(sessionId: string, messages: QueuedMessage[]): Promise<string> {

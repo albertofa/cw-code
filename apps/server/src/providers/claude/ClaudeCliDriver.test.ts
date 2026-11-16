@@ -1856,8 +1856,9 @@ describe("ClaudeCliDriver mid-turn messages", () => {
     const { driver, events, children } = makeDriver();
     const handle = driver.startTurn({ sessionId: "s1", cwd: "C:\\proj", prompt: "go" });
     await settle();
-    await driver.injectMessage(handle.turnId, { id: "m1", prompt: "next", cwd: "C:\\proj", attachments: [] });
     children[0].stdout.write(`${replayLine("go")}\n`);
+    await settle();
+    await driver.injectMessage(handle.turnId, { id: "m1", prompt: "next", cwd: "C:\\proj", attachments: [] });
     children[0].stdout.write(`${resultLine({ result: "first", modelUsage: modelUsage(100, 20) })}\n`);
     await settle();
     expect(turnDones(events)).toHaveLength(0);
@@ -1877,6 +1878,8 @@ describe("ClaudeCliDriver mid-turn messages", () => {
   it("terminates the process after an interrupt with an undelivered injected message", async () => {
     const { driver, children, killed } = makeDriver();
     const handle = driver.startTurn({ sessionId: "s1", cwd: "C:\\proj", prompt: "go" });
+    await settle();
+    children[0].stdout.write(`${replayLine("go")}\n`);
     await settle();
     await driver.injectMessage(handle.turnId, { id: "m1", prompt: "later", cwd: "C:\\proj", attachments: [] });
     driver.interrupt(handle.turnId);
@@ -1926,6 +1929,37 @@ describe("ClaudeCliDriver mid-turn messages", () => {
     driver.dispose();
   });
 
+  it("holds a message injected before the prompt echo and writes it right after the echo", async () => {
+    const { driver, events, children } = makeDriver();
+    const handle = driver.startTurn({ sessionId: "s1", cwd: "C:\\proj", prompt: "start" });
+    await settle();
+    await driver.injectMessage(handle.turnId, { id: "m1", prompt: "early note", cwd: "C:\\proj", attachments: [] });
+    await settle();
+    expect(children[0].written).not.toContain("early note");
+    children[0].stdout.write(`${replayLine("start")}\n`);
+    await settle();
+    expect(children[0].written).toContain("early note");
+    expect(events.some((event) => event.type === "user.message")).toBe(false);
+    children[0].stdout.write(`${replayLine("early note")}\n`);
+    children[0].stdout.write(`${resultLine()}\n`);
+    await settle();
+    expect(events.filter((event) => event.type === "user.message")).toEqual([expect.objectContaining({ messageId: "m1" })]);
+    expect(turnDones(events)).toHaveLength(1);
+    driver.dispose();
+  });
+
+  it("drops a held pre-echo message on Stop without writing it", async () => {
+    const { driver, children } = makeDriver();
+    const handle = driver.startTurn({ sessionId: "s1", cwd: "C:\\proj", prompt: "start" });
+    await settle();
+    await driver.injectMessage(handle.turnId, { id: "m1", prompt: "early note", cwd: "C:\\proj", attachments: [] });
+    driver.interrupt(handle.turnId);
+    children[0].stdout.write(`${replayLine("start")}\n`);
+    await settle();
+    expect(children[0].written).not.toContain("early note");
+    driver.dispose();
+  });
+
   it("treats a command-form prompt echo as the prompt, not an injection", async () => {
     const { driver, events, children } = makeDriver();
     const handle = driver.startTurn({ sessionId: "s1", cwd: "C:\\proj", prompt: "/greet now" });
@@ -1946,6 +1980,8 @@ describe("ClaudeCliDriver mid-turn messages", () => {
     const { driver, children } = makeDriver();
     const handle = driver.startTurn({ sessionId: "s1", cwd: "C:\\proj", prompt: "go" });
     await settle();
+    children[0].stdout.write(`${replayLine("go")}\n`);
+    await settle();
     await driver.injectMessage(handle.turnId, { id: "m1", prompt: "later", cwd: "C:\\proj", attachments: [] });
     driver.interrupt(handle.turnId);
     driver.startTurn({ sessionId: "s1", cwd: "C:\\proj", prompt: "again" });
@@ -1959,6 +1995,8 @@ describe("ClaudeCliDriver mid-turn messages", () => {
     try {
       const { driver, events, children } = makeDriver();
       const handle = driver.startTurn({ sessionId: "s1", cwd: "C:\\proj", prompt: "go" });
+      await settle();
+      children[0].stdout.write(`${replayLine("go")}\n`);
       await settle();
       await driver.injectMessage(handle.turnId, { id: "m1", prompt: "lost", cwd: "C:\\proj", attachments: [] });
       children[0].stdout.write(`${resultLine({ result: "first" })}\n`);
@@ -2019,6 +2057,8 @@ describe("ClaudeCliDriver mid-turn messages", () => {
       const { driver, children } = makeDriver();
       const handle = driver.startTurn({ sessionId: "s1", cwd: "C:\\proj", prompt: "go" });
       await settle();
+      children[0].stdout.write(`${replayLine("go")}\n`);
+      await settle();
       await driver.injectMessage(handle.turnId, { id: "m1", prompt: "lost", cwd: "C:\\proj", attachments: [] });
       children[0].stdout.write(`${resultLine({ result: "first" })}\n`);
       await settle();
@@ -2035,6 +2075,8 @@ describe("ClaudeCliDriver mid-turn messages", () => {
   it("does not carry an API error from the held run into the next one", async () => {
     const { driver, events, children } = makeDriver();
     const handle = driver.startTurn({ sessionId: "s1", cwd: "C:\\proj", prompt: "go" });
+    await settle();
+    children[0].stdout.write(`${replayLine("go")}\n`);
     await settle();
     await driver.injectMessage(handle.turnId, { id: "m1", prompt: "next", cwd: "C:\\proj", attachments: [] });
     children[0].stdout.write(`${JSON.stringify({ type: "assistant", isApiErrorMessage: true, message: { content: [{ type: "text", text: "overloaded" }] } })}\n`);

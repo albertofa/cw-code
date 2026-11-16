@@ -177,6 +177,8 @@ interface ClaudeProcessState {
   stale?: boolean;
   promptEchoPending: boolean;
   injected: PendingInjection[];
+  /** Messages accepted before the prompt echo; written right after it so each echo stays attributable. */
+  deferredInjections: InjectedMessage[];
   heldResult?: TurnDoneInfo;
   heldTimer?: NodeJS.Timeout;
   terminateAfterInterrupt: boolean;
@@ -279,6 +281,17 @@ export class ClaudeCliDriver implements CliDriver {
     if (!state || state.activeTurnId !== turnId || state.completedTurn || this.interruptedTurns.has(turnId) || !this.isProcessAlive(state)) {
       throw new Error("Claude has no active turn to receive this message");
     }
+    // Before the prompt echo the CLI may batch the prompt and this line into one replay we cannot attribute,
+    // so hold the message until the echo arrives.
+    if (state.promptEchoPending) {
+      state.deferredInjections.push(message);
+      return;
+    }
+    this.writeInjection(state, message);
+  }
+
+  private writeInjection(state: ClaudeProcessState, message: InjectedMessage): void {
+    const turnId = state.activeTurnId;
     const echo = this.writeUserMessage(state, message);
     state.injected.push({ id: message.id, text: message.prompt, echo });
     traceHarnessCall({
@@ -295,12 +308,17 @@ export class ClaudeCliDriver implements CliDriver {
     const firstReplay = state.promptEchoPending;
     state.promptEchoPending = false;
     const matched = matchingEchoPrefix(state.injected, text);
-    if (firstReplay && matched === 0) return;
-    if (state.injected.length === 0) return;
-    const consumed = state.injected.splice(0, Math.max(matched, 1));
-    const timestamp = Date.now();
-    for (const injection of consumed) {
-      this.emit({ type: "user.message", turnId: state.activeTurnId, messageId: injection.id, text: injection.text, timestamp });
+    if ((!firstReplay || matched > 0) && state.injected.length > 0) {
+      const consumed = state.injected.splice(0, Math.max(matched, 1));
+      const timestamp = Date.now();
+      for (const injection of consumed) {
+        this.emit({ type: "user.message", turnId: state.activeTurnId, messageId: injection.id, text: injection.text, timestamp });
+      }
+    }
+    if (firstReplay && state.deferredInjections.length > 0) {
+      const deferred = state.deferredInjections.splice(0);
+      if (state.completedTurn || this.interruptedTurns.has(state.activeTurnId) || !this.isProcessAlive(state)) return;
+      for (const message of deferred) this.writeInjection(state, message);
     }
   }
 
@@ -948,6 +966,7 @@ export class ClaudeCliDriver implements CliDriver {
       existing.compactedPostTokens = undefined;
       existing.apiErrorMessage = undefined;
       existing.injected = [];
+      existing.deferredInjections = [];
       existing.heldResult = undefined;
       this.clearHeldTimer(existing);
       existing.terminateAfterInterrupt = false;
@@ -1010,6 +1029,7 @@ export class ClaudeCliDriver implements CliDriver {
       permissionMode: request.permissionMode ?? "auto",
       modelUsage: {},
       injected: [],
+      deferredInjections: [],
       promptEchoPending: true,
       terminateAfterInterrupt: false
     };
@@ -1069,6 +1089,7 @@ export class ClaudeCliDriver implements CliDriver {
       return;
     }
     this.interruptedTurns.add(turnId);
+    state.deferredInjections = [];
     if (state.injected.length > 0) {
       state.terminateAfterInterrupt = true;
       state.stale = true;
