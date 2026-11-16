@@ -111,7 +111,7 @@ import { shutdownReservedError } from "../shutdown/shutdownReservation.js";
 import { BRANCH_MISMATCH_MARKER } from "./branchMismatch.js";
 import { currentCheckoutSessionIds } from "../sourceControl/branchMismatch.js";
 import { overlayLiveTasks } from "../tasks/overlayLiveTasks.js";
-import { SessionBusyError } from "./SessionBusyError.js";
+import { HARNESS_UPDATE_BUSY_DETAIL, SessionBusyError } from "./SessionBusyError.js";
 import { PendingRequests, type PendingRequest } from "./PendingRequests.js";
 import type { UsageLedgerQuery, UsageLedgerRow } from "../usage/ledgerTypes.js";
 
@@ -2585,7 +2585,7 @@ export class SessionManager {
 
   private assertTurnGateOpen(kind: DriverKind): void {
     const gated = this.turnGate?.(kind) ?? null;
-    if (gated !== null) throw new SessionBusyError("harness updating", gated);
+    if (gated !== null) throw new SessionBusyError(HARNESS_UPDATE_BUSY_DETAIL, gated);
   }
 
   private revertFailedTurnStart(sessionId: string, previous: SessionStatusSnapshot): void {

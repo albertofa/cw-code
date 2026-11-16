@@ -1,5 +1,6 @@
 import type { AppSettings, LimitResume as LimitResumeMeta, SessionMeta, ThreadLimitResume } from "@cw-code/contracts";
 import { SHUTDOWN_RESERVED_MESSAGE } from "../shutdown/shutdownReservation.js";
+import { HARNESS_UPDATE_BUSY_DETAIL } from "./SessionBusyError.js";
 import type { SessionRuntime, SettledTurnEvent, ThreadNotice } from "../threads/ThreadService.js";
 import type { TurnOrigin } from "../threads/TurnService.js";
 
@@ -15,8 +16,6 @@ export const LIMIT_RESUME_MAX_ATTEMPTS = 3;
 /** A reset that passed longer ago than this (server was off) is dropped instead of resumed. */
 export const LIMIT_RESUME_STALE_MS = 24 * 60 * 60_000;
 const MAX_TIMER_MS = 2 ** 31 - 1;
-/** `SessionBusyError` detail of the harness update gate, which closes only while an update runs. */
-const HARNESS_GATE_DETAIL = "harness updating";
 
 export interface LimitResumeDeps {
   sessions(): SessionMeta[];
@@ -47,7 +46,10 @@ export class LimitResume {
   private readonly timers = new Map<string, ReturnType<typeof setTimeout>>();
   /** Attempts count of the continuation being started, until its turn id is known. */
   private readonly firing = new Map<string, number>();
-  /** The running continuation turn per session and how many attempts it represents. */
+  /**
+   * The latest continuation turn per session and how many attempts it represents. Kept after it settles,
+   * until the next turn starts or a stop, so a second settle of the same turn is still counted.
+   */
   private readonly resumed = new Map<string, { turnId: string; attempts: number }>();
   private readonly published = new Map<string, string>();
   private disposed = false;
@@ -97,7 +99,6 @@ export class LimitResume {
   turnSettled(sessionId: string, turnId: string, event: SettledTurnEvent): void {
     const resumed = this.resumed.get(sessionId);
     const counted = resumed?.turnId === turnId;
-    if (counted) this.resumed.delete(sessionId);
     // A turn can settle twice (background tasks): the second settle keeps the streak the first one stored.
     // A user turn clears the stored entry when it starts, so its streak still starts at zero.
     const attempts = counted ? resumed.attempts : (this.find(sessionId)?.limitResume?.attempts ?? 0);
@@ -260,7 +261,7 @@ export class LimitResume {
     } catch (error) {
       if (errorMessage(error) === SHUTDOWN_RESERVED_MESSAGE) return;
       const busy = error as { code?: unknown; detail?: unknown } | null;
-      if (busy?.code === "session-busy" && busy.detail === HARNESS_GATE_DETAIL) {
+      if (busy?.code === "session-busy" && busy.detail === HARNESS_UPDATE_BUSY_DETAIL) {
         // The harness is updating; the reset has passed, so `arm` retries after the margin.
         this.arm(sessionId);
         return;
