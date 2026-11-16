@@ -182,6 +182,7 @@ interface ClaudeProcessState {
   heldResult?: TurnDoneInfo;
   heldTimer?: NodeJS.Timeout;
   terminateAfterInterrupt: boolean;
+  staleFromInterrupt: boolean;
 }
 
 interface PendingInjection {
@@ -768,7 +769,11 @@ export class ClaudeCliDriver implements CliDriver {
       state.modelUsage = info.modelUsage;
       if (interrupted) {
         state.postCompletionOutputPending = false;
-        if (state.terminateAfterInterrupt) {
+        const terminateNow = state.terminateAfterInterrupt && state.injected.length > 0;
+        if (!terminateNow && state.staleFromInterrupt) state.stale = false;
+        state.terminateAfterInterrupt = false;
+        state.staleFromInterrupt = false;
+        if (terminateNow) {
           this.terminate(state);
           return;
         }
@@ -970,6 +975,7 @@ export class ClaudeCliDriver implements CliDriver {
       existing.heldResult = undefined;
       this.clearHeldTimer(existing);
       existing.terminateAfterInterrupt = false;
+      existing.staleFromInterrupt = false;
       this.clearIdleTimer(existing);
       this.turnToSession.set(turnId, request.sessionId);
       existing.promptEchoPending = true;
@@ -1031,7 +1037,8 @@ export class ClaudeCliDriver implements CliDriver {
       injected: [],
       deferredInjections: [],
       promptEchoPending: true,
-      terminateAfterInterrupt: false
+      terminateAfterInterrupt: false,
+      staleFromInterrupt: false
     };
     this.processes.set(request.sessionId, state);
     this.turnToSession.set(turnId, request.sessionId);
@@ -1092,6 +1099,7 @@ export class ClaudeCliDriver implements CliDriver {
     state.deferredInjections = [];
     if (state.injected.length > 0) {
       state.terminateAfterInterrupt = true;
+      if (!state.stale) state.staleFromInterrupt = true;
       state.stale = true;
     }
     const line = JSON.stringify({

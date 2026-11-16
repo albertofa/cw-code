@@ -49,6 +49,14 @@ describe("groupTurns", () => {
     expect(turns.map((t) => t.messages.map((m) => m.id))).toEqual([["u", "a1", "t1-q-m1", "a2"], ["next"]]);
   });
 
+  it("does not treat a user id that merely contains -q- as a mid-turn message", () => {
+    const turns = groupTurns([
+      msg({ id: "u", role: "user", turnId: "t1" }),
+      msg({ id: "x-q-m1", role: "user", turnId: "t1" })
+    ]);
+    expect(turns).toHaveLength(2);
+  });
+
   it("returns no slices for no messages", () => {
     expect(groupTurns([])).toEqual([]);
   });

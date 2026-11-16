@@ -1041,6 +1041,13 @@ export class OpencodeDriver implements CliDriver {
     return true;
   }
 
+  private releaseParkedDeliveries(turnId: string, meta: { deliveredWhileInjecting: Set<string> }): void {
+    const parked = [...meta.deliveredWhileInjecting];
+    meta.deliveredWhileInjecting.clear();
+    if (this.turnMeta.get(turnId) !== meta) return;
+    for (const inboxID of parked) this.noteInputDelivered(turnId, inboxID);
+  }
+
   private emitInjectedDelivered(turnId: string, entry: InjectedEntry): void {
     this.emit({ type: "user.message", turnId, messageId: entry.messageId, text: entry.text, timestamp: Date.now() });
   }
@@ -1082,7 +1089,7 @@ export class OpencodeDriver implements CliDriver {
       });
     } finally {
       meta.injecting--;
-      if (meta.injecting === 0) meta.deliveredWhileInjecting.clear();
+      if (meta.injecting === 0) this.releaseParkedDeliveries(turnId, meta);
     }
   }
 

@@ -704,10 +704,38 @@ describe("CodexCliDriver", () => {
     client.notify("item/started", {
       threadId: "thr_1",
       turnId: "turn_2",
-      item: { type: "userMessage", id: "u1", clientId: null, content: [{ type: "text", text: "focus on races" }] }
+      item: { type: "userMessage", id: "u1", clientId: "m1", content: [{ type: "text", text: "focus on races" }] }
     });
     const delivered = events.filter((e) => e.type === "user.message");
     expect(delivered.map((e) => (e as { messageId: string }).messageId)).toEqual(["m1"]);
+    driver.dispose();
+  });
+
+  it("does not match the command's own userMessage to an injection by position", async () => {
+    const { driver, events } = makeDriver(client);
+    const handle = driver.startTurn({
+      sessionId: "local-1",
+      prompt: "/review",
+      cwd: "C:\proj",
+      command: { name: "review", args: "" }
+    });
+    await settle();
+    await driver.injectMessage(handle.turnId, { id: "m1", prompt: "focus on races", cwd: "C:\proj", attachments: [] });
+    client.notify("item/started", {
+      threadId: "thr_1",
+      turnId: "turn_2",
+      item: { type: "userMessage", id: "u0", content: [{ type: "text", text: "$review" }] }
+    });
+    expect(events.some((e) => e.type === "user.message")).toBe(false);
+    client.notify("item/started", {
+      threadId: "thr_1",
+      turnId: "turn_2",
+      item: { type: "userMessage", id: "u1", clientId: "m1", content: [{ type: "text", text: "focus on races" }] }
+    });
+    const delivered = events.filter((e) => e.type === "user.message");
+    expect(delivered).toEqual([
+      { type: "user.message", turnId: handle.turnId, messageId: "m1", text: "focus on races", timestamp: expect.any(Number) }
+    ]);
     driver.dispose();
   });
 

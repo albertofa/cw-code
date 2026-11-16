@@ -21,10 +21,8 @@ export interface TurnPieces {
   pinned?: ChatMessage[];
 }
 
-const MID_TURN_USER_ID = /-q-/;
-
 function isMidTurnUser(m: ChatMessage): boolean {
-  return m.role === "user" && MID_TURN_USER_ID.test(m.id);
+  return m.role === "user" && m.id.startsWith(`${m.turnId}-q-`);
 }
 
 export function isMidTurnNode(node: ThreadNode): boolean {

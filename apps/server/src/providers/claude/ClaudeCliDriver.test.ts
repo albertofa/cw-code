@@ -1890,6 +1890,28 @@ describe("ClaudeCliDriver mid-turn messages", () => {
     driver.dispose();
   });
 
+  it("keeps and reuses the process when the echo arrives before the interrupted result", async () => {
+    const { driver, children, killed } = makeDriver();
+    const handle = driver.startTurn({ sessionId: "s1", cwd: "C:\proj", prompt: "go" });
+    await settle();
+    children[0].stdout.write(`${replayLine("go")}
+`);
+    await settle();
+    await driver.injectMessage(handle.turnId, { id: "m1", prompt: "later", cwd: "C:\proj", attachments: [] });
+    driver.interrupt(handle.turnId);
+    children[0].stdout.write(`${replayLine("later")}
+`);
+    await settle();
+    children[0].stdout.write(`${resultLine({ subtype: "error_during_execution", is_error: true })}
+`);
+    await settle();
+    expect(killed).toHaveLength(0);
+    driver.startTurn({ sessionId: "s1", cwd: "C:\proj", prompt: "again" });
+    await settle();
+    expect(children).toHaveLength(1);
+    driver.dispose();
+  });
+
   it("keeps the process after an interrupt with no pending injection", async () => {
     const { driver, children, killed } = makeDriver();
     const handle = driver.startTurn({ sessionId: "s1", cwd: "C:\\proj", prompt: "go" });

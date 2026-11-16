@@ -273,6 +273,29 @@ describe("OpencodeDriver mid-turn messages on opencode v2", () => {
     }
   }, 10_000);
 
+  it("counts the initial prompt delivery that lands during an injection when the prompt was admitted without an id", async () => {
+    const events: ThreadEvent[] = [];
+    const sse = controllableSse();
+    const state = newState();
+    state.initialWithoutId = true;
+    state.injectDelayMs = 200;
+    stubServer(sse, state);
+    const driver = startDriver(events);
+    try {
+      const turnId = await startRunning(driver, state);
+      const pending = driver.injectMessage(turnId, injection("cw-msg-1"));
+      await waitFor(() => state.prompts.length === 2);
+      sse.push("session.inbox.delivered", { sessionID: SID, inboxID: "msg_u" });
+      await pending;
+      expect(userMessages(events)).toEqual([]);
+      sse.push("session.execution.succeeded", { sessionID: SID });
+      await waitFor(() => events.some((e) => e.type === "turn.done"));
+      expect(events.filter((e) => e.type === "turn.done")).toHaveLength(1);
+    } finally {
+      driver.dispose();
+    }
+  }, 10_000);
+
   it("retracts a message the server never delivered when the turn ends", async () => {
     const events: ThreadEvent[] = [];
     const sse = controllableSse();

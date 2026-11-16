@@ -728,7 +728,7 @@ export class CodexCliDriver implements CliDriver {
     const isFirst = active.userMessagesSeen === 0;
     active.userMessagesSeen += 1;
     const byClientId = item.clientId ? active.injected.findIndex((m) => m.id === item.clientId) : -1;
-    const index = byClientId >= 0 ? byClientId : isFirst || item.clientId ? -1 : 0;
+    const index = byClientId >= 0 ? byClientId : isFirst || item.clientId || active.command ? -1 : 0;
     const pending = index >= 0 ? active.injected[index] : undefined;
     if (!pending) return null;
     active.injected.splice(index, 1);
