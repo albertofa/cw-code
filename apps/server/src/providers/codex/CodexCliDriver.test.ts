@@ -526,6 +526,41 @@ describe("CodexCliDriver", () => {
     driver.dispose();
   });
 
+  it("closes a command with no output with an empty tool.result", async () => {
+    const { driver, events } = makeDriver(client);
+    driver.startTurn({ sessionId: "local-1", prompt: "mkdir", cwd: "C:\\proj" });
+    await settle();
+    client.notify("item/completed", {
+      threadId: "thr_1",
+      turnId: "turn_2",
+      item: { type: "commandExecution", id: "cmd-empty", command: "mkdir out", aggregatedOutput: "", exitCode: 0, status: "completed" }
+    });
+    await settle();
+    expect(events).toContainEqual({
+      type: "tool.result",
+      turnId: expect.any(String),
+      toolCallId: "cmd-empty",
+      output: "",
+      isError: false,
+      outputEmpty: true
+    });
+    driver.dispose();
+  });
+
+  it("closes a web search with a tool.result", async () => {
+    const { driver, events } = makeDriver(client);
+    driver.startTurn({ sessionId: "local-1", prompt: "search", cwd: "C:\\proj" });
+    await settle();
+    client.notify("item/completed", {
+      threadId: "thr_1",
+      turnId: "turn_2",
+      item: { type: "webSearch", id: "ws-1", query: "bun test" }
+    });
+    await settle();
+    expect(events).toContainEqual(expect.objectContaining({ type: "tool.result", toolCallId: "ws-1", outputEmpty: true }));
+    driver.dispose();
+  });
+
   it("emits todo.updated from a turn/plan/updated notification for the active turn", async () => {
     const { driver, events } = makeDriver(client);
     const handle = driver.startTurn({ sessionId: "local-1", prompt: "plan the work", cwd: "C:\\proj" });

@@ -248,7 +248,7 @@ export class TurnService {
       await this.deps.sessions.injectMessage(sessionId, { id: message.id, prompt: message.text, attachments: message.attachments, skills: message.skills });
     } catch (error) {
       this.injected.delete(message.id);
-      this.deps.queue.update(sessionId, message.id, { removable: true });
+      if (!removable) this.deps.queue.update(sessionId, message.id, { removable: true });
       console.warn(`[turns] message ${message.id} stays queued for session ${sessionId}: ${error instanceof Error ? error.message : String(error)}`);
     }
   }

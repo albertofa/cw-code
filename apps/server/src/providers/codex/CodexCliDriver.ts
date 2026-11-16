@@ -933,7 +933,7 @@ export class CodexCliDriver implements CliDriver {
           }
           break;
         }
-        const result = this.toolResultFor(item, active.turnId);
+        const result = this.toolResultFor(item, active.turnId) ?? this.emptyToolResultFor(item, active.turnId);
         if (result) this.emit(result);
         break;
       }
@@ -1090,6 +1090,12 @@ export class CodexCliDriver implements CliDriver {
         };
       }
     }
+  }
+
+  private emptyToolResultFor(item: CodexThreadItem, turnId: string): ThreadEvent | null {
+    const call = this.toolCallFor(item, turnId);
+    if (call?.type !== "tool.call") return null;
+    return { type: "tool.result", turnId, toolCallId: call.toolCallId, output: "", isError: false, outputEmpty: true };
   }
 
   private toolResultFor(item: CodexThreadItem, turnId: string): ThreadEvent | null {

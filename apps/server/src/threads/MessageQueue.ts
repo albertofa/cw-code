@@ -62,7 +62,9 @@ export class MessageQueue {
 
   update(sessionId: string, messageId: string, patch: Partial<Pick<QueuedMessage, "state" | "removable">>): void {
     const messages = this.list(sessionId);
-    if (!messages.some((message) => message.id === messageId)) return;
+    const current = messages.find((message) => message.id === messageId);
+    if (!current) return;
+    if (Object.entries(patch).every(([key, value]) => current[key as keyof typeof patch] === value)) return;
     this.write(
       sessionId,
       messages.map((message) => (message.id === messageId ? { ...message, ...patch } : message))

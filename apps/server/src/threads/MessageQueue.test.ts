@@ -12,8 +12,9 @@ import { TurnService, type TurnServiceDeps } from "./TurnService.js";
 
 type Sessions = TurnServiceDeps["sessions"];
 
-function setup(options: { retractable?: boolean; injectFails?: boolean } = {}) {
+function setup(options: { retractable?: boolean; injectFails?: boolean; startGate?: Promise<void> } = {}) {
   let waitSince: number | null = null;
+  let failures = 0;
   const dbPath = join(mkdtempSync(join(tmpdir(), "cw-queue-")), "test.db");
   const store = new SessionStore(dbPath);
   const project = store.addProject("C:/proj");
@@ -39,6 +40,10 @@ function setup(options: { retractable?: boolean; injectFails?: boolean } = {}) {
       const turnId = `turn-${prompts.length}`;
       active.push({ sessionId: id, turnId, startedAt: 1 });
       threads.onDriverEvent(id, { type: "turn.started", turnId, sessionId: id, startedAt: 1, prompt });
+      if (options.startGate) {
+        turns.noteTurnStarted(id, turnId);
+        await options.startGate;
+      }
       return turnId;
     },
     interrupt: (turnId) => {
@@ -54,6 +59,10 @@ function setup(options: { retractable?: boolean; injectFails?: boolean } = {}) {
     subagentWaitSince: () => waitSince,
     injectMessage: async (_id, message) => {
       if (options.injectFails) throw new Error("no active turn to steer");
+      if (failures > 0) {
+        failures -= 1;
+        throw new Error("steer rejected");
+      }
       injected.push(message.id);
     },
     retractMessage: async (_id, messageId) => {
@@ -87,7 +96,10 @@ function setup(options: { retractable?: boolean; injectFails?: boolean } = {}) {
   };
   const toolCall = (turnId: string, toolCallId: string) => emit({ type: "tool.call", turnId, toolCallId, name: "Read", input: {} });
   const toolResult = (turnId: string, toolCallId: string) => emit({ type: "tool.result", turnId, toolCallId, output: "", isError: false });
-  return { dbPath, store, sessionId, turns, queue, prompts, injected, retracted, emit, done, setWait, startExternal, toolCall, toolResult };
+  const failNextInject = () => {
+    failures += 1;
+  };
+  return { dbPath, store, sessionId, turns, queue, prompts, injected, retracted, emit, done, setWait, startExternal, toolCall, toolResult, failNextInject };
 }
 
 describe("MessageQueue", () => {
@@ -238,6 +250,42 @@ describe("MessageQueue", () => {
 
     expect(ctx.injected).toEqual([]);
     expect(ctx.queue.list(ctx.sessionId)).toMatchObject([{ text: "during second", removable: true }]);
+  });
+
+  test("a tool.call that arrives while the turn is still starting is kept and injects once start resolves", async () => {
+    let release = () => {};
+    const startGate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const ctx = setup({ startGate });
+    const first = ctx.turns.send(ctx.sessionId, "first");
+    const queued = await ctx.turns.send(ctx.sessionId, "during start");
+    ctx.toolCall("turn-1", "tool-1");
+    expect(ctx.injected).toEqual([]);
+
+    release();
+    await first;
+
+    expect(ctx.injected).toEqual([queued.disposition === "queued" ? queued.messageId : ""]);
+    expect(ctx.queue.list(ctx.sessionId)).toMatchObject([{ text: "during start", removable: false }]);
+  });
+
+  test("an injection that fails at tool.call goes back to removable and is injected at the next tool.call", async () => {
+    const ctx = setup();
+    await ctx.turns.send(ctx.sessionId, "first");
+    const queued = await ctx.turns.send(ctx.sessionId, "retry me");
+    const messageId = queued.disposition === "queued" ? queued.messageId : "";
+    ctx.failNextInject();
+
+    ctx.toolCall("turn-1", "tool-1");
+    await Promise.resolve();
+    expect(ctx.injected).toEqual([]);
+    expect(ctx.queue.list(ctx.sessionId)).toMatchObject([{ id: messageId, state: "sending", removable: true }]);
+
+    ctx.toolCall("turn-1", "tool-2");
+    await Promise.resolve();
+    expect(ctx.injected).toEqual([messageId]);
+    expect(ctx.queue.list(ctx.sessionId)).toMatchObject([{ id: messageId, removable: false }]);
   });
 
   test("a driver that can retract still injects right away", async () => {
