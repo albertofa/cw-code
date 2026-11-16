@@ -69,6 +69,9 @@ export function registerTurnHandlers(router: Router, app: ServerApp): void {
     assertAgentTarget(ctx, sessionId);
     return turns().stop(sessionId);
   });
+  handle<{ sessionId: string }>(router, "turns.cancelLimitResume", (args) =>
+    app.requireServices().limitResume.cancel(knownSessionId(sessions(), args.sessionId))
+  );
   handle<{ sessionId: string; requestId: string; decision: ApprovalDecision }>(router, "approvals.respond", (args) =>
     sessions().respondApproval(args.requestId, args.decision)
   );

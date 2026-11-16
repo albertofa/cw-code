@@ -221,6 +221,7 @@ function buildRouter(): Router {
     },
     prStore: { onSettingsChanged: noop },
     autoFollowUp: { reevaluate: noop },
+    limitResume: { settingsChanged: noop },
     sidebar: { invalidate: noop },
     githubViews: { onSettingsChanged: noop },
     accountUsage: { invalidate: noop },

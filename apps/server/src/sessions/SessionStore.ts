@@ -5,6 +5,7 @@ import type {
   AutoFollowUpPause,
   ComposerPrefs,
   DriverKind,
+  LimitResume,
   Project,
   ProjectSettings,
   ResolvedCheckout,
@@ -167,6 +168,10 @@ function resetRuntimeStatuses(sessions: SessionMeta[]): boolean {
       delete session.autoFollowUp;
       changed = true;
     }
+    if (session.limitResume !== undefined && !isLimitResume(session.limitResume)) {
+      delete session.limitResume;
+      changed = true;
+    }
     if (session.status === "idle" && session.idleSince === undefined && Number.isFinite(session.updatedAt)) {
       session.idleSince = session.updatedAt;
       changed = true;
@@ -214,6 +219,14 @@ function isAutoFollowUpMeta(value: unknown): value is AutoFollowUpMeta {
   const meta = value as Partial<Record<keyof AutoFollowUpMeta, unknown>>;
   if (typeof meta.turns !== "number" || !Number.isInteger(meta.turns) || meta.turns < 0) return false;
   return meta.paused === undefined || AUTO_FOLLOW_UP_PAUSES.has(meta.paused as AutoFollowUpPause);
+}
+
+function isLimitResume(value: unknown): value is LimitResume {
+  if (!value || typeof value !== "object") return false;
+  const meta = value as Partial<Record<keyof LimitResume, unknown>>;
+  if (typeof meta.resetsAt !== "number" || !Number.isFinite(meta.resetsAt)) return false;
+  if (typeof meta.attempts !== "number" || !Number.isInteger(meta.attempts) || meta.attempts < 0) return false;
+  return meta.window === undefined || typeof meta.window === "string";
 }
 
 function normalizedAutoFollowUp(meta: AutoFollowUpMeta | undefined): AutoFollowUpMeta | undefined {
@@ -481,6 +494,17 @@ export class SessionStore {
     if (next?.turns === current.autoFollowUp?.turns && next?.paused === current.autoFollowUp?.paused) return false;
     if (next === undefined) delete current.autoFollowUp;
     else current.autoFollowUp = next;
+    this.persist();
+    return true;
+  }
+
+  setLimitResume(id: string, next: LimitResume | undefined): boolean {
+    const current = this.getSession(id);
+    if (!current) return false;
+    const previous = current.limitResume;
+    if (previous?.resetsAt === next?.resetsAt && previous?.window === next?.window && previous?.attempts === next?.attempts) return false;
+    if (next === undefined) delete current.limitResume;
+    else current.limitResume = { ...next };
     this.persist();
     return true;
   }
