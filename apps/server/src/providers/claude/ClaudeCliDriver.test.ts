@@ -473,6 +473,26 @@ describe("ClaudeCliDriver persistent process", () => {
     driver.dispose();
   });
 
+  it("does not reuse a rate limit event from an earlier turn", async () => {
+    const { driver, events, children } = makeDriver();
+    driver.startTurn({ sessionId: "s1", cwd: "C:\\proj", prompt: "go" });
+    await settle();
+    children[0].stdout.write(`${JSON.stringify({ type: "rate_limit_event", rate_limit_info: { status: "rejected", resetsAt: 1793724600, rateLimitType: "five_hour" } })}\n`);
+    children[0].stdout.write(`${resultLine()}\n`);
+    await settle();
+    driver.startTurn({ sessionId: "s1", cwd: "C:\\proj", prompt: "again" });
+    await settle();
+    children[0].stdout.write(`${JSON.stringify({
+      type: "assistant", isApiErrorMessage: true, error: "rate_limit",
+      message: { content: [{ type: "text", text: "You've hit your limit" }] }
+    })}\n`);
+    children[0].stdout.write(`${resultLine({ result: "" })}\n`);
+    await settle();
+    expect(turnDones(events).at(-1)).toMatchObject({ isError: true });
+    expect(turnDones(events).at(-1)?.usageLimit).toBeUndefined();
+    driver.dispose();
+  });
+
   it("does not report a plan limit for other API errors", async () => {
     const { driver, events, children } = makeDriver();
     driver.startTurn({ sessionId: "s1", cwd: "C:\\proj", prompt: "go" });

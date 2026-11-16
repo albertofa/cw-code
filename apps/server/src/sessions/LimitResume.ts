@@ -15,6 +15,8 @@ export const LIMIT_RESUME_MAX_ATTEMPTS = 3;
 /** A reset that passed longer ago than this (server was off) is dropped instead of resumed. */
 export const LIMIT_RESUME_STALE_MS = 24 * 60 * 60_000;
 const MAX_TIMER_MS = 2 ** 31 - 1;
+/** `SessionBusyError` detail of the harness update gate, which closes only while an update runs. */
+const HARNESS_GATE_DETAIL = "harness updating";
 
 export interface LimitResumeDeps {
   sessions(): SessionMeta[];
@@ -94,8 +96,11 @@ export class LimitResume {
 
   turnSettled(sessionId: string, turnId: string, event: SettledTurnEvent): void {
     const resumed = this.resumed.get(sessionId);
-    const attempts = resumed?.turnId === turnId ? resumed.attempts : 0;
-    if (resumed?.turnId === turnId) this.resumed.delete(sessionId);
+    const counted = resumed?.turnId === turnId;
+    if (counted) this.resumed.delete(sessionId);
+    // A turn can settle twice (background tasks): the second settle keeps the streak the first one stored.
+    // A user turn clears the stored entry when it starts, so its streak still starts at zero.
+    const attempts = counted ? resumed.attempts : (this.find(sessionId)?.limitResume?.attempts ?? 0);
     const found = event.type === "turn.done" ? event.usageLimit : undefined;
     const autoResume = this.deps.settings().limitAutoResume;
     // With auto resume off, a model limit still offers to continue on another model, without the scheduled wait.
@@ -254,8 +259,14 @@ export class LimitResume {
       await this.deps.startTurn(sessionId, LIMIT_RESUME_PROMPT);
     } catch (error) {
       if (errorMessage(error) === SHUTDOWN_RESERVED_MESSAGE) return;
+      const busy = error as { code?: unknown; detail?: unknown } | null;
+      if (busy?.code === "session-busy" && busy.detail === HARNESS_GATE_DETAIL) {
+        // The harness is updating; the reset has passed, so `arm` retries after the margin.
+        this.arm(sessionId);
+        return;
+      }
       this.clear(sessionId);
-      if ((error as { code?: unknown } | null)?.code === "session-busy") return;
+      if (busy?.code === "session-busy") return;
       console.warn(`[limit-resume] could not continue session ${sessionId}: ${errorMessage(error)}`);
       this.notify(sessionId, {
         noticeId: LIMIT_RESUME_NOTICE_ID,

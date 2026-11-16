@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, jest } from "bun:test";
 import type { LimitResume as LimitResumeMeta, SessionMeta, ThreadEvent, UsageLimitHit } from "@cw-code/contracts";
 import { SHUTDOWN_RESERVED_MESSAGE } from "../shutdown/shutdownReservation.js";
+import { SessionBusyError } from "./SessionBusyError.js";
 import type { ThreadNotice } from "../threads/ThreadService.js";
 import {
   LIMIT_RESUME_MARGIN_MS,
@@ -280,6 +281,44 @@ describe("LimitResume", () => {
     h.state.startError = null;
     await h.advance(HOUR + LIMIT_RESUME_MARGIN_MS);
     expect(h.started).toEqual([{ sessionId: "s1", prompt: LIMIT_RESUME_PROMPT }]);
+  });
+
+  it("keeps the streak when a continuation settles twice on a limit", async () => {
+    const h = harness();
+    h.engine.turnSettled("s1", "t1", done("t1", Date.now() + HOUR));
+    for (let attempt = 1; attempt < LIMIT_RESUME_MAX_ATTEMPTS; attempt += 1) {
+      await h.advance(HOUR + LIMIT_RESUME_MARGIN_MS);
+      const turnId = `resume-${attempt}`;
+      h.engine.turnSettled("s1", turnId, done(turnId, Date.now() + HOUR));
+      h.engine.turnSettled("s1", turnId, done(turnId, Date.now() + HOUR));
+      expect(h.pending()?.attempts).toBe(attempt);
+    }
+    await h.advance(HOUR + LIMIT_RESUME_MARGIN_MS);
+    h.engine.turnSettled("s1", `resume-${LIMIT_RESUME_MAX_ATTEMPTS}`, done("x", Date.now() + HOUR));
+    expect(h.pending()).toBeUndefined();
+    expect(h.notices).toHaveLength(1);
+  });
+
+  it("retries after a harness update instead of dropping the continuation", async () => {
+    const h = harness();
+    h.engine.turnSettled("s1", "t1", done("t1", Date.now() + HOUR));
+    h.state.startError = new SessionBusyError("harness updating", "Claude is updating. Try again when the update finishes.");
+    await h.advance(HOUR + LIMIT_RESUME_MARGIN_MS);
+    expect(h.pending()).toBeDefined();
+    expect(h.notices).toEqual([]);
+    h.state.startError = null;
+    await h.advance(LIMIT_RESUME_MARGIN_MS);
+    expect(h.started).toEqual([{ sessionId: "s1", prompt: LIMIT_RESUME_PROMPT }]);
+    expect(h.pending()).toBeUndefined();
+  });
+
+  it("drops the continuation quietly when another turn is already running", async () => {
+    const h = harness();
+    h.engine.turnSettled("s1", "t1", done("t1", Date.now() + HOUR));
+    h.state.startError = new SessionBusyError("turn pending");
+    await h.advance(HOUR + LIMIT_RESUME_MARGIN_MS);
+    expect(h.pending()).toBeUndefined();
+    expect(h.notices).toEqual([]);
   });
 
   it("tells the user when the continuation could not start", async () => {
