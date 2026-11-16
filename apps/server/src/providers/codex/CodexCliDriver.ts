@@ -467,7 +467,7 @@ export class CodexCliDriver implements CliDriver {
           lastTotal: this.threadLastTotal.get(threadId)
         },
         numTurns: 0,
-        userMessagesSeen: 0,
+        userMessagesSeen: request.command ? 1 : 0,
         injected: [],
         ...(request.permissionMode ? { permissionMode: request.permissionMode } : {}),
         ...(request.command ? { command: request.command.name } : {})
@@ -690,10 +690,10 @@ export class CodexCliDriver implements CliDriver {
     }
     const start = Date.now();
     const pending = { id: message.id, prompt: message.prompt };
-    turn.injected.push(pending);
     try {
       const attachments = this.insideAttachments(message.cwd, message.attachments);
       const skills = await this.mentionedSkills(message.cwd, message.skills ?? []);
+      turn.injected.push(pending);
       await this.client.request<unknown>("turn/steer", {
         threadId: turn.threadId,
         expectedTurnId,
@@ -727,13 +727,20 @@ export class CodexCliDriver implements CliDriver {
   private injectedUserMessage(item: CodexThreadItem, active: ActiveTurn): ThreadEvent | null {
     const isFirst = active.userMessagesSeen === 0;
     active.userMessagesSeen += 1;
-    const byClientId = item.clientUserMessageId ? active.injected.findIndex((m) => m.id === item.clientUserMessageId) : -1;
-    const index = byClientId >= 0 ? byClientId : isFirst ? -1 : 0;
+    const byClientId = item.clientId ? active.injected.findIndex((m) => m.id === item.clientId) : -1;
+    const index = byClientId >= 0 ? byClientId : isFirst || item.clientId ? -1 : 0;
     const pending = index >= 0 ? active.injected[index] : undefined;
     if (!pending) return null;
     active.injected.splice(index, 1);
     const text = codexUserMessageText(item) || pending.prompt;
     return { type: "user.message", turnId: active.turnId, messageId: pending.id, text, timestamp: Date.now() };
+  }
+
+  private warnUndeliveredInjections(turn: ActiveTurn): void {
+    if (turn.injected.length === 0) return;
+    console.warn(
+      `codex turn ${turn.turnId} of session ${turn.localSessionId} ended with ${turn.injected.length} injected message(s) not confirmed as delivered`
+    );
   }
 
   private codexTurnId(turn: ActiveTurn): string | undefined {
@@ -776,6 +783,7 @@ export class CodexCliDriver implements CliDriver {
   private clearTurnsForSession(sessionId: string): void {
     for (const turn of [...this.turns.values()]) {
       if (turn.localSessionId !== sessionId) continue;
+      this.warnUndeliveredInjections(turn);
       this.turns.delete(turn.turnId);
       this.reasoningKinds.delete(turn.turnId);
       for (const [codexId, driverTurnId] of [...this.turnByCodexId]) {
@@ -902,7 +910,7 @@ export class CodexCliDriver implements CliDriver {
       case "item/completed": {
         const item = p["item"] as CodexThreadItem | undefined;
         const active = this.turnForCodexId(String(p["turnId"] ?? ""), typeof p["threadId"] === "string" ? p["threadId"] : undefined);
-        if (!item || !active) break;
+        if (!item || !active || item.type === "userMessage") break;
         if (item.type === "reasoning") {
           const kinds = this.reasoningKinds.get(active.turnId);
           const streamed = typeof item.id === "string" && kinds?.has(item.id) === true;
@@ -978,6 +986,7 @@ export class CodexCliDriver implements CliDriver {
     const active = this.turnForCodexId(turn.id, threadId);
     if (!active) return;
     const driverTurnId = active.turnId;
+    this.warnUndeliveredInjections(active);
     this.turns.delete(driverTurnId);
     this.reasoningKinds.delete(driverTurnId);
     this.activityNotifier.notify();

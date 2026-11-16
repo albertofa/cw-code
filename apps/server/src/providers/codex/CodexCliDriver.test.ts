@@ -669,7 +669,7 @@ describe("CodexCliDriver", () => {
     driver.dispose();
   });
 
-  it("prefers clientUserMessageId when the item carries it", async () => {
+  it("prefers clientId when the item carries it", async () => {
     const { driver, events } = makeDriver(client);
     const handle = driver.startTurn({ sessionId: "local-1", prompt: "work", cwd: "C:\\proj" });
     await settle();
@@ -684,10 +684,78 @@ describe("CodexCliDriver", () => {
     client.notify("item/started", {
       threadId: "thr_1",
       turnId: "turn_2",
-      item: { type: "userMessage", id: "u2", clientUserMessageId: "m2", content: [{ type: "text", text: "two" }] }
+      item: { type: "userMessage", id: "u2", clientId: "m2", content: [{ type: "text", text: "two" }] }
     });
     const delivered = events.filter((e) => e.type === "user.message");
     expect(delivered.map((e) => (e as { messageId: string }).messageId)).toEqual(["m2"]);
+    driver.dispose();
+  });
+
+  it("does not swallow the first injected message on a command turn", async () => {
+    const { driver, events } = makeDriver(client);
+    const handle = driver.startTurn({
+      sessionId: "local-1",
+      prompt: "/review",
+      cwd: "C:\\proj",
+      command: { name: "review", args: "" }
+    });
+    await settle();
+    await driver.injectMessage(handle.turnId, { id: "m1", prompt: "focus on races", cwd: "C:\\proj", attachments: [] });
+    client.notify("item/started", {
+      threadId: "thr_1",
+      turnId: "turn_2",
+      item: { type: "userMessage", id: "u1", clientId: null, content: [{ type: "text", text: "focus on races" }] }
+    });
+    const delivered = events.filter((e) => e.type === "user.message");
+    expect(delivered.map((e) => (e as { messageId: string }).messageId)).toEqual(["m1"]);
+    driver.dispose();
+  });
+
+  it("does not match a userMessage that carries an unknown clientId by position", async () => {
+    const { driver, events } = makeDriver(client);
+    const handle = driver.startTurn({ sessionId: "local-1", prompt: "work", cwd: "C:\\proj" });
+    await settle();
+    await driver.injectMessage(handle.turnId, { id: "m1", prompt: "one", cwd: "C:\\proj", attachments: [] });
+    client.notify("item/started", {
+      threadId: "thr_1",
+      turnId: "turn_2",
+      item: { type: "userMessage", id: "u0", clientId: null, content: [{ type: "text", text: "work" }] }
+    });
+    client.notify("item/started", {
+      threadId: "thr_1",
+      turnId: "turn_2",
+      item: { type: "userMessage", id: "u9", clientId: "other", content: [{ type: "text", text: "x" }] }
+    });
+    expect(events.some((e) => e.type === "user.message")).toBe(false);
+    driver.dispose();
+  });
+
+  it("ignores item/completed for userMessage items", async () => {
+    const { driver, events } = makeDriver(client);
+    driver.startTurn({ sessionId: "local-1", prompt: "work", cwd: "C:\\proj" });
+    await settle();
+    client.notify("item/completed", {
+      threadId: "thr_1",
+      turnId: "turn_2",
+      item: { type: "userMessage", id: "u0", content: [{ type: "text", text: "work" }] }
+    });
+    expect(events).toEqual([]);
+    driver.dispose();
+  });
+
+  it("warns when a turn ends with injected messages not confirmed as delivered", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const { driver, events } = makeDriver(client);
+    const handle = driver.startTurn({ sessionId: "local-1", prompt: "work", cwd: "C:\\proj" });
+    await settle();
+    await driver.injectMessage(handle.turnId, { id: "m1", prompt: "late", cwd: "C:\\proj", attachments: [] });
+    client.notify("turn/completed", {
+      threadId: "thr_1",
+      turn: { id: "turn_2", status: "completed", items: [] }
+    });
+    await settle();
+    expect(events.some((e) => e.type === "user.message")).toBe(false);
+    expect(warn.mock.calls.some(([message]) => String(message).includes(`${handle.turnId}`) && String(message).includes("1 injected message"))).toBe(true);
     driver.dispose();
   });
 

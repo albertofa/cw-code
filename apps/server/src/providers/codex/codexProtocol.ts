@@ -49,7 +49,7 @@ export interface CodexFileUpdateChange {
 export interface CodexThreadItem {
   type: string;
   id?: string;
-  clientUserMessageId?: string;
+  clientId?: string | null;
   text?: string;
   phase?: string | null;
   command?: string;
