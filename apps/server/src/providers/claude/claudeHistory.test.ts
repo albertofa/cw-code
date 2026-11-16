@@ -824,6 +824,15 @@ describe("queued_command history", () => {
     expect(messages).toEqual([expect.objectContaining({ id: "att-1", role: "user", text: "also say hi" })]);
   });
 
+  it("maps a queued user message whose prompt is a string", () => {
+    const messages = parseClaudeTranscriptLine({
+      type: "attachment",
+      uuid: "att-3",
+      attachment: { type: "queued_command", prompt: "Second: say BANANA.", commandMode: "prompt" }
+    } as Parameters<typeof parseClaudeTranscriptLine>[0]);
+    expect(messages).toEqual([expect.objectContaining({ id: "att-3", role: "user", text: "Second: say BANANA." })]);
+  });
+
   it("leaves task-notification queued commands out of user messages", () => {
     const messages = parseClaudeTranscriptLine({
       type: "attachment",

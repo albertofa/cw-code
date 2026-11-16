@@ -7,7 +7,7 @@ import { PassThrough } from "node:stream";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { AppSettings, HistoryMessage, TaskSnapshot, ThreadEvent } from "@cw-code/contracts";
-import { buildClaudeArgs, CLAUDE_IDLE_EVICT_MS, ClaudeCliDriver, claudeSettingsPath, mapClaudeEffort, mapClaudePermission, mergeClaudeAllowRule, subagentToolsResult } from "./ClaudeCliDriver.js";
+import { buildClaudeArgs, CLAUDE_HELD_RESULT_TIMEOUT_MS, CLAUDE_IDLE_EVICT_MS, ClaudeCliDriver, claudeSettingsPath, mapClaudeEffort, mapClaudePermission, mergeClaudeAllowRule, subagentToolsResult } from "./ClaudeCliDriver.js";
 import { readClaudeHistoryFile } from "./claudeHistory.js";
 import { SYNTHETIC_FULL_ACCESS_DESCRIPTION } from "../permissions.js";
 
@@ -1906,6 +1906,84 @@ describe("ClaudeCliDriver mid-turn messages", () => {
     await settle();
     await expect(driver.injectMessage(handle.turnId, { id: "m1", prompt: "x", cwd: "C:\\proj", attachments: [] })).rejects.toThrow();
     await expect(driver.injectMessage("unknown", { id: "m2", prompt: "x", cwd: "C:\\proj", attachments: [] })).rejects.toThrow();
+    driver.dispose();
+  });
+
+  it("consumes every pending message a batched echo carries", async () => {
+    const { driver, events, children } = makeDriver();
+    const handle = driver.startTurn({ sessionId: "s1", cwd: "C:\\proj", prompt: "First: say APPLE." });
+    await settle();
+    children[0].stdout.write(`${replayLine("First: say APPLE.")}\n`);
+    await driver.injectMessage(handle.turnId, { id: "m2", prompt: "Second: say BANANA.", cwd: "C:\\proj", attachments: [] });
+    await driver.injectMessage(handle.turnId, { id: "m3", prompt: "Third: say CHERRY.", cwd: "C:\\proj", attachments: [] });
+    children[0].stdout.write(`${resultLine({ result: "APPLE" })}\n`);
+    children[0].stdout.write(`${JSON.stringify({ type: "system", subtype: "init", session_id: "native-1" })}\n`);
+    children[0].stdout.write(`${replayLine("Second: say BANANA.\nThird: say CHERRY.")}\n`);
+    children[0].stdout.write(`${resultLine({ result: "BANANA CHERRY" })}\n`);
+    await settle();
+    expect(events.filter((event) => event.type === "user.message").map((event) => (event as { messageId: string }).messageId)).toEqual(["m2", "m3"]);
+    expect(turnDones(events)).toEqual([expect.objectContaining({ turnId: handle.turnId, resultText: "BANANA CHERRY", numTurns: 2 })]);
+    driver.dispose();
+  });
+
+  it("treats a command-form prompt echo as the prompt, not an injection", async () => {
+    const { driver, events, children } = makeDriver();
+    const handle = driver.startTurn({ sessionId: "s1", cwd: "C:\\proj", prompt: "/greet now" });
+    await settle();
+    await driver.injectMessage(handle.turnId, { id: "m1", prompt: "and then wave", cwd: "C:\\proj", attachments: [] });
+    children[0].stdout.write(`${replayLine("<command-message>greet</command-message>\n<command-name>/greet</command-name>\n<command-args>now</command-args>")}\n`);
+    await settle();
+    expect(events.some((event) => event.type === "user.message")).toBe(false);
+    children[0].stdout.write(`${replayLine("and then wave")}\n`);
+    children[0].stdout.write(`${resultLine()}\n`);
+    await settle();
+    expect(events.filter((event) => event.type === "user.message")).toEqual([expect.objectContaining({ messageId: "m1" })]);
+    expect(turnDones(events)).toHaveLength(1);
+    driver.dispose();
+  });
+
+  it("marks the process stale on Stop with pending messages so the next turn spawns fresh", async () => {
+    const { driver, children } = makeDriver();
+    const handle = driver.startTurn({ sessionId: "s1", cwd: "C:\\proj", prompt: "go" });
+    await settle();
+    await driver.injectMessage(handle.turnId, { id: "m1", prompt: "later", cwd: "C:\\proj", attachments: [] });
+    driver.interrupt(handle.turnId);
+    driver.startTurn({ sessionId: "s1", cwd: "C:\\proj", prompt: "again" });
+    await settle();
+    expect(children).toHaveLength(2);
+    driver.dispose();
+  });
+
+  it("emits the held turn.done when no follow-up run starts in time", async () => {
+    vi.useFakeTimers();
+    try {
+      const { driver, events, children } = makeDriver();
+      const handle = driver.startTurn({ sessionId: "s1", cwd: "C:\\proj", prompt: "go" });
+      await settle();
+      await driver.injectMessage(handle.turnId, { id: "m1", prompt: "lost", cwd: "C:\\proj", attachments: [] });
+      children[0].stdout.write(`${resultLine({ result: "first" })}\n`);
+      await settle();
+      expect(turnDones(events)).toHaveLength(0);
+      await advanceTimersByTimeAsync(CLAUDE_HELD_RESULT_TIMEOUT_MS);
+      expect(turnDones(events)).toEqual([expect.objectContaining({ turnId: handle.turnId, resultText: "first" })]);
+      driver.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not carry an API error from the held run into the next one", async () => {
+    const { driver, events, children } = makeDriver();
+    const handle = driver.startTurn({ sessionId: "s1", cwd: "C:\\proj", prompt: "go" });
+    await settle();
+    await driver.injectMessage(handle.turnId, { id: "m1", prompt: "next", cwd: "C:\\proj", attachments: [] });
+    children[0].stdout.write(`${JSON.stringify({ type: "assistant", isApiErrorMessage: true, message: { content: [{ type: "text", text: "overloaded" }] } })}\n`);
+    children[0].stdout.write(`${resultLine({ result: "first" })}\n`);
+    children[0].stdout.write(`${JSON.stringify({ type: "system", subtype: "init", session_id: "native-1" })}\n`);
+    children[0].stdout.write(`${replayLine("next")}\n`);
+    children[0].stdout.write(`${resultLine({ result: "second" })}\n`);
+    await settle();
+    expect(turnDones(events)).toEqual([expect.objectContaining({ isError: false, resultText: "second" })]);
     driver.dispose();
   });
 });

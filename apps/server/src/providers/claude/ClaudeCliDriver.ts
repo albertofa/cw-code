@@ -175,16 +175,20 @@ interface ClaudeProcessState {
   apiErrorMessage?: string;
   lastWindowTokens?: number;
   stale?: boolean;
-  promptEcho?: string;
+  promptEchoPending: boolean;
   injected: PendingInjection[];
   heldResult?: TurnDoneInfo;
+  heldTimer?: NodeJS.Timeout;
   terminateAfterInterrupt: boolean;
 }
 
 interface PendingInjection {
   id: string;
   text: string;
+  echo: string;
 }
+
+export const CLAUDE_HELD_RESULT_TIMEOUT_MS = 10_000;
 
 export function combineClaudeTurnDone(held: TurnDoneInfo, next: TurnDoneInfo): TurnDoneInfo {
   return {
@@ -262,8 +266,8 @@ export class ClaudeCliDriver implements CliDriver {
     if (!state || state.activeTurnId !== turnId || state.completedTurn || this.interruptedTurns.has(turnId) || !this.isProcessAlive(state)) {
       throw new Error("Claude has no active turn to receive this message");
     }
-    this.writeUserMessage(state, message);
-    state.injected.push({ id: message.id, text: message.prompt });
+    const echo = this.writeUserMessage(state, message);
+    state.injected.push({ id: message.id, text: message.prompt, echo });
     traceHarnessCall({
       harness: "claude",
       operation: "claude.injectMessage",
@@ -275,13 +279,46 @@ export class ClaudeCliDriver implements CliDriver {
   }
 
   private handleReplay(state: ClaudeProcessState, text: string): void {
-    if (state.promptEcho !== undefined && text === state.promptEcho) {
-      state.promptEcho = undefined;
-      return;
+    const firstReplay = state.promptEchoPending;
+    state.promptEchoPending = false;
+    if (firstReplay && !state.injected.some((pending) => text.includes(pending.echo))) return;
+    const head = state.injected.shift();
+    if (!head) return;
+    const consumed = [head, ...state.injected.filter((pending) => text.includes(pending.echo))];
+    state.injected = state.injected.filter((pending) => !consumed.includes(pending));
+    const timestamp = Date.now();
+    for (const injection of consumed) {
+      this.emit({ type: "user.message", turnId: state.activeTurnId, messageId: injection.id, text: injection.text, timestamp });
     }
-    const injection = state.injected.shift();
-    if (!injection) return;
-    this.emit({ type: "user.message", turnId: state.activeTurnId, messageId: injection.id, text: injection.text, timestamp: Date.now() });
+  }
+
+  private clearHeldTimer(state: ClaudeProcessState): void {
+    if (!state.heldTimer) return;
+    clearTimeout(state.heldTimer);
+    state.heldTimer = undefined;
+  }
+
+  private armHeldTimer(state: ClaudeProcessState): void {
+    this.clearHeldTimer(state);
+    const timer = setTimeout(() => {
+      if (state.heldTimer !== timer) return;
+      state.heldTimer = undefined;
+      const held = state.heldResult;
+      if (!held) return;
+      traceHarnessCall({
+        harness: "claude",
+        operation: "claude.heldResultTimeout",
+        sessionId: state.sessionId,
+        turnId: state.activeTurnId,
+        ok: false,
+        extra: { droppedMessages: state.injected.map((pending) => pending.id) }
+      });
+      state.injected = [];
+      state.heldResult = undefined;
+      this.handleTurnDone(state, held);
+    }, CLAUDE_HELD_RESULT_TIMEOUT_MS);
+    timer.unref?.();
+    state.heldTimer = timer;
   }
 
   private isProcessAlive(state: ClaudeProcessState): boolean {
@@ -295,6 +332,7 @@ export class ClaudeCliDriver implements CliDriver {
 
   private terminate(state: ClaudeProcessState): void {
     this.clearIdleTimer(state);
+    this.clearHeldTimer(state);
     this.closeTasks(state, "interrupted", "process-exit");
     this.killChild(state);
     if (this.processes.get(state.sessionId) === state) this.processes.delete(state.sessionId);
@@ -573,6 +611,7 @@ export class ClaudeCliDriver implements CliDriver {
     }
     const systemInit = parseClaudeSystemInit(line);
     if (systemInit) {
+      this.clearHeldTimer(state);
       recordClaudeTerminalCommands(state.binary, state.cwd, systemInit.terminalSlashCommands);
       if (systemInit.skills) recordClaudeSkills(state.binary, systemInit.skills);
       if (systemInit.model) state.mainModel = systemInit.model;
@@ -681,8 +720,11 @@ export class ClaudeCliDriver implements CliDriver {
       state.modelUsage = info.modelUsage;
       state.resumeCursor = info.resumeCursor;
       if (info.windowTokens !== undefined) state.lastWindowTokens = info.windowTokens;
+      state.apiErrorMessage = undefined;
+      this.armHeldTimer(state);
       return;
     }
+    this.clearHeldTimer(state);
     if (state.heldResult) {
       info = combineClaudeTurnDone(state.heldResult, info);
       state.heldResult = undefined;
@@ -764,6 +806,7 @@ export class ClaudeCliDriver implements CliDriver {
   private handleProcessClose(state: ClaudeProcessState, code: number | null): void {
     if (this.processes.get(state.sessionId) === state) this.processes.delete(state.sessionId);
     this.clearIdleTimer(state);
+    this.clearHeldTimer(state);
     this.resolvePendingForSession(state.sessionId, null);
     this.closeTasks(state, "interrupted", "process-exit");
     const turnId = state.activeTurnId;
@@ -893,10 +936,12 @@ export class ClaudeCliDriver implements CliDriver {
       existing.apiErrorMessage = undefined;
       existing.injected = [];
       existing.heldResult = undefined;
+      this.clearHeldTimer(existing);
       existing.terminateAfterInterrupt = false;
       this.clearIdleTimer(existing);
       this.turnToSession.set(turnId, request.sessionId);
-      existing.promptEcho = this.writeUserMessage(existing, request);
+      existing.promptEchoPending = true;
+      this.writeUserMessage(existing, request);
       traceHarnessCall({
         harness: "claude",
         operation: "claude.startTurn",
@@ -952,6 +997,7 @@ export class ClaudeCliDriver implements CliDriver {
       permissionMode: request.permissionMode ?? "auto",
       modelUsage: {},
       injected: [],
+      promptEchoPending: true,
       terminateAfterInterrupt: false
     };
     this.processes.set(request.sessionId, state);
@@ -995,7 +1041,7 @@ export class ClaudeCliDriver implements CliDriver {
       ok: true,
       extra: { reused: false }
     });
-    state.promptEcho = this.writeUserMessage(state, request);
+    this.writeUserMessage(state, request);
 
     return { turnId, events: (async function* () {})() };
   }
@@ -1010,7 +1056,10 @@ export class ClaudeCliDriver implements CliDriver {
       return;
     }
     this.interruptedTurns.add(turnId);
-    if (state.injected.length > 0) state.terminateAfterInterrupt = true;
+    if (state.injected.length > 0) {
+      state.terminateAfterInterrupt = true;
+      state.stale = true;
+    }
     const line = JSON.stringify({
       type: "control_request",
       request_id: randomUUID(),
