@@ -166,6 +166,7 @@ export class ThreadService {
       store.upsert("turnChanges", extras.turnChanges);
       store.upsert("subagents", extras.subagents);
       store.upsert("subagentWait", extras.subagentWait);
+      store.upsert("queuedMessages", extras.queuedMessages);
     });
   }
 

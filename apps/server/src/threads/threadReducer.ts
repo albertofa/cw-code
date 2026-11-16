@@ -387,6 +387,13 @@ function applyEvent(state: ThreadState, event: ThreadEvent, now: number, changes
     case "todo.updated":
       setTodos(state, event.todos, changes);
       return;
+    case "user.message": {
+      const userId = `${event.turnId}-q-${event.messageId}`;
+      if (state.items.has(userId)) return;
+      closeReasoning(state, now, changes);
+      insertItem(state, { id: userId, role: "user", text: event.text, turnId: event.turnId, timestamp: event.timestamp }, changes);
+      return;
+    }
     case "turn.retry":
       applyTurnRetry(state, event, now, changes);
       return;

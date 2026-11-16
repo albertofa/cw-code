@@ -1,7 +1,9 @@
-import type { CommandInvocation, ComposerPrefs, PrRef } from "@cw-code/contracts";
+import type { CommandInvocation, ComposerPrefs, PrRef, QueuedMessage, ThreadEvent } from "@cw-code/contracts";
+import { SessionBusyError } from "../sessions/SessionBusyError.js";
 import type { SessionManager } from "../sessions/SessionManager.js";
 import type { GitTopic } from "../sourceControl/GitTopic.js";
-import { notifyAll, type ThreadService } from "./ThreadService.js";
+import { combineMessages, type MessageQueue } from "./MessageQueue.js";
+import { notifyAll, type SettledTurnEvent, type ThreadService } from "./ThreadService.js";
 
 export type TurnOrigin = "subagent-wake";
 
@@ -20,10 +22,31 @@ export interface StartTurnInput {
 }
 
 export interface TurnServiceDeps {
-  sessions: Pick<SessionManager, "assertCanStartTurn" | "startTurn" | "interrupt" | "listActiveTurns" | "listSubagents" | "endSubagentWait">;
+  sessions: Pick<
+    SessionManager,
+    | "assertCanStartTurn"
+    | "startTurn"
+    | "interrupt"
+    | "listActiveTurns"
+    | "listSubagents"
+    | "endSubagentWait"
+    | "findSession"
+    | "subagentWaitSince"
+    | "injectMessage"
+    | "retractMessage"
+    | "canRetractMessages"
+  >;
   threads: ThreadService;
   git: Pick<GitTopic, "keptFolderHead">;
+  queue: MessageQueue;
 }
+
+export interface SendInput {
+  attachments?: string[];
+  skills?: string[];
+}
+
+export type SendResult = { disposition: "started"; turnId: string } | { disposition: "queued"; messageId: string };
 
 export interface StopResult {
   stopped: boolean;
@@ -37,6 +60,7 @@ export class TurnService {
   private readonly starting = new Map<string, StartingTurn>();
   private readonly startedListeners = new Set<TurnStartedListener>();
   private readonly stoppedListeners = new Set<(sessionId: string) => void>();
+  private readonly injected = new Set<string>();
 
   constructor(private readonly deps: TurnServiceDeps) {}
 
@@ -66,6 +90,118 @@ export class TurnService {
     return turnId;
   }
 
+  async send(sessionId: string, prompt: string, input: SendInput = {}): Promise<SendResult> {
+    const session = this.deps.sessions.findSession(sessionId);
+    if (!session) throw new Error(`unknown session ${sessionId}`);
+    if (session.subagent) throw new Error("subagent sessions do not accept messages");
+    if (session.status === "resolved" || session.status === "archived") {
+      throw new Error(`session is ${session.status}; reopen it before sending a message`);
+    }
+    if (!this.busy(sessionId) && this.deps.queue.list(sessionId).length === 0) {
+      const turnId = await this.start(sessionId, prompt, { attachments: input.attachments, skills: input.skills });
+      return { disposition: "started", turnId };
+    }
+    const message = this.deps.queue.add(sessionId, { text: prompt, attachments: input.attachments, skills: input.skills });
+    await this.inject(sessionId, message);
+    return { disposition: "queued", messageId: message.id };
+  }
+
+  async unqueue(sessionId: string, messageId: string): Promise<void> {
+    const message = this.deps.queue.find(sessionId, messageId);
+    if (!message) throw new Error(`unknown queued message ${messageId}`);
+    if (!message.removable) throw new Error("message was already handed to the agent and cannot be removed");
+    if (this.injected.has(messageId)) {
+      const retracted = await this.deps.sessions.retractMessage(sessionId, messageId);
+      if (!retracted) throw new Error("message was already delivered to the agent");
+      this.injected.delete(messageId);
+    }
+    this.deps.queue.remove(sessionId, [messageId]);
+  }
+
+  flushQueue(sessionId: string): Promise<string> {
+    if (this.busy(sessionId)) return Promise.reject(new SessionBusyError("turn running"));
+    const messages = this.deps.queue.list(sessionId);
+    if (messages.length === 0) return Promise.reject(new Error("no queued messages to send"));
+    return this.startQueued(sessionId, messages);
+  }
+
+  sendPending(sessionId: string): Promise<string> | null {
+    if (this.busy(sessionId)) return null;
+    const sending = this.deps.queue.list(sessionId).filter((message) => message.state === "sending");
+    if (sending.length === 0) return null;
+    const started = this.startQueued(sessionId, sending);
+    started.catch((error: unknown) => {
+      console.warn(`[turns] queued messages for session ${sessionId} could not start: ${error instanceof Error ? error.message : String(error)}`);
+    });
+    return started;
+  }
+
+  turnSettled(sessionId: string, event: SettledTurnEvent): void {
+    if (event.type === "turn.error") {
+      this.holdQueue(sessionId);
+      return;
+    }
+    this.sendPending(sessionId);
+  }
+
+  messageEvent(sessionId: string, event: ThreadEvent): void {
+    if (event.type === "user.message") {
+      this.injected.delete(event.messageId);
+      this.deps.queue.remove(sessionId, [event.messageId]);
+    } else if (event.type === "turn.interrupted") {
+      this.holdQueue(sessionId);
+    }
+  }
+
+  queueExtras(sessionId: string): { queuedMessages: QueuedMessage[] } {
+    return this.deps.queue.extras(sessionId);
+  }
+
+  holdQueue(sessionId: string): void {
+    for (const message of this.deps.queue.list(sessionId)) this.injected.delete(message.id);
+    this.deps.queue.holdAll(sessionId);
+  }
+
+  clearQueue(sessionId: string): void {
+    for (const message of this.deps.queue.list(sessionId)) this.injected.delete(message.id);
+    this.deps.queue.clear(sessionId);
+  }
+
+  private startQueued(sessionId: string, messages: QueuedMessage[]): Promise<string> {
+    const combined = combineMessages(messages);
+    const started = this.start(sessionId, combined.prompt, { attachments: combined.attachments, skills: combined.skills });
+    const removed = this.deps.queue.remove(
+      sessionId,
+      messages.map((message) => message.id)
+    );
+    for (const message of removed) this.injected.delete(message.id);
+    return started.catch((error: unknown) => {
+      this.deps.queue.restore(sessionId, removed);
+      throw error;
+    });
+  }
+
+  private async inject(sessionId: string, message: QueuedMessage): Promise<void> {
+    if (this.starting.has(sessionId) || this.deps.sessions.subagentWaitSince(sessionId) !== null) return;
+    if (!this.deps.sessions.listActiveTurns().some((turn) => turn.sessionId === sessionId)) return;
+    const removable = this.deps.sessions.canRetractMessages(sessionId);
+    if (!removable) this.deps.queue.update(sessionId, message.id, { removable: false });
+    this.injected.add(message.id);
+    try {
+      await this.deps.sessions.injectMessage(sessionId, { id: message.id, prompt: message.text, attachments: message.attachments, skills: message.skills });
+    } catch (error) {
+      this.injected.delete(message.id);
+      this.deps.queue.update(sessionId, message.id, { removable: true });
+      console.warn(`[turns] message ${message.id} stays queued for session ${sessionId}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  private busy(sessionId: string): boolean {
+    if (this.starting.has(sessionId) || this.deps.sessions.subagentWaitSince(sessionId) !== null) return true;
+    if (this.deps.sessions.listActiveTurns().some((turn) => turn.sessionId === sessionId)) return true;
+    return this.deps.threads.runtime(sessionId).busy;
+  }
+
   stop(sessionId: string): StopResult {
     const result = this.stopSession(sessionId);
     if (!result.stopped) {
@@ -90,6 +226,7 @@ export class TurnService {
   }
 
   private notifyStopped(sessionId: string): void {
+    this.holdQueue(sessionId);
     notifyAll(this.stoppedListeners, "[turns] turn stopped", sessionId);
   }
 

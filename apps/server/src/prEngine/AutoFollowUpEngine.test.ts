@@ -8,6 +8,7 @@ import { SessionStore } from "../sessions/SessionStore.js";
 import { DEFAULT_SETTINGS } from "../settings/SettingsStore.js";
 import { ThreadService, type SettledTurnEvent, type ThreadNotice } from "../threads/ThreadService.js";
 import { TurnService } from "../threads/TurnService.js";
+import { MessageQueue } from "../threads/MessageQueue.js";
 import type { BegunTurn } from "../threads/threadReducer.js";
 import { TopicHub } from "../topics/TopicHub.js";
 import { AUTO_FOLLOW_UP_LIMIT } from "./babysit.js";
@@ -536,10 +537,16 @@ describe("AutoFollowUpEngine with the real thread and turn services", () => {
         interrupt: () => {},
         listActiveTurns: () => [],
         listSubagents: () => [],
-        endSubagentWait: () => false
+        endSubagentWait: () => false,
+        findSession: (id) => store.getSession(id),
+        subagentWaitSince: () => null,
+        injectMessage: async () => {},
+        retractMessage: async () => false,
+        canRetractMessages: () => false
       },
       threads,
-      git: { keptFolderHead: () => null }
+      git: { keptFolderHead: () => null },
+      queue: new MessageQueue({ store, refresh: () => {} })
     });
     let sneak = options.sneakInUserTurn ?? false;
     let userTurn: BegunTurn | null = null;

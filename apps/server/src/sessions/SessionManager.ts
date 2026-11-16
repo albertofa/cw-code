@@ -2855,6 +2855,43 @@ export class SessionManager {
     this.emitSession(sessionId);
   }
 
+  async injectMessage(sessionId: string, message: { id: string; prompt: string; attachments: string[]; skills?: string[] }): Promise<void> {
+    const { session, project, turnId } = this.activeTurnOf(sessionId);
+    const driver = this.drivers[session.driver];
+    if (!driver.injectMessage) throw new Error(`${session.driver} cannot receive messages during a turn`);
+    const cwd = await this.ensureWorktree(sessionId);
+    await driver.injectMessage(turnId, {
+      id: message.id,
+      prompt: message.prompt,
+      cwd,
+      attachments: resolveAttachments(project.rootPath, cwd, message.attachments),
+      ...(message.skills?.length ? { skills: message.skills } : {})
+    });
+  }
+
+  async retractMessage(sessionId: string, messageId: string): Promise<boolean> {
+    const { session, turnId } = this.activeTurnOf(sessionId);
+    const driver = this.drivers[session.driver];
+    if (!driver.retractMessage) return false;
+    return driver.retractMessage(turnId, messageId);
+  }
+
+  canRetractMessages(sessionId: string): boolean {
+    const session = this.store.getSession(sessionId);
+    return session !== undefined && typeof this.drivers[session.driver]?.retractMessage === "function";
+  }
+
+  private activeTurnOf(sessionId: string): { session: SessionMeta; project: Project; turnId: string } {
+    const session = this.store.getSession(sessionId);
+    if (!session) throw new Error(`unknown session ${sessionId}`);
+    const project = this.store.getProject(session.projectId);
+    if (!project) throw new Error(`unknown project ${session.projectId}`);
+    for (const [turnId, entry] of this.activeTurns) {
+      if (entry.sessionId === sessionId) return { session, project, turnId };
+    }
+    throw new Error(`session ${sessionId} has no active turn`);
+  }
+
   async retryConnection(sessionId: string): Promise<RetryConnectionResult> {
     this.assertNotReserved();
     const session = this.store.getSession(sessionId);
