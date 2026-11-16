@@ -172,7 +172,7 @@ interface ClaudeProcessState {
   mainModel?: string;
   compactedPostTokens?: number;
   apiErrorMessage?: string;
-  /** Latest exhausted plan window the CLI reported; cleared when it reports the window as usable again. */
+  /** Exhausted plan window the CLI reported during the current turn; cleared at each turn start and when the window is usable again. */
   rejectedLimit?: UsageLimitHit;
   /** Plan limit behind `apiErrorMessage`, when that error is one. */
   usageLimit?: UsageLimitHit;
@@ -840,6 +840,7 @@ export class ClaudeCliDriver implements CliDriver {
       existing.apiErrorMessage = undefined;
       existing.usageLimit = undefined;
       existing.usageLimitUnnamed = false;
+      existing.rejectedLimit = undefined;
       this.clearIdleTimer(existing);
       this.turnToSession.set(turnId, request.sessionId);
       this.writeUserMessage(existing, request);
