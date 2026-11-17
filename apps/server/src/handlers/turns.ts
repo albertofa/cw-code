@@ -1,6 +1,6 @@
 import type { ApprovalDecision, CommandInvocation, DriverKind, PrRef } from "@cw-code/contracts";
 import { isSkillMentionList } from "@cw-code/shared/skillMentions";
-import { agentTurnPermissionMode, assertAgentMayDispatch, assertAgentModelId, assertAgentOmits, assertAgentSessionTarget } from "../agent/agentPolicy.js";
+import { agentTurnPermissionMode, assertAgentMayDispatch, assertAgentModelId, assertAgentOmits, assertAgentSessionTarget, isSafeModelId } from "../agent/agentPolicy.js";
 import type { ServerApp } from "../app/ServerApp.js";
 import { assertPrRef } from "../github/PullRequestService.js";
 import type { CallContext, Router } from "../transport/Router.js";
@@ -68,6 +68,18 @@ export function registerTurnHandlers(router: Router, app: ServerApp): void {
     const sessionId = knownSessionId(sessions(), args.sessionId);
     assertAgentTarget(ctx, sessionId);
     return turns().stop(sessionId);
+  });
+  handle<{ sessionId: string }>(router, "turns.cancelLimitResume", (args) =>
+    app.requireServices().limitResume.cancel(knownSessionId(sessions(), args.sessionId))
+  );
+  handle<{ sessionId: string; model: string }>(router, "turns.continueWithModel", async (args) => {
+    const sessionId = knownSessionId(sessions(), args.sessionId);
+    const model = typeof args.model === "string" ? args.model.trim() : "";
+    if (!isSafeModelId(model)) throw new Error("model is not a valid model id");
+    const turnId = await app.requireServices().limitResume.continueNow(sessionId, model);
+    // Persist the switch only once the turn started, so a refused continuation leaves the composer as it was.
+    setComposer(app, sessionId, { ...sessions().getComposer(sessionId), model });
+    return turnId;
   });
   handle<{ sessionId: string; requestId: string; decision: ApprovalDecision }>(router, "approvals.respond", (args) =>
     sessions().respondApproval(args.requestId, args.decision)

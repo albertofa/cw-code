@@ -1,4 +1,5 @@
-import type { ApprovalDecision, ApprovalRequest, ContextUsage, QuestionInfo, QuestionOption, QuestionRequest, ThreadEvent, ToolUsage, TurnModelUsage } from "@cw-code/contracts";
+import type { ApprovalDecision, ApprovalRequest, ContextUsage, QuestionInfo, QuestionOption, QuestionRequest, ThreadEvent, ToolUsage, TurnModelUsage, UsageLimitHit } from "@cw-code/contracts";
+import { MODEL_LIMIT_WINDOWS } from "@cw-code/shared/usageLimits";
 import { todosFromToolCall } from "../todos.js";
 import { claudeTurnUsage, type ClaudeModelUsageSnapshot } from "./claudeUsage.js";
 
@@ -589,6 +590,111 @@ export function parseTaskNotificationUsage(text: string): ToolUsage | undefined 
   const durationMs = TASK_NOTIFY_USAGE_RE.durationMs.exec(text)?.[1];
   if (durationMs !== undefined) usage.durationMs = Number.parseInt(durationMs, 10);
   return Object.keys(usage).length > 0 ? usage : undefined;
+}
+
+interface ClaudeRateLimitInfo {
+  status?: unknown;
+  resetsAt?: unknown;
+  rateLimitType?: unknown;
+}
+
+/**
+ * Windows that limit one model family rather than the whole account. The CLI labels
+ * `seven_day_overage_included` "Fable limit": Fable's own weekly allowance.
+ */
+export const CLAUDE_MODEL_LIMIT_WINDOWS: ReadonlySet<string> = MODEL_LIMIT_WINDOWS;
+
+/** API error kinds that refuse only the session's model; another model can still run. */
+const CLAUDE_MODEL_LIMIT_ERRORS: ReadonlySet<string> = new Set(["model_requires_usage_credits", "consent_unanswered"]);
+
+function epochMs(value: unknown): number | undefined {
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) return undefined;
+  return value < 1e12 ? value * 1000 : value;
+}
+
+function claudeLimitInfo(info: unknown): { resetsAt?: number; window?: string; status?: unknown } | undefined {
+  if (info === null || typeof info !== "object" || Array.isArray(info)) return undefined;
+  const { status, resetsAt, rateLimitType } = info as ClaudeRateLimitInfo;
+  const ms = epochMs(resetsAt);
+  const window = str(rateLimitType);
+  return { status, ...(ms !== undefined ? { resetsAt: ms } : {}), ...(window ? { window } : {}) };
+}
+
+function withScope(hit: { resetsAt?: number; window?: string }, model: boolean): UsageLimitHit {
+  const scoped = model || (hit.window !== undefined && CLAUDE_MODEL_LIMIT_WINDOWS.has(hit.window));
+  return {
+    ...(hit.resetsAt !== undefined ? { resetsAt: hit.resetsAt } : {}),
+    ...(hit.window ? { window: hit.window } : {}),
+    ...(scoped ? { scope: "model" as const } : {})
+  };
+}
+
+function claudeRejectedLimit(info: unknown): UsageLimitHit | undefined {
+  const parsed = claudeLimitInfo(info);
+  if (parsed?.status !== "rejected" || parsed.resetsAt === undefined) return undefined;
+  return withScope(parsed, false);
+}
+
+/** `undefined` when the message is not a rate limit event; `null` when it reports a window that is not exhausted. */
+export function parseClaudeRateLimitEvent(message: unknown): UsageLimitHit | null | undefined {
+  if (message === null || typeof message !== "object") return undefined;
+  const event = message as { type?: unknown; rate_limit_info?: unknown };
+  if (event.type !== "rate_limit_event") return undefined;
+  return claudeRejectedLimit(event.rate_limit_info) ?? null;
+}
+
+interface ClaudeApiErrorFields {
+  error?: unknown;
+  is_api_error_message?: unknown;
+  isApiErrorMessage?: unknown;
+  api_error?: unknown;
+  apiError?: unknown;
+  api_error_params?: { rate_limit_info?: unknown } | null;
+  apiErrorParams?: { rate_limit_info?: unknown } | null;
+  quotaLimits?: unknown;
+}
+
+/** The stream spells the flag `is_api_error_message`; transcripts and older CLIs spell it `isApiErrorMessage`. */
+export function isClaudeApiErrorMessage(message: unknown): boolean {
+  if (message === null || typeof message !== "object") return false;
+  const fields = message as ClaudeApiErrorFields;
+  return fields.is_api_error_message === true || fields.isApiErrorMessage === true;
+}
+
+/**
+ * Whether an API error message is the account's plan limit, and the limit when the message carries it
+ * (`api_error_params.rate_limit_info` on the stream; the camelCase and `quotaLimits` spellings in transcripts).
+ * `hit` is missing on a plan-limit error that names no reset; the caller then falls back to the latest
+ * rejected `rate_limit_event`.
+ */
+export function parseClaudeUsageLimit(message: unknown): { hit?: UsageLimitHit } | undefined {
+  if (message === null || typeof message !== "object") return undefined;
+  const fields = message as ClaudeApiErrorFields;
+  const kind = fields.api_error ?? fields.apiError;
+  if (typeof kind === "string" && CLAUDE_MODEL_LIMIT_ERRORS.has(kind)) {
+    const info = claudeLimitInfo(fields.api_error_params?.rate_limit_info) ?? claudeLimitInfo(fields.apiErrorParams?.rate_limit_info) ?? {};
+    return { hit: withScope(info, true) };
+  }
+  if (fields.error !== "rate_limit") return undefined;
+  if (kind !== undefined && kind !== "usage_limit_reached") return undefined;
+  const hit =
+    claudeRejectedLimit(fields.api_error_params?.rate_limit_info) ??
+    claudeRejectedLimit(fields.apiErrorParams?.rate_limit_info) ??
+    claudeRejectedLimit(fields.quotaLimits);
+  return hit ? { hit } : {};
+}
+
+/** The CLI swapped the session to another model on its own (e.g. when Fable's weekly limit ran out). */
+export function parseClaudeModelFallback(message: unknown): { text: string; from?: string; to?: string } | null {
+  if (message === null || typeof message !== "object") return null;
+  const msg = message as Record<string, unknown>;
+  if (msg["type"] !== "system" || msg["subtype"] !== "model_consent_fallback") return null;
+  const from = str(msg["original_model"]) ?? str(msg["originalModel"]);
+  const to = str(msg["fallback_model"]) ?? str(msg["fallbackModel"]);
+  const fallbackText = to
+    ? `Claude switched this session to ${to}${from ? ` because ${from} is limited` : ""}.`
+    : "Claude switched this session to another model.";
+  return { text: str(msg["content"]) ?? fallbackText, ...(from ? { from } : {}), ...(to ? { to } : {}) };
 }
 
 export interface TurnDoneInfo {

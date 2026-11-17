@@ -3,7 +3,7 @@ import type { SessionManager } from "../sessions/SessionManager.js";
 import type { GitTopic } from "../sourceControl/GitTopic.js";
 import { notifyAll, type ThreadService } from "./ThreadService.js";
 
-export type TurnOrigin = "subagent-wake";
+export type TurnOrigin = "subagent-wake" | "limit-resume";
 
 export type TurnStartedListener = (sessionId: string, auto: boolean, turn: { turnId: string; origin?: TurnOrigin }) => void;
 

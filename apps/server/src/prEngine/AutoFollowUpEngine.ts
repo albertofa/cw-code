@@ -104,7 +104,7 @@ export class AutoFollowUpEngine {
 
   turnStarted(sessionId: string, auto: boolean, turn?: { turnId: string; origin?: TurnOrigin }): void {
     if (this.isSubagent(sessionId)) return;
-    if (turn?.origin === "subagent-wake") {
+    if (turn?.origin !== undefined) {
       this.wakeTurns.set(sessionId, turn.turnId);
       this.reevaluate();
       return;

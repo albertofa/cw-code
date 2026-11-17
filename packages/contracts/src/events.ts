@@ -87,6 +87,16 @@ export interface QuestionRequest {
   questions: QuestionInfo[];
 }
 
+/** A turn ended because a plan limit ran out; `resetsAt` is epoch milliseconds. */
+export interface UsageLimitHit {
+  /** Always set for an account-wide limit; a model's own limit may not name its reset. */
+  resetsAt?: number;
+  /** The harness's own name for the exhausted window (e.g. `five_hour`, `seven_day_overage_included`); display only. */
+  window?: string;
+  /** `model` when only the session's model is limited, so another model can continue now; absent for the whole account. */
+  scope?: "model";
+}
+
 export type ThreadEvent =
   | { type: "turn.started"; turnId: string; sessionId: string; startedAt: number; prompt: string }
   | { type: "turn.interrupted"; turnId: string; sessionId: string; reason?: "shutdown" }
@@ -142,6 +152,7 @@ export type ThreadEvent =
       numTurns: number;
       isError: boolean;
       backgroundTasks: number;
+      usageLimit?: UsageLimitHit;
     }
   | { type: "turn.error"; turnId: string; message: string; resumeCursor?: string; retryable?: boolean }
   | {

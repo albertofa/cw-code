@@ -189,6 +189,25 @@ Core behaviors:
     An entry without models always has an `error`: no model matched, or the harness cannot run
     (message from the cached harness check, `harnessUnavailableReason`). `subagents.create` and
     `subagents.send` refuse such a harness with the same message before creating anything.
+- Limit resume: a `turn.done` may carry `usageLimit` (`resetsAt` in epoch ms), set by the driver when
+  the account's plan limit ended the turn. Only the Claude driver reports it, from the API error
+  message's quota or the last rejected `rate_limit_event`. With the `limitAutoResume` setting,
+  `LimitResume` (`apps/server/src/sessions/`) stores `SessionMeta.limitResume`, publishes it as the
+  thread topic entry `limitResume` and, one minute after the reset, starts one `auto` turn with
+  origin `limit-resume`. Any other turn start, a stop, `turns.cancelLimitResume`, turning the setting
+  off, or resolving/archiving the session drops it. It is persisted, so it survives a restart (a
+  reset more than 24 h past is dropped); three continuations in a row that end on a limit stop the
+  retries with a thread notice. Subagents are never resumed this way, and turns with an origin are
+  invisible to PR auto follow-up.
+  A limit on one model only (`usageLimit.scope: "model"`: the `seven_day_opus`, `seven_day_sonnet`
+  and `seven_day_overage_included` windows, the last being Fable's weekly limit, or the
+  `model_requires_usage_credits` and `consent_unanswered` API errors) may name no reset. It is stored
+  with `scope` and, without a reset, nothing is scheduled; with `limitAutoResume` off it is kept
+  without the reset. The thread entry adds the session's `model` and `fallbackModel` (the Claude
+  default model when it differs), and `turns.continueWithModel` switches the session's composer model
+  and starts the continuation now (origin `limit-resume`). The driver traces every API error line's
+  error fields (`claude.apiError`) and turns the CLI's own `system/model_consent_fallback` swap into a
+  thread notice.
 - Browser entry: a browser opens the server's own address (`/`) and pairs with a device
   token. The owner creates one in Settings (`devices.create`) and gets a link
   `<serverPublicUrl>/#token=<token>`; the UI reads the hash, removes it from the address bar and

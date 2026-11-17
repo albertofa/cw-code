@@ -23,11 +23,12 @@ function assertBindHostAllowed(app: ServerApp, value: unknown): void {
 }
 
 export function commitSettings(app: ServerApp, patch: SettingsPatch): AppSettings {
-  const { sessions, appTopic, prStore, autoFollowUp, sidebar, githubViews } = app.requireServices();
+  const { sessions, appTopic, prStore, autoFollowUp, sidebar, githubViews, limitResume } = app.requireServices();
   const saved = sessions.setSettings(patch);
   appTopic.setSettings(saved);
   prStore.onSettingsChanged();
   autoFollowUp.reevaluate();
+  limitResume.settingsChanged();
   sidebar.invalidate();
   githubViews.onSettingsChanged();
   app.emit("settings.changed", saved);
