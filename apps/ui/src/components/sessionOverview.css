@@ -279,3 +279,10 @@
 .ov-sec.closed .ov-chev svg {
   transform: rotate(-90deg);
 }
+
+.ov-plan-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}

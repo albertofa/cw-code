@@ -3,6 +3,7 @@ import type { DockableTabId, PanelId } from "@cw-code/contracts";
 import { AppWindow, PanelBottom, PanelRight, Pin, RotateCcw, X, type LucideIcon } from "lucide-react";
 import { selectSessionPanel, usePanelStore } from "../stores/panelStore.js";
 import { useMenuPosition } from "./menuPosition.js";
+import { closeDockTab } from "./closeDockTab.js";
 
 const MENU_WIDTH = 240;
 
@@ -76,7 +77,7 @@ export function TabMenu({
         role="menuitem"
         title="Close this tab — reopen it any time from the right rail"
         onClick={() => {
-          moveTab(sessionId, tab, "closed");
+          void closeDockTab(sessionId, tab);
           onClose();
         }}
       >

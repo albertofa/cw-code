@@ -12,6 +12,7 @@ import { usePanelAnimationMs, usePresence } from "./usePresence.js";
 import { BOTTOM_HEIGHT_DEFAULT, resolveBottomActive, tabsInPanel } from "../stores/panelLayout.js";
 import { useAppStore } from "../stores/appStore.js";
 import { selectSessionPanel, usePanelStore } from "../stores/panelStore.js";
+import { closeDockTab } from "./closeDockTab.js";
 
 export function BottomPanel({ sessionId }: { sessionId: string }) {
   const { dockByTab, activeBottom, bottomHeight, bottomCollapsed } = usePanelStore((s) => selectSessionPanel(s, sessionId));
@@ -20,7 +21,6 @@ export function BottomPanel({ sessionId }: { sessionId: string }) {
   const hasPreview = useAppStore((s) => (s.previewBySession[sessionId] ?? null) !== null);
   const isToolAvailable = toolAvailability(driver, hasPr, hasPreview);
   const setActive = usePanelStore((s) => s.setActive);
-  const moveTab = usePanelStore((s) => s.moveTab);
   const setBottomHeight = usePanelStore((s) => s.setBottomHeight);
   const dropBottom = useDockDrop("bottom", sessionId);
   const tabMenu = useTabMenu(sessionId);
@@ -100,7 +100,7 @@ export function BottomPanel({ sessionId }: { sessionId: string }) {
               if (bottomCollapsed) setBottomCollapsed(sessionId, false);
             }}
             onContextMenu={tabMenu.onTabContextMenu(id)}
-            onClose={() => moveTab(sessionId, id, "closed")}
+            onClose={() => void closeDockTab(sessionId, id)}
           />
         ))}
         <button

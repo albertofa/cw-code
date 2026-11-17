@@ -1,8 +1,8 @@
 import type { SessionStatus } from "../cw.js";
 
-export type QuickFilter = "all" | "pr";
+export type QuickFilter = "all" | "pr" | "noPr";
 
-export const QUICK_FILTERS: readonly Exclude<QuickFilter, "all">[] = ["pr"];
+export const QUICK_FILTERS: readonly Exclude<QuickFilter, "all">[] = ["pr", "noPr"];
 
 export interface QuickFilterFacts {
   status: SessionStatus;
@@ -15,11 +15,13 @@ export function matchesQuickFilter(filter: QuickFilter, facts: QuickFilterFacts)
       return true;
     case "pr":
       return facts.linkCount > 0;
+    case "noPr":
+      return facts.linkCount === 0;
   }
 }
 
 export function quickFilterCounts(items: QuickFilterFacts[]): Record<Exclude<QuickFilter, "all">, number> {
-  const counts = { pr: 0 };
+  const counts = { pr: 0, noPr: 0 };
   for (const item of items) {
     if (item.status === "archived" || item.status === "resolved") continue;
     for (const filter of QUICK_FILTERS) if (matchesQuickFilter(filter, item)) counts[filter] += 1;

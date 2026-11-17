@@ -8,6 +8,7 @@ import {
   LockOpen,
   Pencil,
   Plus,
+  Reply,
   Package,
   Slash,
   Square,
@@ -60,6 +61,12 @@ import { parseBranchMismatchError, type BranchMismatch } from "./sessionBranch.j
 import { harnessLabel } from "./toolTabs.js";
 import { ipcErrorMessage } from "./ipcError.js";
 import { useThreadVisible } from "./threadVisibility.js";
+import { useComposerAutoFocus } from "./composerFocus.js";
+import { formatQuotedReply } from "./replyQuotes.js";
+import { QuoteDialog } from "./QuoteDialog.js";
+import { insertPaste, pastePreview, pasteSizeLabel, shouldCollapsePaste, withPastes } from "./pastedText.js";
+import { MAX_DRAFT_PASTES, MAX_PASTE_LENGTH } from "@cw-code/shared/composerDraftLimits";
+import { selectReplyQuotes, useReplyQuotesStore } from "../stores/replyQuotesStore.js";
 
 export interface BranchGuard {
   mismatch: BranchMismatch | null;
@@ -145,12 +152,16 @@ export function ComposerView({
   const [draft, setDraft] = useState(initialDraft?.text ?? "");
   const [caret, setCaret] = useState<number | null>(initialDraft?.text.length ?? 0);
   const [attachments, setAttachments] = useState<string[]>(initialDraft?.attachments ?? []);
+  const [pastes, setPastes] = useState<string[]>(initialDraft?.pastes ?? []);
+  const [openPaste, setOpenPaste] = useState<string | null>(null);
   const resetKeyRef = useRef(resetKey);
   resetKeyRef.current = resetKey;
   const draftRef = useRef(draft);
   draftRef.current = draft;
   const attachmentsRef = useRef(attachments);
   attachmentsRef.current = attachments;
+  const pastesRef = useRef(pastes);
+  pastesRef.current = pastes;
   const [pasteError, setPasteError] = useState<string | null>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
@@ -193,6 +204,11 @@ export function ComposerView({
   commandsKeyRef.current = commandsKey;
   const mountedRef = useRef(true);
   const visible = useThreadVisible();
+  const quotes = useReplyQuotesStore((s) => selectReplyQuotes(s, resetKey));
+  const quoteTexts = useMemo(() => quotes.map((quote) => quote.text), [quotes]);
+  const quoteTextsRef = useRef(quoteTexts);
+  quoteTextsRef.current = quoteTexts;
+  const [openQuote, setOpenQuote] = useState<string | null>(null);
   const commandAvailability = {
     newSession: backend.newSession !== undefined,
     rename: backend.rename !== undefined,
@@ -234,20 +250,13 @@ export function ComposerView({
     return () => window.removeEventListener("resize", onResize);
   }, []);
 
-  useEffect(() => {
-    if (!visible || backendRef.current.busy) return;
-    const frame = requestAnimationFrame(() => {
-      try {
-        composerRef.current?.focus({ preventScroll: true });
-      } catch {
-      }
-    });
-    return () => cancelAnimationFrame(frame);
-  }, [resetKey, visible]);
+  useComposerAutoFocus(composerRef, visible, sending || blockedReason !== undefined, resetKey);
 
   useEffect(() => {
     const saved = loadComposerDraft(resetKey);
+    useReplyQuotesStore.getState().replace(resetKey, saved?.quotes ?? []);
     setAttachments(saved?.attachments ?? []);
+    setPastes(saved?.pastes ?? []);
     setDraft(saved?.text ?? "");
     setCaret(saved?.text.length ?? 0);
     setPasteError(null);
@@ -257,14 +266,14 @@ export function ComposerView({
     setPickerOpen(false);
     invalidateBranchChoice();
     return () => {
-      saveComposerDraft(resetKey, draftRef.current, attachmentsRef.current);
+      saveComposerDraft(resetKey, draftRef.current, attachmentsRef.current, quoteTextsRef.current, pastesRef.current);
       flushComposerDraft(resetKey);
     };
   }, [resetKey]);
 
   useEffect(() => {
-    saveComposerDraft(resetKeyRef.current, draft, attachments);
-  }, [draft, attachments]);
+    saveComposerDraft(resetKeyRef.current, draft, attachments, quoteTexts, pastes);
+  }, [draft, attachments, quoteTexts, pastes]);
 
   useEffect(() => {
     setShowCustom(false);
@@ -415,6 +424,24 @@ export function ComposerView({
     }
   };
 
+  // A large text paste becomes a card above the composer instead of filling the textarea. Past the
+  // draft limits it falls back to a normal paste, so nothing is lost.
+  const collapsePaste = (clipboard: DataTransfer): boolean => {
+    if (Array.from(clipboard.items).some((item) => item.kind === "file")) return false;
+    const text = clipboard.getData("text/plain");
+    if (!shouldCollapsePaste(text)) return false;
+    if (text.length > MAX_PASTE_LENGTH || pastesRef.current.length >= MAX_DRAFT_PASTES) return false;
+    setPastes((prev) => [...prev, text]);
+    return true;
+  };
+
+  const expandPaste = (index: number) => {
+    const text = pastes[index];
+    if (text === undefined) return;
+    setPastes((prev) => prev.filter((_, i) => i !== index));
+    placeCaret(insertPaste(draft, caret, text));
+  };
+
   const openFilePicker = () => {
     setAddOpen(false);
     setPickerOpen(true);
@@ -470,10 +497,13 @@ export function ComposerView({
   const clearComposer = () => {
     draftRef.current = "";
     attachmentsRef.current = [];
+    pastesRef.current = [];
     clearComposerDraft(resetKeyRef.current);
+    useReplyQuotesStore.getState().clear(resetKeyRef.current);
     setDraft("");
     setCaret(0);
     setAttachments([]);
+    setPastes([]);
     setPasteError(null);
   };
 
@@ -654,7 +684,10 @@ export function ComposerView({
       })
       .then(() => {
         if (isCurrent(key)) clearComposer();
-        else clearComposerDraft(resetKey);
+        else {
+          clearComposerDraft(resetKey);
+          useReplyQuotesStore.getState().clear(resetKey);
+        }
       })
       .catch((err: unknown) => handleSendFailure(err, key, (next) => dispatchPlain(body, key, skills, next)))
       .finally(() => {
@@ -666,16 +699,17 @@ export function ComposerView({
   const mentionedSkills = (body: string, list: CommandOption[]): string[] =>
     skillMentionNames(body, new Set(skillCommands(list).map((skill) => skill.name)));
 
-  const sendMessage = async (body: string): Promise<void> => {
+  // `typed` is what the user wrote: skill mentions are read from it, never from quoted assistant text.
+  const sendMessage = async (body: string, typed: string = body): Promise<void> => {
     const key = commandsKey;
     const slash = body.startsWith("/");
     if (slash) {
       const immediate = parseSlashInput(body, commandList);
       if (immediate) return runCommand(immediate.command, immediate.args, key);
     }
-    const needsList = driverCommands === null && (slash || hasSkillCandidate(body));
+    const needsList = driverCommands === null && (slash || hasSkillCandidate(typed));
     if (!needsList) {
-      sendPlain(body, key, mentionedSkills(body, commandList));
+      sendPlain(body, key, mentionedSkills(typed, commandList));
       return;
     }
     setSending(true);
@@ -695,21 +729,22 @@ export function ComposerView({
     const list = mergeCommands(driver, result.list, commandAvailability);
     const parsed = slash ? parseSlashInput(body, list) : null;
     if (parsed) return runCommand(parsed.command, parsed.args, key);
-    sendPlain(body, key, mentionedSkills(body, list));
+    sendPlain(body, key, mentionedSkills(typed, list));
   };
 
   const send = () => {
-    const body = draft.trim();
-    if ((!body && attachments.length === 0) || busy || sending || blockedReason) return;
+    const typed = draft.trim();
+    if ((!typed && attachments.length === 0 && quotes.length === 0 && pastes.length === 0) || busy || sending || blockedReason) return;
+    const body = formatQuotedReply(quoteTexts, withPastes(typed, pastes));
     const restore = backendRef.current.restore;
     if (!restore) {
-      void sendMessage(body);
+      void sendMessage(body, typed);
       return;
     }
-    void restoreThenSend(restore, body);
+    void restoreThenSend(restore, body, typed);
   };
 
-  const restoreThenSend = async (restore: NonNullable<ComposerBackend["restore"]>, body: string): Promise<void> => {
+  const restoreThenSend = async (restore: NonNullable<ComposerBackend["restore"]>, body: string, typed: string): Promise<void> => {
     const key = commandsKey;
     if (restore.confirm && !(await confirm(restore.confirm))) return;
     if (!isCurrent(key)) return;
@@ -722,7 +757,7 @@ export function ComposerView({
     } finally {
       setSending(false);
     }
-    if (isCurrent(key)) await sendMessage(body);
+    if (isCurrent(key)) await sendMessage(body, typed);
   };
 
   const openBranchChoice = (action: HeldSend) => {
@@ -1004,7 +1039,61 @@ export function ComposerView({
           onCancel={cancelBranchChoice}
         />
       )}
+      {openQuote !== null && <QuoteDialog text={openQuote} onClose={() => setOpenQuote(null)} />}
+      {openPaste !== null && <QuoteDialog title="Pasted text" text={openPaste} onClose={() => setOpenPaste(null)} />}
       <div className="composer-card">
+        {quotes.length > 0 && (
+          <div className="reply-quotes">
+            {quotes.map((quote) => (
+              <div key={quote.id} className="reply-quote">
+                <Reply size={14} aria-hidden="true" />
+                <button type="button" className="reply-quote-text" onClick={() => setOpenQuote(quote.text)} aria-label="Show quoted text">
+                  {quote.text}
+                </button>
+                <button
+                  type="button"
+                  className="chip-x"
+                  aria-label="Remove quoted text"
+                  onClick={() => useReplyQuotesStore.getState().remove(resetKey, quote.id)}
+                >
+                  <X aria-hidden="true" size={14} />
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+        {pastes.length > 0 && (
+          <div className="paste-cards">
+            {pastes.map((text, index) => (
+              <div key={index} className="paste-card">
+                <button type="button" className="paste-card-body" onClick={() => setOpenPaste(text)} aria-label="Show pasted text">
+                  <span className="paste-card-preview">{pastePreview(text)}</span>
+                </button>
+                <div className="paste-card-foot">
+                  <span className="paste-card-tag">Pasted</span>
+                  <span className="paste-card-size">{pasteSizeLabel(text)}</span>
+                  <button
+                    type="button"
+                    className="chip-x"
+                    title="Edit in the message"
+                    aria-label="Edit pasted text in the message"
+                    onClick={() => expandPaste(index)}
+                  >
+                    <Pencil aria-hidden="true" size={13} />
+                  </button>
+                  <button
+                    type="button"
+                    className="chip-x"
+                    aria-label="Remove pasted text"
+                    onClick={() => setPastes((prev) => prev.filter((_, i) => i !== index))}
+                  >
+                    <X aria-hidden="true" size={14} />
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
         {attachments.length > 0 && (
           <div className="attach-chips">
             {attachments.map((a) => (
@@ -1071,9 +1160,13 @@ export function ComposerView({
                 }
               }}
               onPaste={(e) => {
+                if (collapsePaste(e.clipboardData)) {
+                  e.preventDefault();
+                  return;
+                }
                 void pasteFiles(e.clipboardData);
               }}
-              placeholder={blockedReason ?? (busy ? "Agent is working — keep writing, you can send when it finishes" : "Ask cw-code — @ files, / commands, $ skills")}
+              placeholder={blockedReason ?? (busy ? "Agent is working — keep writing, you can send when it finishes" : quotes.length > 0 ? "Reply" : "Ask cw-code — @ files, / commands, $ skills")}
               className={`composer-input${highlightMentions ? " has-mentions" : ""}`}
               rows={3}
               disabled={sending || blockedReason !== undefined}
@@ -1184,7 +1277,7 @@ export function ComposerView({
             type="button"
             className="composer-action composer-send"
             onClick={send}
-            disabled={busy || sending || blockedReason !== undefined || (!draft.trim() && attachments.length === 0)}
+            disabled={busy || sending || blockedReason !== undefined || (!draft.trim() && attachments.length === 0 && quotes.length === 0 && pastes.length === 0)}
             title={busy ? "Locked while the agent is working" : (blockedReason ?? "Send")}
             aria-label="Send"
           >

@@ -1,4 +1,10 @@
-import { useState, type ReactNode } from "react";
+import { useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { usePopoverFit } from "./popoverFit.js";
+
+/** Mirrors the `.menu-panel` max-height caps in theme.css, so the fit only flips for content that is really shown. */
+function menuPanelCap(panel: HTMLElement): number {
+  return panel.querySelector(".menu-row.has-desc") ? Math.min(440, window.innerHeight * 0.7) : 240;
+}
 import { Check, ChevronDown, ChevronUp } from "lucide-react";
 
 export interface MenuOption {
@@ -38,6 +44,8 @@ export function MenuSelect({
 }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
+  const anchorRef = useRef<HTMLDivElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
   const close = () => {
     setOpen(false);
     setQuery("");
@@ -62,6 +70,11 @@ export function MenuSelect({
   }
   if (rows.length > 0 && rows[rows.length - 1].separator) rows.pop();
 
+  const preferUp = direction !== "down";
+  const fit = usePopoverFit(open, anchorRef, panelRef, preferUp, [rows.length], (panel) => Math.min(panel.scrollHeight, menuPanelCap(panel)));
+  const flip = fit !== null && fit.up !== preferUp ? (fit.up ? " menu-panel-flip-up" : " menu-panel-flip-down") : "";
+  const panelStyle = fit ? ({ "--fit-max": `${fit.maxHeight}px` } as CSSProperties) : undefined;
+
   const pickFirst = () => {
     const first = rows.find((option) => !option.disabled && !option.separator);
     close();
@@ -69,7 +82,7 @@ export function MenuSelect({
   };
 
   return (
-    <div className="menu">
+    <div className="menu" ref={anchorRef}>
       <button
         className={`menu-btn${isSet ? " is-set" : ""}`}
         aria-label={label}
@@ -90,7 +103,9 @@ export function MenuSelect({
         <>
           <div className="menu-backdrop" onClick={close} />
           <div
-            className={`menu-panel${direction === "down" ? " menu-panel-down" : ""}`}
+            ref={panelRef}
+            className={`menu-panel${direction === "down" ? " menu-panel-down" : ""}${flip}`}
+            style={panelStyle}
             role="listbox"
             aria-label={label}
             onKeyDown={(e) => {

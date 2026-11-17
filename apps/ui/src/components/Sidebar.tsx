@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
-import { Activity, Archive, ArchiveRestore, Bell, ChartColumn, Check, ChevronDown, ChevronRight, ChevronUp, CircleCheck, CircleHelp, Clock, Copy, GitBranch, GitPullRequest, Hash, LoaderCircle, Pause, Pencil, Play, Plus, Search, Settings, ShieldAlert, Sparkles, X, type LucideIcon } from "lucide-react";
+import { Activity, Archive, ArchiveRestore, Bell, ChartColumn, Check, ChevronDown, ChevronRight, ChevronUp, CircleCheck, CircleHelp, Clock, Copy, GitBranch, GitPullRequest, Hash, LoaderCircle, Pause, Pencil, Play, Plus, Search, Settings, ShieldAlert, Sparkles, Unlink, X, type LucideIcon } from "lucide-react";
 import type { Attention, AttentionKind, BabysitState, NeedsYouSlot, SessionRow, SidebarLayout, SidebarReorderRequest, SidebarSection, SidebarTopicData } from "@cw-code/contracts";
 import { SIDEBAR_TOPIC } from "@cw-code/shared/topics";
 import type { DriverName, Session, SessionStatus } from "../cw.js";
@@ -23,13 +23,52 @@ import { peekTopic } from "../server/topics.js";
 import { useMenuPosition } from "./menuPosition.js";
 import { useConfirm } from "./ConfirmDialog.js";
 import { ARCHIVE_CONFIRM, restoreConfirm } from "./sessionLifecycle.js";
+import { requestComposerFocus } from "./composerFocus.js";
+import { SidebarToggle } from "./SidebarToggle.js";
 import appIcon from "../assets/console-c.svg";
 
 const IDLE_LIMIT = 4;
 const FLIP_MS_FALLBACK = 150;
 const FLIP_EASING_FALLBACK = "cubic-bezier(0.22, 1, 0.36, 1)";
 const PENDING_MOVE_MS = 1500;
-const EMPTY_LAYOUT: SidebarLayout = { needsYou: [], workingSet: [], main: [], resolved: [], quickCounts: { pr: 0, prAttention: 0 } };
+type CollapsibleSection = "active" | "working" | "idle";
+const COLLAPSED_SECTIONS_KEY = "cw-code:sidebarCollapsedSections";
+const COLLAPSIBLE_SECTIONS: readonly CollapsibleSection[] = ["active", "working", "idle"];
+
+function loadCollapsedSections(): CollapsibleSection[] {
+  try {
+    const parsed: unknown = JSON.parse(window.localStorage.getItem(COLLAPSED_SECTIONS_KEY) ?? "[]");
+    return Array.isArray(parsed) ? COLLAPSIBLE_SECTIONS.filter((id) => parsed.includes(id)) : [];
+  } catch {
+    return [];
+  }
+}
+
+function storeCollapsedSections(sections: CollapsibleSection[]): void {
+  try {
+    if (sections.length === 0) window.localStorage.removeItem(COLLAPSED_SECTIONS_KEY);
+    else window.localStorage.setItem(COLLAPSED_SECTIONS_KEY, JSON.stringify(sections));
+  } catch (err) {
+    console.warn(`[layout] could not persist ${COLLAPSED_SECTIONS_KEY}`, err);
+  }
+}
+
+function SectionToggle({ open, label, onToggle, children }: { open: boolean; label: string; onToggle: () => void; children: ReactNode }) {
+  return (
+    <button
+      type="button"
+      className="side-sec-toggle"
+      onClick={onToggle}
+      aria-expanded={open}
+      aria-label={`${open ? "Collapse" : "Expand"} ${label.toLowerCase()} sessions`}
+    >
+      <ChevronRight size={12} className={`side-sec-chev${open ? " open" : ""}`} aria-hidden="true" />
+      {children}
+    </button>
+  );
+}
+
+const EMPTY_LAYOUT: SidebarLayout = { needsYou: [], workingSet: [], main: [], resolved: [], quickCounts: { pr: 0, noPr: 0, prAttention: 0 } };
 
 const ATTENTION_ACTION: Record<AttentionKind, { verb: string; Icon: LucideIcon }> = {
   approval: { verb: "Approve", Icon: ShieldAlert },
@@ -89,7 +128,8 @@ const DRIVER_LABEL: Record<DriverName, string> = {
 };
 
 const QUICK_FILTER_UI: Array<{ id: Exclude<QuickFilter, "all">; label: string; hint: string; Icon: LucideIcon }> = [
-  { id: "pr", label: "Linked to a PR", hint: "Linked to a PR", Icon: GitPullRequest }
+  { id: "pr", label: "Linked to a PR", hint: "Linked to a PR", Icon: GitPullRequest },
+  { id: "noPr", label: "Not linked to a PR", hint: "Not linked to a PR", Icon: Unlink }
 ];
 
 function quickFacts(s: Session): QuickFilterFacts {
@@ -307,6 +347,14 @@ export function Sidebar({ onOpenSkills, skillsOpen = false, hidden = false }: { 
   const [landedId, setLandedId] = useState<string | null>(null);
   const [idleShowAll, setIdleShowAll] = useState(false);
   const [resolvedOpen, setResolvedOpen] = useState(false);
+  const [collapsedSections, setCollapsedSections] = useState<CollapsibleSection[]>(loadCollapsedSections);
+  const toggleSection = (id: CollapsibleSection) => {
+    setCollapsedSections((current) => {
+      const next = current.includes(id) ? current.filter((s) => s !== id) : [...current, id];
+      storeCollapsedSections(next);
+      return next;
+    });
+  };
   const [hover, setHover] = useState<{ id: string; x: number; y: number } | null>(null);
   const hoverTimer = useRef<number | null>(null);
 
@@ -440,10 +488,18 @@ export function Sidebar({ onOpenSkills, skillsOpen = false, hidden = false }: { 
   }, [idleFiltered, idleUnlimited, draggedId]);
   const idleToggleVisible = trimmedQuery === "" && idleFiltered.length > IDLE_LIMIT;
   const resolvedExpanded = trimmedQuery !== "" || resolvedOpen;
+  const sectionOpen = (id: CollapsibleSection): boolean => trimmedQuery !== "" || dragged !== null || !collapsedSections.includes(id);
+  const activeOpen = sectionOpen("active");
+  const workingOpen = sectionOpen("working");
+  const idleOpen = sectionOpen("idle");
+  // A collapsed section still shows the session that is open, so it never disappears from the list.
+  const needsYouRows = activeOpen ? needsYouShown : needsYouShown.filter((entry) => entry.row.session.id === activeSessionId);
+  const workingSetRows = workingOpen ? workingSetShown : workingSetShown.filter((s) => s.id === activeSessionId);
+  const idleRows = idleOpen ? idleShown : idleShown.filter((s) => s.id === activeSessionId);
   const rowOrderKey = [
-    needsYouShown.map((entry) => entry.row.session.id),
-    workingSetShown.map((s) => s.id),
-    idleShown.map((s) => s.id),
+    needsYouRows.map((entry) => entry.row.session.id),
+    workingSetRows.map((s) => s.id),
+    idleRows.map((s) => s.id),
     resolvedExpanded ? resolvedShown.map((s) => s.id) : []
   ]
     .map((ids) => ids.join(","))
@@ -491,6 +547,7 @@ export function Sidebar({ onOpenSkills, skillsOpen = false, hidden = false }: { 
   const selectSession = (sessionId: string) => {
     openSessionView();
     selectStoreSession(sessionId);
+    requestComposerFocus();
   };
   const hoverSession = hover ? (source.find((s) => s.id === hover.id) ?? null) : null;
   const hoverBabysit = hoverSession ? babysitOf(hoverSession) : null;
@@ -969,6 +1026,7 @@ export function Sidebar({ onOpenSkills, skillsOpen = false, hidden = false }: { 
           <span>cw-code</span>
         </div>
         <DebugMenu />
+        <SidebarToggle />
       </div>
       <div className="brand">
         <button
@@ -1028,10 +1086,12 @@ export function Sidebar({ onOpenSkills, skillsOpen = false, hidden = false }: { 
           {needsYouShown.length > 0 && (
             <div className="side-section">
               <div className="side-sec needs">
-                Active
-                <span className="side-needs-n">{needsYouAll.length}</span>
+                <SectionToggle open={activeOpen} label="Active" onToggle={() => toggleSection("active")}>
+                  Active
+                  <span className="side-needs-n">{needsYouAll.length}</span>
+                </SectionToggle>
               </div>
-              {needsYouShown.map((entry) =>
+              {needsYouRows.map((entry) =>
                 isAttentionSlot(entry.slot) && entry.row.attention
                   ? renderAttentionRow(entry.row.session, entry.row.attention)
                   : renderWorkingRow(entry.row.session)
@@ -1041,8 +1101,10 @@ export function Sidebar({ onOpenSkills, skillsOpen = false, hidden = false }: { 
           {workingSetVisible && (
             <div className="side-section">
               <div className="side-sec">
-                Working set
-                <span className="side-sec-n">{workingSetShown.length}</span>
+                <SectionToggle open={workingOpen} label="Working set" onToggle={() => toggleSection("working")}>
+                  Working set
+                  <span className="side-sec-n">{workingSetShown.length}</span>
+                </SectionToggle>
                 <span className="side-sec-end" role="group" aria-label="Quick filters">
                   <button
                     type="button"
@@ -1052,31 +1114,36 @@ export function Sidebar({ onOpenSkills, skillsOpen = false, hidden = false }: { 
                   >
                     All
                   </button>
-                  {QUICK_FILTER_UI.map(({ id, label, hint, Icon }) => (
+                  {QUICK_FILTER_UI.map(({ id, label, hint, Icon }) => {
+                    const count = quickCounts[id] ?? 0;
+                    return (
                     <button
                       key={id}
                       type="button"
-                      className={`side-qf${quickFilter === id ? " on" : ""}${quickCounts[id] === 0 ? " is-zero" : ""}`}
+                      className={`side-qf${quickFilter === id ? " on" : ""}${count === 0 ? " is-zero" : ""}`}
                       onClick={() => setQuickFilter((current) => toggleQuickFilter(current, id))}
                       aria-pressed={quickFilter === id}
-                      title={`${hint} (${quickCounts[id]})`}
-                      aria-label={`${label}, ${quickCounts[id]}`}
+                      title={`${hint} (${count})`}
+                      aria-label={`${label}, ${count}`}
                     >
                       <Icon size={12} aria-hidden="true" />
-                      <span>{quickCounts[id]}</span>
+                      <span>{count}</span>
                     </button>
-                  ))}
+                    );
+                  })}
                 </span>
               </div>
-              {workingSetShown.map((s) => renderWorkingRow(s))}
+              {workingSetRows.map((s) => renderWorkingRow(s))}
             </div>
           )}
           {idleShown.length > 0 && (
             <div className="side-section side-idle">
               <div className="side-sec">
-                Idle
-                <span className="side-sec-n">{idleFiltered.length}</span>
-                {idleToggleVisible && (
+                <SectionToggle open={idleOpen} label="Idle" onToggle={() => toggleSection("idle")}>
+                  Idle
+                  <span className="side-sec-n">{idleFiltered.length}</span>
+                </SectionToggle>
+                {idleOpen && idleToggleVisible && (
                   <span className="side-sec-end">
                     <button type="button" className="side-qf" onClick={() => setIdleShowAll((v) => !v)} aria-pressed={idleShowAll}>
                       {idleShowAll ? "Show less" : "Show all"}
@@ -1084,7 +1151,7 @@ export function Sidebar({ onOpenSkills, skillsOpen = false, hidden = false }: { 
                   </span>
                 )}
               </div>
-              {idleShown.map((s) => renderFlatRow(s, "main"))}
+              {idleRows.map((s) => renderFlatRow(s, "main"))}
             </div>
           )}
           {needsYouShown.length === 0 && workingSetShown.length === 0 && idleShown.length === 0 && resolvedShown.length === 0 && (
