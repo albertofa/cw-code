@@ -5,6 +5,12 @@ const MODEL_WINDOW_FAMILIES: Record<string, { family: string; label: string }> =
   seven_day_sonnet: { family: "sonnet", label: "Sonnet" }
 };
 
+/**
+ * Claude plan windows that limit one model family rather than the whole account. The Claude driver marks a
+ * limit in one of these as `scope: "model"`, so this is the single list for both that and the picker.
+ */
+export const MODEL_LIMIT_WINDOWS: ReadonlySet<string> = new Set(Object.keys(MODEL_WINDOW_FAMILIES));
+
 /** The model family a limit window belongs to, or null for a window that limits the whole account. */
 export function limitWindowFamily(window: string | undefined): { family: string; label: string } | null {
   return (window && MODEL_WINDOW_FAMILIES[window]) || null;

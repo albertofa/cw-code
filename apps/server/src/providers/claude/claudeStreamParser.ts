@@ -1,4 +1,5 @@
 import type { ApprovalDecision, ApprovalRequest, ContextUsage, QuestionInfo, QuestionOption, QuestionRequest, ThreadEvent, ToolUsage, TurnModelUsage, UsageLimitHit } from "@cw-code/contracts";
+import { MODEL_LIMIT_WINDOWS } from "@cw-code/shared/usageLimits";
 import { todosFromToolCall } from "../todos.js";
 import { claudeTurnUsage, type ClaudeModelUsageSnapshot } from "./claudeUsage.js";
 
@@ -601,7 +602,7 @@ interface ClaudeRateLimitInfo {
  * Windows that limit one model family rather than the whole account. The CLI labels
  * `seven_day_overage_included` "Fable limit": Fable's own weekly allowance.
  */
-export const CLAUDE_MODEL_LIMIT_WINDOWS: ReadonlySet<string> = new Set(["seven_day_opus", "seven_day_sonnet", "seven_day_overage_included"]);
+export const CLAUDE_MODEL_LIMIT_WINDOWS: ReadonlySet<string> = MODEL_LIMIT_WINDOWS;
 
 /** API error kinds that refuse only the session's model; another model can still run. */
 const CLAUDE_MODEL_LIMIT_ERRORS: ReadonlySet<string> = new Set(["model_requires_usage_credits", "consent_unanswered"]);

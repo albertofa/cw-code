@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { isLimitedModel, limitWindowFamily } from "./usageLimits.js";
+import { MODEL_LIMIT_WINDOWS, isLimitedModel, limitWindowFamily } from "./usageLimits.js";
 
 describe("usage limit windows", () => {
   it("maps the model windows to their family and leaves account windows alone", () => {
@@ -7,6 +7,11 @@ describe("usage limit windows", () => {
     expect(limitWindowFamily("seven_day_opus")?.family).toBe("opus");
     expect(limitWindowFamily("five_hour")).toBeNull();
     expect(limitWindowFamily(undefined)).toBeNull();
+  });
+
+  it("lists every window that has a family, and only those", () => {
+    expect([...MODEL_LIMIT_WINDOWS].sort()).toEqual(["seven_day_opus", "seven_day_overage_included", "seven_day_sonnet"]);
+    for (const window of MODEL_LIMIT_WINDOWS) expect(limitWindowFamily(window)).not.toBeNull();
   });
 
   it("treats the recorded model and every model of the limited family as limited", () => {
