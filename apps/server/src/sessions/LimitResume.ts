@@ -1,5 +1,6 @@
 import type { AppSettings, LimitResume as LimitResumeMeta, SessionMeta, ThreadLimitResume } from "@cw-code/contracts";
 import { SHUTDOWN_RESERVED_MESSAGE } from "../shutdown/shutdownReservation.js";
+import { isLimitedModel } from "@cw-code/shared/usageLimits";
 import { HARNESS_UPDATE_BUSY_DETAIL } from "./SessionBusyError.js";
 import type { SessionRuntime, SettledTurnEvent, ThreadNotice } from "../threads/ThreadService.js";
 import type { TurnOrigin } from "../threads/TurnService.js";
@@ -22,7 +23,8 @@ export interface LimitResumeDeps {
   settings(): Pick<AppSettings, "limitAutoResume" | "claudeDefaultModel">;
   runtime(sessionId: string): Pick<SessionRuntime, "busy" | "approvals" | "questions">;
   waitingOnSubagents(sessionId: string): boolean;
-  startTurn(sessionId: string, prompt: string): Promise<string>;
+  /** Starts a continuation turn; `model` runs this turn on another model without touching the composer. */
+  startTurn(sessionId: string, prompt: string, model?: string): Promise<string>;
   setLimitResume(sessionId: string, next: LimitResumeMeta | undefined): void;
   refresh(sessionId: string): void;
   postNotice(sessionId: string, notice: ThreadNotice): void;
@@ -68,15 +70,16 @@ export class LimitResume {
     const session = this.find(sessionId);
     const pending = session?.limitResume;
     if (!session || !pending) return { limitResume: null };
-    const model = session.model?.trim() || undefined;
+    const model = pending.model;
     const fallback = session.driver === "claude" ? this.deps.settings().claudeDefaultModel.trim() : "";
+    const offerFallback = pending.scope === "model" && fallback !== "" && !isLimitedModel(fallback, { model, window: pending.window });
     return {
       limitResume: {
         ...(pending.resetsAt !== undefined ? { resetsAt: pending.resetsAt } : {}),
         ...(pending.window ? { window: pending.window } : {}),
         ...(pending.scope ? { scope: pending.scope } : {}),
         ...(model ? { model } : {}),
-        ...(pending.scope && fallback && fallback !== model ? { fallbackModel: fallback } : {})
+        ...(offerFallback ? { fallbackModel: fallback } : {})
       }
     };
   }
@@ -110,6 +113,8 @@ export class LimitResume {
     if (hit.resetsAt === undefined && hit.scope !== "model") return;
     const session = this.find(sessionId);
     if (!session || session.subagent || isClosed(session)) return;
+    // A second settle keeps the model the first one recorded, even if the composer changed in between.
+    const limitedModel = hit.scope === "model" ? (session.limitResume?.model ?? (session.model?.trim() || undefined)) : undefined;
     if (attempts >= LIMIT_RESUME_MAX_ATTEMPTS) {
       this.notify(sessionId, {
         noticeId: LIMIT_RESUME_NOTICE_ID,
@@ -122,6 +127,7 @@ export class LimitResume {
       ...(hit.resetsAt !== undefined ? { resetsAt: hit.resetsAt } : {}),
       ...(hit.window ? { window: hit.window } : {}),
       ...(hit.scope ? { scope: hit.scope } : {}),
+      ...(limitedModel ? { model: limitedModel } : {}),
       attempts
     });
     this.arm(sessionId);
@@ -135,21 +141,27 @@ export class LimitResume {
   }
 
   /**
-   * Continues a limited session now instead of waiting for the reset. The caller has already switched the
-   * session's model; this starts the continuation turn on it.
+   * Continues a limited session now on `model` instead of waiting for the reset. The turn runs on `model`
+   * without touching the composer; the caller persists the switch once this resolves.
    */
-  async continueNow(sessionId: string): Promise<string> {
+  async continueNow(sessionId: string, model: string): Promise<string> {
     const session = this.find(sessionId);
-    if (!session?.limitResume) throw new Error("This session is not waiting on a usage limit.");
+    const pending = session?.limitResume;
+    if (!session || !pending) throw new Error("This session is not waiting on a usage limit.");
     if (session.subagent || isClosed(session)) throw new Error("This session can't be continued.");
     if (this.firing.has(sessionId)) throw new Error("The session is already continuing.");
+    if (isLimitedModel(model, pending)) throw new Error(`${model} is the model that hit the limit; pick another one.`);
+    const runtime = this.deps.runtime(sessionId);
+    if (runtime.busy) throw new Error("Wait for the running turn to finish before continuing.");
+    if (runtime.approvals.length > 0 || runtime.questions.length > 0) throw new Error("Answer the pending request before continuing.");
+    if (this.deps.waitingOnSubagents(sessionId)) throw new Error("Wait for this session's subagents to finish before continuing.");
     const timer = this.timers.get(sessionId);
     if (timer) clearTimeout(timer);
     this.timers.delete(sessionId);
     this.firing.set(sessionId, 0);
     let turnId: string;
     try {
-      turnId = await this.deps.startTurn(sessionId, LIMIT_SWITCH_PROMPT);
+      turnId = await this.deps.startTurn(sessionId, LIMIT_SWITCH_PROMPT, model);
     } catch (error) {
       this.arm(sessionId);
       throw error;
@@ -166,7 +178,7 @@ export class LimitResume {
       return;
     }
     const pending = session.limitResume;
-    const key = pending ? `${pending.resetsAt ?? ""}|${pending.scope ?? ""}|${session.model ?? ""}` : undefined;
+    const key = pending ? `${pending.resetsAt ?? ""}|${pending.scope ?? ""}|${pending.model ?? ""}` : undefined;
     if (this.published.get(session.id) === key) return;
     if (key === undefined) this.published.delete(session.id);
     else this.published.set(session.id, key);

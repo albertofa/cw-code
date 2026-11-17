@@ -227,6 +227,7 @@ function isLimitResume(value: unknown): value is LimitResume {
   if (meta.resetsAt !== undefined && (typeof meta.resetsAt !== "number" || !Number.isFinite(meta.resetsAt))) return false;
   if (meta.scope !== undefined && meta.scope !== "model") return false;
   if (meta.resetsAt === undefined && meta.scope !== "model") return false;
+  if (meta.model !== undefined && typeof meta.model !== "string") return false;
   if (typeof meta.attempts !== "number" || !Number.isInteger(meta.attempts) || meta.attempts < 0) return false;
   return meta.window === undefined || typeof meta.window === "string";
 }
@@ -508,6 +509,7 @@ export class SessionStore {
       previous?.resetsAt === next?.resetsAt &&
       previous?.window === next?.window &&
       previous?.scope === next?.scope &&
+      previous?.model === next?.model &&
       previous?.attempts === next?.attempts
     ) {
       return false;

@@ -58,7 +58,7 @@ export interface ThreadLimitResume {
   window?: string;
   /** `model` when only the session's model is limited, so the thread offers to continue on another model now. */
   scope?: "model";
-  /** The session's model when the limit hit, if it has one set. */
+  /** The session's model when the limit hit, if it had one set; later composer changes do not move it. */
   model?: string;
   /** The harness default model to offer first, when it is set and differs from `model`. */
   fallbackModel?: string;

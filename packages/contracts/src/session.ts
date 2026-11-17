@@ -104,6 +104,8 @@ export interface LimitResume {
   window?: string;
   /** `model` when only the session's model is limited; absent for the whole account. */
   scope?: "model";
+  /** The session's model when the limit hit (a model limit only); absent when the session ran the harness default. */
+  model?: string;
   /** Automatic continuations already spent on this limit streak. */
   attempts: number;
 }

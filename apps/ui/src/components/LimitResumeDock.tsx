@@ -1,14 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
 import { Hourglass } from "lucide-react";
 import type { ModelOption } from "../cw.js";
+import { isLimitedModel, limitWindowFamily } from "@cw-code/shared/usageLimits";
 import { ipcErrorMessage } from "./ipcError.js";
 import { useThreadEntry } from "./useThread.js";
-
-const MODEL_WINDOW_NAMES: Record<string, string> = {
-  seven_day_overage_included: "Fable",
-  seven_day_opus: "Opus",
-  seven_day_sonnet: "Sonnet"
-};
 
 function resetPhrase(resetsAt: number, now: number): string {
   const date = new Date(resetsAt);
@@ -43,6 +38,7 @@ export function LimitResumeDock({ sessionId }: { sessionId: string }) {
   const waiting = pending != null;
   const modelScoped = pending?.scope === "model";
   const limitedModel = pending?.model;
+  const limitedWindow = pending?.window;
   const fallbackModel = pending?.fallbackModel;
 
   useEffect(() => {
@@ -65,7 +61,10 @@ export function LimitResumeDock({ sessionId }: { sessionId: string }) {
     };
   }, [sessionId, modelScoped]);
 
-  const options = useMemo(() => models.filter((model) => model.id !== limitedModel), [models, limitedModel]);
+  const options = useMemo(
+    () => models.filter((model) => !isLimitedModel(model.id, { model: limitedModel, window: limitedWindow })),
+    [models, limitedModel, limitedWindow]
+  );
 
   useEffect(() => {
     if (options.some((model) => model.id === choice)) return;
@@ -91,7 +90,7 @@ export function LimitResumeDock({ sessionId }: { sessionId: string }) {
   const continueOn = () => run(() => window.cw.continueWithModel(sessionId, choice), "Could not continue");
 
   const name =
-    (pending.window ? MODEL_WINDOW_NAMES[pending.window] : undefined) ?? labelOf(models, limitedModel) ?? "This model's";
+    limitWindowFamily(pending.window)?.label ?? labelOf(models, limitedModel) ?? "This model's";
   const sentence = modelScoped
     ? modelLimitSentence(name, pending.resetsAt)
     : limitResumeSentence(pending.resetsAt ?? Date.now());

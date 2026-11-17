@@ -76,10 +76,10 @@ export function registerTurnHandlers(router: Router, app: ServerApp): void {
     const sessionId = knownSessionId(sessions(), args.sessionId);
     const model = typeof args.model === "string" ? args.model.trim() : "";
     if (!isSafeModelId(model)) throw new Error("model is not a valid model id");
-    const { limitResume } = app.requireServices();
-    if (!sessions().findSession(sessionId)?.limitResume) throw new Error("This session is not waiting on a usage limit.");
+    const turnId = await app.requireServices().limitResume.continueNow(sessionId, model);
+    // Persist the switch only once the turn started, so a refused continuation leaves the composer as it was.
     setComposer(app, sessionId, { ...sessions().getComposer(sessionId), model });
-    return limitResume.continueNow(sessionId);
+    return turnId;
   });
   handle<{ sessionId: string; requestId: string; decision: ApprovalDecision }>(router, "approvals.respond", (args) =>
     sessions().respondApproval(args.requestId, args.decision)
