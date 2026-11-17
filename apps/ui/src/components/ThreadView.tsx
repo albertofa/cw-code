@@ -11,6 +11,7 @@ import { GitPanelBar } from "./GitPanelBar.js";
 import { ToolContent } from "./ToolContent.js";
 import { useDockDrop } from "./useDockDrop.js";
 import { Composer } from "./Composer.js";
+import { isContentDrift } from "./threadFollow.js";
 import { isBottomOpen, resolveMainTab } from "../stores/panelLayout.js";
 import { ToolCard } from "./ToolCard.js";
 import { ToolGroupCard } from "./ToolGroupCard.js";
@@ -426,11 +427,12 @@ export function ThreadView({ hidden = false }: { hidden?: boolean }) {
     if (!el || hiddenRef.current) return;
     const distance = distanceFromBottom(el);
     const previous = lastDistanceRef.current;
-    const contentChanged = el.scrollHeight !== lastScrollHeightRef.current;
+    const drift = isContentDrift(el.scrollTop - savedScrollTopRef.current, el.scrollHeight - lastScrollHeightRef.current);
     lastScrollHeightRef.current = el.scrollHeight;
-    if (distance >= FOLLOW_BAND && stickRef.current && contentChanged) {
+    if (distance >= FOLLOW_BAND && stickRef.current && drift) {
       // The content grew or shrank under a thread that follows the end (history loading on open,
-      // a large card appearing): that is not the user scrolling away, so keep following.
+      // a large card appearing) without the view moving up: keep following. An upward move, even
+      // while a turn streams, still releases below.
       pinToBottom(el);
       savedScrollTopRef.current = el.scrollTop;
       lastDistanceRef.current = distanceFromBottom(el);
