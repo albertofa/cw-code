@@ -44,6 +44,7 @@ import {
   type TokenCipher
 } from "./connections.js";
 import { failedServerProbe, RendererProbeTracker, runPackageProbe } from "./debug/packageProbe.js";
+import { clampZoom, ZoomStore } from "./zoomStore";
 import { readOrCreateInstallId } from "./installId.js";
 import { assertLocalAbsolutePath, resolveOpenTarget } from "./openPathPolicy.js";
 import { claimParent } from "./serverAttach.js";
@@ -120,6 +121,7 @@ const connections = new ConnectionStore({ userDataDir: app.getPath("userData"), 
 const runningProfile: ConnectionProfile = packageProbeOutPath() ? LOCAL_PROFILE : (connections.profile(connections.activeId) ?? LOCAL_PROFILE);
 const remoteMode = runningProfile.kind === "remote";
 const localUpdatePreferences = new LocalUpdatePreferences(app.getPath("userData"), connectionsFs);
+const zoomStore = new ZoomStore(app.getPath("userData"), connectionsFs);
 
 const serverProcess: ServerProcess = new ServerProcess({
   launch: {
@@ -445,6 +447,14 @@ function wireWindow(window: BrowserWindow): void {
       appendCrashLog(`renderer error: ${event.message} (${event.sourceId}:${event.lineNumber})`);
     }
   });
+  let zoomRestored = false;
+  webContents.on("did-navigate", () => {
+    webContents.setZoomLevel(zoomStore.level);
+    zoomRestored = true;
+  });
+  window.on("close", () => {
+    if (zoomRestored) saveZoom(webContents.getZoomLevel());
+  });
   webContents.setWindowOpenHandler(({ url }) => {
     if (/^https?:/i.test(url)) void shell.openExternal(url);
     return { action: "deny" };
@@ -568,15 +578,20 @@ function windowFromSender(sender: WebContents): BrowserWindow | null {
   return BrowserWindow.fromWebContents(sender);
 }
 
-const ZOOM_MIN = -5;
-const ZOOM_MAX = 5;
 const ZOOM_STEP = 0.5;
 
-function bumpZoom(sender: WebContents, delta: number): void {
-  const w = windowFromSender(sender);
-  if (!w) return;
-  const next = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, w.webContents.getZoomLevel() + delta));
-  w.webContents.setZoomLevel(next);
+function setZoom(sender: WebContents, level: number): void {
+  const next = clampZoom(level);
+  sender.setZoomLevel(next);
+  saveZoom(next);
+}
+
+function saveZoom(level: number): void {
+  try {
+    zoomStore.save(level);
+  } catch (error) {
+    appendCrashLog(`zoom level not saved: ${errorMessage(error)}`);
+  }
 }
 
 const BADGE_SIZE = 32;
@@ -627,9 +642,9 @@ function registerWindowIpc(): void {
   ipcMain.on("win.close", (e) => windowFromSender(e.sender)?.close());
   ipcMain.handle("win.is-maximized", (e) => windowFromSender(e.sender)?.isMaximized() ?? false);
 
-  ipcMain.on("win.zoom-in", (e) => bumpZoom(e.sender, ZOOM_STEP));
-  ipcMain.on("win.zoom-out", (e) => bumpZoom(e.sender, -ZOOM_STEP));
-  ipcMain.on("win.zoom-reset", (e) => windowFromSender(e.sender)?.webContents.setZoomLevel(0));
+  ipcMain.on("win.zoom-in", (e) => setZoom(e.sender, e.sender.getZoomLevel() + ZOOM_STEP));
+  ipcMain.on("win.zoom-out", (e) => setZoom(e.sender, e.sender.getZoomLevel() - ZOOM_STEP));
+  ipcMain.on("win.zoom-reset", (e) => setZoom(e.sender, 0));
 }
 
 function registerShellIpc(): void {
