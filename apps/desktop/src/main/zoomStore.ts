@@ -9,17 +9,22 @@ export interface ZoomFs {
   write(path: string, data: string): void;
 }
 
-export function clampZoom(level: number): number {
-  return Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, level));
+/**
+ * Next level for a shortcut step, kept inside the shortcut range. A level already outside it
+ * (set through the default menu roles) never moves against the direction of the step.
+ */
+export function stepZoom(current: number, delta: number): number {
+  const next = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, current + delta));
+  return delta >= 0 ? Math.max(current, next) : Math.min(current, next);
 }
 
-export function parseZoom(raw: string | null): number {
-  if (raw === null) return 0;
+export function parseZoom(raw: string | null): number | null {
+  if (raw === null) return null;
   try {
     const level = (JSON.parse(raw) as { level?: unknown } | null)?.level;
-    return typeof level === "number" && Number.isFinite(level) ? clampZoom(level) : 0;
+    return typeof level === "number" && Number.isFinite(level) ? level : null;
   } catch {
-    return 0;
+    return null;
   }
 }
 
@@ -29,24 +34,33 @@ export function parseZoom(raw: string | null): number {
  */
 export class ZoomStore {
   private readonly path: string;
+  private loaded = false;
   private saved: number | null = null;
 
   constructor(
     userDataDir: string,
-    private readonly fs: ZoomFs
+    private readonly fs: ZoomFs,
+    private readonly warn: (message: string) => void = () => {}
   ) {
     this.path = join(userDataDir, ZOOM_FILE);
   }
 
-  get level(): number {
-    this.saved ??= parseZoom(this.fs.read(this.path));
+  /** The stored level, or null when none was ever saved or the file cannot be read. */
+  get level(): number | null {
+    if (!this.loaded) {
+      this.loaded = true;
+      try {
+        this.saved = parseZoom(this.fs.read(this.path));
+      } catch (error) {
+        this.warn(`zoom level not read: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
     return this.saved;
   }
 
   save(level: number): void {
-    const next = clampZoom(level);
-    if (next === this.level) return;
-    this.saved = next;
-    this.fs.write(this.path, `${JSON.stringify({ level: next })}\n`);
+    if (!Number.isFinite(level) || level === this.level) return;
+    this.saved = level;
+    this.fs.write(this.path, `${JSON.stringify({ level })}\n`);
   }
 }

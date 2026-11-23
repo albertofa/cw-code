@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { parseZoom, ZoomStore, type ZoomFs } from "./zoomStore";
+import { parseZoom, stepZoom, ZoomStore, type ZoomFs } from "./zoomStore";
 
 function memoryFs(initial: string | null = null): ZoomFs & { data: string | null; writes: number } {
   const fs = {
@@ -15,37 +15,67 @@ function memoryFs(initial: string | null = null): ZoomFs & { data: string | null
 }
 
 describe("parseZoom", () => {
-  test("reads a stored level", () => {
+  test("reads a stored level, including 0 and levels outside the shortcut range", () => {
     expect(parseZoom('{"level":1.5}')).toBe(1.5);
+    expect(parseZoom('{"level":0}')).toBe(0);
+    expect(parseZoom('{"level":7}')).toBe(7);
   });
 
-  test("falls back to 0 for missing or malformed content", () => {
-    expect(parseZoom(null)).toBe(0);
-    expect(parseZoom("not json")).toBe(0);
-    expect(parseZoom("null")).toBe(0);
-    expect(parseZoom('{"level":"2"}')).toBe(0);
+  test("returns null for missing or malformed content", () => {
+    expect(parseZoom(null)).toBeNull();
+    expect(parseZoom("not json")).toBeNull();
+    expect(parseZoom("null")).toBeNull();
+    expect(parseZoom('{"level":"2"}')).toBeNull();
+  });
+});
+
+describe("stepZoom", () => {
+  test("steps inside the range and stops at its ends", () => {
+    expect(stepZoom(1, 0.5)).toBe(1.5);
+    expect(stepZoom(5, 0.5)).toBe(5);
+    expect(stepZoom(-5, -0.5)).toBe(-5);
   });
 
-  test("clamps out-of-range levels", () => {
-    expect(parseZoom('{"level":40}')).toBe(5);
-    expect(parseZoom('{"level":-40}')).toBe(-5);
+  test("a level outside the range never moves against the step", () => {
+    expect(stepZoom(7, 0.5)).toBe(7);
+    expect(stepZoom(7, -0.5)).toBe(5);
+    expect(stepZoom(-7, -0.5)).toBe(-7);
+    expect(stepZoom(-7, 0.5)).toBe(-5);
   });
 });
 
 describe("ZoomStore", () => {
-  test("a saved level is read back by a new store", () => {
-    const fs = memoryFs();
-    new ZoomStore("/data", fs).save(2);
-    expect(new ZoomStore("/data", fs).level).toBe(2);
+  test("has no level until one is saved", () => {
+    expect(new ZoomStore("/data", memoryFs()).level).toBeNull();
   });
 
-  test("does not write an unchanged level", () => {
-    const fs = memoryFs('{"level":1}');
+  test("a saved level is read back by a new store, unclamped", () => {
+    const fs = memoryFs();
+    new ZoomStore("/data", fs).save(7);
+    expect(new ZoomStore("/data", fs).level).toBe(7);
+  });
+
+  test("saves 0 when nothing was stored, and skips an unchanged level", () => {
+    const fs = memoryFs();
     const store = new ZoomStore("/data", fs);
-    store.save(1);
-    expect(fs.writes).toBe(0);
     store.save(0);
     expect(fs.writes).toBe(1);
-    expect(store.level).toBe(0);
+    store.save(0);
+    expect(fs.writes).toBe(1);
+    expect(new ZoomStore("/data", fs).level).toBe(0);
+  });
+
+  test("an unreadable file reads as no level and is reported", () => {
+    const warnings: string[] = [];
+    const fs: ZoomFs = {
+      read: () => {
+        throw new Error("EACCES");
+      },
+      write: () => {}
+    };
+    const store = new ZoomStore("/data", fs, (message) => warnings.push(message));
+    expect(store.level).toBeNull();
+    expect(store.level).toBeNull();
+    expect(warnings).toEqual(["zoom level not read: EACCES"]);
   });
 });

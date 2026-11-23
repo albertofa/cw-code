@@ -44,7 +44,7 @@ import {
   type TokenCipher
 } from "./connections.js";
 import { failedServerProbe, RendererProbeTracker, runPackageProbe } from "./debug/packageProbe.js";
-import { clampZoom, ZoomStore } from "./zoomStore";
+import { stepZoom, ZoomStore } from "./zoomStore";
 import { readOrCreateInstallId } from "./installId.js";
 import { assertLocalAbsolutePath, resolveOpenTarget } from "./openPathPolicy.js";
 import { claimParent } from "./serverAttach.js";
@@ -121,7 +121,7 @@ const connections = new ConnectionStore({ userDataDir: app.getPath("userData"), 
 const runningProfile: ConnectionProfile = packageProbeOutPath() ? LOCAL_PROFILE : (connections.profile(connections.activeId) ?? LOCAL_PROFILE);
 const remoteMode = runningProfile.kind === "remote";
 const localUpdatePreferences = new LocalUpdatePreferences(app.getPath("userData"), connectionsFs);
-const zoomStore = new ZoomStore(app.getPath("userData"), connectionsFs);
+const zoomStore = new ZoomStore(app.getPath("userData"), connectionsFs, appendCrashLog);
 
 const serverProcess: ServerProcess = new ServerProcess({
   launch: {
@@ -449,7 +449,9 @@ function wireWindow(window: BrowserWindow): void {
   });
   let zoomRestored = false;
   webContents.on("did-navigate", () => {
-    webContents.setZoomLevel(zoomStore.level);
+    const stored = zoomStore.level;
+    if (stored === null) saveZoom(webContents.getZoomLevel());
+    else webContents.setZoomLevel(stored);
     zoomRestored = true;
   });
   window.on("close", () => {
@@ -581,9 +583,8 @@ function windowFromSender(sender: WebContents): BrowserWindow | null {
 const ZOOM_STEP = 0.5;
 
 function setZoom(sender: WebContents, level: number): void {
-  const next = clampZoom(level);
-  sender.setZoomLevel(next);
-  saveZoom(next);
+  sender.setZoomLevel(level);
+  saveZoom(level);
 }
 
 function saveZoom(level: number): void {
@@ -642,8 +643,8 @@ function registerWindowIpc(): void {
   ipcMain.on("win.close", (e) => windowFromSender(e.sender)?.close());
   ipcMain.handle("win.is-maximized", (e) => windowFromSender(e.sender)?.isMaximized() ?? false);
 
-  ipcMain.on("win.zoom-in", (e) => setZoom(e.sender, e.sender.getZoomLevel() + ZOOM_STEP));
-  ipcMain.on("win.zoom-out", (e) => setZoom(e.sender, e.sender.getZoomLevel() - ZOOM_STEP));
+  ipcMain.on("win.zoom-in", (e) => setZoom(e.sender, stepZoom(e.sender.getZoomLevel(), ZOOM_STEP)));
+  ipcMain.on("win.zoom-out", (e) => setZoom(e.sender, stepZoom(e.sender.getZoomLevel(), -ZOOM_STEP)));
   ipcMain.on("win.zoom-reset", (e) => setZoom(e.sender, 0));
 }
 
