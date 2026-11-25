@@ -186,7 +186,7 @@ export class LimitResume {
       return;
     }
     const pending = session.limitResume;
-    const key = pending ? `${pending.resetsAt ?? ""}|${pending.scope ?? ""}|${pending.model ?? ""}` : undefined;
+    const key = pending ? `${pending.resetsAt ?? ""}|${pending.window ?? ""}|${pending.scope ?? ""}|${pending.model ?? ""}` : undefined;
     if (this.published.get(session.id) === key) return;
     if (key === undefined) this.published.delete(session.id);
     else this.published.set(session.id, key);
@@ -206,7 +206,11 @@ export class LimitResume {
           this.clear(session.id);
           continue;
         }
-        if (pending.resetsAt === undefined) continue;
+        if (pending.resetsAt === undefined) {
+          // The offered default model may have changed.
+          this.deps.refresh(session.id);
+          continue;
+        }
         const timer = this.timers.get(session.id);
         if (timer) clearTimeout(timer);
         this.timers.delete(session.id);

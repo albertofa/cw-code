@@ -18,10 +18,14 @@ export function limitResumeSentence(resumesAt: number, now: number = Date.now())
   return `Usage limit reached. cw-code continues this session ${whenPhrase(resumesAt, now)}, once it resets.`;
 }
 
-export function modelLimitSentence(name: string, resumesAt: number | undefined, now: number = Date.now()): string {
+export function modelLimitSentence(name: string, resumesAt: number | undefined, now: number = Date.now(), canSwitch = true): string {
   const head = `${name} limit reached.`;
+  if (resumesAt !== undefined && resumesAt <= now) return `${head} cw-code is about to continue this session.`;
+  if (!canSwitch) {
+    if (resumesAt === undefined) return `${head} No other model is available here; send a message later or pick a model in the composer.`;
+    return `${head} cw-code continues this session ${whenPhrase(resumesAt, now)}, once it resets.`;
+  }
   if (resumesAt === undefined) return `${head} Continue on another model now, or send a message later.`;
-  if (resumesAt <= now) return `${head} cw-code is about to continue this session.`;
   return `${head} Continue on another model now, or cw-code continues on this one ${whenPhrase(resumesAt, now)}, once it resets.`;
 }
 
@@ -51,6 +55,7 @@ export function LimitResumeDock({ sessionId }: { sessionId: string }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [models, setModels] = useState<ModelOption[]>([]);
+  const [modelsLoaded, setModelsLoaded] = useState(false);
   const [choice, setChoice] = useState<string>("");
   const waiting = pending != null;
   const modelScoped = pending?.scope === "model";
@@ -69,10 +74,14 @@ export function LimitResumeDock({ sessionId }: { sessionId: string }) {
     window.cw
       .listModels(sessionId)
       .then((list) => {
-        if (live) setModels(list);
+        if (!live) return;
+        setModels(list);
+        setModelsLoaded(true);
       })
       .catch((err) => {
-        if (live) setError(`Could not load models: ${ipcErrorMessage(err)}`);
+        if (!live) return;
+        setModelsLoaded(true);
+        setError(`Could not load models: ${ipcErrorMessage(err)}`);
       });
     return () => {
       live = false;
@@ -109,7 +118,7 @@ export function LimitResumeDock({ sessionId }: { sessionId: string }) {
 
   const name = limitWindowFamily(pending.window)?.label ?? labelOf(models, limitedModel) ?? "This model's";
   const sentence = modelScoped
-    ? modelLimitSentence(name, pending.resumesAt, now)
+    ? modelLimitSentence(name, pending.resumesAt, now, !modelsLoaded || options.length > 0)
     : limitResumeSentence(pending.resumesAt ?? now, now);
   const choiceLabel = labelOf(models, choice);
 

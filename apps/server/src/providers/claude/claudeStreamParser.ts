@@ -675,8 +675,9 @@ export function parseClaudeUsageLimit(message: unknown): { hit?: UsageLimitHit }
   const fields = message as ClaudeApiErrorFields;
   const kind = fields.api_error;
   if (typeof kind === "string" && CLAUDE_MODEL_LIMIT_ERRORS.has(kind)) {
-    const info = claudeLimitInfo(fields.api_error_params?.rate_limit_info) ?? {};
-    return { hit: withScope(info, true) };
+    // Only a rejected limit says when this model frees up; any other info would schedule an unrelated reset.
+    const info = claudeLimitInfo(fields.api_error_params?.rate_limit_info);
+    return { hit: withScope(info?.status === "rejected" ? info : {}, true) };
   }
   if (fields.error !== "rate_limit") return undefined;
   if (kind !== undefined && kind !== "usage_limit_reached") return undefined;

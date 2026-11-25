@@ -165,6 +165,17 @@ describe("LimitResume", () => {
     expect(h.started).toEqual([]);
   });
 
+  it("refreshes an open model offer when the default model changes with auto resume off", () => {
+    const h = harness([session("s1", { model: "fable" })]);
+    h.state.enabled = false;
+    h.engine.turnSettled("s1", "t1", done("t1", undefined, { scope: "model", window: "seven_day_overage_included" }));
+    h.refreshed.length = 0;
+    h.state.defaultModel = "claude-sonnet-5-5";
+    h.engine.settingsChanged();
+    expect(h.refreshed).toEqual(["s1"]);
+    expect(h.engine.extras("s1").limitResume?.fallbackModel).toBe("claude-sonnet-5-5");
+  });
+
   it("drops every pending continuation when the setting is turned off", async () => {
     const h = harness();
     h.engine.turnSettled("s1", "t1", done("t1", Date.now() + HOUR));

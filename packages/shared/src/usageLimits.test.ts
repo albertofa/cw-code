@@ -21,5 +21,7 @@ describe("usage limit windows", () => {
     expect(isLimitedModel("Custom-Model", { model: "custom-model" })).toBe(true);
     expect(isLimitedModel("claude-sonnet-5-5", { model: "fable" })).toBe(false);
     expect(isLimitedModel("", { model: "fable" })).toBe(false);
+    expect(isLimitedModel("claude-opus-5-5", { model: "claude-opus-5-5[1m]" })).toBe(true);
+    expect(isLimitedModel("claude-opus-5-5[1m]", { model: "claude-opus-5-5" })).toBe(true);
   });
 });

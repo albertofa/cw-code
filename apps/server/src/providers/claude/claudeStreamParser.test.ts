@@ -1091,6 +1091,20 @@ describe("Claude plan limit parsing", () => {
     expect(parseClaudeUsageLimit({ error: "rate_limit" })).toEqual({});
     expect(parseClaudeUsageLimit({ error: "rate_limit", api_error: "usage_limit_reached", api_error_params: { rate_limit_info: { ...info, status: "allowed" } } })).toEqual({});
     expect(parseClaudeUsageLimit({ error: "rate_limit", api_error: "model_requires_usage_credits" })).toEqual({ hit: { scope: "model" } });
+    expect(
+      parseClaudeUsageLimit({
+        error: "rate_limit",
+        api_error: "model_requires_usage_credits",
+        api_error_params: { rate_limit_info: { status: "rejected", resetsAt: 1793724600, rateLimitType: "seven_day_overage_included" } }
+      })
+    ).toEqual({ hit: { resetsAt: 1793724600000, window: "seven_day_overage_included", scope: "model" } });
+    expect(
+      parseClaudeUsageLimit({
+        error: "rate_limit",
+        api_error: "consent_unanswered",
+        api_error_params: { rate_limit_info: { status: "allowed", resetsAt: 1793724600, rateLimitType: "five_hour" } }
+      })
+    ).toEqual({ hit: { scope: "model" } });
     expect(parseClaudeUsageLimit({ error: "rate_limit", api_error: "workspace_rate_limited" })).toBeUndefined();
     expect(parseClaudeUsageLimit({ error: "server_error" })).toBeUndefined();
   });
