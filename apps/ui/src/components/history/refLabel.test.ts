@@ -67,7 +67,15 @@ describe("buildRefLabel", () => {
 
   it("gives a detached HEAD entry no checkout target", () => {
     expect(buildRefLabel([], true)?.entries).toEqual([
-      { key: "HEAD", name: "HEAD", checkout: null, kind: "head", isCurrent: true, hasLocal: false, hasRemote: false }
+      { key: "HEAD", name: "HEAD", checkout: null, localElsewhere: false, kind: "head", isCurrent: true, hasLocal: false, hasRemote: false }
+    ]);
+  });
+
+  it("checks out the existing local branch when a remote branch's local twin is on another commit", () => {
+    const label = buildRefLabel([ref("remote", "origin/testing"), ref("remote", "origin/main")], false, { names: new Set(["testing", "main"]), current: "main" });
+    expect(label?.entries.map((entry) => [entry.name, entry.checkout, entry.localElsewhere])).toEqual([
+      ["origin/main", null, true],
+      ["origin/testing", "testing", true]
     ]);
   });
 });

@@ -6,6 +6,7 @@ export interface RefEntry {
   key: string;
   name: string;
   checkout: string | null;
+  localElsewhere: boolean;
   kind: RefLabelKind;
   isCurrent: boolean;
   hasLocal: boolean;
@@ -31,6 +32,22 @@ interface Candidate {
   isCurrent: boolean;
   hasRemote: boolean;
   checkout: string | null;
+  localElsewhere: boolean;
+}
+
+export interface LocalBranches {
+  names: ReadonlySet<string>;
+  current: string | null;
+}
+
+const NO_LOCALS: LocalBranches = { names: new Set(), current: null };
+
+function checkoutFor(ref: HistoryRef, locals: LocalBranches): { checkout: string | null; localElsewhere: boolean } {
+  if (ref.kind === "local") return { checkout: ref.name, localElsewhere: false };
+  if (ref.kind !== "remote") return { checkout: null, localElsewhere: false };
+  const local = remoteBranchName(ref.name);
+  if (!locals.names.has(local)) return { checkout: ref.name, localElsewhere: false };
+  return { checkout: local === locals.current ? null : local, localElsewhere: true };
 }
 
 const KIND_ORDER: Record<RefLabelKind, number> = { head: 0, local: 1, remote: 2, tag: 3, stash: 4 };
@@ -40,7 +57,7 @@ function remoteBranchName(name: string): string {
   return slash === -1 ? name : name.slice(slash + 1);
 }
 
-export function buildRefLabel(refs: HistoryRef[], detachedHead: boolean): RefLabel | null {
+export function buildRefLabel(refs: HistoryRef[], detachedHead: boolean, localBranches: LocalBranches = NO_LOCALS): RefLabel | null {
   const locals = refs.filter((ref) => ref.kind === "local");
   const candidates: Candidate[] = [];
   for (const ref of refs) {
@@ -55,10 +72,10 @@ export function buildRefLabel(refs: HistoryRef[], detachedHead: boolean): RefLab
       kind: ref.kind,
       isCurrent: ref.isCurrent && ref.kind === "local",
       hasRemote: twinRemote !== undefined,
-      checkout: ref.kind === "local" || ref.kind === "remote" ? ref.name : null,
+      ...checkoutFor(ref, localBranches),
     });
   }
-  if (detachedHead) candidates.push({ key: "HEAD", label: "HEAD", kind: "head", isCurrent: true, hasRemote: false, checkout: null });
+  if (detachedHead) candidates.push({ key: "HEAD", label: "HEAD", kind: "head", isCurrent: true, hasRemote: false, checkout: null, localElsewhere: false });
   if (candidates.length === 0) return null;
   candidates.sort(
     (a, b) =>
@@ -79,6 +96,7 @@ export function buildRefLabel(refs: HistoryRef[], detachedHead: boolean): RefLab
       key: candidate.key,
       name: candidate.label,
       checkout: candidate.checkout,
+      localElsewhere: candidate.localElsewhere,
       kind: candidate.kind,
       isCurrent: candidate.isCurrent,
       hasLocal: candidate.kind === "local",
