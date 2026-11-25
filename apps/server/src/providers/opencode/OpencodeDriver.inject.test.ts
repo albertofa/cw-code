@@ -71,6 +71,8 @@ interface ServerState {
   inbox: Set<string>;
   messages: Set<string>;
   deliverOnDelete: boolean;
+  messagesDelayMs: number;
+  injectWithoutId: boolean;
 }
 
 function stubServer(sse: ReturnType<typeof controllableSse>, state: ServerState): void {
@@ -85,7 +87,9 @@ function stubServer(sse: ReturnType<typeof controllableSse>, state: ServerState)
         state.prompts.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
         const index = state.prompts.length;
         if (index > 1 && state.injectDelayMs > 0) await sleep(state.injectDelayMs);
+        if (init?.signal?.aborted) throw new DOMException("The operation was aborted.", "AbortError");
         if (index === 1 && state.initialWithoutId) return json({ data: {} });
+        if (index > 1 && state.injectWithoutId) return json({ data: {} });
         const id = index === 1 ? "msg_u" : `inbox_${index}`;
         if (index > 1) state.inbox.add(id);
         return json({ data: { id, delivery: "steer" } });
@@ -103,7 +107,10 @@ function stubServer(sse: ReturnType<typeof controllableSse>, state: ServerState)
         return new Response(null, { status: 204 });
       }
       if (path.endsWith("/inbox")) return json({ data: [...state.inbox].map((id) => ({ id, type: "user" })) });
-      if (path.endsWith("/message")) return json({ data: [...state.messages].map((id) => ({ id, type: "user", text: "" })), cursor: {} });
+      if (path.endsWith("/message")) {
+        if (state.messagesDelayMs > 0) await sleep(state.messagesDelayMs);
+        return json({ data: [...state.messages].map((id) => ({ id, type: "user", text: "" })), cursor: {} });
+      }
       if (path.endsWith("/form") || path === "/api/permission/request") return json({ data: [] });
       return json({ data: { id: SID } });
     })
@@ -120,7 +127,9 @@ function newState(): ServerState {
     initialWithoutId: false,
     inbox: new Set(),
     messages: new Set(),
-    deliverOnDelete: false
+    deliverOnDelete: false,
+    messagesDelayMs: 0,
+    injectWithoutId: false
   };
 }
 
@@ -400,6 +409,158 @@ describe("OpencodeDriver mid-turn messages on opencode v2", () => {
       expect(String(warn.mock.calls.find((call) => String(call[0]).includes("inbox_2"))?.[0])).toContain(SID);
     } finally {
       warn.mockRestore();
+      driver.dispose();
+    }
+  });
+
+  it("retracts a message whose post was still in flight when the turn ended", async () => {
+    const events: ThreadEvent[] = [];
+    const sse = controllableSse();
+    const state = newState();
+    state.injectDelayMs = 300;
+    stubServer(sse, state);
+    const driver = startDriver(events);
+    try {
+      const turnId = await startRunning(driver, state);
+      sse.push("session.inbox.delivered", { sessionID: SID, inboxID: "msg_u" });
+      await sleep(50);
+      const pending = driver.injectMessage(turnId, injection("cw-msg-1"));
+      await waitFor(() => state.prompts.length === 2);
+      sse.push("session.execution.succeeded", { sessionID: SID });
+      await waitFor(() => events.some((e) => e.type === "turn.done"));
+      expect(((await pending.then(() => null, (error: unknown) => error)) as Error | null)?.message).toContain("ended before the message was delivered");
+      expect(state.deletes).toEqual([`/api/session/${SID}/inbox/inbox_2`]);
+      expect(userMessages(events)).toEqual([]);
+    } finally {
+      driver.dispose();
+    }
+  });
+
+  it("retracts a message whose post was in flight at interrupt before interrupting", async () => {
+    const events: ThreadEvent[] = [];
+    const sse = controllableSse();
+    const state = newState();
+    state.injectDelayMs = 200;
+    stubServer(sse, state);
+    const driver = startDriver(events);
+    try {
+      const turnId = await startRunning(driver, state);
+      const pending = driver.injectMessage(turnId, injection("cw-msg-1"));
+      await waitFor(() => state.prompts.length === 2);
+      driver.interrupt(turnId);
+      expect(((await pending.then(() => null, (error: unknown) => error)) as Error | null)?.message).toContain("stopped before the message was delivered");
+      await waitFor(() => state.interrupts.length === 1);
+      expect(state.deletes).toEqual([`/api/session/${SID}/inbox/inbox_2`]);
+    } finally {
+      driver.dispose();
+    }
+  });
+
+  it("refuses to retract a message whose post is still in flight", async () => {
+    const events: ThreadEvent[] = [];
+    const sse = controllableSse();
+    const state = newState();
+    state.injectDelayMs = 200;
+    stubServer(sse, state);
+    const driver = startDriver(events);
+    try {
+      const turnId = await startRunning(driver, state);
+      const pending = driver.injectMessage(turnId, injection("cw-msg-1"));
+      await waitFor(() => state.prompts.length === 2);
+      await expect(driver.retractMessage(turnId, "cw-msg-1")).rejects.toThrow("still being sent");
+      await pending;
+      expect(await driver.retractMessage(turnId, "cw-msg-1")).toBe(true);
+    } finally {
+      driver.dispose();
+    }
+  });
+
+  it("treats a message the server accepted without an inbox id as delivered", async () => {
+    const events: ThreadEvent[] = [];
+    const sse = controllableSse();
+    const state = newState();
+    state.injectWithoutId = true;
+    stubServer(sse, state);
+    const driver = startDriver(events);
+    try {
+      const turnId = await startRunning(driver, state);
+      await driver.injectMessage(turnId, injection("cw-msg-1"));
+      expect(userMessages(events)).toMatchObject([{ turnId, messageId: "cw-msg-1" }]);
+    } finally {
+      driver.dispose();
+    }
+  });
+
+  it("finishes retracting leftovers before turn.done", async () => {
+    const events: ThreadEvent[] = [];
+    const sse = controllableSse();
+    const state = newState();
+    stubServer(sse, state);
+    const driver = startDriver(events);
+    const deletesAtDone: number[] = [];
+    try {
+      const turnId = await startRunning(driver, state);
+      sse.push("session.inbox.delivered", { sessionID: SID, inboxID: "msg_u" });
+      await driver.injectMessage(turnId, injection("cw-msg-1"));
+      const done = new Promise<void>((resolve) => {
+        const timer = setInterval(() => {
+          if (!events.some((e) => e.type === "turn.done")) return;
+          deletesAtDone.push(state.deletes.length);
+          clearInterval(timer);
+          resolve();
+        }, 1);
+      });
+      sse.push("session.execution.succeeded", { sessionID: SID });
+      await done;
+      expect(deletesAtDone).toEqual([1]);
+      expect(userMessages(events)).toEqual([]);
+    } finally {
+      driver.dispose();
+    }
+  });
+
+  it("reports a leftover the agent already received as delivered at turn end", async () => {
+    const events: ThreadEvent[] = [];
+    const sse = controllableSse();
+    const state = newState();
+    stubServer(sse, state);
+    const driver = startDriver(events);
+    try {
+      const turnId = await startRunning(driver, state);
+      sse.push("session.inbox.delivered", { sessionID: SID, inboxID: "msg_u" });
+      await driver.injectMessage(turnId, injection("cw-msg-1"));
+      deliverOnServer(state, "inbox_2");
+      sse.push("session.execution.succeeded", { sessionID: SID });
+      await waitFor(() => events.some((e) => e.type === "turn.done"));
+      expect(state.deletes).toEqual([]);
+      const delivered = events.findIndex((e) => e.type === "user.message");
+      expect(userMessages(events)).toMatchObject([{ turnId, messageId: "cw-msg-1" }]);
+      expect(delivered).toBeLessThan(events.findIndex((e) => e.type === "turn.done"));
+    } finally {
+      driver.dispose();
+    }
+  });
+
+  it("stops taking messages once the server reports the execution ended", async () => {
+    const events: ThreadEvent[] = [];
+    const sse = controllableSse();
+    const state = newState();
+    state.messagesDelayMs = 300;
+    stubServer(sse, state);
+    const driver = startDriver(events);
+    try {
+      const turnId = await startRunning(driver, state);
+      sse.push("session.inbox.delivered", { sessionID: SID, inboxID: "msg_u" });
+      await sleep(50);
+      expect(driver.messageCapabilities(turnId)).toEqual({ inject: true, retract: true });
+      sse.push("session.execution.succeeded", { sessionID: SID });
+      await sleep(100);
+      expect(events.some((e) => e.type === "turn.done")).toBe(false);
+      expect(driver.messageCapabilities(turnId)).toEqual({ inject: false, retract: true });
+      await expect(driver.injectMessage(turnId, injection("cw-msg-1"))).rejects.toThrow("already finished running");
+      expect(state.prompts).toHaveLength(1);
+      await waitFor(() => events.some((e) => e.type === "turn.done"));
+    } finally {
       driver.dispose();
     }
   });

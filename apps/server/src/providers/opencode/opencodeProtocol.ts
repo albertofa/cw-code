@@ -157,7 +157,8 @@ export interface OpencodeProtocol {
   send(client: OpencodeClient, sessionId: string, input: OpencodeSendInput): Promise<OpencodeSendResult>;
   interrupt(client: OpencodeClient, sessionId: string): Promise<Response>;
   /** Queues a message on the running session; resolves with the inbox id the server gave it. Absent when the protocol cannot steer a running turn. */
-  inject?(client: OpencodeClient, sessionId: string, input: OpencodeInjectInput): Promise<{ inboxId: string }>;
+  /** Posts a message into the running turn; `inboxId` is absent when the server accepted it without naming the inbox item. */
+  inject?(client: OpencodeClient, sessionId: string, input: OpencodeInjectInput): Promise<{ inboxId?: string }>;
   /** Removes an undelivered injected message from the inbox; false when the server no longer has it. */
   retractInput?(client: OpencodeClient, sessionId: string, inboxId: string): Promise<boolean>;
   /** Runs a native builtin; resolves with the notice to show and whether the turn is over. */

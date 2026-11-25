@@ -315,6 +315,7 @@ export class ClaudeCliDriver implements CliDriver {
       for (const injection of consumed) {
         this.emit({ type: "user.message", turnId: state.activeTurnId, messageId: injection.id, text: injection.text, timestamp });
       }
+      if (state.heldResult && state.injected.length === 0) this.clearHeldTimer(state);
     }
     if (firstReplay && state.deferredInjections.length > 0) {
       const deferred = state.deferredInjections.splice(0);
@@ -336,6 +337,10 @@ export class ClaudeCliDriver implements CliDriver {
       state.heldTimer = undefined;
       const held = state.heldResult;
       if (!held) return;
+      if (this.interruptedTurns.has(state.activeTurnId)) {
+        this.terminate(state);
+        return;
+      }
       state.stale = true;
       traceHarnessCall({
         harness: "claude",
@@ -599,6 +604,7 @@ export class ClaudeCliDriver implements CliDriver {
 
   private handleProcessLine(state: ClaudeProcessState, line: string): void {
     this.noteProcessActivity(state, line);
+    if (state.heldTimer && state.heldResult && state.injected.length > 0) this.armHeldTimer(state);
     try {
       const message = JSON.parse(line);
       if (message?.type === "assistant" && message.isApiErrorMessage === true && !message.parent_tool_use_id) {
@@ -1097,6 +1103,15 @@ export class ClaudeCliDriver implements CliDriver {
     }
     this.interruptedTurns.add(turnId);
     state.deferredInjections = [];
+    if (state.heldResult) {
+      this.resolvePendingForTurn(turnId);
+      state.completedTurn = true;
+      state.postCompletionOutputPending = false;
+      state.heldResult = undefined;
+      this.turnToSession.delete(turnId);
+      this.terminate(state);
+      return;
+    }
     if (state.injected.length > 0) {
       state.terminateAfterInterrupt = true;
       if (!state.stale) state.staleFromInterrupt = true;
@@ -1191,6 +1206,7 @@ export class ClaudeCliDriver implements CliDriver {
     this.shuttingDown = true;
     for (const state of states) {
       this.clearIdleTimer(state);
+      this.clearHeldTimer(state);
       try {
         state.child.stdin.end();
       } catch {

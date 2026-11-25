@@ -386,7 +386,7 @@ export const opencodeV2Protocol: OpencodeProtocol = {
     return admitted(await post("/command", { name: input.command.name, text: input.command.args }), notice);
   },
 
-  async inject(client, sessionId, input: OpencodeInjectInput): Promise<{ inboxId: string }> {
+  async inject(client, sessionId, input: OpencodeInjectInput): Promise<{ inboxId?: string }> {
     let response = await postPrompt(client, sessionId, input);
     if (response.status === 400 && input.files.length > 0) {
       console.warn("opencode rejected the attachments of a mid-turn message; resending as text only");
@@ -400,8 +400,7 @@ export const opencodeV2Protocol: OpencodeProtocol = {
     }
     if (!response.ok) throw new Error(await opencodeFailureText("opencode message send failed", response));
     const inboxId = await admittedIdOf(response);
-    if (!inboxId) throw new Error("opencode accepted the message without an inbox id");
-    return { inboxId };
+    return inboxId ? { inboxId } : {};
   },
 
   async retractInput(client, sessionId, inboxId): Promise<boolean> {

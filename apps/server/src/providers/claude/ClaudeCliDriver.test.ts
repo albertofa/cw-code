@@ -2094,6 +2094,89 @@ describe("ClaudeCliDriver mid-turn messages", () => {
     }
   });
 
+  it("keeps the turn open after the held message is echoed until the next result, however late", async () => {
+    vi.useFakeTimers();
+    try {
+      const { driver, events, children } = makeDriver();
+      const handle = driver.startTurn({ sessionId: "s1", cwd: "C:\\proj", prompt: "go" });
+      await settle();
+      children[0].stdout.write(`${replayLine("go")}
+`);
+      await settle();
+      await driver.injectMessage(handle.turnId, { id: "m1", prompt: "next", cwd: "C:\\proj", attachments: [] });
+      children[0].stdout.write(`${resultLine({ result: "first" })}
+`);
+      children[0].stdout.write(`${replayLine("next")}
+`);
+      await settle();
+      await advanceTimersByTimeAsync(CLAUDE_HELD_RESULT_TIMEOUT_MS * 3);
+      expect(turnDones(events)).toHaveLength(0);
+      children[0].stdout.write(`${JSON.stringify({ type: "system", subtype: "init", session_id: "native-1" })}
+`);
+      children[0].stdout.write(`${resultLine({ result: "second" })}
+`);
+      await settle();
+      expect(turnDones(events)).toEqual([expect.objectContaining({ turnId: handle.turnId, resultText: "second", numTurns: 2 })]);
+      driver.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("re-arms the held-result timer on output while the echo is still pending", async () => {
+    vi.useFakeTimers();
+    try {
+      const { driver, events, children } = makeDriver();
+      const handle = driver.startTurn({ sessionId: "s1", cwd: "C:\\proj", prompt: "go" });
+      await settle();
+      children[0].stdout.write(`${replayLine("go")}
+`);
+      await settle();
+      await driver.injectMessage(handle.turnId, { id: "m1", prompt: "next", cwd: "C:\\proj", attachments: [] });
+      children[0].stdout.write(`${resultLine({ result: "first" })}
+`);
+      await settle();
+      await advanceTimersByTimeAsync(CLAUDE_HELD_RESULT_TIMEOUT_MS - 1_000);
+      children[0].stdout.write(`${JSON.stringify({ type: "system", subtype: "status", status: "compacting" })}
+`);
+      await settle();
+      await advanceTimersByTimeAsync(CLAUDE_HELD_RESULT_TIMEOUT_MS - 1_000);
+      expect(turnDones(events)).toHaveLength(0);
+      await advanceTimersByTimeAsync(1_000);
+      expect(turnDones(events)).toEqual([expect.objectContaining({ turnId: handle.turnId, resultText: "first" })]);
+      driver.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("terminates the process when Stop lands while a result is held", async () => {
+    vi.useFakeTimers();
+    try {
+      const { driver, events, children, killed } = makeDriver();
+      const handle = driver.startTurn({ sessionId: "s1", cwd: "C:\\proj", prompt: "go" });
+      await settle();
+      children[0].stdout.write(`${replayLine("go")}
+`);
+      await settle();
+      await driver.injectMessage(handle.turnId, { id: "m1", prompt: "later", cwd: "C:\\proj", attachments: [] });
+      children[0].stdout.write(`${resultLine({ result: "first" })}
+`);
+      await settle();
+      driver.interrupt(handle.turnId);
+      expect(killed).toHaveLength(1);
+      expect(driver.activity().ownedProcesses).toBe(0);
+      await advanceTimersByTimeAsync(CLAUDE_HELD_RESULT_TIMEOUT_MS);
+      expect(turnDones(events)).toHaveLength(0);
+      driver.startTurn({ sessionId: "s1", cwd: "C:\\proj", prompt: "again" });
+      await settle();
+      expect(children).toHaveLength(2);
+      driver.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("does not carry an API error from the held run into the next one", async () => {
     const { driver, events, children } = makeDriver();
     const handle = driver.startTurn({ sessionId: "s1", cwd: "C:\\proj", prompt: "go" });

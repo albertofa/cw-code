@@ -94,6 +94,8 @@ interface ActiveTurn {
   command?: string;
   hasAssistantText?: boolean;
   userMessagesSeen: number;
+  userMessageItems: Set<string>;
+  startedToolCalls: Set<string>;
   injected: Array<{ id: string; prompt: string }>;
 }
 
@@ -468,6 +470,8 @@ export class CodexCliDriver implements CliDriver {
         },
         numTurns: 0,
         userMessagesSeen: request.command ? 1 : 0,
+        userMessageItems: new Set(),
+        startedToolCalls: new Set(),
         injected: [],
         ...(request.permissionMode ? { permissionMode: request.permissionMode } : {}),
         ...(request.command ? { command: request.command.name } : {})
@@ -724,7 +728,16 @@ export class CodexCliDriver implements CliDriver {
     }
   }
 
-  private injectedUserMessage(item: CodexThreadItem, active: ActiveTurn): ThreadEvent | null {
+  private injectedUserMessage(item: CodexThreadItem, active: ActiveTurn, completed: boolean): ThreadEvent | null {
+    if (item.id) {
+      if (active.userMessageItems.has(item.id)) return null;
+      active.userMessageItems.add(item.id);
+    } else if (completed) {
+      const index = item.clientId ? active.injected.findIndex((m) => m.id === item.clientId) : -1;
+      if (index < 0) return null;
+      const [pending] = active.injected.splice(index, 1);
+      return { type: "user.message", turnId: active.turnId, messageId: pending.id, text: codexUserMessageText(item) || pending.prompt, timestamp: Date.now() };
+    }
     const isFirst = active.userMessagesSeen === 0;
     active.userMessagesSeen += 1;
     const byClientId = item.clientId ? active.injected.findIndex((m) => m.id === item.clientId) : -1;
@@ -899,18 +912,24 @@ export class CodexCliDriver implements CliDriver {
         const active = this.turnForCodexId(String(p["turnId"] ?? ""), typeof p["threadId"] === "string" ? p["threadId"] : undefined);
         if (!item || !active) break;
         if (item.type === "userMessage") {
-          const delivered = this.injectedUserMessage(item, active);
+          const delivered = this.injectedUserMessage(item, active, false);
           if (delivered) this.emit(delivered);
           break;
         }
         const call = this.toolCallFor(item, active.turnId);
+        if (call?.type === "tool.call") active.startedToolCalls.add(call.toolCallId);
         if (call) this.emit(call);
         break;
       }
       case "item/completed": {
         const item = p["item"] as CodexThreadItem | undefined;
         const active = this.turnForCodexId(String(p["turnId"] ?? ""), typeof p["threadId"] === "string" ? p["threadId"] : undefined);
-        if (!item || !active || item.type === "userMessage") break;
+        if (!item || !active) break;
+        if (item.type === "userMessage") {
+          const delivered = this.injectedUserMessage(item, active, true);
+          if (delivered) this.emit(delivered);
+          break;
+        }
         if (item.type === "reasoning") {
           const kinds = this.reasoningKinds.get(active.turnId);
           const streamed = typeof item.id === "string" && kinds?.has(item.id) === true;
@@ -933,7 +952,7 @@ export class CodexCliDriver implements CliDriver {
           }
           break;
         }
-        const result = this.toolResultFor(item, active.turnId) ?? this.emptyToolResultFor(item, active.turnId);
+        const result = this.toolResultFor(item, active.turnId) ?? this.emptyToolResultFor(item, active);
         if (result) this.emit(result);
         break;
       }
@@ -1092,10 +1111,10 @@ export class CodexCliDriver implements CliDriver {
     }
   }
 
-  private emptyToolResultFor(item: CodexThreadItem, turnId: string): ThreadEvent | null {
-    const call = this.toolCallFor(item, turnId);
-    if (call?.type !== "tool.call") return null;
-    return { type: "tool.result", turnId, toolCallId: call.toolCallId, output: "", isError: false, outputEmpty: true };
+  private emptyToolResultFor(item: CodexThreadItem, active: ActiveTurn): ThreadEvent | null {
+    const call = this.toolCallFor(item, active.turnId);
+    if (call?.type !== "tool.call" || !active.startedToolCalls.delete(call.toolCallId)) return null;
+    return { type: "tool.result", turnId: active.turnId, toolCallId: call.toolCallId, output: "", isError: false, outputEmpty: true };
   }
 
   private toolResultFor(item: CodexThreadItem, turnId: string): ThreadEvent | null {

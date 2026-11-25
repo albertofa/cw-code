@@ -60,7 +60,7 @@ export class TurnService {
   private readonly starting = new Map<string, StartingTurn>();
   private readonly startedListeners = new Set<TurnStartedListener>();
   private readonly stoppedListeners = new Set<(sessionId: string) => void>();
-  private readonly injected = new Set<string>();
+  private readonly injected = new Map<string, Set<string>>();
   private readonly lastTurns = new Map<string, string>();
   private readonly openTools = new Map<string, Set<string>>();
 
@@ -106,10 +106,9 @@ export class TurnService {
         const turnId = await this.start(sessionId, prompt, { attachments: input.attachments, skills: input.skills });
         return { disposition: "started", turnId };
       }
-      this.deps.queue.add(sessionId, { text: prompt, attachments: input.attachments, skills: input.skills });
-      const pending = this.sendPending(sessionId);
-      if (!pending) throw new Error("queued messages could not be sent");
-      return { disposition: "started", turnId: await pending };
+      const added = this.deps.queue.add(sessionId, { text: prompt, attachments: input.attachments, skills: input.skills });
+      const sending = this.deps.queue.list(sessionId).filter((message) => message.state === "sending");
+      return { disposition: "started", turnId: await this.startQueued(sessionId, sending, added.id) };
     }
     const message = this.deps.queue.add(sessionId, { text: prompt, attachments: input.attachments, skills: input.skills });
     await this.inject(sessionId, message);
@@ -120,10 +119,10 @@ export class TurnService {
     const message = this.deps.queue.find(sessionId, messageId);
     if (!message) throw new Error(`unknown queued message ${messageId}`);
     if (!message.removable) throw new Error("message was already handed to the agent and cannot be removed");
-    if (this.injected.has(messageId)) {
+    if (this.isInjected(sessionId, messageId)) {
       const retracted = await this.deps.sessions.retractMessage(sessionId, messageId);
       if (!retracted) throw new Error("message was already delivered to the agent");
-      this.injected.delete(messageId);
+      this.unmarkInjected(sessionId, messageId);
     }
     this.deps.queue.remove(sessionId, [messageId]);
   }
@@ -158,7 +157,7 @@ export class TurnService {
 
   messageEvent(sessionId: string, event: ThreadEvent): void {
     if (event.type === "user.message") {
-      this.injected.delete(event.messageId);
+      this.unmarkInjected(sessionId, event.messageId);
       this.deps.queue.remove(sessionId, [event.messageId]);
     } else if (event.type === "turn.interrupted" && !this.isStale(sessionId, event.turnId)) {
       this.openTools.delete(sessionId);
@@ -186,7 +185,7 @@ export class TurnService {
   }
 
   holdQueue(sessionId: string): void {
-    for (const message of this.deps.queue.list(sessionId)) this.injected.delete(message.id);
+    for (const message of this.deps.queue.list(sessionId)) this.unmarkInjected(sessionId, message.id);
     this.deps.queue.holdAll(sessionId);
   }
 
@@ -195,6 +194,7 @@ export class TurnService {
     this.holdQueue(sessionId);
     this.lastTurns.delete(sessionId);
     this.openTools.delete(sessionId);
+    this.injected.delete(sessionId);
   }
 
   /** Records every turn the session starts, including ones started outside this service (reconnect turns). */
@@ -208,18 +208,37 @@ export class TurnService {
     this.openTools.delete(sessionId);
   }
 
-  private startQueued(sessionId: string, messages: QueuedMessage[]): Promise<string> {
+  private startQueued(sessionId: string, messages: QueuedMessage[], dropOnFailure?: string): Promise<string> {
     const combined = combineMessages(messages);
     const started = this.start(sessionId, combined.prompt, { attachments: combined.attachments, skills: combined.skills });
     const removed = this.deps.queue.remove(
       sessionId,
       messages.map((message) => message.id)
     );
-    for (const message of removed) this.injected.delete(message.id);
+    for (const message of removed) this.unmarkInjected(sessionId, message.id);
     return started.catch((error: unknown) => {
-      this.deps.queue.restore(sessionId, removed);
+      this.deps.queue.restore(sessionId, removed.filter((message) => message.id !== dropOnFailure));
       throw error;
     });
+  }
+
+  private isInjected(sessionId: string, messageId: string): boolean {
+    return this.injected.get(sessionId)?.has(messageId) ?? false;
+  }
+
+  private markInjected(sessionId: string, messageId: string): void {
+    let ids = this.injected.get(sessionId);
+    if (!ids) {
+      ids = new Set();
+      this.injected.set(sessionId, ids);
+    }
+    ids.add(messageId);
+  }
+
+  private unmarkInjected(sessionId: string, messageId: string): void {
+    const ids = this.injected.get(sessionId);
+    if (!ids?.delete(messageId) || ids.size > 0) return;
+    this.injected.delete(sessionId);
   }
 
   private hasSending(sessionId: string): boolean {
@@ -233,7 +252,7 @@ export class TurnService {
 
   private injectPending(sessionId: string): void {
     for (const message of this.deps.queue.list(sessionId)) {
-      if (message.state === "sending" && !this.injected.has(message.id)) void this.inject(sessionId, message);
+      if (message.state === "sending" && !this.isInjected(sessionId, message.id)) void this.inject(sessionId, message);
     }
   }
 
@@ -245,11 +264,11 @@ export class TurnService {
     const removable = capabilities.retract;
     if (!removable && !this.toolOpen(sessionId)) return;
     if (!removable) this.deps.queue.update(sessionId, message.id, { removable: false });
-    this.injected.add(message.id);
+    this.markInjected(sessionId, message.id);
     try {
       await this.deps.sessions.injectMessage(sessionId, { id: message.id, prompt: message.text, attachments: message.attachments, skills: message.skills });
     } catch (error) {
-      this.injected.delete(message.id);
+      this.unmarkInjected(sessionId, message.id);
       if (!removable) this.deps.queue.update(sessionId, message.id, { removable: true });
       console.warn(`[turns] message ${message.id} stays queued for session ${sessionId}: ${error instanceof Error ? error.message : String(error)}`);
     }

@@ -41,11 +41,12 @@ export function QueuedMessages({ sessionId }: { sessionId: string }) {
       {messages.map((message) => {
         const held = message.state === "held";
         const label = held ? "Not sent" : message.removable ? "Queued" : "Sending";
+        const text = untagAttachments(message.text, message.attachments);
         return (
           <li key={message.id} className={`queued-message${held ? " held" : ""}${message.removable ? "" : " sending"}`}>
             <span className="queued-message-state">{label}</span>
-            <span className="queued-message-text" title={message.text}>
-              {message.text}
+            <span className="queued-message-text" title={text}>
+              {text}
             </span>
             {message.attachments.length > 0 && (
               <span className="queued-message-files" title={`${message.attachments.length} attachment(s)`}>

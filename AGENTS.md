@@ -28,22 +28,35 @@ Core behaviors:
   sends it as the leftover turn. Until injected the message is `removable`, so the UI offers Edit
   (unqueue, then append text and attachments to the composer draft) and Remove; once injected it
   shows as Sending with no actions. opencode injects at once and stays removable through retract. Claude writes a stream-json user line
-  (delivery seen through `--replay-user-messages` echoes, matched exactly by prefix; a message the
+  (delivery seen through `--replay-user-messages` echoes, matched exactly by prefix; an echo that
+  matches no pending message still consumes the oldest pending one as a fallback; a message the
   CLI runs as its own run stays in the same cw turn), Codex uses `turn/steer` (`clientId` on the
-  `userMessage` item), opencode v2 posts to the session inbox (`session.inbox.delivered`; it alone
+  `userMessage` item, recognised on `item/started` or `item/completed`, once), opencode v2 posts to
+  the session inbox (`session.inbox.delivered`; it alone
   supports `retractMessage`, which succeeds only when the item is listed in the inbox before the
   DELETE and no message with its id exists after it, because the server answers 204 even for an
-  item already delivered). Messages still `sending` at a successful `turn.done` become one new
+  item already delivered). opencode refuses injection once the server reports the execution ended
+  (`turn.ended`), since a post to an idle session would start a run cw does not track. Each
+  opencode post has its own abort controller, so a post still in flight when the turn ends is
+  retracted when it lands, and Stop retracts it before interrupting; Remove during the post fails
+  with "still being sent". A 2xx post without an inbox id counts as delivered (it cannot be
+  retracted or matched). At turn end the driver awaits the retract of leftover inbox items before
+  `turn.done`; an item it cannot retract that is in the session history is reported as delivered
+  (`user.message`), so it is not sent again. Messages still `sending` at a successful `turn.done` become one new
   turn before auto follow-up and subagent wakes; while a parent waits on subagents
   (`subagentWait`) messages stay queued and go out as their own turn before the wake turn. Stop, a
   turn error (including `turn.done` with `isError`), restart, resolve and archive turn them `held`
   (kept across reloads for resolved and archived sessions too, shown as Not sent on reopen), and they go out
-  only through `turns.flushQueue`. Claude holds a message sent before the prompt echo and writes it
-  right after; if a held Claude result sees no follow-up run within 10 s
-  (`CLAUDE_HELD_RESULT_TIMEOUT_MS`) the driver ends the turn and the server re-sends the
-  undelivered message as a new turn, which can duplicate it when the CLI was only slow. A Stop
-  with an undelivered Claude injection restarts the Claude process (background tasks included) so
-  the CLI cannot run it on its own. A restart can show a message Claude or Codex already received
+  only through `turns.flushQueue`. A `turns.send` on an idle session that has `sending` messages
+  starts them together with the new one; if that start fails the older ones turn `held` and the new
+  one is dropped from the queue (the composer still holds it), so a retry does not duplicate it.
+  Claude holds a message sent before the prompt echo and writes it
+  right after; if a held Claude result sees neither the echo of its pending messages nor any other
+  output for 10 s (`CLAUDE_HELD_RESULT_TIMEOUT_MS`, re-armed on every stdout line and dropped once
+  the last pending echo or the next run's `init` arrives) the driver ends the turn and the server
+  re-sends the undelivered message as a new turn, which can duplicate it when the CLI was only
+  slow. A Stop with an undelivered Claude injection, or while a Claude result is held, restarts the
+  Claude process (background tasks included) so the CLI cannot run it on its own. A restart can show a message Claude or Codex already received
   as `held`; sending it again duplicates it. Agents cannot call `turns.send`/`unqueue`/`flushQueue`,
   and subagent sessions refuse them.
 - The CLI is always the source of truth. The app stores only its own metadata

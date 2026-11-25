@@ -15,6 +15,7 @@ type Sessions = TurnServiceDeps["sessions"];
 function setup(options: { retractable?: boolean; injectable?: boolean; injectFails?: boolean; startGate?: Promise<void> } = {}) {
   let waitSince: number | null = null;
   let failures = 0;
+  let startFailures = 0;
   const dbPath = join(mkdtempSync(join(tmpdir(), "cw-queue-")), "test.db");
   const store = new SessionStore(dbPath);
   const project = store.addProject("C:/proj");
@@ -36,6 +37,10 @@ function setup(options: { retractable?: boolean; injectable?: boolean; injectFai
       return { session: store.getSession(id)!, project };
     },
     startTurn: async (id, prompt) => {
+      if (startFailures > 0) {
+        startFailures -= 1;
+        throw new Error("start failed");
+      }
       prompts.push(prompt);
       const turnId = `turn-${prompts.length}`;
       active.push({ sessionId: id, turnId, startedAt: 1 });
@@ -99,7 +104,10 @@ function setup(options: { retractable?: boolean; injectable?: boolean; injectFai
   const failNextInject = () => {
     failures += 1;
   };
-  return { dbPath, store, sessionId, turns, queue, prompts, injected, retracted, emit, done, setWait, startExternal, toolCall, toolResult, failNextInject };
+  const failNextStart = () => {
+    startFailures += 1;
+  };
+  return { dbPath, store, sessionId, turns, queue, prompts, injected, retracted, emit, done, setWait, startExternal, toolCall, toolResult, failNextInject, failNextStart };
 }
 
 describe("MessageQueue", () => {
@@ -373,6 +381,27 @@ describe("MessageQueue", () => {
     expect(result.disposition).toBe("started");
     expect(ctx.prompts).toEqual(["first", "new"]);
     expect(ctx.queue.list(ctx.sessionId)).toMatchObject([{ text: "pending", state: "held" }]);
+  });
+
+  test("a send that fails to start with queued messages holds the older ones and leaves the new one to the composer", async () => {
+    const ctx = setup({ injectFails: true });
+    await ctx.turns.send(ctx.sessionId, "first");
+    await ctx.turns.send(ctx.sessionId, "later");
+    ctx.setWait(1);
+    ctx.done("turn-1");
+    await Promise.resolve();
+    ctx.setWait(null);
+    expect(ctx.queue.list(ctx.sessionId)).toMatchObject([{ text: "later", state: "sending" }]);
+    ctx.failNextStart();
+
+    await expect(ctx.turns.send(ctx.sessionId, "new")).rejects.toThrow("start failed");
+
+    expect(ctx.queue.list(ctx.sessionId)).toMatchObject([{ text: "later", state: "held", removable: true }]);
+    expect(ctx.queue.list(ctx.sessionId)).toHaveLength(1);
+    const retry = await ctx.turns.send(ctx.sessionId, "new");
+    expect(retry.disposition).toBe("started");
+    expect(ctx.prompts).toEqual(["first", "new"]);
+    expect(ctx.queue.list(ctx.sessionId)).toMatchObject([{ text: "later", state: "held" }]);
   });
 
   test("turn.done with isError holds what is left", async () => {

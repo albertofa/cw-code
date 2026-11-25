@@ -413,15 +413,17 @@ function isBareNotification(content: string): boolean {
   return content.trimStart().startsWith("<task-notification>");
 }
 
+function isQueuedNotification(attachment: Record<string, unknown>): boolean {
+  return stringField(attachment, "commandMode") === TASK_NOTIFICATION_KIND || isNotificationOrigin(plainObject(attachment["origin"]));
+}
+
 function queuedNotificationPrompt(attachment: Record<string, unknown> | undefined): string | undefined {
   if (attachment?.["type"] !== "queued_command") return undefined;
-  const marked =
-    stringField(attachment, "commandMode") === TASK_NOTIFICATION_KIND || isNotificationOrigin(plainObject(attachment["origin"]));
-  return marked ? stringField(attachment, "prompt") : undefined;
+  return isQueuedNotification(attachment) ? stringField(attachment, "prompt") : undefined;
 }
 
 function queuedUserPrompt(attachment: Record<string, unknown> | undefined): string | undefined {
-  if (attachment?.["type"] !== "queued_command" || queuedNotificationPrompt(attachment) !== undefined) return undefined;
+  if (attachment?.["type"] !== "queued_command" || isQueuedNotification(attachment)) return undefined;
   const prompt = attachment["prompt"];
   const text =
     typeof prompt === "string"

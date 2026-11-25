@@ -530,6 +530,11 @@ describe("CodexCliDriver", () => {
     const { driver, events } = makeDriver(client);
     driver.startTurn({ sessionId: "local-1", prompt: "mkdir", cwd: "C:\\proj" });
     await settle();
+    client.notify("item/started", {
+      threadId: "thr_1",
+      turnId: "turn_2",
+      item: { type: "commandExecution", id: "cmd-empty", command: "mkdir out", status: "inProgress" }
+    });
     client.notify("item/completed", {
       threadId: "thr_1",
       turnId: "turn_2",
@@ -551,6 +556,11 @@ describe("CodexCliDriver", () => {
     const { driver, events } = makeDriver(client);
     driver.startTurn({ sessionId: "local-1", prompt: "search", cwd: "C:\\proj" });
     await settle();
+    client.notify("item/started", {
+      threadId: "thr_1",
+      turnId: "turn_2",
+      item: { type: "webSearch", id: "ws-1", query: "bun test" }
+    });
     client.notify("item/completed", {
       threadId: "thr_1",
       turnId: "turn_2",
@@ -558,6 +568,20 @@ describe("CodexCliDriver", () => {
     });
     await settle();
     expect(events).toContainEqual(expect.objectContaining({ type: "tool.result", toolCallId: "ws-1", outputEmpty: true }));
+    driver.dispose();
+  });
+
+  it("emits no empty tool.result for an item whose item/started was never seen", async () => {
+    const { driver, events } = makeDriver(client);
+    driver.startTurn({ sessionId: "local-1", prompt: "mkdir", cwd: "C:\\proj" });
+    await settle();
+    client.notify("item/completed", {
+      threadId: "thr_1",
+      turnId: "turn_2",
+      item: { type: "commandExecution", id: "cmd-orphan", command: "mkdir out", aggregatedOutput: "", exitCode: 0, status: "completed" }
+    });
+    await settle();
+    expect(events.some((e) => e.type === "tool.result")).toBe(false);
     driver.dispose();
   });
 
@@ -793,7 +817,21 @@ describe("CodexCliDriver", () => {
     driver.dispose();
   });
 
-  it("ignores item/completed for userMessage items", async () => {
+  it("recognises delivery on item/completed once, whether or not item/started came first", async () => {
+    const { driver, events } = makeDriver(client);
+    const handle = driver.startTurn({ sessionId: "local-1", prompt: "work", cwd: "C:\\proj" });
+    await settle();
+    await driver.injectMessage(handle.turnId, { id: "m1", prompt: "one", cwd: "C:\\proj", attachments: [] });
+    const item = { type: "userMessage", id: "u1", clientId: "m1", content: [{ type: "text", text: "one" }] };
+    client.notify("item/completed", { threadId: "thr_1", turnId: "turn_2", item });
+    client.notify("item/started", { threadId: "thr_1", turnId: "turn_2", item });
+    client.notify("item/completed", { threadId: "thr_1", turnId: "turn_2", item });
+    const delivered = events.filter((e) => e.type === "user.message");
+    expect(delivered.map((e) => (e as { messageId: string }).messageId)).toEqual(["m1"]);
+    driver.dispose();
+  });
+
+  it("emits nothing for the prompt's own userMessage on item/completed", async () => {
     const { driver, events } = makeDriver(client);
     driver.startTurn({ sessionId: "local-1", prompt: "work", cwd: "C:\\proj" });
     await settle();

@@ -841,4 +841,13 @@ describe("queued_command history", () => {
     } as Parameters<typeof parseClaudeTranscriptLine>[0]);
     expect(messages).toEqual([]);
   });
+
+  it("leaves task-notification queued commands with a block prompt out of user messages", () => {
+    const messages = parseClaudeTranscriptLine({
+      type: "attachment",
+      uuid: "att-4",
+      attachment: { type: "queued_command", commandMode: "task-notification", prompt: [{ type: "text", text: "agent finished" }] }
+    } as Parameters<typeof parseClaudeTranscriptLine>[0]);
+    expect(messages).toEqual([]);
+  });
 });
