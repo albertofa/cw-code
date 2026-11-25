@@ -60,7 +60,7 @@ function sameDiff(a: GitDiffResult, b: GitDiffResult): boolean {
   return a.patch === b.patch && a.baseRef === b.baseRef && a.headRef === b.headRef && a.mode === b.mode;
 }
 
-const DiffFileSection = memo(function DiffFileSection({
+export const DiffFileSection = memo(function DiffFileSection({
   file,
   open,
   onToggle,
@@ -69,7 +69,7 @@ const DiffFileSection = memo(function DiffFileSection({
   file: DiffFile;
   open: boolean;
   onToggle: (path: string) => void;
-  onReveal: (path: string) => void;
+  onReveal?: (path: string) => void;
 }) {
   const { dir, name } = splitRepoPath(file.path);
   const deleted = file.status === "deleted";
@@ -91,16 +91,18 @@ const DiffFileSection = memo(function DiffFileSection({
           ) : (
             <span className="inspect-dfh-stats"><span className="add">+{file.added}</span><span className="del">−{file.removed}</span></span>
           )}
-          <button
-            type="button"
-            className="inspect-dfh-open"
-            onClick={() => onReveal(file.path)}
-            disabled={deleted}
-            title={deleted ? "File was deleted" : "Open in Files"}
-            aria-label={`Open ${file.path} in Files`}
-          >
-            <ExternalLink size={13} aria-hidden="true" />
-          </button>
+          {onReveal && (
+            <button
+              type="button"
+              className="inspect-dfh-open"
+              onClick={() => onReveal(file.path)}
+              disabled={deleted}
+              title={deleted ? "File was deleted" : "Open in Files"}
+              aria-label={`Open ${file.path} in Files`}
+            >
+              <ExternalLink size={13} aria-hidden="true" />
+            </button>
+          )}
         </span>
       </div>
       {open && (
