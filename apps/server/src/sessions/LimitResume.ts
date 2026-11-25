@@ -174,8 +174,12 @@ export class LimitResume {
     } finally {
       this.firing.delete(sessionId);
     }
-    // Another client may have dismissed the limit while this turn was starting.
-    if (this.cancelledWhileStarting.delete(sessionId)) this.deps.stopTurn(sessionId);
+    // Another client may have dismissed the limit while this turn was starting: stop it and refuse, so the
+    // caller does not persist a model switch for a turn that no longer runs.
+    if (this.cancelledWhileStarting.delete(sessionId)) {
+      this.deps.stopTurn(sessionId);
+      throw new Error("The usage limit was dismissed while the continuation was starting.");
+    }
     this.clear(sessionId);
     return turnId;
   }

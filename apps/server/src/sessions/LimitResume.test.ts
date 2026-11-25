@@ -232,6 +232,21 @@ describe("LimitResume", () => {
     expect(h.pending()).toBeUndefined();
   });
 
+  it("stops a model switch dismissed while starting and refuses it, so the switch is not persisted", async () => {
+    const h = harness([session("s1", { model: "fable" })]);
+    h.engine.turnSettled("s1", "t1", done("t1", undefined, { scope: "model", window: "seven_day_overage_included" }));
+    let release = () => {};
+    h.state.hold = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const continuing = h.engine.continueNow("s1", "claude-sonnet-5-5");
+    expect(h.engine.cancel("s1")).toBe(true);
+    release();
+    await expect(continuing).rejects.toThrow(/dismissed/);
+    expect(h.stopped).toEqual(["s1"]);
+    expect(h.pending()).toBeUndefined();
+  });
+
   it("stops the continuation when the setting is turned off while its turn is starting", async () => {
     const h = harness();
     h.engine.turnSettled("s1", "t1", done("t1", Date.now() + HOUR));
