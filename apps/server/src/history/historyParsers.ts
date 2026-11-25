@@ -1,4 +1,4 @@
-import type { HistoryCommit, HistoryCommitDetail, HistoryRef, HistoryRefKind } from "@cw-code/contracts";
+import type { HistoryCommit, HistoryCommitDetail, HistoryRef, HistoryRefKind, HistoryWorktree } from "@cw-code/contracts";
 
 const RECORD_SEPARATOR = "\x1e";
 const FIELD_SEPARATOR = "\x1f";
@@ -155,4 +155,36 @@ export function parseHistoryLimit(value: unknown): number {
     throw new Error(`limit must be an integer between 1 and ${HISTORY_MAX_LIMIT}`);
   }
   return value;
+}
+
+function comparablePath(path: string): string {
+  const normalized = path.replace(/\\/g, "/").replace(/\/+$/, "");
+  return process.platform === "win32" || process.platform === "darwin" ? normalized.toLowerCase() : normalized;
+}
+
+export function parseWorktreeList(stdout: string, toplevel: string): HistoryWorktree[] {
+  const worktrees: HistoryWorktree[] = [];
+  const current = toplevel === "" ? null : comparablePath(toplevel);
+  let first = true;
+  for (const block of stdout.replace(/\r/g, "").split(/\n{2,}/)) {
+    const lines = block.split("\n").filter(Boolean);
+    const pathLine = lines.find((line) => line.startsWith("worktree "));
+    if (!pathLine) continue;
+    const isMain = first;
+    first = false;
+    if (lines.includes("bare")) continue;
+    const path = pathLine.slice("worktree ".length);
+    const branchRef = lines.find((line) => line.startsWith("branch "))?.slice("branch ".length) ?? null;
+    const head = lines.find((line) => line.startsWith("HEAD "))?.slice("HEAD ".length) ?? null;
+    const segments = path.split(/[\\/]/).filter(Boolean);
+    worktrees.push({
+      path,
+      name: segments[segments.length - 1] ?? path,
+      branch: branchRef?.startsWith("refs/heads/") ? branchRef.slice("refs/heads/".length) : null,
+      head,
+      isCurrent: current !== null && comparablePath(path) === current,
+      isMain
+    });
+  }
+  return worktrees;
 }

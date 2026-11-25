@@ -3,7 +3,7 @@ import type { HistoryCommitDetail, HistoryHead, HistoryLog, HistoryRef } from "@
 import { execWithStatus } from "../fs/GitService.js";
 import { sanitizedChildEnv } from "../shellEnvironment.js";
 import { comparableRoot } from "../sessions/worktreeCleanup.js";
-import { LOG_FORMAT, mergeStashes, parseCommitShow, parseLog, parseRefs, parseStashList, REFS_FORMAT, SHOW_FORMAT, STASH_FORMAT } from "./historyParsers.js";
+import { LOG_FORMAT, mergeStashes, parseCommitShow, parseLog, parseRefs, parseStashList, parseWorktreeList, REFS_FORMAT, SHOW_FORMAT, STASH_FORMAT } from "./historyParsers.js";
 
 export const HISTORY_PATCH_MAX_CHARS = 400_000;
 const READ_TIMEOUT_MS = 20_000;
@@ -59,20 +59,28 @@ export class HistoryService {
   }
 
   async log(root: string, limit: number): Promise<HistoryLog> {
-    const [snapshot, stashResult] = await Promise.allSettled([this.computeSnapshot(root), this.read(root, ["stash", "list", STASH_FORMAT])]);
+    const [snapshot, stashResult, worktreeResult, toplevelResult] = await Promise.allSettled([
+      this.computeSnapshot(root),
+      this.read(root, ["stash", "list", STASH_FORMAT]),
+      this.run(root, ["worktree", "list", "--porcelain"]),
+      this.run(root, ["rev-parse", "--show-toplevel"])
+    ]);
     if (snapshot.status === "rejected") throw snapshot.reason;
     if (stashResult.status === "rejected") throw stashResult.reason;
     const { head, refs } = snapshot.value;
     const stashOutput = stashResult.value;
     const stashes = parseStashList(stashOutput);
     const allRefs = [...refs, ...stashes.map((entry) => entry.ref)];
-    if (head.sha === null && refs.length === 0) return { head, refs: allRefs, commits: [], truncated: false };
+    const toplevel = toplevelResult.status === "fulfilled" && toplevelResult.value.code === 0 ? toplevelResult.value.stdout.trim() : "";
+    const worktrees =
+      worktreeResult.status === "fulfilled" && worktreeResult.value.code === 0 ? parseWorktreeList(worktreeResult.value.stdout, toplevel) : [];
+    if (head.sha === null && refs.length === 0) return { head, refs: allRefs, commits: [], truncated: false, worktrees };
     const walk = ["--branches", "--remotes", "--tags", ...(head.sha === null ? [] : ["HEAD"])];
     const stdout = await this.read(root, ["log", "--date-order", `--max-count=${limit + 1}`, LOG_FORMAT, ...walk, "--"], LOG_TIMEOUT_MS);
     const parsed = parseLog(stdout);
     const truncated = parsed.length > limit;
     const commits = mergeStashes(truncated ? parsed.slice(0, limit) : parsed, stashes.map((entry) => entry.commit));
-    return { head, refs: allRefs, commits, truncated };
+    return { head, refs: allRefs, commits, truncated, worktrees };
   }
 
   async commit(root: string, sha: string): Promise<HistoryCommitDetail> {

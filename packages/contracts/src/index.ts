@@ -8,7 +8,8 @@ export type {
   HistoryLog,
   HistoryRef,
   HistoryRefKind,
-  HistoryTopicData
+  HistoryTopicData,
+  HistoryWorktree
 } from "./history.js";
 export type {
   DriverKind,

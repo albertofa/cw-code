@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import type { HistoryCommit } from "@cw-code/contracts";
-import { isFullSha, mergeStashes, parseCommitShow, parseHistoryLimit, parseLog, parseRefs, parseStashList } from "./historyParsers.js";
+import { isFullSha, mergeStashes, parseCommitShow, parseHistoryLimit, parseLog, parseRefs, parseStashList, parseWorktreeList } from "./historyParsers.js";
 
 const R = "\x1e";
 const S = "\x1f";
@@ -151,5 +151,28 @@ describe("validation", () => {
     expect(() => parseHistoryLimit(20001)).toThrow();
     expect(() => parseHistoryLimit(1.5)).toThrow();
     expect(() => parseHistoryLimit("10")).toThrow();
+  });
+});
+
+describe("parseWorktreeList", () => {
+  const sha = "a".repeat(40);
+  const output = [
+    `worktree C:/repo/app\nHEAD ${sha}\nbranch refs/heads/main\n`,
+    `worktree C:/wt-bo\nHEAD ${sha}\nbranch refs/heads/feature/x\nlocked\n`,
+    `worktree C:/tmp/detached\nHEAD ${sha}\ndetached\n`,
+    ""
+  ].join("\n");
+
+  it("reads branch, head and folder name and marks the main and current worktrees", () => {
+    expect(parseWorktreeList(output, "C:/wt-bo")).toEqual([
+      { path: "C:/repo/app", name: "app", branch: "main", head: sha, isCurrent: false, isMain: true },
+      { path: "C:/wt-bo", name: "wt-bo", branch: "feature/x", head: sha, isCurrent: true, isMain: false },
+      { path: "C:/tmp/detached", name: "detached", branch: null, head: sha, isCurrent: false, isMain: false }
+    ]);
+  });
+
+  it("skips a bare main entry without promoting the next one to main", () => {
+    const bare = `worktree C:/repo/app.git\nbare\n\nworktree C:/wt\nHEAD ${sha}\nbranch refs/heads/dev\n`;
+    expect(parseWorktreeList(bare, "").map((worktree) => [worktree.name, worktree.isMain])).toEqual([["wt", false]]);
   });
 });

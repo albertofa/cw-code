@@ -1,6 +1,6 @@
 import { memo, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type MouseEvent } from "react";
-import { Check, Cloud, Monitor, Tag } from "lucide-react";
-import type { HistoryCommit, HistoryLog } from "@cw-code/contracts";
+import { Check, Cloud, GitFork, Monitor, Tag } from "lucide-react";
+import type { HistoryCommit, HistoryLog, HistoryWorktree } from "@cw-code/contracts";
 import { computeGraphLayout } from "../../history/graphLayout.js";
 import { relativeTime } from "../prDetailModel.js";
 import { GraphCanvas, graphColumnWidth, REF_COLUMN_WIDTH, ROW_HEIGHT, type NodeKind } from "./GraphCanvas.js";
@@ -69,9 +69,24 @@ function RefIcons({ kind, isCurrent, hasLocal, hasRemote }: { kind: RefLabel["ki
   );
 }
 
-function entryTitle(entry: RefEntry, worktreeBranches: ReadonlyMap<string, string>): string {
+function worktreeOf(entry: RefEntry | undefined, worktreeBranches: ReadonlyMap<string, HistoryWorktree>): HistoryWorktree | undefined {
+  if (!entry || !entry.hasLocal) return undefined;
+  return worktreeBranches.get(entry.name);
+}
+
+function WorktreeChip({ worktree }: { worktree: HistoryWorktree | undefined }) {
+  if (!worktree) return null;
+  return (
+    <span className="history-ref-wt" title={`Worktree ${worktree.name} — ${worktree.path}`}>
+      <GitFork size={10} aria-hidden="true" />
+      {worktree.name}
+    </span>
+  );
+}
+
+function entryTitle(entry: RefEntry, worktreeBranches: ReadonlyMap<string, HistoryWorktree>): string {
   const elsewhere = entry.checkout === null ? undefined : worktreeBranches.get(entry.checkout);
-  if (elsewhere) return `${entry.name} — checked out in another worktree at ${elsewhere}; it can't be checked out here`;
+  if (elsewhere) return `${entry.name} — checked out in the worktree ${elsewhere.name} (${elsewhere.path}); it can't be checked out here`;
   if (entry.isCurrent) return `${entry.name} — current branch`;
   if (entry.checkout === null && entry.localElsewhere) return `${entry.name} — its local branch is the current one; Pull updates it`;
   if (entry.checkout === null) return entry.kind === "tag" ? `Tag ${entry.name}` : entry.name;
@@ -80,7 +95,7 @@ function entryTitle(entry: RefEntry, worktreeBranches: ReadonlyMap<string, strin
   return `${entry.name} — double-click to check out (${command})`;
 }
 
-function RefLabelCell({ label, onCheckout, worktreeBranches }: { label: RefLabel; onCheckout: (branch: string) => void; worktreeBranches: ReadonlyMap<string, string> }) {
+function RefLabelCell({ label, onCheckout, worktreeBranches }: { label: RefLabel; onCheckout: (branch: string) => void; worktreeBranches: ReadonlyMap<string, HistoryWorktree> }) {
   const [open, setOpen] = useState(false);
   const stacked = label.extra > 0;
   const primary = label.entries[0];
@@ -105,6 +120,7 @@ function RefLabelCell({ label, onCheckout, worktreeBranches }: { label: RefLabel
         >
           <RefIcons kind={label.kind} isCurrent={label.isCurrent} hasLocal={label.hasLocal} hasRemote={label.hasRemote} />
           <span className="history-ref-text">{label.label}</span>
+          <WorktreeChip worktree={worktreeOf(primary, worktreeBranches)} />
           {stacked && <span className="history-ref-extra">+{label.extra}</span>}
         </span>
         {open && (
@@ -121,6 +137,7 @@ function RefLabelCell({ label, onCheckout, worktreeBranches }: { label: RefLabel
                 <span className="history-ref-text">{entry.name}</span>
                 {entry.hasLocal && <Monitor size={11} className="history-ref-icon" />}
                 {entry.hasRemote && <Cloud size={11} className="history-ref-icon" />}
+                <WorktreeChip worktree={worktreeOf(entry, worktreeBranches)} />
               </span>
             ))}
           </span>
@@ -152,7 +169,7 @@ const HistoryRow = memo(function HistoryRow({
   selected: boolean;
   onSelect: (sha: string) => void;
   onCheckout: (branch: string) => void;
-  worktreeBranches: ReadonlyMap<string, string>;
+  worktreeBranches: ReadonlyMap<string, HistoryWorktree>;
 }) {
   const isWip = commit.sha === WIP_SHA;
   const title = isWip
@@ -201,7 +218,7 @@ export function HistoryGraph({
   showAvatars: boolean;
   onCheckout: (branch: string) => void;
   onHighlight: (sha: string) => void;
-  worktreeBranches: ReadonlyMap<string, string>;
+  worktreeBranches: ReadonlyMap<string, HistoryWorktree>;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const theme = useGraphTheme();

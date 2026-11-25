@@ -34,6 +34,7 @@ export interface HistoryLog {
   refs: HistoryRef[];
   commits: HistoryCommit[];
   truncated: boolean;
+  worktrees: HistoryWorktree[];
 }
 
 export interface HistoryCommitDetail extends HistoryCommit {
@@ -59,4 +60,13 @@ export interface HistoryAvatarAuthor {
 export interface HistoryAvatars {
   avatars: Record<string, string | null>;
   pending: string[];
+}
+
+export interface HistoryWorktree {
+  path: string;
+  name: string;
+  branch: string | null;
+  head: string | null;
+  isCurrent: boolean;
+  isMain: boolean;
 }

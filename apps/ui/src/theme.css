@@ -14158,3 +14158,25 @@ button.gitbar-checkout:hover {
   opacity: 0.6;
   font-style: italic;
 }
+
+.history-ref-wt {
+  flex: 0 1 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+  max-width: 96px;
+  padding: 0 4px;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--on-accent) 18%, transparent);
+  font-size: 10px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.history-ref.remote .history-ref-wt,
+.history-ref-stack-row .history-ref-wt {
+  background: color-mix(in srgb, var(--lane) 30%, transparent);
+}

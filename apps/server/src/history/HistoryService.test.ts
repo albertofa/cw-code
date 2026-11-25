@@ -46,7 +46,8 @@ describe("HistoryService.log", () => {
   it("returns an empty history for a repository without commits", async () => {
     const repo = initRepo();
     const log = await service.log(repo, 10);
-    expect(log).toEqual({ head: { sha: null, branch: "main", detached: false }, refs: [], commits: [], truncated: false });
+    expect(log).toMatchObject({ head: { sha: null, branch: "main", detached: false }, refs: [], commits: [], truncated: false });
+    expect(log.worktrees.map((worktree) => [worktree.name, worktree.branch, worktree.isCurrent])).toEqual([["repo", "main", true]]);
   });
 
   it("walks branches, merges, annotated tags and stashes without stash internals", async () => {
@@ -151,5 +152,28 @@ describe("HistoryService.commit", () => {
     const repo = initRepo();
     commitFile(repo, "a.txt", "a\n", "one");
     await expect(service.commit(repo, "0".repeat(40))).rejects.toThrow(/not found/);
+  });
+});
+
+describe("HistoryService.log worktrees", () => {
+  it("lists every worktree with its branch and marks the one being read", async () => {
+    const repo = initRepo();
+    const first = commitFile(repo, "a.txt", "a\n", "one");
+    git(repo, "branch", "feature");
+    const linked = join(sandbox(), "wt-feature");
+    git(repo, "worktree", "add", "-q", linked, "feature");
+    const detached = join(sandbox(), "wt-detached");
+    git(repo, "worktree", "add", "-q", "--detach", detached, first);
+
+    const fromMain = await service.log(repo, 50);
+    expect(fromMain.worktrees.map((worktree) => [worktree.name, worktree.branch, worktree.isMain, worktree.isCurrent])).toEqual([
+      ["repo", "main", true, true],
+      ["wt-feature", "feature", false, false],
+      ["wt-detached", null, false, false]
+    ]);
+    expect(fromMain.worktrees[2]?.head).toBe(first);
+
+    const fromLinked = await service.log(linked, 50);
+    expect(fromLinked.worktrees.filter((worktree) => worktree.isCurrent).map((worktree) => worktree.name)).toEqual(["wt-feature"]);
   });
 });

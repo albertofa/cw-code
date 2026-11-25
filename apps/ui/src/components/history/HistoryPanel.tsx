@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ArrowDownToLine, GitGraph, UserRound } from "lucide-react";
-import type { HistoryCommit, HistoryLog, HistoryTopicData } from "@cw-code/contracts";
+import type { HistoryCommit, HistoryLog, HistoryTopicData, HistoryWorktree } from "@cw-code/contracts";
 import { historyTopic } from "@cw-code/shared/topics";
 import { usePanelStore } from "../../stores/panelStore.js";
 import { useConnectionEpoch, useTopic } from "../../server/topics.js";
@@ -13,7 +13,6 @@ import { useHistorySide } from "./useHistorySide.js";
 const PAGE_SIZE = 2000;
 const MAX_LIMIT = 20000;
 const NO_COMMITS: HistoryCommit[] = [];
-const NO_WORKTREE_BRANCHES: ReadonlyMap<string, string> = new Map();
 const isWip = (commit: HistoryCommit): boolean => commit.sha === WIP_SHA;
 
 export function HistoryPanel({ sessionId }: { sessionId: string }) {
@@ -32,7 +31,13 @@ export function HistoryPanel({ sessionId }: { sessionId: string }) {
   const [action, setAction] = useState<string | null>(null);
   const [actionError, setActionError] = useState("");
   const busy = useRef(false);
-  const [worktreeBranches, setWorktreeBranches] = useState<ReadonlyMap<string, string>>(NO_WORKTREE_BRANCHES);
+  const worktreeBranches = useMemo<ReadonlyMap<string, HistoryWorktree>>(() => {
+    const byBranch = new Map<string, HistoryWorktree>();
+    for (const worktree of log?.worktrees ?? []) {
+      if (!worktree.isCurrent && worktree.branch) byBranch.set(worktree.branch, worktree);
+    }
+    return byBranch;
+  }, [log]);
   const [showAvatars, setShowAvatars] = useState(loadShowAvatars);
   const avatars = useHistoryAvatars(sessionId, log?.commits ?? NO_COMMITS, isWip, showAvatars);
   const rev = topic?.data.rev ?? 0;
@@ -59,26 +64,6 @@ export function HistoryPanel({ sessionId }: { sessionId: string }) {
     };
   }, [sessionId, rev, limit, epoch]);
 
-  useEffect(() => {
-    if (rev === 0) return;
-    let active = true;
-    window.cw.listGitBranches(sessionId).then(
-      (branches) => {
-        if (!active) return;
-        const elsewhere = new Map<string, string>();
-        for (const branch of branches) {
-          if (!branch.remote && !branch.current && branch.worktreePath) elsewhere.set(branch.name, branch.worktreePath);
-        }
-        setWorktreeBranches(elsewhere);
-      },
-      () => {
-        if (active) setWorktreeBranches(NO_WORKTREE_BRANCHES);
-      }
-    );
-    return () => {
-      active = false;
-    };
-  }, [sessionId, rev, epoch]);
 
   const select = (sha: string): void => {
     if (sha === WIP_SHA) {
@@ -117,7 +102,7 @@ export function HistoryPanel({ sessionId }: { sessionId: string }) {
     (branch: string): void => {
       const elsewhere = worktreeBranches.get(branch);
       if (elsewhere) {
-        setActionError(`'${branch}' is checked out in another worktree at ${elsewhere} — git allows a branch in only one worktree at a time`);
+        setActionError(`'${branch}' is checked out in the worktree ${elsewhere.name} (${elsewhere.path}) — git allows a branch in only one worktree at a time`);
         return;
       }
       runAction(`Checking out ${branch}…`, () => window.cw.switchGitBranch(sessionId, branch));
