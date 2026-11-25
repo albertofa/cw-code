@@ -5,9 +5,10 @@ import { historyTopic } from "@cw-code/shared/topics";
 import { usePanelStore } from "../../stores/panelStore.js";
 import { useConnectionEpoch, useTopic } from "../../server/topics.js";
 import { useGitStatus } from "../useGit.js";
-import { HistoryCommitView } from "./HistoryCommitView.js";
+import { HistoryCommitSidebar, HistoryFileDiff, useHistoryCommit } from "./HistoryCommitView.js";
 import { HistoryGraph, WIP_SHA } from "./HistoryGraph.js";
 import { loadShowAvatars, saveShowAvatars, useHistoryAvatars } from "./historyAvatars.js";
+import { useHistorySide } from "./useHistorySide.js";
 
 const PAGE_SIZE = 2000;
 const MAX_LIMIT = 20000;
@@ -23,7 +24,9 @@ export function HistoryPanel({ sessionId }: { sessionId: string }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [selected, setSelected] = useState<string | null>(null);
-  const [opened, setOpened] = useState<string | null>(null);
+  const [openPath, setOpenPath] = useState<string | null>(null);
+  const commit = useHistoryCommit(sessionId, selected);
+  const side = useHistorySide();
   const panelRef = useRef<HTMLDivElement>(null);
   const [action, setAction] = useState<string | null>(null);
   const [actionError, setActionError] = useState("");
@@ -59,11 +62,17 @@ export function HistoryPanel({ sessionId }: { sessionId: string }) {
       return;
     }
     setSelected(sha);
-    setOpened(sha);
+    setOpenPath(null);
   };
 
-  const back = useCallback((): void => {
-    setOpened(null);
+  const highlight = (sha: string): void => {
+    if (sha === WIP_SHA) return;
+    setSelected(sha);
+    setOpenPath(null);
+  };
+
+  const closeDiff = useCallback((): void => {
+    setOpenPath(null);
     requestAnimationFrame(() => panelRef.current?.querySelector<HTMLElement>(".history-scroll")?.focus({ preventScroll: true }));
   }, []);
 
@@ -137,19 +146,36 @@ export function HistoryPanel({ sessionId }: { sessionId: string }) {
       )}
       {log && log.commits.length > 0 && (
         <div className="history-split">
-          <HistoryGraph
-            log={log}
-            dirtyCount={status?.available ? status.dirtyCount : 0}
-            selected={selected}
-            onSelect={select}
-            onHighlight={setSelected}
-            onLoadMore={limit < MAX_LIMIT ? () => setLimit((current) => Math.min(MAX_LIMIT, current + PAGE_SIZE)) : null}
-            loadingMore={loading}
-            avatars={avatars}
-            showAvatars={showAvatars}
-            onCheckout={checkout}
-          />
-          {opened && <HistoryCommitView key={opened} sessionId={sessionId} sha={opened} onSelect={select} onBack={back} />}
+          <div className="history-main">
+            <HistoryGraph
+              log={log}
+              dirtyCount={status?.available ? status.dirtyCount : 0}
+              selected={selected}
+              onSelect={select}
+              onHighlight={highlight}
+              onLoadMore={limit < MAX_LIMIT ? () => setLimit((current) => Math.min(MAX_LIMIT, current + PAGE_SIZE)) : null}
+              loadingMore={loading}
+              avatars={avatars}
+              showAvatars={showAvatars}
+              onCheckout={checkout}
+            />
+            {selected && openPath && <HistoryFileDiff files={commit.files} path={openPath} onOpenFile={setOpenPath} onClose={closeDiff} />}
+          </div>
+          {selected && (
+            <>
+              <div
+                className="history-side-handle"
+                role="separator"
+                aria-orientation="vertical"
+                title="Drag to resize (double-click resets)"
+                onPointerDown={side.startDrag}
+                onDoubleClick={side.reset}
+              />
+              <aside className="history-side" style={{ width: side.width }} aria-label="Commit detail">
+                <HistoryCommitSidebar commit={commit} openPath={openPath} onOpenFile={setOpenPath} onSelect={select} />
+              </aside>
+            </>
+          )}
         </div>
       )}
     </div>

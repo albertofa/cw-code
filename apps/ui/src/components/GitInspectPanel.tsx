@@ -20,7 +20,7 @@ const MODE_LABEL: Record<GitDiffMode, string> = {
 
 const MODES: GitDiffMode[] = ["working", "staged", "branch", "turn"];
 
-const STATUS_BADGE: Record<string, string> = {
+export const STATUS_BADGE: Record<string, string> = {
   added: "A",
   deleted: "D",
   renamed: "R",
@@ -58,6 +58,22 @@ function statusSignature(status: GitStatus | null): string {
 
 function sameDiff(a: GitDiffResult, b: GitDiffResult): boolean {
   return a.patch === b.patch && a.baseRef === b.baseRef && a.headRef === b.headRef && a.mode === b.mode;
+}
+
+export function DiffLines({ file }: { file: DiffFile }) {
+  return (
+    <div className="diff-body inspect-lines">
+      {file.lines.length === 0 && <div className="inspect-dfile-note">{file.binary ? "Binary file not shown" : "No textual changes"}</div>}
+      {file.lines.map((line, index) => (
+        <div key={index} className={`diff-line ${line.type}`}>
+          <span className="diff-number">{line.oldNumber ?? ""}</span>
+          <span className="diff-number">{line.newNumber ?? ""}</span>
+          <span className="diff-gutter">{line.type === "add" ? "+" : line.type === "del" ? "−" : line.type === "hunk" ? "⋯" : ""}</span>
+          <span className="diff-text">{line.text || " "}</span>
+        </div>
+      ))}
+    </div>
+  );
 }
 
 export const DiffFileSection = memo(function DiffFileSection({
@@ -105,19 +121,7 @@ export const DiffFileSection = memo(function DiffFileSection({
           )}
         </span>
       </div>
-      {open && (
-        <div className="diff-body inspect-lines">
-          {file.lines.length === 0 && <div className="inspect-dfile-note">{file.binary ? "Binary file not shown" : "No textual changes"}</div>}
-          {file.lines.map((line, index) => (
-            <div key={index} className={`diff-line ${line.type}`}>
-              <span className="diff-number">{line.oldNumber ?? ""}</span>
-              <span className="diff-number">{line.newNumber ?? ""}</span>
-              <span className="diff-gutter">{line.type === "add" ? "+" : line.type === "del" ? "−" : line.type === "hunk" ? "⋯" : ""}</span>
-              <span className="diff-text">{line.text || " "}</span>
-            </div>
-          ))}
-        </div>
-      )}
+      {open && <DiffLines file={file} />}
     </section>
   );
 });

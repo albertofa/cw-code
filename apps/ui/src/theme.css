@@ -7645,7 +7645,122 @@ button.gitbar-checkout:hover {
   flex: 1;
   min-height: 0;
   display: flex;
+  flex-direction: row;
+}
+
+.history-main {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
   flex-direction: column;
+}
+
+.history-side-handle {
+  flex: none;
+  width: 5px;
+  margin: 0 -2px;
+  z-index: 5;
+  cursor: col-resize;
+  background: linear-gradient(to right, transparent 2px, var(--border-soft) 2px, var(--border-soft) 3px, transparent 3px);
+  touch-action: none;
+}
+
+.history-side-handle:hover {
+  background: linear-gradient(to right, transparent 1px, var(--violet) 1px, var(--violet) 4px, transparent 4px);
+}
+
+.history-side {
+  flex: none;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: auto;
+  background: var(--bg-deep);
+}
+
+.history-side .history-detail-body {
+  max-height: 200px;
+}
+
+.history-files {
+  display: flex;
+  flex-direction: column;
+  padding: 4px 0;
+}
+
+.history-file {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 4px 10px;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: var(--t-xs);
+  text-align: left;
+  cursor: pointer;
+}
+
+.history-file:hover {
+  background: var(--control-bg-hover);
+}
+
+.history-file.active {
+  background: var(--violet-soft);
+  box-shadow: inset 2px 0 0 var(--violet);
+}
+
+.history-file-path {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.history-file-name {
+  flex: none;
+}
+
+.history-file-dir {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  direction: rtl;
+  text-align: left;
+  color: var(--muted);
+  font-size: var(--t-3xs);
+}
+
+.history-file-end {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.history-file-title {
+  flex: 1;
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  overflow: hidden;
+  white-space: nowrap;
+  font-size: var(--t-xs);
+}
+
+.history-detail-actions {
+  flex: none;
+  display: inline-flex;
+  gap: 2px;
 }
 
 .history-scroll {
@@ -7963,11 +8078,15 @@ button.gitbar-checkout:hover {
   flex: none;
   display: flex;
   align-items: center;
-  padding: 4px 6px;
+  gap: 8px;
+  padding: 4px 6px 4px 10px;
   border-bottom: 1px solid var(--border-soft);
 }
 
 .history-detail .diff-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
   font-size: max(11px, calc(var(--fs-code) - 2px));
   line-height: 1.5;
 }
