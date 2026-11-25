@@ -168,6 +168,7 @@ export function HistoryPanel({ sessionId }: { sessionId: string }) {
   const worktrees = log?.worktrees ?? [];
   const activePath = viewWorktree ?? homePath;
   const viewed = viewWorktree === null ? undefined : worktrees.find((worktree) => worktree.path === viewWorktree);
+  const viewName = view === null ? "" : (view.path.split(/[\\/]/).filter(Boolean).pop() ?? view.path);
   const sessionBranch = worktrees.find((worktree) => worktree.path === homePath)?.branch ?? null;
   const worktreeOptions: MenuOption[] = worktrees.map((worktree) => {
     const home = worktree.path === homePath;
@@ -256,14 +257,28 @@ export function HistoryPanel({ sessionId }: { sessionId: string }) {
           })}
         </div>
       )}
-      {viewed && (
+      {view !== null && (
         <div className="history-viewing" role="status">
           <GitFork size={13} aria-hidden="true" />
-          <span className="history-viewing-text">
-            You are viewing the worktree <b>{viewed.name}</b>
-            {viewed.branch ? <> on <b>{viewed.branch}</b></> : null}, not your session's checkout
-            {sessionBranch ? <> (<b>{sessionBranch}</b>)</> : null}. Switching branches and pulling here do not change your session.
-          </span>
+          {viewed ? (
+            <span className="history-viewing-text">
+              You are viewing the worktree <b>{viewed.name}</b>
+              {viewed.branch ? <> on <b>{viewed.branch}</b></> : null}, not your session's checkout
+              {sessionBranch ? <> (<b>{sessionBranch}</b>)</> : null}. Switching branches and pulling here do not change your session.
+            </span>
+          ) : (
+            <span className="history-viewing-text" title={view.path}>
+              {failure ? (
+                <>
+                  The worktree <b>{viewName}</b> could not be loaded — it may have been removed.
+                </>
+              ) : (
+                <>
+                  Loading the worktree <b>{viewName}</b>…
+                </>
+              )}
+            </span>
+          )}
           <button type="button" className="inspect-mode" onClick={() => openWorktree(null)}>
             Back to this session
           </button>
