@@ -13,6 +13,7 @@ import { useHistorySide } from "./useHistorySide.js";
 const PAGE_SIZE = 2000;
 const MAX_LIMIT = 20000;
 const NO_COMMITS: HistoryCommit[] = [];
+const NO_WORKTREE_BRANCHES: ReadonlyMap<string, string> = new Map();
 const isWip = (commit: HistoryCommit): boolean => commit.sha === WIP_SHA;
 
 export function HistoryPanel({ sessionId }: { sessionId: string }) {
@@ -30,6 +31,8 @@ export function HistoryPanel({ sessionId }: { sessionId: string }) {
   const panelRef = useRef<HTMLDivElement>(null);
   const [action, setAction] = useState<string | null>(null);
   const [actionError, setActionError] = useState("");
+  const busy = useRef(false);
+  const [worktreeBranches, setWorktreeBranches] = useState<ReadonlyMap<string, string>>(NO_WORKTREE_BRANCHES);
   const [showAvatars, setShowAvatars] = useState(loadShowAvatars);
   const avatars = useHistoryAvatars(sessionId, log?.commits ?? NO_COMMITS, isWip, showAvatars);
   const rev = topic?.data.rev ?? 0;
@@ -56,6 +59,27 @@ export function HistoryPanel({ sessionId }: { sessionId: string }) {
     };
   }, [sessionId, rev, limit, epoch]);
 
+  useEffect(() => {
+    if (rev === 0) return;
+    let active = true;
+    window.cw.listGitBranches(sessionId).then(
+      (branches) => {
+        if (!active) return;
+        const elsewhere = new Map<string, string>();
+        for (const branch of branches) {
+          if (!branch.remote && !branch.current && branch.worktreePath) elsewhere.set(branch.name, branch.worktreePath);
+        }
+        setWorktreeBranches(elsewhere);
+      },
+      () => {
+        if (active) setWorktreeBranches(NO_WORKTREE_BRANCHES);
+      }
+    );
+    return () => {
+      active = false;
+    };
+  }, [sessionId, rev, epoch]);
+
   const select = (sha: string): void => {
     if (sha === WIP_SHA) {
       usePanelStore.getState().requestDiffMode(sessionId, "working");
@@ -77,14 +101,28 @@ export function HistoryPanel({ sessionId }: { sessionId: string }) {
   }, []);
 
   const runAction = useCallback((label: string, task: () => Promise<unknown>): void => {
+    if (busy.current) return;
+    busy.current = true;
     setAction(label);
     setActionError("");
-    task().catch((reason: Error) => setActionError(reason.message)).finally(() => setAction(null));
+    task()
+      .catch((reason: Error) => setActionError(reason.message))
+      .finally(() => {
+        busy.current = false;
+        setAction(null);
+      });
   }, []);
 
   const checkout = useCallback(
-    (branch: string): void => runAction(`Checking out ${branch}…`, () => window.cw.switchGitBranch(sessionId, branch)),
-    [runAction, sessionId]
+    (branch: string): void => {
+      const elsewhere = worktreeBranches.get(branch);
+      if (elsewhere) {
+        setActionError(`'${branch}' is checked out in another worktree at ${elsewhere} — git allows a branch in only one worktree at a time`);
+        return;
+      }
+      runAction(`Checking out ${branch}…`, () => window.cw.switchGitBranch(sessionId, branch));
+    },
+    [runAction, sessionId, worktreeBranches]
   );
 
   const head = topic?.data.head ?? null;
@@ -158,6 +196,7 @@ export function HistoryPanel({ sessionId }: { sessionId: string }) {
               avatars={avatars}
               showAvatars={showAvatars}
               onCheckout={checkout}
+              worktreeBranches={worktreeBranches}
             />
             {selected && openPath && <HistoryFileDiff files={commit.files} path={openPath} onOpenFile={setOpenPath} onClose={closeDiff} />}
           </div>

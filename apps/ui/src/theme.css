@@ -14153,3 +14153,8 @@ button.gitbar-checkout:hover {
   color: var(--danger);
   font-size: var(--t-desc);
 }
+
+.history-ref-stack-row.elsewhere {
+  opacity: 0.6;
+  font-style: italic;
+}

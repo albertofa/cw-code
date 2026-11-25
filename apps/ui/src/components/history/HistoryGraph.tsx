@@ -69,7 +69,9 @@ function RefIcons({ kind, isCurrent, hasLocal, hasRemote }: { kind: RefLabel["ki
   );
 }
 
-function entryTitle(entry: RefEntry): string {
+function entryTitle(entry: RefEntry, worktreeBranches: ReadonlyMap<string, string>): string {
+  const elsewhere = entry.checkout === null ? undefined : worktreeBranches.get(entry.checkout);
+  if (elsewhere) return `${entry.name} — checked out in another worktree at ${elsewhere}; it can't be checked out here`;
   if (entry.isCurrent) return `${entry.name} — current branch`;
   if (entry.checkout === null && entry.localElsewhere) return `${entry.name} — its local branch is the current one; Pull updates it`;
   if (entry.checkout === null) return entry.kind === "tag" ? `Tag ${entry.name}` : entry.name;
@@ -78,7 +80,7 @@ function entryTitle(entry: RefEntry): string {
   return `${entry.name} — double-click to check out (${command})`;
 }
 
-function RefLabelCell({ label, onCheckout }: { label: RefLabel; onCheckout: (branch: string) => void }) {
+function RefLabelCell({ label, onCheckout, worktreeBranches }: { label: RefLabel; onCheckout: (branch: string) => void; worktreeBranches: ReadonlyMap<string, string> }) {
   const [open, setOpen] = useState(false);
   const stacked = label.extra > 0;
   const primary = label.entries[0];
@@ -97,7 +99,7 @@ function RefLabelCell({ label, onCheckout }: { label: RefLabel; onCheckout: (bra
       >
         <span
           className={`history-ref ${label.kind}${label.isCurrent ? " current" : ""}`}
-          title={stacked ? undefined : primary ? entryTitle(primary) : label.title}
+          title={stacked ? undefined : primary ? entryTitle(primary, worktreeBranches) : label.title}
           tabIndex={stacked ? 0 : -1}
           onDoubleClick={checkout(primary)}
         >
@@ -110,9 +112,9 @@ function RefLabelCell({ label, onCheckout }: { label: RefLabel; onCheckout: (bra
             {label.entries.map((entry) => (
               <span
                 key={entry.key}
-                className={`history-ref-stack-row ${entry.kind}${entry.isCurrent ? " current" : ""}`}
+                className={`history-ref-stack-row ${entry.kind}${entry.isCurrent ? " current" : ""}${entry.checkout !== null && worktreeBranches.has(entry.checkout) ? " elsewhere" : ""}`}
                 role="listitem"
-                title={entryTitle(entry)}
+                title={entryTitle(entry, worktreeBranches)}
                 onDoubleClick={checkout(entry)}
               >
                 <RefIcons kind={entry.kind} isCurrent={entry.isCurrent} hasLocal={false} hasRemote={false} />
@@ -139,7 +141,8 @@ const HistoryRow = memo(function HistoryRow({
   nowMs,
   selected,
   onSelect,
-  onCheckout
+  onCheckout,
+  worktreeBranches
 }: {
   commit: HistoryCommit;
   label: RefLabel | null;
@@ -149,6 +152,7 @@ const HistoryRow = memo(function HistoryRow({
   selected: boolean;
   onSelect: (sha: string) => void;
   onCheckout: (branch: string) => void;
+  worktreeBranches: ReadonlyMap<string, string>;
 }) {
   const isWip = commit.sha === WIP_SHA;
   const title = isWip
@@ -164,7 +168,7 @@ const HistoryRow = memo(function HistoryRow({
       onClick={() => onSelect(commit.sha)}
     >
       <span className="history-ref-cell" style={{ width: REF_COLUMN_WIDTH }}>
-        {label && <RefLabelCell label={label} onCheckout={onCheckout} />}
+        {label && <RefLabelCell label={label} onCheckout={onCheckout} worktreeBranches={worktreeBranches} />}
       </span>
       <span className="history-graph-cell" style={{ width: graphWidth }} />
       <span className="history-subject">{commit.subject}</span>
@@ -184,7 +188,8 @@ export function HistoryGraph({
   avatars,
   showAvatars,
   onCheckout,
-  onHighlight
+  onHighlight,
+  worktreeBranches
 }: {
   log: HistoryLog;
   dirtyCount: number;
@@ -196,6 +201,7 @@ export function HistoryGraph({
   showAvatars: boolean;
   onCheckout: (branch: string) => void;
   onHighlight: (sha: string) => void;
+  worktreeBranches: ReadonlyMap<string, string>;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const theme = useGraphTheme();
@@ -257,6 +263,7 @@ export function HistoryGraph({
               selected={commit.sha === selected}
               onSelect={onSelect}
               onCheckout={onCheckout}
+              worktreeBranches={worktreeBranches}
             />
           ))}
         </div>
