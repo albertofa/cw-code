@@ -78,6 +78,8 @@ function desiredTargets(entries: GitWatchRoot[]): Map<string, TargetPlan> {
         { base: join(entry.commonDir, "refs", "heads"), relativeTo: entry.commonDir, recursive: true },
         { base: join(entry.commonDir, "refs", "remotes"), relativeTo: entry.commonDir, recursive: true },
         { base: join(entry.commonDir, "refs", "tags"), relativeTo: entry.commonDir, recursive: true },
+        { base: join(entry.commonDir, "refs"), relativeTo: entry.commonDir, recursive: false },
+        { base: join(entry.commonDir, "logs", "refs"), relativeTo: entry.commonDir, recursive: false },
       ],
       entry,
     );

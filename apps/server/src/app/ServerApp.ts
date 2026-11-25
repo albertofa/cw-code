@@ -579,6 +579,7 @@ export class ServerApp {
     services.usageTopic.dispose();
     services.runWatcher.dispose();
     services.filesTopic.dispose();
+    services.historyAvatars.dispose();
     services.harnessUpdates.dispose();
     void services.fileWatcher.dispose();
     services.sessions.dispose();

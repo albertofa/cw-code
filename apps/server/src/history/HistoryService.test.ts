@@ -96,6 +96,27 @@ describe("HistoryService.log", () => {
     expect(head).toEqual({ sha: first, branch: null, detached: true });
   });
 
+  it("changes the snapshot when a stash is pushed or an older stash is dropped", async () => {
+    const repo = initRepo();
+    commitFile(repo, "a.txt", "1\n", "one");
+    const empty = await service.snapshot(repo);
+    expect(empty.stashes).toEqual([]);
+
+    writeFileSync(join(repo, "a.txt"), "2\n", "utf8");
+    git(repo, "stash", "push", "-q", "-m", "first");
+    writeFileSync(join(repo, "a.txt"), "3\n", "utf8");
+    git(repo, "stash", "push", "-q", "-m", "second");
+    const pushed = await service.snapshot(repo);
+    expect(pushed.stashes).toHaveLength(2);
+    expect(JSON.stringify(pushed)).not.toBe(JSON.stringify(empty));
+
+    git(repo, "stash", "drop", "-q", "stash@{1}");
+    const dropped = await service.snapshot(repo);
+    expect(dropped.stashes).toEqual([pushed.stashes[0]]);
+    expect(dropped.head).toEqual(pushed.head);
+    expect(dropped.refs).toEqual(pushed.refs);
+  });
+
   it("fails visibly outside a git repository", async () => {
     await expect(service.snapshot(sandbox())).rejects.toThrow(/not a git repository/i);
   });

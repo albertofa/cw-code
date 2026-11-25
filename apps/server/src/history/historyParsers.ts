@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type { HistoryCommit, HistoryCommitDetail, HistoryRef, HistoryRefKind, HistoryWorktree } from "@cw-code/contracts";
 
 const RECORD_SEPARATOR = "\x1e";
@@ -162,6 +163,10 @@ export function comparableGitPath(path: string): string {
   return process.platform === "win32" || process.platform === "darwin" ? normalized.toLowerCase() : normalized;
 }
 
+export function worktreeKey(path: string): string {
+  return createHash("sha1").update(comparableGitPath(path)).digest("hex").slice(0, 16);
+}
+
 export function parseWorktreeList(stdout: string, toplevel: string): HistoryWorktree[] {
   const worktrees: HistoryWorktree[] = [];
   const current = toplevel === "" ? null : comparableGitPath(toplevel);
@@ -178,6 +183,7 @@ export function parseWorktreeList(stdout: string, toplevel: string): HistoryWork
     const head = lines.find((line) => line.startsWith("HEAD "))?.slice("HEAD ".length) ?? null;
     const segments = path.split(/[\\/]/).filter(Boolean);
     worktrees.push({
+      key: worktreeKey(path),
       path,
       name: segments[segments.length - 1] ?? path,
       branch: branchRef?.startsWith("refs/heads/") ? branchRef.slice("refs/heads/".length) : null,

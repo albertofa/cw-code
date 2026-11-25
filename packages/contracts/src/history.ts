@@ -50,6 +50,7 @@ export type HistoryTopicData = {
   head: HistoryHead | null;
   refs: HistoryRef[];
   rev: number;
+  avatarsRev: number;
   error: string | null;
 };
 
@@ -64,6 +65,7 @@ export interface HistoryAvatars {
 }
 
 export interface HistoryWorktree {
+  key: string;
   path: string;
   name: string;
   branch: string | null;

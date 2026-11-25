@@ -28,6 +28,8 @@ const READ_PREFIX = [
 export interface HistorySnapshot {
   head: HistoryHead;
   refs: HistoryRef[];
+  stashes: string[];
+  wipCount?: number;
 }
 
 function readEnv(): NodeJS.ProcessEnv {
@@ -72,8 +74,12 @@ export class HistoryService {
     const stashes = parseStashList(stashOutput);
     const allRefs = [...refs, ...stashes.map((entry) => entry.ref)];
     const toplevel = toplevelResult.status === "fulfilled" && toplevelResult.value.code === 0 ? toplevelResult.value.stdout.trim() : "";
-    const worktrees =
-      worktreeResult.status === "fulfilled" && worktreeResult.value.code === 0 ? parseWorktreeList(worktreeResult.value.stdout, toplevel) : [];
+    const worktreeOk = worktreeResult.status === "fulfilled" && worktreeResult.value.code === 0;
+    if (!worktreeOk) {
+      const reason = worktreeResult.status === "rejected" ? String(worktreeResult.reason) : worktreeResult.value.stderr.trim();
+      console.warn(`[history] git worktree list failed in ${root}; worktree tabs are hidden: ${reason}`);
+    }
+    const worktrees = worktreeOk ? parseWorktreeList(worktreeResult.value.stdout, toplevel) : [];
     if (head.sha === null && refs.length === 0) return { head, refs: allRefs, commits: [], truncated: false, worktrees, wipCount: null };
     const walk = ["--branches", "--remotes", "--tags", ...(head.sha === null ? [] : ["HEAD"])];
     const stdout = await this.read(root, ["log", "--date-order", `--max-count=${limit + 1}`, LOG_FORMAT, ...walk, "--"], LOG_TIMEOUT_MS);
@@ -108,18 +114,21 @@ export class HistoryService {
   }
 
   private async computeSnapshot(root: string): Promise<HistorySnapshot> {
-    const [sha, branch, refs] = await Promise.all([
+    const [sha, branch, refs, stashes] = await Promise.all([
       this.run(root, ["rev-parse", "--verify", "-q", "HEAD"]),
       this.run(root, ["symbolic-ref", "--short", "-q", "HEAD"]),
-      this.run(root, ["for-each-ref", REFS_FORMAT, "refs/heads", "refs/remotes", "refs/tags"])
+      this.run(root, ["for-each-ref", REFS_FORMAT, "refs/heads", "refs/remotes", "refs/tags"]),
+      this.run(root, ["stash", "list", "--format=%H"])
     ]);
     if (sha.code !== 0 && sha.code !== 1) throw failure(["rev-parse"], sha.stderr, sha.code);
     if (refs.code !== 0) throw failure(["for-each-ref"], refs.stderr, refs.code);
+    if (stashes.code !== 0) throw failure(["stash", "list"], stashes.stderr, stashes.code);
     const shaValue = sha.code === 0 ? sha.stdout.trim() : "";
     const branchValue = branch.code === 0 ? branch.stdout.trim() : "";
     return {
       head: { sha: shaValue || null, branch: branchValue || null, detached: branch.code !== 0 },
-      refs: parseRefs(refs.stdout)
+      refs: parseRefs(refs.stdout),
+      stashes: stashes.stdout.split("\n").map((line) => line.trim()).filter((line) => line.length > 0)
     };
   }
 

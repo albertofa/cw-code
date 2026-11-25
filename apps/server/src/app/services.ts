@@ -191,9 +191,11 @@ function wireGitTopic({ gitTopic, sourceControl, sessions }: Services): void {
   });
 }
 
-function wireHistoryTopic({ historyTopic, sourceControl }: Services): void {
+function wireHistoryTopic({ historyTopic, historyAvatars, sourceControl }: Services): void {
   sourceControl.onGitChange((roots) => historyTopic.rootsChanged(roots));
   sourceControl.onPublished((update) => historyTopic.sessionChanged(update.sessionId));
+  sourceControl.onPoll(() => historyTopic.pollWorktrees());
+  historyAvatars.onResolved(() => historyTopic.avatarsChanged());
 }
 
 function wireFilesTopic({ filesTopic, sourceControl }: Services): void {
@@ -335,9 +337,19 @@ export function createServices(stores: { sessionStore: SessionStore; settingsSto
   });
   const history = new HistoryService(() => configuredGitBinary(sessions.getSettings()));
   const historyTopic = new HistoryTopic(hooks.topics, {
-    root: (sessionId) => sessions.sessionStatusContext(sessionId).then((context) => context.root),
-    snapshot: (root) => history.snapshot(root),
-    setWatched: (sessionIds) => sourceControl.setHistoryWatched(sessionIds)
+    root: async (sessionId, key) => {
+      const root = (await sessions.sessionStatusContext(sessionId)).root;
+      if (key === null) return root;
+      const match = (await history.worktrees(root)).find((worktree) => worktree.key === key);
+      if (!match) throw new Error("This worktree no longer exists");
+      return match.path;
+    },
+    snapshot: async (root, withWip) => {
+      if (!withWip) return history.snapshot(root);
+      const [snapshot, wipCount] = await Promise.all([history.snapshot(root), history.wipCount(root)]);
+      return { ...snapshot, wipCount };
+    },
+    setWatched: (sessionIds, worktreeRoots) => sourceControl.setHistoryWatched(sessionIds, worktreeRoots)
   });
   const historyAvatars = new HistoryAvatarService({
     cacheFile: join(userdataDir(), "history-avatars.json"),

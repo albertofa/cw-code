@@ -29,8 +29,8 @@ export function gitTopic(sessionId: string): string {
   return `git/${sessionId}`;
 }
 
-export function historyTopic(sessionId: string): string {
-  return `history/${sessionId}`;
+export function historyTopic(sessionId: string, worktreeKey: string | null = null): string {
+  return worktreeKey === null ? `history/${sessionId}` : `history/${sessionId}:${worktreeKey}`;
 }
 
 export function filesTopic(sessionId: string): string {

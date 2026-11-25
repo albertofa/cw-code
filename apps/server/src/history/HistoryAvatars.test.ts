@@ -139,13 +139,24 @@ describe("HistoryAvatarService", () => {
     expect(result.avatars["dev@example.com"]).not.toBeNull();
   });
 
-  it("stays pending when every sha is missing or the failure is transient", async () => {
+  it("caches an author whose commits are all missing on GitHub for 6 hours", async () => {
+    let now = 1_000;
     const missing = setup({
+      now: () => now,
       lookup: async () => {
         throw new AvatarNotFoundError("HTTP 404");
       }
     });
-    expect(await missing.service.resolve("/repo", [{ email: "dev@example.com", shas: [SHA_A] }])).toEqual({ avatars: {}, pending: ["dev@example.com"] });
+    const request = [{ email: "dev@example.com", shas: [SHA_A, SHA_B] }];
+    expect(await missing.service.resolve("/repo", request)).toEqual({ avatars: { "dev@example.com": null }, pending: [] });
+    await missing.service.resolve("/repo", request);
+    expect(missing.calls).toEqual([SHA_A, SHA_B]);
+    now += 6 * 60 * 60_000 + 1;
+    await missing.service.resolve("/repo", request);
+    expect(missing.calls).toEqual([SHA_A, SHA_B, SHA_A, SHA_B]);
+  });
+
+  it("stays pending when the failure is transient", async () => {
     const flaky = setup({
       lookup: async () => {
         throw new Error("timeout");
@@ -182,6 +193,45 @@ describe("HistoryAvatarService", () => {
     expect(calls).toEqual([SHA_A]);
     now += 5 * 60_000 + 1;
     expect((await service.resolve("/repo", [{ email: "b@example.com", shas: [SHA_B] }])).pending).toEqual([]);
+  });
+
+  it("retries a pending author on the server and announces the result", async () => {
+    let fail = true;
+    const { service } = setup({
+      lookup: async () => {
+        if (fail) throw new Error("timeout");
+        return AVATAR;
+      }
+    });
+    let announced = 0;
+    service.onResolved(() => (announced += 1));
+    expect((await service.resolve("/repo", [{ email: "dev@example.com", shas: [SHA_A] }])).pending).toEqual(["dev@example.com"]);
+    fail = false;
+    await (service as unknown as { runRetries(): Promise<void> }).runRetries();
+    expect(announced).toBe(1);
+    expect((await service.resolve("/repo", [{ email: "dev@example.com", shas: [SHA_A] }])).avatars["dev@example.com"]).not.toBeNull();
+    service.dispose();
+  });
+
+  it("gives up retrying after five attempts", async () => {
+    const { service, calls } = setup({
+      lookup: async () => {
+        throw new Error("timeout");
+      }
+    });
+    await service.resolve("/repo", [{ email: "dev@example.com", shas: [SHA_A] }]);
+    const run = (service as unknown as { runRetries(): Promise<void> }).runRetries.bind(service);
+    for (let attempt = 0; attempt < 7; attempt += 1) await run();
+    expect(calls).toHaveLength(6);
+    service.dispose();
+  });
+
+  it("writes pending cache changes synchronously on dispose", async () => {
+    const file = cacheFile();
+    const { service } = setup({ file });
+    await service.resolve("/repo", [{ email: "dev@example.com", shas: [SHA_A] }]);
+    service.dispose();
+    expect(JSON.parse(readFileSync(file, "utf8"))["dev@example.com"].url).toBe("https://avatars.githubusercontent.com/u/42?v=4&s=64");
   });
 
   it("shares one lookup between concurrent requests for the same email", async () => {

@@ -1,3 +1,4 @@
+import { mkdirSync, renameSync, writeFileSync } from "node:fs";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname } from "node:path";
@@ -31,6 +32,14 @@ type Outcome = { done: true; url: string | null } | { done: false };
 interface CacheEntry {
   url: string | null;
   checkedAt: number;
+  ttl?: number;
+}
+
+interface PendingLookup {
+  email: string;
+  shas: string[];
+  root: string;
+  attempts: number;
 }
 
 const PENDING: Outcome = { done: false };
@@ -52,6 +61,9 @@ const MAX_AUTHORS = 100;
 const MAX_EMAIL_LENGTH = 320;
 const UNSAFE_EMAIL = /[\s\x00-\x1f\x7f]/;
 const NULL_TTL_MS = 7 * 24 * 60 * 60_000;
+const NOT_FOUND_TTL_MS = 6 * 60 * 60_000;
+const RETRY_MS = 60_000;
+const MAX_RETRY_ATTEMPTS = 5;
 const SAVE_DEBOUNCE_MS = 1000;
 
 export function githubAvatarFromEmail(email: string): string | null {
@@ -130,15 +142,25 @@ async function loadCache(file: string): Promise<Map<string, CacheEntry>> {
     if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) return entries;
     for (const [email, value] of Object.entries(parsed)) {
       if (value === null || typeof value !== "object") continue;
-      const { url, checkedAt } = value as Record<string, unknown>;
+      const { url, checkedAt, ttl } = value as Record<string, unknown>;
       if (typeof checkedAt !== "number") continue;
-      if (url === null) entries.set(email, { url: null, checkedAt });
+      if (url === null) entries.set(email, typeof ttl === "number" ? { url: null, checkedAt, ttl } : { url: null, checkedAt });
       else if (isCachedUrl(url)) entries.set(email, { url, checkedAt });
     }
   } catch {
     return entries;
   }
   return entries;
+}
+
+function notifyListeners(listeners: ReadonlySet<() => void>): void {
+  for (const listener of listeners) {
+    try {
+      listener();
+    } catch (error) {
+      console.warn(`[history-avatars] listener failed: ${(error as Error).message}`);
+    }
+  }
 }
 
 function createLimiter(max: number) {
@@ -161,9 +183,13 @@ export class HistoryAvatarService {
   private readonly limit = createLimiter(GH_PARALLEL);
   private readonly inflight = new Map<string, Promise<Outcome>>();
   private cachePromise: Promise<Map<string, CacheEntry>> | null = null;
+  private loaded: Map<string, CacheEntry> | null = null;
   private pausedUntil = 0;
   private saveTimer: ReturnType<typeof setTimeout> | null = null;
   private saving: Promise<void> = Promise.resolve();
+  private readonly retries = new Map<string, PendingLookup>();
+  private retryTimer: ReturnType<typeof setTimeout> | null = null;
+  private readonly resolvedListeners = new Set<() => void>();
 
   constructor(private readonly options: HistoryAvatarsOptions) {
     this.now = options.now ?? Date.now;
@@ -184,11 +210,81 @@ export class HistoryAvatarService {
     await Promise.all(
       [...merged].map(async ([email, shas]) => {
         const outcome = await this.lookup(email, shas, remoteOnce);
-        if (outcome.done) avatars[email] = outcome.url;
-        else pending.push(email);
+        if (outcome.done) {
+          avatars[email] = outcome.url;
+          this.retries.delete(email);
+        } else pending.push(email);
       })
     );
+    for (const email of pending) this.queueRetry(email, merged.get(email) ?? [], root);
     return { avatars, pending: pending.sort() };
+  }
+
+  onResolved(listener: () => void): () => void {
+    this.resolvedListeners.add(listener);
+    return () => this.resolvedListeners.delete(listener);
+  }
+
+  dispose(): void {
+    if (this.retryTimer !== null) clearTimeout(this.retryTimer);
+    this.retryTimer = null;
+    if (this.saveTimer === null) return;
+    clearTimeout(this.saveTimer);
+    this.saveTimer = null;
+    if (this.loaded === null) return;
+    const file = this.options.cacheFile;
+    const temporary = `${file}.${process.pid}.tmp`;
+    try {
+      mkdirSync(dirname(file), { recursive: true });
+      writeFileSync(temporary, JSON.stringify(Object.fromEntries(this.loaded)), "utf8");
+      renameSync(temporary, file);
+    } catch (error) {
+      console.warn(`[history-avatars] could not save the avatar cache: ${(error as Error).message}`);
+    }
+  }
+
+  private queueRetry(email: string, shas: string[], root: string): void {
+    const previous = this.retries.get(email);
+    if (previous && previous.attempts >= MAX_RETRY_ATTEMPTS) return;
+    this.retries.set(email, { email, shas, root, attempts: previous?.attempts ?? 0 });
+    this.scheduleRetry();
+  }
+
+  private scheduleRetry(): void {
+    if (this.retryTimer !== null || this.retries.size === 0) return;
+    const delay = Math.max(RETRY_MS, this.pausedUntil - this.now());
+    this.retryTimer = setTimeout(() => {
+      this.retryTimer = null;
+      void this.runRetries();
+    }, delay);
+    this.retryTimer.unref?.();
+  }
+
+  private async runRetries(): Promise<void> {
+    const due = [...this.retries.values()].filter((entry) => entry.attempts < MAX_RETRY_ATTEMPTS);
+    const remotes = new Map<string, Promise<AvatarRemote | null>>();
+    let resolved = false;
+    await Promise.all(
+      due.map(async (entry) => {
+        entry.attempts += 1;
+        const remoteOf = () => {
+          let remote = remotes.get(entry.root);
+          if (!remote) {
+            remote = this.options.remote(entry.root);
+            remotes.set(entry.root, remote);
+          }
+          return remote;
+        };
+        const outcome = await this.lookup(entry.email, entry.shas, remoteOf);
+        if (outcome.done) {
+          this.retries.delete(entry.email);
+          resolved = true;
+        }
+      })
+    );
+    for (const [email, entry] of this.retries) if (entry.attempts >= MAX_RETRY_ATTEMPTS) this.retries.delete(email);
+    if (resolved) notifyListeners(this.resolvedListeners);
+    this.scheduleRetry();
   }
 
   async flush(): Promise<void> {
@@ -201,7 +297,7 @@ export class HistoryAvatarService {
   }
 
   private cache(): Promise<Map<string, CacheEntry>> {
-    return (this.cachePromise ??= loadCache(this.options.cacheFile));
+    return (this.cachePromise ??= loadCache(this.options.cacheFile).then((entries) => (this.loaded = entries)));
   }
 
   private async writeCache(): Promise<void> {
@@ -226,14 +322,14 @@ export class HistoryAvatarService {
     this.saveTimer.unref?.();
   }
 
-  private async remember(email: string, url: string | null): Promise<void> {
-    (await this.cache()).set(email, { url, checkedAt: this.now() });
+  private async remember(email: string, url: string | null, ttl?: number): Promise<void> {
+    (await this.cache()).set(email, ttl === undefined ? { url, checkedAt: this.now() } : { url, checkedAt: this.now(), ttl });
     this.scheduleSave();
   }
 
   private async lookup(email: string, shas: string[], remoteOf: () => Promise<AvatarRemote | null>): Promise<Outcome> {
     const hit = (await this.cache()).get(email);
-    if (hit !== undefined && (hit.url !== null || this.now() - hit.checkedAt < NULL_TTL_MS)) return { done: true, url: hit.url };
+    if (hit !== undefined && (hit.url !== null || this.now() - hit.checkedAt < (hit.ttl ?? NULL_TTL_MS))) return { done: true, url: hit.url };
     const noreply = githubAvatarFromEmail(email);
     if (noreply !== null) return { done: true, url: noreply };
     const valid = shas.filter(isFullSha).slice(0, MAX_SHAS_PER_AUTHOR);
@@ -269,6 +365,7 @@ export class HistoryAvatarService {
         return PENDING;
       }
     }
-    return PENDING;
+    await this.remember(email, null, NOT_FOUND_TTL_MS);
+    return { done: true, url: null };
   }
 }

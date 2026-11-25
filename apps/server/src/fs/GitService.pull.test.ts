@@ -102,3 +102,19 @@ describe("pullFailureReason", () => {
     expect(pullFailureReason("fatal: unable to access 'https://user:secret@example.com/r.git/': Could not resolve host", 128)).not.toContain("secret");
   });
 });
+
+describe("GitService.checkoutBranch", () => {
+  it("finds a branch created outside cw-code while the branch list is cached", async () => {
+    const { local } = setup();
+    const service = new GitService();
+    await service.branches(local);
+    git(local, "branch", "made-in-terminal");
+    await service.checkoutBranch(local, "made-in-terminal");
+    expect(git(local, "rev-parse", "--abbrev-ref", "HEAD")).toBe("made-in-terminal");
+  });
+
+  it("still rejects a branch that does not exist", async () => {
+    const { local } = setup();
+    await expect(new GitService().checkoutBranch(local, "missing")).rejects.toThrow("unknown branch 'missing'");
+  });
+});

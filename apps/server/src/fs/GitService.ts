@@ -1662,8 +1662,11 @@ export class GitService {
 
   async checkoutBranch(root: string, name: string): Promise<string> {
     if (!name || name.startsWith("-")) throw new Error("invalid branch name");
-    const branches = await this.branches(root);
-    const target = branches.find((item) => item.name === name);
+    let target = (await this.branches(root)).find((item) => item.name === name);
+    if (!target) {
+      this.invalidateBranches(root);
+      target = (await this.branches(root)).find((item) => item.name === name);
+    }
     if (!target) throw new Error(`unknown branch '${name}'`);
     if (target.worktreePath && !sameWorktreePath(target.worktreePath, root)) throw new Error(`'${target.label}' is already checked out at ${target.worktreePath}`);
     const git = this.git(root);

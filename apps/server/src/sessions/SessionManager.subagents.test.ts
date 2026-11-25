@@ -182,6 +182,27 @@ describe("createSubagentSession", () => {
     expect(git(child.worktreePath ?? "", "rev-parse", "HEAD")).toBe(git(parentPath, "rev-parse", "HEAD"));
   });
 
+  it("never maps an isolated child's worktree to the parent as checkout owner", async () => {
+    const { manager, project, repository } = makeSandbox();
+    const parent = await manager.createSession(project.id, "claude");
+    const shared = await manager.createSubagentSession(parent.id, "claude", { title: "Shared", isolation: "shared" });
+    const isolated = await manager.createSubagentSession(parent.id, "claude", { title: "Isolated", isolation: "worktree" });
+
+    expect(manager.checkoutOwner(parent.worktreePath ?? "")).toBe(parent.id);
+    expect(manager.checkoutOwner(shared.worktreePath ?? "")).toBe(parent.id);
+    expect(manager.checkoutOwner(isolated.worktreePath ?? "")).toBeNull();
+    expect(manager.checkoutOwner(join(repository, "missing"))).toBeNull();
+  });
+
+  it("maps a shared child's checkout to its parent when only the child matches", async () => {
+    const { manager, project, store } = makeSandbox();
+    const parent = await manager.createSession(project.id, "claude");
+    const shared = await manager.createSubagentSession(parent.id, "claude", { title: "Shared", isolation: "shared" });
+    store.updateSession(parent.id, { worktreePath: join(parent.worktreePath ?? "", "..", "moved") });
+
+    expect(manager.checkoutOwner(shared.worktreePath ?? "")).toBe(parent.id);
+  });
+
   it("rejects unknown, nested, resolved and untitled requests", async () => {
     const { manager, project } = makeSandbox();
     const parent = await manager.createSession(project.id, "claude", { mode: "current" });

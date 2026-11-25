@@ -40,6 +40,8 @@ const GIT_DIR_B = join(COMMON, "worktrees", "b");
 const REFS_HEADS = join(COMMON, "refs", "heads");
 const REFS_REMOTES = join(COMMON, "refs", "remotes");
 const REFS_TAGS = join(COMMON, "refs", "tags");
+const REFS = join(COMMON, "refs");
+const LOGS_REFS = join(COMMON, "logs", "refs");
 const ROOT_MAIN: GitWatchRoot = { root: resolve("/repo"), gitDir: COMMON, commonDir: COMMON };
 const ROOT_A: GitWatchRoot = { root: resolve("/wt/a"), gitDir: GIT_DIR_A, commonDir: COMMON };
 const ROOT_B: GitWatchRoot = { root: resolve("/wt/b"), gitDir: GIT_DIR_B, commonDir: COMMON };
@@ -83,15 +85,17 @@ describe("GitWatcher", () => {
     expect(handleFor(REFS_HEADS).recursive).toBe(true);
     expect(handleFor(REFS_REMOTES).recursive).toBe(true);
     expect(handleFor(REFS_TAGS).recursive).toBe(true);
+    expect(handleFor(REFS).recursive).toBe(false);
+    expect(handleFor(LOGS_REFS).recursive).toBe(false);
     expect(handleFor(GIT_DIR_A).recursive).toBe(false);
     expect(handleFor(GIT_DIR_B).recursive).toBe(false);
-    expect(handles).toHaveLength(6);
+    expect(handles).toHaveLength(8);
   });
 
   it("does not open a second watcher when gitDir equals commonDir", () => {
     watcher.setRoots([ROOT_MAIN]);
 
-    expect(handles.map((handle) => handle.base).sort()).toEqual([COMMON, REFS_HEADS, REFS_REMOTES, REFS_TAGS].sort());
+    expect(handles.map((handle) => handle.base).sort()).toEqual([COMMON, REFS_HEADS, REFS_REMOTES, REFS_TAGS, REFS, LOGS_REFS].sort());
   });
 
   it("notifies on a new tag", () => {
@@ -101,6 +105,17 @@ describe("GitWatcher", () => {
     vi.advanceTimersByTime(300);
 
     expect(onChange).toHaveBeenCalledTimes(1);
+  });
+
+  it("notifies on a stash push and on dropping an older stash", () => {
+    watcher.setRoots([ROOT_MAIN]);
+
+    handleFor(REFS).fire(join(COMMON, "refs", "stash"));
+    vi.advanceTimersByTime(300);
+    handleFor(LOGS_REFS).fire(join(COMMON, "logs", "refs", "stash"));
+    vi.advanceTimersByTime(300);
+
+    expect(onChange).toHaveBeenCalledTimes(2);
   });
 
   it("notifies every root sharing the commonDir on a refs change", () => {
@@ -252,7 +267,7 @@ describe("GitWatcher", () => {
     watcher.setRoots([]);
     watcher.setRoots([ROOT_A]);
 
-    expect(handles).toHaveLength(10);
+    expect(handles).toHaveLength(14);
     expect(handleFor(GIT_DIR_A).closed).toBe(false);
   });
 

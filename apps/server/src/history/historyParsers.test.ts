@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import type { HistoryCommit } from "@cw-code/contracts";
-import { isFullSha, mergeStashes, parseCommitShow, parseHistoryLimit, parseLog, parseRefs, parseStashList, parseWorktreeList } from "./historyParsers.js";
+import { isFullSha, mergeStashes, parseCommitShow, parseHistoryLimit, parseLog, parseRefs, parseStashList, parseWorktreeList, worktreeKey } from "./historyParsers.js";
 
 const R = "\x1e";
 const S = "\x1f";
@@ -165,10 +165,16 @@ describe("parseWorktreeList", () => {
 
   it("reads branch, head and folder name and marks the main and current worktrees", () => {
     expect(parseWorktreeList(output, "C:/wt-feature")).toEqual([
-      { path: "C:/repo/app", name: "app", branch: "main", head: sha, isCurrent: false, isMain: true, sessionId: null },
-      { path: "C:/wt-feature", name: "wt-feature", branch: "feature/x", head: sha, isCurrent: true, isMain: false, sessionId: null },
-      { path: "C:/tmp/detached", name: "detached", branch: null, head: sha, isCurrent: false, isMain: false, sessionId: null }
+      { key: worktreeKey("C:/repo/app"), path: "C:/repo/app", name: "app", branch: "main", head: sha, isCurrent: false, isMain: true, sessionId: null },
+      { key: worktreeKey("C:/wt-feature"), path: "C:/wt-feature", name: "wt-feature", branch: "feature/x", head: sha, isCurrent: true, isMain: false, sessionId: null },
+      { key: worktreeKey("C:/tmp/detached"), path: "C:/tmp/detached", name: "detached", branch: null, head: sha, isCurrent: false, isMain: false, sessionId: null }
     ]);
+  });
+
+  it("keys a worktree by its normalized path", () => {
+    expect(worktreeKey("C:/wt-feature")).toMatch(/^[0-9a-f]{16}$/);
+    expect(worktreeKey("C:/wt-feature/")).toBe(worktreeKey("C:\\wt-feature"));
+    expect(worktreeKey("C:/wt-feature")).not.toBe(worktreeKey("C:/wt-other"));
   });
 
   it("skips a bare main entry without promoting the next one to main", () => {

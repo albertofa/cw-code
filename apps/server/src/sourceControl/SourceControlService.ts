@@ -50,10 +50,13 @@ export class SourceControlService {
   private watched = new Set<string>();
   private subscribed: string[] = [];
   private historySubscribed: string[] = [];
+  private historyRoots: string[] = [];
+  private historyOnlyKeys = new Set<string>();
   private workingSet: string[] = [];
   private readonly publishedListeners = new Set<(update: GitStatusUpdate) => void>();
   private readonly failureListeners = new Set<(sessionId: string) => void>();
   private readonly gitChangeListeners = new Set<(roots: string[]) => void>();
+  private readonly pollListeners = new Set<() => void>();
   private pollTimer: ReturnType<typeof setTimeout> | null = null;
   private watchGeneration = 0;
 
@@ -83,9 +86,18 @@ export class SourceControlService {
     this.applyWatched();
   }
 
-  setHistoryWatched(sessionIds: string[]): void {
+  setHistoryWatched(sessionIds: string[], worktreeRoots: string[] = []): void {
     this.historySubscribed = [...sessionIds];
+    const rootsChanged =
+      worktreeRoots.length !== this.historyRoots.length || worktreeRoots.some((root, index) => comparableRoot(root) !== comparableRoot(this.historyRoots[index] ?? ""));
+    this.historyRoots = [...worktreeRoots];
     this.applyWatched();
+    if (rootsChanged && this.scheduler) void this.syncWatcherRoots();
+  }
+
+  onPoll(cb: () => void): () => void {
+    this.pollListeners.add(cb);
+    return () => this.pollListeners.delete(cb);
   }
 
   onGitChange(cb: (roots: string[]) => void): () => void {
@@ -151,6 +163,7 @@ export class SourceControlService {
     notifyAll(this.gitChangeListeners, `${LOG_PREFIX} git change`, roots);
     for (const root of roots) {
       const rootKey = comparableRoot(root);
+      if (this.historyOnlyKeys.has(rootKey)) continue;
       this.rootByKey.set(rootKey, root);
       void scheduler.request(rootKey, { forcePullRequest: false });
     }
@@ -340,6 +353,7 @@ export class SourceControlService {
     this.pollTimer = setTimeout(() => {
       this.pollTimer = null;
       this.refreshWatched();
+      notifyAll(this.pollListeners, `${LOG_PREFIX} poll`);
       this.schedulePoll();
     }, seconds * 1000);
     this.pollTimer.unref?.();
@@ -357,6 +371,13 @@ export class SourceControlService {
     );
     const unique = new Map<string, string>();
     for (const root of roots) if (root) unique.set(comparableRoot(root), root);
+    const historyOnly = new Set<string>();
+    for (const root of this.historyRoots) {
+      const key = comparableRoot(root);
+      if (unique.has(key)) continue;
+      unique.set(key, root);
+      historyOnly.add(key);
+    }
     const entries = await Promise.all(
       [...unique.values()].map(async (root): Promise<GitWatchRoot | null> => {
         try {
@@ -369,6 +390,7 @@ export class SourceControlService {
       })
     );
     if (!this.scheduler || generation !== this.watchGeneration) return;
+    this.historyOnlyKeys = historyOnly;
     this.watcher.setRoots(entries.filter((entry): entry is GitWatchRoot => entry !== null));
   }
 }
