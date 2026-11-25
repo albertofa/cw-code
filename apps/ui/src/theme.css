@@ -7645,7 +7645,7 @@ button.gitbar-checkout:hover {
   flex: 1;
   min-height: 0;
   display: flex;
-  flex-direction: row;
+  flex-direction: column;
 }
 
 .history-main {
@@ -7658,17 +7658,36 @@ button.gitbar-checkout:hover {
 }
 
 .history-side-handle {
+  position: relative;
   flex: none;
-  width: 5px;
-  margin: 0 -2px;
-  z-index: 5;
-  cursor: col-resize;
-  background: linear-gradient(to right, transparent 2px, var(--border-soft) 2px, var(--border-soft) 3px, transparent 3px);
+  height: 8px;
+  cursor: row-resize;
+  background: var(--tool);
+  border-top: 1px solid var(--border-soft);
+  border-bottom: 1px solid var(--border-soft);
   touch-action: none;
 }
 
-.history-side-handle:hover {
-  background: linear-gradient(to right, transparent 1px, var(--violet) 1px, var(--violet) 4px, transparent 4px);
+.history-side-handle::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 40px;
+  height: 3px;
+  border-radius: 2px;
+  background: var(--muted);
+  transform: translate(-50%, -50%);
+}
+
+.history-side-handle:hover,
+.history-side-handle:active {
+  background: var(--violet-soft);
+}
+
+.history-side-handle:hover::after,
+.history-side-handle:active::after {
+  background: var(--violet);
 }
 
 .history-side {
@@ -7676,9 +7695,26 @@ button.gitbar-checkout:hover {
   min-width: 0;
   min-height: 0;
   display: flex;
+  flex-direction: row;
+  overflow: hidden;
+  background: var(--bg-deep);
+}
+
+.history-side-info {
+  flex: 0 0 45%;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
   flex-direction: column;
   overflow: auto;
-  background: var(--bg-deep);
+  border-right: 1px solid var(--border-soft);
+}
+
+.history-side .history-files {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
 }
 
 .history-side .history-detail-body {

@@ -100,6 +100,7 @@ export function HistoryCommitSidebar({
 
   return (
     <>
+      <div className="history-side-info">
       <div className="history-detail-head">
         <div className="history-detail-subject">{detail.subject}</div>
         {detail.body && <pre className="history-detail-body">{detail.body}</pre>}
@@ -136,8 +137,9 @@ export function HistoryCommitSidebar({
         {detail.parents.length > 1 && <span className="inspect-range">vs first parent</span>}
       </div>
       {detail.patchTruncated && <div className="inspect-note">This commit is too large to show in full; later files are cut off.</div>}
-      {files.length === 0 && <div className="inspect-dfile-note">No file changes</div>}
+      </div>
       <div className="history-files" role="list" aria-label="Changed files">
+        {files.length === 0 && <div className="inspect-dfile-note">No file changes</div>}
         {files.map((file) => {
           const { dir, name } = splitRepoPath(file.path);
           return (

@@ -166,12 +166,12 @@ export function HistoryPanel({ sessionId }: { sessionId: string }) {
               <div
                 className="history-side-handle"
                 role="separator"
-                aria-orientation="vertical"
+                aria-orientation="horizontal"
                 title="Drag to resize (double-click resets)"
                 onPointerDown={side.startDrag}
                 onDoubleClick={side.reset}
               />
-              <aside className="history-side" style={{ width: side.width }} aria-label="Commit detail">
+              <aside className="history-side" style={{ height: side.height }} aria-label="Commit detail">
                 <HistoryCommitSidebar commit={commit} openPath={openPath} onOpenFile={setOpenPath} onSelect={select} />
               </aside>
             </>
