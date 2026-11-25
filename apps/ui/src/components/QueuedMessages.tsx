@@ -4,6 +4,7 @@ import type { QueuedMessage } from "@cw-code/contracts";
 import { appendToComposerDraft, untagAttachments } from "./composerDrafts.js";
 import { ipcErrorMessage } from "./ipcError.js";
 import { useNotifs } from "./Notifications.js";
+import { useSessionRow } from "./useSessions.js";
 import { useThreadBusy, useThreadEntry } from "./useThread.js";
 
 const NO_MESSAGES: QueuedMessage[] = [];
@@ -11,6 +12,8 @@ const NO_MESSAGES: QueuedMessage[] = [];
 export function QueuedMessages({ sessionId }: { sessionId: string }) {
   const messages = useThreadEntry(sessionId, "queuedMessages") ?? NO_MESSAGES;
   const busy = useThreadBusy(sessionId);
+  const status = useSessionRow(sessionId)?.session.status;
+  const closed = status === "resolved" || status === "archived";
   const [pending, setPending] = useState(false);
   const heldCount = messages.filter((message) => message.state === "held").length;
 
@@ -54,8 +57,16 @@ export function QueuedMessages({ sessionId }: { sessionId: string }) {
               <button
                 type="button"
                 className="queued-message-action"
-                disabled={busy || pending}
-                title={busy ? "Available when the agent finishes" : (heldCount > 1 ? "Send all queued messages now" : "Send the queued message now")}
+                disabled={busy || pending || closed}
+                title={
+                  closed
+                    ? `This session is ${status}; reopen it to send`
+                    : busy
+                      ? "Available when the agent finishes"
+                      : heldCount > 1
+                        ? "Send all queued messages now"
+                        : "Send the queued message now"
+                }
                 onClick={() => void run("Could not send", () => window.cw.flushQueue(sessionId))}
               >
                 {heldCount > 1 ? "Send all now" : "Send now"}
