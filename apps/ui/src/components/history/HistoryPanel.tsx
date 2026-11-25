@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ArrowDownToLine, GitFork, GitGraph, UserRound, X } from "lucide-react";
+import { ArrowDownToLine, GitFork, GitGraph, UserRound } from "lucide-react";
 import type { HistoryCommit, HistoryLog, HistoryTopicData, HistoryWorktree } from "@cw-code/contracts";
 import { historyTopic } from "@cw-code/shared/topics";
 import { usePanelStore } from "../../stores/panelStore.js";
@@ -13,7 +13,6 @@ import { useHistorySide } from "./useHistorySide.js";
 const PAGE_SIZE = 2000;
 const MAX_LIMIT = 20000;
 const NO_COMMITS: HistoryCommit[] = [];
-const NOTICE_MS = 8000;
 const isWip = (commit: HistoryCommit): boolean => commit.sha === WIP_SHA;
 
 export function HistoryPanel({ sessionId }: { sessionId: string }) {
@@ -31,7 +30,9 @@ export function HistoryPanel({ sessionId }: { sessionId: string }) {
   const panelRef = useRef<HTMLDivElement>(null);
   const [action, setAction] = useState<string | null>(null);
   const [actionError, setActionError] = useState("");
-  const [notice, setNotice] = useState<{ branch: string; worktree: HistoryWorktree } | null>(null);
+  const [viewWorktree, setViewWorktree] = useState<string | null>(null);
+  const [homePath, setHomePath] = useState<string | null>(null);
+  const [reload, setReload] = useState(0);
   const busy = useRef(false);
   const worktreeBranches = useMemo<ReadonlyMap<string, HistoryWorktree>>(() => {
     const byBranch = new Map<string, HistoryWorktree>();
@@ -49,11 +50,12 @@ export function HistoryPanel({ sessionId }: { sessionId: string }) {
     if (rev === 0) return;
     let active = true;
     setLoading(true);
-    window.cw.getHistoryLog(sessionId, limit).then(
+    window.cw.getHistoryLog(sessionId, limit, viewWorktree).then(
       (next) => {
         if (!active) return;
         setLog(next);
         setError("");
+        if (viewWorktree === null) setHomePath(next.worktrees.find((worktree) => worktree.isCurrent)?.path ?? null);
       },
       (reason: Error) => {
         if (active) setError(reason.message);
@@ -64,12 +66,21 @@ export function HistoryPanel({ sessionId }: { sessionId: string }) {
     return () => {
       active = false;
     };
-  }, [sessionId, rev, limit, epoch]);
+  }, [sessionId, rev, limit, epoch, viewWorktree, reload]);
 
+  const openWorktree = useCallback(
+    (path: string | null): void => {
+      setViewWorktree(path === null || path === homePath ? null : path);
+      setSelected(null);
+      setOpenPath(null);
+      setActionError("");
+    },
+    [homePath]
+  );
 
   const select = (sha: string): void => {
     if (sha === WIP_SHA) {
-      usePanelStore.getState().requestDiffMode(sessionId, "working");
+      if (viewWorktree === null) usePanelStore.getState().requestDiffMode(sessionId, "working");
       return;
     }
     setSelected(sha);
@@ -97,6 +108,7 @@ export function HistoryPanel({ sessionId }: { sessionId: string }) {
       .finally(() => {
         busy.current = false;
         setAction(null);
+        setReload((value) => value + 1);
       });
   }, []);
 
@@ -104,27 +116,19 @@ export function HistoryPanel({ sessionId }: { sessionId: string }) {
     (branch: string): void => {
       const elsewhere = worktreeBranches.get(branch);
       if (elsewhere) {
-        setActionError("");
-        setNotice({ branch, worktree: elsewhere });
+        openWorktree(elsewhere.path);
         return;
       }
-      setNotice(null);
-      runAction(`Checking out ${branch}…`, () => window.cw.switchGitBranch(sessionId, branch));
+      runAction(`Checking out ${branch}…`, () => window.cw.checkoutHistory(sessionId, viewWorktree, branch));
     },
-    [runAction, sessionId, worktreeBranches]
+    [runAction, sessionId, viewWorktree, worktreeBranches, openWorktree]
   );
 
-  useEffect(() => {
-    if (!notice) return;
-    const timer = setTimeout(() => setNotice(null), NOTICE_MS);
-    return () => clearTimeout(timer);
-  }, [notice]);
-
-  const head = topic?.data.head ?? null;
-  const currentRef = head?.branch ? topic?.data.refs.find((ref) => ref.kind === "local" && ref.isCurrent) : undefined;
+  const head = log?.head ?? null;
+  const currentRef = head?.branch ? log?.refs.find((ref) => ref.kind === "local" && ref.isCurrent) : undefined;
   const pullBlocked = !head?.branch ? "HEAD is detached — check out a branch to pull" : !currentRef?.upstream ? `${head.branch} has no upstream branch` : null;
   const pullTitle = pullBlocked ?? `Fast-forward ${head?.branch} from ${currentRef?.upstream} (git pull --ff-only)`;
-  const pull = (): void => runAction("Pulling…", () => window.cw.pullHistory(sessionId));
+  const pull = (): void => runAction("Pulling…", () => window.cw.pullHistory(sessionId, viewWorktree));
 
   const toggleAvatars = (): void => {
     const next = !showAvatars;
@@ -132,7 +136,10 @@ export function HistoryPanel({ sessionId }: { sessionId: string }) {
     saveShowAvatars(next);
   };
 
-  const branch = topic?.data.head?.branch ?? (topic?.data.head?.sha ? `detached at ${topic.data.head.sha.slice(0, 7)}` : null);
+  const branch = head?.branch ?? (head?.sha ? `detached at ${head.sha.slice(0, 7)}` : null);
+  const worktrees = log?.worktrees ?? [];
+  const activePath = viewWorktree ?? homePath;
+  const dirtyCount = viewWorktree === null ? (status?.available ? status.dirtyCount : 0) : (log?.wipCount ?? 0);
   const failure = topicError ?? (error || null);
 
   return (
@@ -164,27 +171,34 @@ export function HistoryPanel({ sessionId }: { sessionId: string }) {
           <UserRound size={13} /> Photos
         </button>
       </div>
+      {worktrees.length > 1 && (
+        <div className="history-worktrees" role="tablist" aria-label="Worktrees">
+          {worktrees.map((worktree) => {
+            const home = worktree.path === homePath;
+            const active = worktree.path === activePath;
+            const owned = worktree.sessionId && !home ? " — used by another cw-code session" : "";
+            return (
+              <button
+                key={worktree.path}
+                type="button"
+                role="tab"
+                aria-selected={active}
+                className={`history-worktree-tab${active ? " active" : ""}`}
+                title={`${worktree.path} — ${worktree.branch ?? "detached"}${owned}`}
+                onClick={() => openWorktree(worktree.path)}
+              >
+                <GitFork size={12} aria-hidden="true" />
+                <span className="history-worktree-name">{home ? "This session" : worktree.name}</span>
+                {worktree.branch && <span className="history-worktree-branch">{worktree.branch}</span>}
+              </button>
+            );
+          })}
+        </div>
+      )}
       {failure && <div className="inspect-error">History unavailable: {failure}</div>}
       {actionError && (
         <div className="inspect-error history-action-error" role="alert" onClick={() => setActionError("")} title="Click to dismiss">
           {actionError}
-        </div>
-      )}
-      {notice && (
-        <div className="history-notice" role="status">
-          <GitFork size={13} aria-hidden="true" />
-          <span className="history-notice-text">
-            <b>{notice.branch}</b> is open in the worktree <b>{notice.worktree.name}</b>. Git keeps a branch in one worktree at a time, so switch there or
-            close that worktree first.
-          </span>
-          {window.cw.local && (
-            <button type="button" className="inspect-mode" onClick={() => void window.cw.local?.openPath(notice.worktree.path)} title={notice.worktree.path}>
-              Open {notice.worktree.name}
-            </button>
-          )}
-          <button type="button" className="inspect-mode" onClick={() => setNotice(null)} aria-label="Dismiss">
-            <X size={13} aria-hidden="true" />
-          </button>
         </div>
       )}
       {!failure && !log && <div className="diff-empty">Loading history…</div>}
@@ -199,7 +213,7 @@ export function HistoryPanel({ sessionId }: { sessionId: string }) {
           <div className="history-main">
             <HistoryGraph
               log={log}
-              dirtyCount={status?.available ? status.dirtyCount : 0}
+              dirtyCount={dirtyCount}
               selected={selected}
               onSelect={select}
               onHighlight={highlight}

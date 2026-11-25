@@ -166,12 +166,13 @@ describe("HistoryService.log worktrees", () => {
     git(repo, "worktree", "add", "-q", "--detach", detached, first);
 
     const fromMain = await service.log(repo, 50);
-    expect(fromMain.worktrees.map((worktree) => [worktree.name, worktree.branch, worktree.isMain, worktree.isCurrent])).toEqual([
+    const rows = fromMain.worktrees.map((worktree) => [worktree.name, worktree.branch, worktree.isMain, worktree.isCurrent]);
+    expect([rows[0], ...rows.slice(1).sort((a, b) => String(a[0]).localeCompare(String(b[0])))]).toEqual([
       ["repo", "main", true, true],
-      ["wt-feature", "feature", false, false],
-      ["wt-detached", null, false, false]
+      ["wt-detached", null, false, false],
+      ["wt-feature", "feature", false, false]
     ]);
-    expect(fromMain.worktrees[2]?.head).toBe(first);
+    expect(fromMain.worktrees.find((worktree) => worktree.name === "wt-detached")?.head).toBe(first);
 
     const fromLinked = await service.log(linked, 50);
     expect(fromLinked.worktrees.filter((worktree) => worktree.isCurrent).map((worktree) => worktree.name)).toEqual(["wt-feature"]);

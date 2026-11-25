@@ -35,6 +35,7 @@ export interface HistoryLog {
   commits: HistoryCommit[];
   truncated: boolean;
   worktrees: HistoryWorktree[];
+  wipCount: number | null;
 }
 
 export interface HistoryCommitDetail extends HistoryCommit {
@@ -69,4 +70,5 @@ export interface HistoryWorktree {
   head: string | null;
   isCurrent: boolean;
   isMain: boolean;
+  sessionId: string | null;
 }

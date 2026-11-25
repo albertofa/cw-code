@@ -14186,21 +14186,54 @@ button.gitbar-checkout:hover {
   padding: 0 2px;
 }
 
-.history-notice {
+.history-worktrees {
   flex: none;
   display: flex;
-  align-items: center;
-  gap: 8px;
-  margin: 8px 10px 0;
-  padding: 6px 8px 6px 10px;
-  border: 1px solid var(--border-soft);
-  border-radius: var(--r-sm);
+  gap: 2px;
+  padding: 4px 8px 0;
+  border-bottom: 1px solid var(--border-soft);
   background: var(--tool);
-  color: var(--text);
-  font-size: var(--t-xs);
+  overflow-x: auto;
 }
 
-.history-notice-text {
-  flex: 1;
+.history-worktree-tab {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 260px;
+  margin-bottom: -1px;
+  padding: 5px 10px;
+  border: 1px solid transparent;
+  border-bottom: 0;
+  border-radius: var(--r-sm) var(--r-sm) 0 0;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: var(--t-xs);
+  cursor: pointer;
+}
+
+.history-worktree-tab:hover {
+  color: var(--text);
+  background: var(--control-bg-hover);
+}
+
+.history-worktree-tab.active {
+  border-color: var(--border-soft);
+  background: var(--bg-deep);
+  color: var(--text);
+}
+
+.history-worktree-name {
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.history-worktree-branch {
   min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--faint);
 }

@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import type { HistoryCommitDetail, HistoryHead, HistoryLog, HistoryRef } from "@cw-code/contracts";
+import type { HistoryCommitDetail, HistoryHead, HistoryLog, HistoryRef, HistoryWorktree } from "@cw-code/contracts";
 import { execWithStatus } from "../fs/GitService.js";
 import { sanitizedChildEnv } from "../shellEnvironment.js";
 import { comparableRoot } from "../sessions/worktreeCleanup.js";
@@ -74,13 +74,25 @@ export class HistoryService {
     const toplevel = toplevelResult.status === "fulfilled" && toplevelResult.value.code === 0 ? toplevelResult.value.stdout.trim() : "";
     const worktrees =
       worktreeResult.status === "fulfilled" && worktreeResult.value.code === 0 ? parseWorktreeList(worktreeResult.value.stdout, toplevel) : [];
-    if (head.sha === null && refs.length === 0) return { head, refs: allRefs, commits: [], truncated: false, worktrees };
+    if (head.sha === null && refs.length === 0) return { head, refs: allRefs, commits: [], truncated: false, worktrees, wipCount: null };
     const walk = ["--branches", "--remotes", "--tags", ...(head.sha === null ? [] : ["HEAD"])];
     const stdout = await this.read(root, ["log", "--date-order", `--max-count=${limit + 1}`, LOG_FORMAT, ...walk, "--"], LOG_TIMEOUT_MS);
     const parsed = parseLog(stdout);
     const truncated = parsed.length > limit;
     const commits = mergeStashes(truncated ? parsed.slice(0, limit) : parsed, stashes.map((entry) => entry.commit));
-    return { head, refs: allRefs, commits, truncated, worktrees };
+    return { head, refs: allRefs, commits, truncated, worktrees, wipCount: null };
+  }
+
+  async worktrees(root: string): Promise<HistoryWorktree[]> {
+    const [list, toplevel] = await Promise.all([this.run(root, ["worktree", "list", "--porcelain"]), this.run(root, ["rev-parse", "--show-toplevel"])]);
+    if (list.code !== 0) throw failure(["worktree", "list"], list.stderr, list.code);
+    return parseWorktreeList(list.stdout, toplevel.code === 0 ? toplevel.stdout.trim() : "");
+  }
+
+  async wipCount(root: string): Promise<number> {
+    const status = await this.run(root, ["status", "--porcelain=v1", "--untracked-files=normal"]);
+    if (status.code !== 0) throw failure(["status"], status.stderr, status.code);
+    return status.stdout.split("\n").filter((line) => line.trim().length > 0).length;
   }
 
   async commit(root: string, sha: string): Promise<HistoryCommitDetail> {

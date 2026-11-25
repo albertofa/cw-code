@@ -157,14 +157,14 @@ export function parseHistoryLimit(value: unknown): number {
   return value;
 }
 
-function comparablePath(path: string): string {
+export function comparableGitPath(path: string): string {
   const normalized = path.replace(/\\/g, "/").replace(/\/+$/, "");
   return process.platform === "win32" || process.platform === "darwin" ? normalized.toLowerCase() : normalized;
 }
 
 export function parseWorktreeList(stdout: string, toplevel: string): HistoryWorktree[] {
   const worktrees: HistoryWorktree[] = [];
-  const current = toplevel === "" ? null : comparablePath(toplevel);
+  const current = toplevel === "" ? null : comparableGitPath(toplevel);
   let first = true;
   for (const block of stdout.replace(/\r/g, "").split(/\n{2,}/)) {
     const lines = block.split("\n").filter(Boolean);
@@ -182,8 +182,9 @@ export function parseWorktreeList(stdout: string, toplevel: string): HistoryWork
       name: segments[segments.length - 1] ?? path,
       branch: branchRef?.startsWith("refs/heads/") ? branchRef.slice("refs/heads/".length) : null,
       head,
-      isCurrent: current !== null && comparablePath(path) === current,
-      isMain
+      isCurrent: current !== null && comparableGitPath(path) === current,
+      isMain,
+      sessionId: null
     });
   }
   return worktrees;

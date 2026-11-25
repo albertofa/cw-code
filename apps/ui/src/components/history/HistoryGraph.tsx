@@ -86,7 +86,7 @@ function WorktreeChip({ worktree, compact = false }: { worktree: HistoryWorktree
 
 function entryTitle(entry: RefEntry, worktreeBranches: ReadonlyMap<string, HistoryWorktree>): string {
   const elsewhere = entry.checkout === null ? undefined : worktreeBranches.get(entry.checkout);
-  if (elsewhere) return `${entry.name} — checked out in the worktree ${elsewhere.name} (${elsewhere.path}); it can't be checked out here`;
+  if (elsewhere) return `${entry.name} — open in the worktree ${elsewhere.name}; double-click to open its tab`;
   if (entry.isCurrent) return `${entry.name} — current branch`;
   if (entry.checkout === null && entry.localElsewhere) return `${entry.name} — its local branch is the current one; Pull updates it`;
   if (entry.checkout === null) return entry.kind === "tag" ? `Tag ${entry.name}` : entry.name;

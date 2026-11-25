@@ -165,9 +165,9 @@ describe("parseWorktreeList", () => {
 
   it("reads branch, head and folder name and marks the main and current worktrees", () => {
     expect(parseWorktreeList(output, "C:/wt-bo")).toEqual([
-      { path: "C:/repo/app", name: "app", branch: "main", head: sha, isCurrent: false, isMain: true },
-      { path: "C:/wt-bo", name: "wt-bo", branch: "feature/x", head: sha, isCurrent: true, isMain: false },
-      { path: "C:/tmp/detached", name: "detached", branch: null, head: sha, isCurrent: false, isMain: false }
+      { path: "C:/repo/app", name: "app", branch: "main", head: sha, isCurrent: false, isMain: true, sessionId: null },
+      { path: "C:/wt-bo", name: "wt-bo", branch: "feature/x", head: sha, isCurrent: true, isMain: false, sessionId: null },
+      { path: "C:/tmp/detached", name: "detached", branch: null, head: sha, isCurrent: false, isMain: false, sessionId: null }
     ]);
   });
 
