@@ -5,28 +5,45 @@ import { isLimitedModel, limitWindowFamily } from "@cw-code/shared/usageLimits";
 import { ipcErrorMessage } from "./ipcError.js";
 import { useThreadEntry } from "./useThread.js";
 
-function resetPhrase(resetsAt: number, now: number): string {
-  const date = new Date(resetsAt);
+function whenPhrase(at: number, now: number): string {
+  const date = new Date(at);
   const time = date.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
   if (date.toDateString() === new Date(now).toDateString()) return `at ${time}`;
   return `on ${date.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" })} at ${time}`;
 }
 
-export function limitResumeSentence(resetsAt: number, now: number = Date.now()): string {
-  if (resetsAt <= now) return "Usage limit reached. cw-code is about to continue this session.";
-  return `Usage limit reached. cw-code continues this session when it resets, ${resetPhrase(resetsAt, now)}.`;
+/** `resumesAt` is when cw-code starts the continuation, shortly after the limit resets. */
+export function limitResumeSentence(resumesAt: number, now: number = Date.now()): string {
+  if (resumesAt <= now) return "Usage limit reached. cw-code is about to continue this session.";
+  return `Usage limit reached. cw-code continues this session ${whenPhrase(resumesAt, now)}, once it resets.`;
 }
 
-export function modelLimitSentence(name: string, resetsAt: number | undefined, now: number = Date.now()): string {
+export function modelLimitSentence(name: string, resumesAt: number | undefined, now: number = Date.now()): string {
   const head = `${name} limit reached.`;
-  if (resetsAt === undefined) return `${head} Continue on another model now, or send a message later.`;
-  if (resetsAt <= now) return `${head} cw-code is about to continue this session.`;
-  return `${head} Continue on another model now, or cw-code continues on this one when it resets, ${resetPhrase(resetsAt, now)}.`;
+  if (resumesAt === undefined) return `${head} Continue on another model now, or send a message later.`;
+  if (resumesAt <= now) return `${head} cw-code is about to continue this session.`;
+  return `${head} Continue on another model now, or cw-code continues on this one ${whenPhrase(resumesAt, now)}, once it resets.`;
 }
 
 function labelOf(models: ModelOption[], id: string | undefined): string | undefined {
   if (!id) return undefined;
   return models.find((model) => model.id === id)?.label ?? id;
+}
+
+/** Re-renders once `at` passes, so the dock switches to "about to continue" without waiting for another update. */
+function useNowAfter(at: number | undefined): number {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (at === undefined) return;
+    const wait = at - Date.now();
+    if (wait <= 0) {
+      setNow(Date.now());
+      return;
+    }
+    const timer = setTimeout(() => setNow(Date.now()), Math.min(wait, 2 ** 31 - 1));
+    return () => clearTimeout(timer);
+  }, [at]);
+  return now;
 }
 
 export function LimitResumeDock({ sessionId }: { sessionId: string }) {
@@ -40,6 +57,7 @@ export function LimitResumeDock({ sessionId }: { sessionId: string }) {
   const limitedModel = pending?.model;
   const limitedWindow = pending?.window;
   const fallbackModel = pending?.fallbackModel;
+  const now = useNowAfter(pending?.resumesAt);
 
   useEffect(() => {
     if (!waiting) setError(null);
@@ -89,11 +107,10 @@ export function LimitResumeDock({ sessionId }: { sessionId: string }) {
   const cancel = () => run(() => window.cw.cancelLimitResume(sessionId), "Could not cancel");
   const continueOn = () => run(() => window.cw.continueWithModel(sessionId, choice), "Could not continue");
 
-  const name =
-    limitWindowFamily(pending.window)?.label ?? labelOf(models, limitedModel) ?? "This model's";
+  const name = limitWindowFamily(pending.window)?.label ?? labelOf(models, limitedModel) ?? "This model's";
   const sentence = modelScoped
-    ? modelLimitSentence(name, pending.resetsAt)
-    : limitResumeSentence(pending.resetsAt ?? Date.now());
+    ? modelLimitSentence(name, pending.resumesAt, now)
+    : limitResumeSentence(pending.resumesAt ?? now, now);
   const choiceLabel = labelOf(models, choice);
 
   return (

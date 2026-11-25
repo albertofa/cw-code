@@ -406,6 +406,9 @@ export function createServices(stores: { sessionStore: SessionStore; settingsSto
     waitingOnSubagents: (sessionId) => sessions.subagentWaitSince(sessionId) !== null,
     startTurn: (sessionId, prompt, model) =>
       turns.start(sessionId, prompt, { auto: true, origin: "limit-resume", ...(model ? { prefs: { model } } : {}) }),
+    stopTurn: (sessionId) => {
+      turns.stop(sessionId);
+    },
     setLimitResume: (sessionId, next) => sessions.setLimitResume(sessionId, next),
     refresh: (sessionId) => threads.refreshExtras(sessionId),
     postNotice: (sessionId, notice) => sessions.emitNotice(sessionId, notice.noticeId, notice.text, notice.severity),

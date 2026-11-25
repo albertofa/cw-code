@@ -39,13 +39,26 @@ function harness(initial: SessionMeta[] = [session("s1")]) {
   const started: Array<{ sessionId: string; prompt: string; model?: string }> = [];
   const notices: Array<{ sessionId: string; notice: ThreadNotice }> = [];
   const refreshed: string[] = [];
-  const state = { enabled: true, defaultModel: "", busy: false, approvals: 0, waiting: false, reserved: false, startError: null as unknown, turns: 0 };
+  const stopped: string[] = [];
+  const state = {
+    enabled: true,
+    defaultModel: "",
+    busy: false,
+    approvals: 0,
+    waiting: false,
+    reserved: false,
+    startError: null as unknown,
+    /** When set, `startTurn` waits for it, so a test can act while the turn is starting. */
+    hold: null as Promise<void> | null,
+    turns: 0
+  };
   const engine: LimitResume = new LimitResume({
     sessions: () => [...sessions.values()],
     settings: () => ({ limitAutoResume: state.enabled, claudeDefaultModel: state.defaultModel }),
     runtime: () => ({ busy: state.busy, approvals: Array.from({ length: state.approvals }, () => ({}) as never), questions: [] }),
     waitingOnSubagents: () => state.waiting,
     startTurn: async (sessionId, prompt, model) => {
+      if (state.hold) await state.hold;
       if (state.startError) throw state.startError;
       started.push({ sessionId, prompt, ...(model ? { model } : {}) });
       const turnId = `resume-${++state.turns}`;
@@ -63,7 +76,11 @@ function harness(initial: SessionMeta[] = [session("s1")]) {
     },
     refresh: (sessionId) => refreshed.push(sessionId),
     postNotice: (sessionId, notice) => notices.push({ sessionId, notice }),
-    shutdownReserved: () => state.reserved
+    shutdownReserved: () => state.reserved,
+    stopTurn: (sessionId) => {
+      stopped.push(sessionId);
+      engine.turnStopped(sessionId);
+    }
   });
   const pending = (id = "s1") => sessions.get(id)?.limitResume;
   const advance = async (ms: number) => {
@@ -71,7 +88,7 @@ function harness(initial: SessionMeta[] = [session("s1")]) {
     await Promise.resolve();
     await Promise.resolve();
   };
-  return { engine, sessions, started, notices, refreshed, state, pending, advance };
+  return { engine, sessions, started, stopped, notices, refreshed, state, pending, advance };
 }
 
 describe("LimitResume", () => {
@@ -88,7 +105,7 @@ describe("LimitResume", () => {
     const resetsAt = Date.now() + 2 * HOUR;
     h.engine.turnSettled("s1", "t1", done("t1", resetsAt));
     expect(h.pending()).toEqual({ resetsAt, window: "five_hour", attempts: 0 });
-    expect(h.engine.extras("s1")).toEqual({ limitResume: { resetsAt, window: "five_hour" } });
+    expect(h.engine.extras("s1")).toEqual({ limitResume: { resetsAt, resumesAt: resetsAt + LIMIT_RESUME_MARGIN_MS, window: "five_hour" } });
     expect(h.refreshed).toEqual(["s1"]);
     await h.advance(2 * HOUR);
     expect(h.started).toEqual([]);
@@ -171,6 +188,53 @@ describe("LimitResume", () => {
     await busy.advance(2 * HOUR);
     expect(busy.started).toEqual([]);
     expect(busy.pending()).toBeUndefined();
+    expect(busy.notices).toEqual([]);
+  });
+
+  it("tells the user why it did not continue when the session waits on an answer or runs another turn", async () => {
+    for (const block of [{ approvals: 1 }, { busy: true }]) {
+      const h = harness();
+      h.engine.turnSettled("s1", "t1", done("t1", Date.now() + HOUR));
+      Object.assign(h.state, block);
+      await h.advance(HOUR + LIMIT_RESUME_MARGIN_MS);
+      expect(h.started).toEqual([]);
+      expect(h.pending()).toBeUndefined();
+      expect(h.notices).toHaveLength(1);
+      expect(h.notices[0].notice.text).toContain("did not continue");
+    }
+  });
+
+  it("stops the continuation when the user cancels while its turn is starting", async () => {
+    const h = harness();
+    h.engine.turnSettled("s1", "t1", done("t1", Date.now() + HOUR));
+    let release = () => {};
+    h.state.hold = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    await h.advance(HOUR + LIMIT_RESUME_MARGIN_MS);
+    expect(h.engine.cancel("s1")).toBe(true);
+    release();
+    await h.advance(0);
+    await h.advance(0);
+    expect(h.started).toHaveLength(1);
+    expect(h.stopped).toEqual(["s1"]);
+    expect(h.pending()).toBeUndefined();
+  });
+
+  it("stops the continuation when the setting is turned off while its turn is starting", async () => {
+    const h = harness();
+    h.engine.turnSettled("s1", "t1", done("t1", Date.now() + HOUR));
+    let release = () => {};
+    h.state.hold = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    await h.advance(HOUR + LIMIT_RESUME_MARGIN_MS);
+    h.state.enabled = false;
+    h.engine.settingsChanged();
+    release();
+    await h.advance(0);
+    await h.advance(0);
+    expect(h.stopped).toEqual(["s1"]);
   });
 
   it("reschedules a continuation that hits the limit again and gives up after the cap", async () => {
@@ -209,6 +273,7 @@ describe("LimitResume", () => {
     await stale.advance(LIMIT_RESUME_MARGIN_MS);
     expect(stale.started).toEqual([]);
     expect(stale.pending()).toBeUndefined();
+    expect(stale.notices.map((entry) => entry.notice.severity)).toEqual(["warning"]);
   });
 
   it("keeps the continuation across a shutdown and resumes it on recovery", async () => {
@@ -329,7 +394,8 @@ describe("LimitResume", () => {
       expect(h.pending()?.attempts).toBe(attempt);
     }
     await h.advance(HOUR + LIMIT_RESUME_MARGIN_MS);
-    h.engine.turnSettled("s1", `resume-${LIMIT_RESUME_MAX_ATTEMPTS}`, done("x", Date.now() + HOUR));
+    const lastTurn = `resume-${LIMIT_RESUME_MAX_ATTEMPTS}`;
+    h.engine.turnSettled("s1", lastTurn, done(lastTurn, Date.now() + HOUR));
     expect(h.pending()).toBeUndefined();
     expect(h.notices).toHaveLength(1);
   });
@@ -374,11 +440,11 @@ describe("LimitResume", () => {
   it("tells the user when the continuation could not start", async () => {
     const h = harness();
     h.engine.turnSettled("s1", "t1", done("t1", Date.now() + HOUR));
-    h.state.startError = new Error("claude is updating");
+    h.state.startError = new Error("git snapshot failed");
     await h.advance(HOUR + LIMIT_RESUME_MARGIN_MS);
     expect(h.pending()).toBeUndefined();
     expect(h.notices).toHaveLength(1);
     expect(h.notices[0].notice).toMatchObject({ severity: "error" });
-    expect(h.notices[0].notice.text).toContain("claude is updating");
+    expect(h.notices[0].notice.text).toContain("git snapshot failed");
   });
 });

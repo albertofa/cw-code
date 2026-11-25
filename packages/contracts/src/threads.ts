@@ -55,6 +55,8 @@ export interface ThreadSubagentWait {
 export interface ThreadLimitResume {
   /** Absent when the limit names no reset; then nothing continues on its own. */
   resetsAt?: number;
+  /** When cw-code starts the continuation: shortly after the reset, so the first request does not land on it. Set with `resetsAt`. */
+  resumesAt?: number;
   window?: string;
   /** `model` when only the session's model is limited, so the thread offers to continue on another model now. */
   scope?: "model";
