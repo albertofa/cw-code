@@ -13,6 +13,7 @@ import type {
   DriverKind,
   GitStatus,
   HistoryMessage,
+  LimitResume,
   ImportableSession,
   ImportSessionRequest,
   ImportSessionResult,
@@ -110,7 +111,7 @@ import { shutdownReservedError } from "../shutdown/shutdownReservation.js";
 import { BRANCH_MISMATCH_MARKER } from "./branchMismatch.js";
 import { currentCheckoutSessionIds } from "../sourceControl/branchMismatch.js";
 import { overlayLiveTasks } from "../tasks/overlayLiveTasks.js";
-import { SessionBusyError } from "./SessionBusyError.js";
+import { HARNESS_UPDATE_BUSY_DETAIL, SessionBusyError } from "./SessionBusyError.js";
 import { PendingRequests, type PendingRequest } from "./PendingRequests.js";
 import type { UsageLedgerQuery, UsageLedgerRow } from "../usage/ledgerTypes.js";
 
@@ -1458,6 +1459,10 @@ export class SessionManager {
     return this.emitSession(sessionId);
   }
 
+  setLimitResume(sessionId: string, next: LimitResume | undefined): void {
+    if (this.store.setLimitResume(sessionId, next)) this.emitSession(sessionId);
+  }
+
   updateAutoFollowUp(sessionId: string, update: (current: AutoFollowUpMeta | undefined) => AutoFollowUpMeta | undefined): SessionMeta | null {
     const session = this.store.getSession(sessionId);
     if (!session) return null;
@@ -2580,7 +2585,7 @@ export class SessionManager {
 
   private assertTurnGateOpen(kind: DriverKind): void {
     const gated = this.turnGate?.(kind) ?? null;
-    if (gated !== null) throw new SessionBusyError("harness updating", gated);
+    if (gated !== null) throw new SessionBusyError(HARNESS_UPDATE_BUSY_DETAIL, gated);
   }
 
   private revertFailedTurnStart(sessionId: string, previous: SessionStatusSnapshot): void {

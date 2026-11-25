@@ -87,6 +87,13 @@ export interface QuestionRequest {
   questions: QuestionInfo[];
 }
 
+/** A turn ended because the account's plan limit ran out; `resetsAt` is epoch milliseconds. */
+export interface UsageLimitHit {
+  resetsAt: number;
+  /** The harness's own name for the exhausted window (e.g. `five_hour`); display only. */
+  window?: string;
+}
+
 export type ThreadEvent =
   | { type: "turn.started"; turnId: string; sessionId: string; startedAt: number; prompt: string }
   | { type: "turn.interrupted"; turnId: string; sessionId: string; reason?: "shutdown" }
@@ -142,6 +149,7 @@ export type ThreadEvent =
       numTurns: number;
       isError: boolean;
       backgroundTasks: number;
+      usageLimit?: UsageLimitHit;
     }
   | { type: "turn.error"; turnId: string; message: string; resumeCursor?: string; retryable?: boolean }
   | {

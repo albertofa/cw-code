@@ -38,6 +38,7 @@ const SETTINGS: AppSettings = {
   prFinishedSessionStatus: "idle",
   idleResolveAfterDays: 30,
   holdingHours: 6,
+  limitAutoResume: true,
   holdingAutoExpireEnabled: false,
   autoTitleEnabled: true,
   autoTitleDriver: "claude",
@@ -385,6 +386,96 @@ describe("ClaudeCliDriver persistent process", () => {
     children[0].stdout.write(`${resultLine()}\n`);
     await settle();
     expect(turnDones(events).at(-1)).toEqual(expect.objectContaining({ isError: false }));
+    driver.dispose();
+  });
+
+  it("reports the plan limit that ended a turn, and only for that turn", async () => {
+    const { driver, events, children } = makeDriver();
+    driver.startTurn({ sessionId: "s1", cwd: "C:\\proj", prompt: "go" });
+    await settle();
+    const quota = { status: "rejected", resetsAt: 1793724600, rateLimitType: "five_hour" };
+    children[0].stdout.write(`${JSON.stringify({
+      type: "assistant", is_api_error_message: true, error: "rate_limit", api_error: "usage_limit_reached", api_error_status: 429,
+      api_error_params: { rate_limit_info: quota },
+      message: { content: [{ type: "text", text: "You've hit your 5-hour limit" }] }
+    })}\n`);
+    children[0].stdout.write(`${resultLine({ result: "" })}\n`);
+    await settle();
+    expect(events.filter((event) => event.type === "assistant.delta")).toEqual([]);
+    expect(turnDones(events).at(-1)).toMatchObject({ isError: true, usageLimit: { resetsAt: 1793724600000, window: "five_hour" } });
+    driver.startTurn({ sessionId: "s1", cwd: "C:\\proj", prompt: "continue" });
+    await settle();
+    children[0].stdout.write(`${resultLine()}\n`);
+    await settle();
+    expect(turnDones(events).at(-1)?.usageLimit).toBeUndefined();
+    driver.dispose();
+  });
+
+  it("falls back to a rejected rate limit event when the error names no reset", async () => {
+    const { driver, events, children } = makeDriver();
+    driver.startTurn({ sessionId: "s1", cwd: "C:\\proj", prompt: "go" });
+    await settle();
+    children[0].stdout.write(`${JSON.stringify({
+      type: "assistant", isApiErrorMessage: true, error: "rate_limit",
+      message: { content: [{ type: "text", text: "You've hit your weekly limit" }] }
+    })}\n`);
+    children[0].stdout.write(`${JSON.stringify({ type: "rate_limit_event", rate_limit_info: { status: "rejected", resetsAt: 1793724600, rateLimitType: "seven_day" } })}\n`);
+    children[0].stdout.write(`${resultLine({ result: "" })}\n`);
+    await settle();
+    expect(events.filter((event) => event.type === "assistant.delta")).toEqual([]);
+    expect(turnDones(events).at(-1)).toMatchObject({ usageLimit: { resetsAt: 1793724600000, window: "seven_day" } });
+    driver.dispose();
+  });
+
+  it("keeps the rejected window when another window is reported usable", async () => {
+    const { driver, events, children } = makeDriver();
+    driver.startTurn({ sessionId: "s1", cwd: "C:\\proj", prompt: "go" });
+    await settle();
+    children[0].stdout.write(`${JSON.stringify({ type: "rate_limit_event", rate_limit_info: { status: "rejected", resetsAt: 1793724600, rateLimitType: "seven_day" } })}\n`);
+    children[0].stdout.write(`${JSON.stringify({ type: "rate_limit_event", rate_limit_info: { status: "allowed", resetsAt: 1793700000, rateLimitType: "five_hour" } })}\n`);
+    children[0].stdout.write(`${JSON.stringify({
+      type: "assistant", is_api_error_message: true, error: "rate_limit",
+      message: { content: [{ type: "text", text: "You've hit your weekly limit" }] }
+    })}\n`);
+    children[0].stdout.write(`${resultLine({ result: "" })}\n`);
+    await settle();
+    expect(turnDones(events).at(-1)?.usageLimit).toEqual({ resetsAt: 1793724600000, window: "seven_day" });
+    driver.dispose();
+  });
+
+  it("does not reuse a rate limit event from an earlier turn", async () => {
+    const { driver, events, children } = makeDriver();
+    driver.startTurn({ sessionId: "s1", cwd: "C:\\proj", prompt: "go" });
+    await settle();
+    children[0].stdout.write(`${JSON.stringify({ type: "rate_limit_event", rate_limit_info: { status: "rejected", resetsAt: 1793724600, rateLimitType: "five_hour" } })}\n`);
+    children[0].stdout.write(`${resultLine()}\n`);
+    await settle();
+    driver.startTurn({ sessionId: "s1", cwd: "C:\\proj", prompt: "again" });
+    await settle();
+    children[0].stdout.write(`${JSON.stringify({
+      type: "assistant", isApiErrorMessage: true, error: "rate_limit",
+      message: { content: [{ type: "text", text: "You've hit your limit" }] }
+    })}\n`);
+    children[0].stdout.write(`${resultLine({ result: "" })}\n`);
+    await settle();
+    expect(turnDones(events).at(-1)).toMatchObject({ isError: true });
+    expect(turnDones(events).at(-1)?.usageLimit).toBeUndefined();
+    driver.dispose();
+  });
+
+  it("does not report a plan limit for other API errors", async () => {
+    const { driver, events, children } = makeDriver();
+    driver.startTurn({ sessionId: "s1", cwd: "C:\\proj", prompt: "go" });
+    await settle();
+    children[0].stdout.write(`${JSON.stringify({ type: "rate_limit_event", rate_limit_info: { status: "rejected", resetsAt: 1793724600, rateLimitType: "five_hour" } })}\n`);
+    children[0].stdout.write(`${JSON.stringify({
+      type: "assistant", is_api_error_message: true, error: "rate_limit", api_error: "model_requires_usage_credits",
+      message: { content: [{ type: "text", text: "This model requires usage credits." }] }
+    })}\n`);
+    children[0].stdout.write(`${resultLine({ result: "" })}\n`);
+    await settle();
+    expect(turnDones(events).at(-1)).toMatchObject({ isError: true });
+    expect(turnDones(events).at(-1)?.usageLimit).toBeUndefined();
     driver.dispose();
   });
 

@@ -33,6 +33,7 @@ const SETTINGS: AppSettings = {
   prFinishedSessionStatus: "idle",
   idleResolveAfterDays: 30,
   holdingHours: 6,
+  limitAutoResume: true,
   holdingAutoExpireEnabled: false,
   autoTitleEnabled: true,
   autoTitleDriver: "claude",

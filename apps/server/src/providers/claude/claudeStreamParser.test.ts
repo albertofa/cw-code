@@ -9,7 +9,10 @@ import {
   claudeControlResponse,
   claudeDenyResponse,
   claudeQuestionRequest,
+  isClaudeApiErrorMessage,
   parseClaudeCompactBoundary,
+  parseClaudeRateLimitEvent,
+  parseClaudeUsageLimit,
   parseClaudeControlRequest,
   parseClaudeSubagentHandback,
   parseClaudeSystemInit,
@@ -1063,5 +1066,37 @@ describe("buildClaudeAllowRule", () => {
     expect(buildClaudeAllowRule("Bash", { command: "rm -rf /" })).toBe("Bash");
     expect(buildClaudeAllowRule("Edit", { file_path: "src/a.ts" })).toBe("Edit");
     expect(buildClaudeAllowRule("  Read  ", null)).toBe("Read");
+  });
+});
+
+describe("Claude plan limit parsing", () => {
+  const info = { status: "rejected", resetsAt: 1793724600, rateLimitType: "five_hour" };
+
+  it("reads a rejected rate limit event in milliseconds, and the window an allowed one frees", () => {
+    expect(parseClaudeRateLimitEvent({ type: "rate_limit_event", rate_limit_info: info })).toEqual({
+      rejected: { resetsAt: 1793724600000, window: "five_hour" }
+    });
+    expect(parseClaudeRateLimitEvent({ type: "rate_limit_event", rate_limit_info: { status: "allowed", rateLimitType: "seven_day" } })).toEqual({
+      usable: "seven_day"
+    });
+    expect(parseClaudeRateLimitEvent({ type: "rate_limit_event", rate_limit_info: null })).toEqual({ usable: undefined });
+    expect(parseClaudeRateLimitEvent({ type: "assistant" })).toBeUndefined();
+    expect(parseClaudeRateLimitEvent(null)).toBeUndefined();
+  });
+
+  it("reads the limit behind a stream API error, and nothing for other errors", () => {
+    expect(parseClaudeUsageLimit({ error: "rate_limit", api_error: "usage_limit_reached", api_error_params: { rate_limit_info: info } })).toEqual({
+      hit: { resetsAt: 1793724600000, window: "five_hour" }
+    });
+    expect(parseClaudeUsageLimit({ error: "rate_limit" })).toEqual({});
+    expect(parseClaudeUsageLimit({ error: "rate_limit", api_error: "usage_limit_reached", api_error_params: { rate_limit_info: { ...info, status: "allowed" } } })).toEqual({});
+    expect(parseClaudeUsageLimit({ error: "rate_limit", api_error: "model_requires_usage_credits" })).toBeUndefined();
+    expect(parseClaudeUsageLimit({ error: "server_error" })).toBeUndefined();
+  });
+
+  it("recognizes both spellings of the API error flag", () => {
+    expect(isClaudeApiErrorMessage({ is_api_error_message: true })).toBe(true);
+    expect(isClaudeApiErrorMessage({ isApiErrorMessage: true })).toBe(true);
+    expect(isClaudeApiErrorMessage({ type: "assistant" })).toBe(false);
   });
 });
