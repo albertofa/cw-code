@@ -427,6 +427,22 @@ describe("ClaudeCliDriver persistent process", () => {
     driver.dispose();
   });
 
+  it("keeps the rejected window when another window is reported usable", async () => {
+    const { driver, events, children } = makeDriver();
+    driver.startTurn({ sessionId: "s1", cwd: "C:\\proj", prompt: "go" });
+    await settle();
+    children[0].stdout.write(`${JSON.stringify({ type: "rate_limit_event", rate_limit_info: { status: "rejected", resetsAt: 1793724600, rateLimitType: "seven_day" } })}\n`);
+    children[0].stdout.write(`${JSON.stringify({ type: "rate_limit_event", rate_limit_info: { status: "allowed", resetsAt: 1793700000, rateLimitType: "five_hour" } })}\n`);
+    children[0].stdout.write(`${JSON.stringify({
+      type: "assistant", is_api_error_message: true, error: "rate_limit",
+      message: { content: [{ type: "text", text: "You've hit your weekly limit" }] }
+    })}\n`);
+    children[0].stdout.write(`${resultLine({ result: "" })}\n`);
+    await settle();
+    expect(turnDones(events).at(-1)?.usageLimit).toEqual({ resetsAt: 1793724600000, window: "seven_day" });
+    driver.dispose();
+  });
+
   it("does not reuse a rate limit event from an earlier turn", async () => {
     const { driver, events, children } = makeDriver();
     driver.startTurn({ sessionId: "s1", cwd: "C:\\proj", prompt: "go" });

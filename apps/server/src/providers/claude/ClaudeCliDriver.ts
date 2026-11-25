@@ -172,7 +172,7 @@ interface ClaudeProcessState {
   mainModel?: string;
   compactedPostTokens?: number;
   apiErrorMessage?: string;
-  /** Exhausted plan window the CLI reported during the current turn; cleared at each turn start and when the window is usable again. */
+  /** Exhausted plan window the CLI reported during the current turn; cleared at each turn start and when that window is usable again. */
   rejectedLimit?: UsageLimitHit;
   /** Plan limit behind `apiErrorMessage`, when that error is one. */
   usageLimit?: UsageLimitHit;
@@ -490,7 +490,9 @@ export class ClaudeCliDriver implements CliDriver {
       const message = JSON.parse(line);
       const rateLimit = parseClaudeRateLimitEvent(message);
       if (rateLimit !== undefined) {
-        state.rejectedLimit = rateLimit ?? undefined;
+        if ("rejected" in rateLimit) state.rejectedLimit = rateLimit.rejected;
+        // Only the exhausted window becoming usable again clears it; another window's event leaves it.
+        else if (rateLimit.usable === undefined || rateLimit.usable === state.rejectedLimit?.window) state.rejectedLimit = undefined;
         return;
       }
       if (message?.type === "assistant" && isClaudeApiErrorMessage(message) && !message.parent_tool_use_id) {

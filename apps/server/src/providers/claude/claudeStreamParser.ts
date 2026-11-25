@@ -605,12 +605,19 @@ function claudeRejectedLimit(info: unknown): UsageLimitHit | undefined {
   return { resetsAt: resetsAt < 1e12 ? resetsAt * 1000 : resetsAt, ...(window ? { window } : {}) };
 }
 
-/** `undefined` when the message is not a rate limit event; `null` when it reports a window that is not exhausted. */
-export function parseClaudeRateLimitEvent(message: unknown): UsageLimitHit | null | undefined {
+/**
+ * A `rate_limit_event`: `rejected` when a window is exhausted, else the window it reports as usable again
+ * (`window` undefined when the event names none). `undefined` when the message is not a rate limit event.
+ */
+export function parseClaudeRateLimitEvent(message: unknown): { rejected: UsageLimitHit } | { usable: string | undefined } | undefined {
   if (message === null || typeof message !== "object") return undefined;
   const event = message as { type?: unknown; rate_limit_info?: unknown };
   if (event.type !== "rate_limit_event") return undefined;
-  return claudeRejectedLimit(event.rate_limit_info) ?? null;
+  const rejected = claudeRejectedLimit(event.rate_limit_info);
+  if (rejected) return { rejected };
+  const info = event.rate_limit_info;
+  const window = info !== null && typeof info === "object" ? str((info as ClaudeRateLimitInfo).rateLimitType) : undefined;
+  return { usable: window };
 }
 
 interface ClaudeApiErrorFields {
@@ -618,13 +625,10 @@ interface ClaudeApiErrorFields {
   is_api_error_message?: unknown;
   isApiErrorMessage?: unknown;
   api_error?: unknown;
-  apiError?: unknown;
   api_error_params?: { rate_limit_info?: unknown } | null;
-  apiErrorParams?: { rate_limit_info?: unknown } | null;
-  quotaLimits?: unknown;
 }
 
-/** The stream spells the flag `is_api_error_message`; transcripts and older CLIs spell it `isApiErrorMessage`. */
+/** Current CLIs spell the stream flag `is_api_error_message`; older ones sent `isApiErrorMessage`. */
 export function isClaudeApiErrorMessage(message: unknown): boolean {
   if (message === null || typeof message !== "object") return false;
   const fields = message as ClaudeApiErrorFields;
@@ -632,21 +636,17 @@ export function isClaudeApiErrorMessage(message: unknown): boolean {
 }
 
 /**
- * Whether an API error message is the account's plan limit, and the limit when the message carries it
- * (`api_error_params.rate_limit_info` on the stream; the camelCase and `quotaLimits` spellings in transcripts).
- * `hit` is missing on a plan-limit error that names no reset; the caller then falls back to the latest
- * rejected `rate_limit_event`.
+ * Whether a stream API error message is the account's plan limit, and the limit when the message carries it
+ * (`api_error_params.rate_limit_info`). `hit` is missing on a plan-limit error that names no reset; the
+ * caller then falls back to the turn's rejected `rate_limit_event`.
  */
 export function parseClaudeUsageLimit(message: unknown): { hit?: UsageLimitHit } | undefined {
   if (message === null || typeof message !== "object") return undefined;
   const fields = message as ClaudeApiErrorFields;
   if (fields.error !== "rate_limit") return undefined;
-  const kind = fields.api_error ?? fields.apiError;
+  const kind = fields.api_error;
   if (kind !== undefined && kind !== "usage_limit_reached") return undefined;
-  const hit =
-    claudeRejectedLimit(fields.api_error_params?.rate_limit_info) ??
-    claudeRejectedLimit(fields.apiErrorParams?.rate_limit_info) ??
-    claudeRejectedLimit(fields.quotaLimits);
+  const hit = claudeRejectedLimit(fields.api_error_params?.rate_limit_info);
   return hit ? { hit } : {};
 }
 

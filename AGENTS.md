@@ -198,7 +198,13 @@ Core behaviors:
   off, or resolving/archiving the session drops it. It is persisted, so it survives a restart (a
   reset more than 24 h past is dropped); three continuations in a row that end on a limit stop the
   retries with a thread notice. Subagents are never resumed this way, and turns with an origin are
-  invisible to PR auto follow-up.
+  invisible to PR auto follow-up. The turn that hit the limit is an error turn, so it still pauses
+  auto follow-up (`error`) and a successful continuation does not lift that pause; the next user turn does.
+  The thread entry carries `resumesAt` (the reset plus the one-minute margin). A continuation that is
+  dropped without starting posts a thread notice saying why (stale reset, a pending answer, another turn
+  running, a start error), except while subagents still run, since their wake turn continues the work. A
+  harness update holding turns back keeps it pending and retries after the margin. Cancelling (or
+  turning the setting off) while its turn is starting stops that turn once it has started.
 - Browser entry: a browser opens the server's own address (`/`) and pairs with a device
   token. The owner creates one in Settings (`devices.create`) and gets a link
   `<serverPublicUrl>/#token=<token>`; the UI reads the hash, removes it from the address bar and

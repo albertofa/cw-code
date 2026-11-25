@@ -1,12 +1,12 @@
 import type { AppSettings, LimitResume as LimitResumeMeta, SessionMeta, ThreadLimitResume } from "@cw-code/contracts";
 import { SHUTDOWN_RESERVED_MESSAGE } from "../shutdown/shutdownReservation.js";
-import { HARNESS_UPDATE_BUSY_DETAIL } from "./SessionBusyError.js";
+import { HARNESS_UPDATE_BUSY_DETAIL, SessionBusyError } from "./SessionBusyError.js";
 import type { SessionRuntime, SettledTurnEvent, ThreadNotice } from "../threads/ThreadService.js";
 import type { TurnOrigin } from "../threads/TurnService.js";
 
 export const LIMIT_RESUME_NOTICE_ID = "limit-resume";
 export const LIMIT_RESUME_PROMPT =
-  "The usage limit that stopped your previous turn has reset. Continue the work you were doing from where it stopped.";
+  "[Sent automatically by cw-code] The usage limit that stopped your previous turn has reset. Continue the work you were doing from where it stopped.";
 /** Waited after the advertised reset so the first request does not land on the boundary. */
 export const LIMIT_RESUME_MARGIN_MS = 60_000;
 /** Automatic continuations in a row that may end on a limit again before cw-code stops trying. */
@@ -21,6 +21,8 @@ export interface LimitResumeDeps {
   runtime(sessionId: string): Pick<SessionRuntime, "busy" | "approvals" | "questions">;
   waitingOnSubagents(sessionId: string): boolean;
   startTurn(sessionId: string, prompt: string): Promise<string>;
+  /** Stops the session's running turn (a continuation that was cancelled while it was starting). */
+  stopTurn(sessionId: string): void;
   setLimitResume(sessionId: string, next: LimitResumeMeta | undefined): void;
   refresh(sessionId: string): void;
   postNotice(sessionId: string, notice: ThreadNotice): void;
@@ -47,6 +49,8 @@ export class LimitResume {
    */
   private readonly resumed = new Map<string, { turnId: string; attempts: number }>();
   private readonly published = new Map<string, number>();
+  /** Sessions whose continuation was cancelled while its turn was starting; the turn is stopped once it starts. */
+  private readonly cancelledWhileStarting = new Set<string>();
   private disposed = false;
 
   constructor(private readonly deps: LimitResumeDeps) {}
@@ -62,7 +66,13 @@ export class LimitResume {
   extras(sessionId: string): { limitResume: ThreadLimitResume | null } {
     const pending = this.find(sessionId)?.limitResume;
     if (!pending) return { limitResume: null };
-    return { limitResume: { resetsAt: pending.resetsAt, ...(pending.window ? { window: pending.window } : {}) } };
+    return {
+      limitResume: {
+        resetsAt: pending.resetsAt,
+        resumesAt: pending.resetsAt + LIMIT_RESUME_MARGIN_MS,
+        ...(pending.window ? { window: pending.window } : {})
+      }
+    };
   }
 
   turnStarted(sessionId: string, turn: { turnId: string; origin?: TurnOrigin }): void {
@@ -105,6 +115,7 @@ export class LimitResume {
   /** Drops the pending continuation; false when the session had none. */
   cancel(sessionId: string): boolean {
     if (!this.find(sessionId)?.limitResume) return false;
+    if (this.firing.has(sessionId)) this.cancelledWhileStarting.add(sessionId);
     this.clear(sessionId);
     return true;
   }
@@ -124,7 +135,9 @@ export class LimitResume {
   settingsChanged(): void {
     if (this.deps.settings().limitAutoResume) return;
     for (const session of this.deps.sessions()) {
-      if (session.limitResume) this.clear(session.id);
+      if (!session.limitResume) continue;
+      if (this.firing.has(session.id)) this.cancelledWhileStarting.add(session.id);
+      this.clear(session.id);
     }
   }
 
@@ -172,8 +185,17 @@ export class LimitResume {
     const pending = session?.limitResume;
     if (!session || !pending) return;
     const overdue = this.now() - pending.resetsAt;
-    if (session.subagent || isClosed(session) || !this.deps.settings().limitAutoResume || overdue > LIMIT_RESUME_STALE_MS) {
+    if (session.subagent || isClosed(session) || !this.deps.settings().limitAutoResume) {
       this.clear(sessionId);
+      return;
+    }
+    if (overdue > LIMIT_RESUME_STALE_MS) {
+      this.clear(sessionId);
+      this.notify(sessionId, {
+        noticeId: LIMIT_RESUME_NOTICE_ID,
+        text: "The usage limit reset more than a day ago, so cw-code did not continue this session on its own. Send a message to continue.",
+        severity: "warning"
+      });
       return;
     }
     if (overdue < 0) {
@@ -181,24 +203,39 @@ export class LimitResume {
       return;
     }
     if (this.deps.shutdownReserved()) return;
-    const runtime = this.deps.runtime(sessionId);
-    if (runtime.busy || runtime.approvals.length > 0 || runtime.questions.length > 0 || this.deps.waitingOnSubagents(sessionId)) {
+    // Waiting subagents wake the session with their results, which continues the work; drop quietly.
+    if (this.deps.waitingOnSubagents(sessionId)) {
       this.clear(sessionId);
+      return;
+    }
+    const runtime = this.deps.runtime(sessionId);
+    const blocked = runtime.approvals.length > 0 || runtime.questions.length > 0
+      ? "this session is waiting on your answer"
+      : runtime.busy
+        ? "another turn was running in this session"
+        : null;
+    if (blocked) {
+      this.clear(sessionId);
+      this.notify(sessionId, {
+        noticeId: LIMIT_RESUME_NOTICE_ID,
+        text: `The usage limit reset, but cw-code did not continue this session because ${blocked}. Send a message to continue.`,
+        severity: "info"
+      });
       return;
     }
     this.firing.set(sessionId, pending.attempts + 1);
     try {
       await this.deps.startTurn(sessionId, LIMIT_RESUME_PROMPT);
     } catch (error) {
+      this.cancelledWhileStarting.delete(sessionId);
       if (errorMessage(error) === SHUTDOWN_RESERVED_MESSAGE) return;
-      const busy = error as { code?: unknown; detail?: unknown } | null;
-      if (busy?.code === "session-busy" && busy.detail === HARNESS_UPDATE_BUSY_DETAIL) {
+      if (error instanceof SessionBusyError && error.detail === HARNESS_UPDATE_BUSY_DETAIL) {
         // The harness is updating; the reset has passed, so `arm` retries after the margin.
         this.arm(sessionId);
         return;
       }
       this.clear(sessionId);
-      if (busy?.code === "session-busy") return;
+      if (error instanceof SessionBusyError) return;
       console.warn(`[limit-resume] could not continue session ${sessionId}: ${errorMessage(error)}`);
       this.notify(sessionId, {
         noticeId: LIMIT_RESUME_NOTICE_ID,
@@ -208,6 +245,11 @@ export class LimitResume {
       return;
     } finally {
       this.firing.delete(sessionId);
+    }
+    if (this.cancelledWhileStarting.delete(sessionId)) {
+      // "Don't continue" (or turning the setting off) landed while the turn was starting.
+      this.deps.stopTurn(sessionId);
+      return;
     }
     this.clear(sessionId);
   }

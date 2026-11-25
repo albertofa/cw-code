@@ -3,13 +3,30 @@ import { Hourglass } from "lucide-react";
 import { ipcErrorMessage } from "./ipcError.js";
 import { useThreadEntry } from "./useThread.js";
 
-export function limitResumeSentence(resetsAt: number, now: number = Date.now()): string {
-  const date = new Date(resetsAt);
+/** `resumesAt` is when cw-code starts the continuation, shortly after the limit resets. */
+export function limitResumeSentence(resumesAt: number, now: number = Date.now()): string {
+  if (resumesAt <= now) return "Usage limit reached. cw-code is about to continue this session.";
+  const date = new Date(resumesAt);
   const time = date.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
-  if (resetsAt <= now) return "Usage limit reached. cw-code is about to continue this session.";
   const sameDay = date.toDateString() === new Date(now).toDateString();
   const when = sameDay ? time : `${date.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" })} at ${time}`;
-  return `Usage limit reached. cw-code continues this session when it resets, ${sameDay ? "at " : "on "}${when}.`;
+  return `Usage limit reached. cw-code continues this session ${sameDay ? "at " : "on "}${when}, once it resets.`;
+}
+
+/** Re-renders once `at` passes, so the dock switches to "about to continue" without waiting for another update. */
+function useNowAfter(at: number | undefined): number {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (at === undefined) return;
+    const wait = at - Date.now();
+    if (wait <= 0) {
+      setNow(Date.now());
+      return;
+    }
+    const timer = setTimeout(() => setNow(Date.now()), Math.min(wait, 2 ** 31 - 1));
+    return () => clearTimeout(timer);
+  }, [at]);
+  return now;
 }
 
 export function LimitResumeDock({ sessionId }: { sessionId: string }) {
@@ -17,6 +34,7 @@ export function LimitResumeDock({ sessionId }: { sessionId: string }) {
   const [cancelling, setCancelling] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const waiting = pending != null;
+  const now = useNowAfter(pending?.resumesAt);
 
   useEffect(() => {
     if (!waiting) setError(null);
@@ -36,7 +54,7 @@ export function LimitResumeDock({ sessionId }: { sessionId: string }) {
     }
   };
 
-  const sentence = limitResumeSentence(pending.resetsAt);
+  const sentence = limitResumeSentence(pending.resumesAt, now);
   return (
     <section className="pr-dock branch-dock" aria-label="Usage limit">
       <div className="pr-dock-head">

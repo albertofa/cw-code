@@ -54,6 +54,8 @@ export interface ThreadSubagentWait {
 /** Set while cw-code waits for a plan limit to reset before continuing the session on its own. */
 export interface ThreadLimitResume {
   resetsAt: number;
+  /** When cw-code starts the continuation: shortly after the reset, so the first request does not land on it. */
+  resumesAt: number;
   window?: string;
 }
 
