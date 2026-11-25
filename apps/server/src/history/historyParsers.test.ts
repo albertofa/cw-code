@@ -158,15 +158,15 @@ describe("parseWorktreeList", () => {
   const sha = "a".repeat(40);
   const output = [
     `worktree C:/repo/app\nHEAD ${sha}\nbranch refs/heads/main\n`,
-    `worktree C:/wt-bo\nHEAD ${sha}\nbranch refs/heads/feature/x\nlocked\n`,
+    `worktree C:/wt-feature\nHEAD ${sha}\nbranch refs/heads/feature/x\nlocked\n`,
     `worktree C:/tmp/detached\nHEAD ${sha}\ndetached\n`,
     ""
   ].join("\n");
 
   it("reads branch, head and folder name and marks the main and current worktrees", () => {
-    expect(parseWorktreeList(output, "C:/wt-bo")).toEqual([
+    expect(parseWorktreeList(output, "C:/wt-feature")).toEqual([
       { path: "C:/repo/app", name: "app", branch: "main", head: sha, isCurrent: false, isMain: true, sessionId: null },
-      { path: "C:/wt-bo", name: "wt-bo", branch: "feature/x", head: sha, isCurrent: true, isMain: false, sessionId: null },
+      { path: "C:/wt-feature", name: "wt-feature", branch: "feature/x", head: sha, isCurrent: true, isMain: false, sessionId: null },
       { path: "C:/tmp/detached", name: "detached", branch: null, head: sha, isCurrent: false, isMain: false, sessionId: null }
     ]);
   });
