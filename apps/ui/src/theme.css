@@ -14237,3 +14237,40 @@ button.gitbar-checkout:hover {
   white-space: nowrap;
   color: var(--faint);
 }
+
+.history-viewing {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border-soft);
+  background: var(--violet-soft);
+  color: var(--text);
+  font-size: var(--t-xs);
+}
+
+.history-viewing-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.history-worktrees-label {
+  flex: none;
+  align-self: center;
+  margin-right: 6px;
+  color: var(--faint);
+  font-size: var(--t-3xs);
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.history-worktree-tab.active {
+  background: var(--violet-soft);
+  box-shadow: inset 0 2px 0 var(--violet);
+}
+
+.history-worktree-tab.active .history-worktree-name {
+  color: var(--text);
+}

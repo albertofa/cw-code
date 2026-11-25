@@ -8,6 +8,7 @@ import { useGitStatus } from "../useGit.js";
 import { HistoryCommitSidebar, HistoryFileDiff, useHistoryCommit } from "./HistoryCommitView.js";
 import { HistoryGraph, WIP_SHA } from "./HistoryGraph.js";
 import { loadShowAvatars, saveShowAvatars, useHistoryAvatars } from "./historyAvatars.js";
+import { MenuSelect, type MenuOption } from "../MenuSelect.js";
 import { useHistorySide } from "./useHistorySide.js";
 
 const PAGE_SIZE = 2000;
@@ -139,6 +140,19 @@ export function HistoryPanel({ sessionId }: { sessionId: string }) {
   const branch = head?.branch ?? (head?.sha ? `detached at ${head.sha.slice(0, 7)}` : null);
   const worktrees = log?.worktrees ?? [];
   const activePath = viewWorktree ?? homePath;
+  const viewed = viewWorktree === null ? undefined : worktrees.find((worktree) => worktree.path === viewWorktree);
+  const sessionBranch = worktrees.find((worktree) => worktree.path === homePath)?.branch ?? null;
+  const worktreeOptions: MenuOption[] = worktrees.map((worktree) => {
+    const home = worktree.path === homePath;
+    const owner = worktree.sessionId && !home ? " · used by another cw-code session" : "";
+    return {
+      id: worktree.path,
+      label: home ? "This session" : worktree.name,
+      hint: worktree.branch ?? "detached",
+      description: `${worktree.path}${owner}`,
+      icon: <GitFork size={13} />
+    };
+  });
   const dirtyCount = viewWorktree === null ? (status?.available ? status.dirtyCount : 0) : (log?.wipCount ?? 0);
   const failure = topicError ?? (error || null);
 
@@ -148,7 +162,25 @@ export function HistoryPanel({ sessionId }: { sessionId: string }) {
         <span className="inspect-title">
           <GitGraph size={14} /> History
         </span>
-        {branch && <span className="inspect-head-ref">{branch}</span>}
+        {worktrees.length > 1 && activePath && (
+          <MenuSelect
+            label="Switch worktree"
+            title="Switch worktree — each one has its own branch and changes"
+            direction="down"
+            value={activePath}
+            display={viewed ? viewed.name : "This session"}
+            icon={<GitFork size={13} aria-hidden="true" />}
+            options={worktreeOptions}
+            onPick={openWorktree}
+            searchable
+            searchPlaceholder="Filter worktrees…"
+          />
+        )}
+        {branch && (
+          <span className="inspect-head-ref" title={viewed ? viewed.path : undefined}>
+            {viewed ? `${viewed.name} · ${branch}` : branch}
+          </span>
+        )}
         {loading && log && <span className="inspect-refreshing">Refreshing…</span>}
         {action && <span className="inspect-refreshing">{action}</span>}
         <button
@@ -173,6 +205,7 @@ export function HistoryPanel({ sessionId }: { sessionId: string }) {
       </div>
       {worktrees.length > 1 && (
         <div className="history-worktrees" role="tablist" aria-label="Worktrees">
+          <span className="history-worktrees-label">Worktrees</span>
           {worktrees.map((worktree) => {
             const home = worktree.path === homePath;
             const active = worktree.path === activePath;
@@ -193,6 +226,19 @@ export function HistoryPanel({ sessionId }: { sessionId: string }) {
               </button>
             );
           })}
+        </div>
+      )}
+      {viewed && (
+        <div className="history-viewing" role="status">
+          <GitFork size={13} aria-hidden="true" />
+          <span className="history-viewing-text">
+            You are viewing the worktree <b>{viewed.name}</b>
+            {viewed.branch ? <> on <b>{viewed.branch}</b></> : null}, not your session's checkout
+            {sessionBranch ? <> (<b>{sessionBranch}</b>)</> : null}. Switching branches and pulling here do not change your session.
+          </span>
+          <button type="button" className="inspect-mode" onClick={() => openWorktree(null)}>
+            Back to this session
+          </button>
         </div>
       )}
       {failure && <div className="inspect-error">History unavailable: {failure}</div>}
