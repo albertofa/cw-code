@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ArrowDownToLine, GitGraph, UserRound } from "lucide-react";
+import { ArrowDownToLine, GitFork, GitGraph, UserRound, X } from "lucide-react";
 import type { HistoryCommit, HistoryLog, HistoryTopicData, HistoryWorktree } from "@cw-code/contracts";
 import { historyTopic } from "@cw-code/shared/topics";
 import { usePanelStore } from "../../stores/panelStore.js";
@@ -13,6 +13,7 @@ import { useHistorySide } from "./useHistorySide.js";
 const PAGE_SIZE = 2000;
 const MAX_LIMIT = 20000;
 const NO_COMMITS: HistoryCommit[] = [];
+const NOTICE_MS = 8000;
 const isWip = (commit: HistoryCommit): boolean => commit.sha === WIP_SHA;
 
 export function HistoryPanel({ sessionId }: { sessionId: string }) {
@@ -30,6 +31,7 @@ export function HistoryPanel({ sessionId }: { sessionId: string }) {
   const panelRef = useRef<HTMLDivElement>(null);
   const [action, setAction] = useState<string | null>(null);
   const [actionError, setActionError] = useState("");
+  const [notice, setNotice] = useState<{ branch: string; worktree: HistoryWorktree } | null>(null);
   const busy = useRef(false);
   const worktreeBranches = useMemo<ReadonlyMap<string, HistoryWorktree>>(() => {
     const byBranch = new Map<string, HistoryWorktree>();
@@ -102,13 +104,21 @@ export function HistoryPanel({ sessionId }: { sessionId: string }) {
     (branch: string): void => {
       const elsewhere = worktreeBranches.get(branch);
       if (elsewhere) {
-        setActionError(`'${branch}' is checked out in the worktree ${elsewhere.name} (${elsewhere.path}) — git allows a branch in only one worktree at a time`);
+        setActionError("");
+        setNotice({ branch, worktree: elsewhere });
         return;
       }
+      setNotice(null);
       runAction(`Checking out ${branch}…`, () => window.cw.switchGitBranch(sessionId, branch));
     },
     [runAction, sessionId, worktreeBranches]
   );
+
+  useEffect(() => {
+    if (!notice) return;
+    const timer = setTimeout(() => setNotice(null), NOTICE_MS);
+    return () => clearTimeout(timer);
+  }, [notice]);
 
   const head = topic?.data.head ?? null;
   const currentRef = head?.branch ? topic?.data.refs.find((ref) => ref.kind === "local" && ref.isCurrent) : undefined;
@@ -158,6 +168,23 @@ export function HistoryPanel({ sessionId }: { sessionId: string }) {
       {actionError && (
         <div className="inspect-error history-action-error" role="alert" onClick={() => setActionError("")} title="Click to dismiss">
           {actionError}
+        </div>
+      )}
+      {notice && (
+        <div className="history-notice" role="status">
+          <GitFork size={13} aria-hidden="true" />
+          <span className="history-notice-text">
+            <b>{notice.branch}</b> is open in the worktree <b>{notice.worktree.name}</b>. Git keeps a branch in one worktree at a time, so switch there or
+            close that worktree first.
+          </span>
+          {window.cw.local && (
+            <button type="button" className="inspect-mode" onClick={() => void window.cw.local?.openPath(notice.worktree.path)} title={notice.worktree.path}>
+              Open {notice.worktree.name}
+            </button>
+          )}
+          <button type="button" className="inspect-mode" onClick={() => setNotice(null)} aria-label="Dismiss">
+            <X size={13} aria-hidden="true" />
+          </button>
         </div>
       )}
       {!failure && !log && <div className="diff-empty">Loading history…</div>}

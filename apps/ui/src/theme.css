@@ -14180,3 +14180,27 @@ button.gitbar-checkout:hover {
 .history-ref-stack-row .history-ref-wt {
   background: color-mix(in srgb, var(--lane) 30%, transparent);
 }
+
+.history-ref-wt.compact {
+  flex: none;
+  padding: 0 2px;
+}
+
+.history-notice {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 8px 10px 0;
+  padding: 6px 8px 6px 10px;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--r-sm);
+  background: var(--tool);
+  color: var(--text);
+  font-size: var(--t-xs);
+}
+
+.history-notice-text {
+  flex: 1;
+  min-width: 0;
+}

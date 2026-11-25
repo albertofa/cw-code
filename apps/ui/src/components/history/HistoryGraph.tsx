@@ -74,12 +74,12 @@ function worktreeOf(entry: RefEntry | undefined, worktreeBranches: ReadonlyMap<s
   return worktreeBranches.get(entry.name);
 }
 
-function WorktreeChip({ worktree }: { worktree: HistoryWorktree | undefined }) {
+function WorktreeChip({ worktree, compact = false }: { worktree: HistoryWorktree | undefined; compact?: boolean }) {
   if (!worktree) return null;
   return (
-    <span className="history-ref-wt" title={`Worktree ${worktree.name} — ${worktree.path}`}>
+    <span className={`history-ref-wt${compact ? " compact" : ""}`} title={`Open in the worktree ${worktree.name} — ${worktree.path}`}>
       <GitFork size={10} aria-hidden="true" />
-      {worktree.name}
+      {!compact && worktree.name}
     </span>
   );
 }
@@ -120,7 +120,7 @@ function RefLabelCell({ label, onCheckout, worktreeBranches }: { label: RefLabel
         >
           <RefIcons kind={label.kind} isCurrent={label.isCurrent} hasLocal={label.hasLocal} hasRemote={label.hasRemote} />
           <span className="history-ref-text">{label.label}</span>
-          <WorktreeChip worktree={worktreeOf(primary, worktreeBranches)} />
+          <WorktreeChip worktree={worktreeOf(primary, worktreeBranches)} compact />
           {stacked && <span className="history-ref-extra">+{label.extra}</span>}
         </span>
         {open && (
