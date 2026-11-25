@@ -26,4 +26,9 @@ export function registerHistoryHandlers(router: Router, app: ServerApp): void {
     const authors = parseAvatarAuthors(args.authors);
     return services().historyAvatars.resolve(await rootOf(args.sessionId), authors);
   });
+  handle(router, "history.pull", async (raw) => {
+    const { sessions } = services();
+    const sessionId = knownSessionId(sessions, parseArgs(raw, "history.pull").sessionId);
+    await sessions.pullBranch(sessionId);
+  });
 }

@@ -2414,6 +2414,19 @@ export class SessionManager {
     }
   }
 
+  async pullBranch(sessionId: string): Promise<GitStatus> {
+    try {
+      return await this.withBranchSwitch(sessionId, async () => {
+        const project = this.projectForSession(sessionId);
+        const root = await this.ensureWorktree(sessionId);
+        await this.git.pullFastForward(root);
+        return this.git.status(root, project);
+      });
+    } finally {
+      this.notifySessionCheckoutChanged(sessionId, [sessionId]);
+    }
+  }
+
   private switchSessionBranch(sessionId: string, branch: string): Promise<GitStatus> {
     return this.withBranchSwitch(sessionId, async () => {
       const session = this.requireSession(sessionId);
