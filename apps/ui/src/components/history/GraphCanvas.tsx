@@ -27,6 +27,21 @@ function laneX(lane: number): number {
   return GRAPH_GAP + LANE_PADDING / 2 + lane * LANE_WIDTH + LANE_WIDTH / 2;
 }
 
+function nodeLane(lane: number): number {
+  return Math.min(lane, MAX_LANES - 1);
+}
+
+function useDevicePixelRatio(): number {
+  const [ratio, setRatio] = useState(() => window.devicePixelRatio || 1);
+  useEffect(() => {
+    const query = window.matchMedia(`(resolution: ${ratio}dppx)`);
+    const update = (): void => setRatio(window.devicePixelRatio || 1);
+    query.addEventListener("change", update);
+    return () => query.removeEventListener("change", update);
+  }, [ratio]);
+  return ratio;
+}
+
 function drawSegment(ctx: CanvasRenderingContext2D, fromLane: number, toLane: number, yFrom: number, yTo: number, color: string): void {
   const x1 = laneX(fromLane);
   const x2 = laneX(toLane);
@@ -139,6 +154,7 @@ export function GraphCanvas({
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [imageVersion, setImageVersion] = useState(0);
+  const ratio = useDevicePixelRatio();
   const width = GRAPH_GAP + graphColumnWidth(laneCount);
   const height = (end - start) * ROW_HEIGHT;
 
@@ -150,7 +166,6 @@ export function GraphCanvas({
     const frame = requestAnimationFrame(() => {
       const ctx = canvas.getContext("2d");
       if (!ctx) return;
-      const ratio = window.devicePixelRatio || 1;
       canvas.width = Math.round(width * ratio);
       canvas.height = Math.max(1, Math.round(height * ratio));
       ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
@@ -170,9 +185,9 @@ export function GraphCanvas({
         const mid = top + ROW_HEIGHT / 2;
         for (const segment of row.up) drawSegment(ctx, segment.from, segment.to, top, mid, colorOf(segment.color));
         for (const segment of row.down) drawSegment(ctx, segment.from, segment.to, mid, top + ROW_HEIGHT, colorOf(segment.color));
-        if (labeled[i] && row.lane < MAX_LANES) {
+        if (labeled[i]) {
           const hasAvatar = (avatars?.[i] ?? null) !== null;
-          const edge = laneX(row.lane) - nodeEdgeRadius(kinds[i] ?? "commit", hasAvatar, i === headIndex) + 1;
+          const edge = laneX(nodeLane(row.lane)) - nodeEdgeRadius(kinds[i] ?? "commit", hasAvatar, i === headIndex) + 1;
           ctx.strokeStyle = colorOf(row.color);
           ctx.lineCap = "butt";
           ctx.beginPath();
@@ -185,8 +200,8 @@ export function GraphCanvas({
 
       for (let i = start; i < end; i++) {
         const row = rows[i];
-        if (!row || row.lane >= MAX_LANES) continue;
-        const x = laneX(row.lane);
+        if (!row) continue;
+        const x = laneX(nodeLane(row.lane));
         const y = (i - start) * ROW_HEIGHT + ROW_HEIGHT / 2;
         const kind = kinds[i] ?? "commit";
         const avatar = avatars?.[i] ?? null;
@@ -203,7 +218,7 @@ export function GraphCanvas({
       ctx.restore();
     });
     return () => cancelAnimationFrame(frame);
-  }, [rows, kinds, avatars, labeled, headIndex, start, end, width, height, theme, imageVersion]);
+  }, [rows, kinds, avatars, labeled, headIndex, start, end, width, height, theme, imageVersion, ratio]);
 
   return (
     <canvas

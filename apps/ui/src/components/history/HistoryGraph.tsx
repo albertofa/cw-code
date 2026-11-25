@@ -1,4 +1,4 @@
-import { memo, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type MouseEvent } from "react";
+import { memo, useMemo, useRef, useState, type CSSProperties, type FocusEvent, type KeyboardEvent, type SyntheticEvent } from "react";
 import { Check, Cloud, GitFork, Monitor, Tag } from "lucide-react";
 import type { HistoryCommit, HistoryLog, HistoryWorktree } from "@cw-code/contracts";
 import { computeGraphLayout } from "../../history/graphLayout.js";
@@ -19,9 +19,13 @@ function nodeKind(commit: HistoryCommit): NodeKind {
   return commit.parents.length >= 2 ? "merge" : "commit";
 }
 
-function withWip(log: HistoryLog, dirtyCount: number): HistoryCommit[] {
+function wipSubject(dirtyCount: number): string {
+  return `Uncommitted changes (${dirtyCount})`;
+}
+
+function withWip(log: HistoryLog, hasWip: boolean): HistoryCommit[] {
   const headSha = log.head.sha;
-  if (dirtyCount <= 0 || !headSha) return log.commits;
+  if (!hasWip || !headSha) return log.commits;
   const now = Math.floor(Date.now() / 1000);
   const wip: HistoryCommit = {
     sha: WIP_SHA,
@@ -30,7 +34,7 @@ function withWip(log: HistoryLog, dirtyCount: number): HistoryCommit[] {
     authorEmail: "",
     authorDate: now,
     committerDate: now,
-    subject: `Uncommitted changes (${dirtyCount})`,
+    subject: wipSubject(0),
     isStash: false
   };
   return [wip, ...log.commits];
@@ -95,28 +99,56 @@ function entryTitle(entry: RefEntry, worktreeBranches: ReadonlyMap<string, Histo
   return `${entry.name} — double-click to check out (${command})`;
 }
 
+function isActivation(event: KeyboardEvent): boolean {
+  return event.key === "Enter" || event.key === " ";
+}
+
 function RefLabelCell({ label, onCheckout, worktreeBranches }: { label: RefLabel; onCheckout: (branch: string) => void; worktreeBranches: ReadonlyMap<string, HistoryWorktree> }) {
   const [open, setOpen] = useState(false);
   const stacked = label.extra > 0;
   const primary = label.entries[0];
-  const checkout = (entry: RefEntry | undefined) => (event: MouseEvent) => {
+  const run = (entry: RefEntry | undefined, event: SyntheticEvent): void => {
     event.stopPropagation();
     if (entry?.checkout && !entry.isCurrent) onCheckout(entry.checkout);
   };
+  const chipKey = (event: KeyboardEvent): void => {
+    if (event.key === "Escape" && open) {
+      event.stopPropagation();
+      setOpen(false);
+      return;
+    }
+    if (!isActivation(event)) return;
+    event.preventDefault();
+    if (stacked) {
+      event.stopPropagation();
+      setOpen((value) => !value);
+    } else run(primary, event);
+  };
+  const rowKey = (entry: RefEntry) => (event: KeyboardEvent): void => {
+    if (event.key === "Escape") {
+      event.stopPropagation();
+      setOpen(false);
+      return;
+    }
+    if (!isActivation(event)) return;
+    event.preventDefault();
+    run(entry, event);
+  };
+  const leave = (event: FocusEvent<HTMLSpanElement>): void => {
+    if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setOpen(false);
+  };
   return (
     <>
-      <span
-        className="history-ref-anchor"
-        onMouseEnter={() => setOpen(stacked)}
-        onMouseLeave={() => setOpen(false)}
-        onFocus={() => setOpen(stacked)}
-        onBlur={() => setOpen(false)}
-      >
+      <span className="history-ref-anchor" onMouseEnter={() => setOpen(stacked)} onMouseLeave={() => setOpen(false)} onBlur={leave}>
         <span
           className={`history-ref ${label.kind}${label.isCurrent ? " current" : ""}`}
           title={stacked ? undefined : primary ? entryTitle(primary, worktreeBranches) : label.title}
-          tabIndex={stacked ? 0 : -1}
-          onDoubleClick={checkout(primary)}
+          role="button"
+          tabIndex={0}
+          aria-haspopup={stacked ? "true" : undefined}
+          aria-expanded={stacked ? open : undefined}
+          onDoubleClick={(event) => run(primary, event)}
+          onKeyDown={chipKey}
         >
           <RefIcons kind={label.kind} isCurrent={label.isCurrent} hasLocal={label.hasLocal} hasRemote={label.hasRemote} />
           <span className="history-ref-text">{label.label}</span>
@@ -129,9 +161,11 @@ function RefLabelCell({ label, onCheckout, worktreeBranches }: { label: RefLabel
               <span
                 key={entry.key}
                 className={`history-ref-stack-row ${entry.kind}${entry.isCurrent ? " current" : ""}${entry.checkout !== null && worktreeBranches.has(entry.checkout) ? " elsewhere" : ""}`}
-                role="listitem"
+                role="button"
+                tabIndex={0}
                 title={entryTitle(entry, worktreeBranches)}
-                onDoubleClick={checkout(entry)}
+                onDoubleClick={(event) => run(entry, event)}
+                onKeyDown={rowKey(entry)}
               >
                 <RefIcons kind={entry.kind} isCurrent={entry.isCurrent} hasLocal={false} hasRemote={false} />
                 <span className="history-ref-text">{entry.name}</span>
@@ -222,7 +256,12 @@ export function HistoryGraph({
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const theme = useGraphTheme();
-  const commits = useMemo(() => withWip(log, dirtyCount), [log, dirtyCount]);
+  const hasWip = dirtyCount > 0;
+  const commits = useMemo(() => withWip(log, hasWip), [log, hasWip]);
+  const wipCommit = useMemo<HistoryCommit | null>(() => {
+    const first = commits[0];
+    return first && first.sha === WIP_SHA ? { ...first, subject: wipSubject(dirtyCount) } : null;
+  }, [commits, dirtyCount]);
   const nowMs = useMemo(() => Date.now(), [commits]);
   const layout = useMemo(() => computeGraphLayout(commits, PALETTE_SIZE), [commits]);
   const kinds = useMemo(() => commits.map(nodeKind), [commits]);
@@ -248,9 +287,10 @@ export function HistoryGraph({
     }
     if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
     event.preventDefault();
-    if (commits.length === 0) return;
+    const first = commits[0]?.sha === WIP_SHA ? 1 : 0;
+    if (commits.length <= first) return;
     const current = selected ? commits.findIndex((commit) => commit.sha === selected) : -1;
-    const next = current === -1 ? 0 : Math.min(commits.length - 1, Math.max(0, current + (event.key === "ArrowDown" ? 1 : -1)));
+    const next = current === -1 ? first : Math.min(commits.length - 1, Math.max(first, current + (event.key === "ArrowDown" ? 1 : -1)));
     const target = commits[next];
     if (!target) return;
     onHighlight(target.sha);
@@ -272,7 +312,7 @@ export function HistoryGraph({
           {commits.slice(start, end).map((commit, offset) => (
             <HistoryRow
               key={commit.sha}
-              commit={commit}
+              commit={commit.sha === WIP_SHA && wipCommit ? wipCommit : commit}
               label={labels.get(commit.sha) ?? null}
               colorIndex={layout.rows[start + offset]?.color ?? 0}
               graphWidth={graphWidth}
@@ -290,6 +330,11 @@ export function HistoryGraph({
           <button type="button" className="inspect-mode" onClick={onLoadMore} disabled={loadingMore}>
             {loadingMore ? "Loading…" : `Load more (showing ${log.commits.length})`}
           </button>
+        </div>
+      )}
+      {log.truncated && !onLoadMore && (
+        <div className="history-more" role="status">
+          Showing the newest {log.commits.length} commits — older history is not loaded here.
         </div>
       )}
     </div>

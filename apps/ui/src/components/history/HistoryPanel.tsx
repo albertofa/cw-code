@@ -10,6 +10,7 @@ import { HistoryGraph, WIP_SHA } from "./HistoryGraph.js";
 import { loadShowAvatars, saveShowAvatars, useHistoryAvatars } from "./historyAvatars.js";
 import { MenuSelect, type MenuOption } from "../MenuSelect.js";
 import { useHistorySide } from "./useHistorySide.js";
+import { useConfirm } from "../ConfirmDialog.js";
 
 const PAGE_SIZE = 2000;
 const MAX_LIMIT = 20000;
@@ -17,7 +18,10 @@ const NO_COMMITS: HistoryCommit[] = [];
 const isWip = (commit: HistoryCommit): boolean => commit.sha === WIP_SHA;
 
 export function HistoryPanel({ sessionId }: { sessionId: string }) {
-  const topic = useTopic<HistoryTopicData>(historyTopic(sessionId));
+  const [view, setView] = useState<{ path: string; key: string } | null>(null);
+  const viewWorktree = view?.path ?? null;
+  const topicName = historyTopic(sessionId, view?.key ?? null);
+  const topic = useTopic<HistoryTopicData>(topicName);
   const status = useGitStatus(sessionId);
   const epoch = useConnectionEpoch();
   const [limit, setLimit] = useState(PAGE_SIZE);
@@ -28,13 +32,12 @@ export function HistoryPanel({ sessionId }: { sessionId: string }) {
   const [openPath, setOpenPath] = useState<string | null>(null);
   const commit = useHistoryCommit(sessionId, selected);
   const side = useHistorySide();
+  const { confirm, dialog } = useConfirm();
   const panelRef = useRef<HTMLDivElement>(null);
   const [action, setAction] = useState<string | null>(null);
   const [actionError, setActionError] = useState("");
-  const [viewWorktree, setViewWorktree] = useState<string | null>(null);
   const [homePath, setHomePath] = useState<string | null>(null);
-  const [reload, setReload] = useState(0);
-  const busy = useRef(false);
+  const busy = useRef<string | null>(null);
   const worktreeBranches = useMemo<ReadonlyMap<string, HistoryWorktree>>(() => {
     const byBranch = new Map<string, HistoryWorktree>();
     for (const worktree of log?.worktrees ?? []) {
@@ -43,7 +46,7 @@ export function HistoryPanel({ sessionId }: { sessionId: string }) {
     return byBranch;
   }, [log]);
   const [showAvatars, setShowAvatars] = useState(loadShowAvatars);
-  const avatars = useHistoryAvatars(sessionId, log?.commits ?? NO_COMMITS, isWip, showAvatars);
+  const avatars = useHistoryAvatars(sessionId, log?.commits ?? NO_COMMITS, isWip, showAvatars, topic?.data.avatarsRev ?? 0);
   const rev = topic?.data.rev ?? 0;
   const topicError = topic?.status === "error" ? (topic.error ?? "History unavailable") : (topic?.data.error ?? null);
 
@@ -59,7 +62,9 @@ export function HistoryPanel({ sessionId }: { sessionId: string }) {
         if (viewWorktree === null) setHomePath(next.worktrees.find((worktree) => worktree.isCurrent)?.path ?? null);
       },
       (reason: Error) => {
-        if (active) setError(reason.message);
+        if (!active) return;
+        setLog(null);
+        setError(reason.message);
       }
     ).finally(() => {
       if (active) setLoading(false);
@@ -67,32 +72,40 @@ export function HistoryPanel({ sessionId }: { sessionId: string }) {
     return () => {
       active = false;
     };
-  }, [sessionId, rev, limit, epoch, viewWorktree, reload]);
+  }, [topicName, rev, limit, epoch]);
 
   const openWorktree = useCallback(
     (path: string | null): void => {
-      setViewWorktree(path === null || path === homePath ? null : path);
+      const target = path === null || path === homePath ? null : (log?.worktrees.find((worktree) => worktree.path === path) ?? null);
+      const next = target === null ? null : { path: target.path, key: target.key };
+      if ((next?.key ?? null) === (view?.key ?? null)) return;
+      setView(next);
+      setLog(null);
+      setError("");
       setSelected(null);
       setOpenPath(null);
       setActionError("");
     },
-    [homePath]
+    [homePath, log, view]
   );
 
-  const select = (sha: string): void => {
-    if (sha === WIP_SHA) {
-      if (viewWorktree === null) usePanelStore.getState().requestDiffMode(sessionId, "working");
-      return;
-    }
-    setSelected(sha);
-    setOpenPath(null);
-  };
+  const select = useCallback(
+    (sha: string): void => {
+      if (sha === WIP_SHA) {
+        if (viewWorktree === null) usePanelStore.getState().requestDiffMode(sessionId, "working");
+        return;
+      }
+      setSelected(sha);
+      setOpenPath(null);
+    },
+    [sessionId, viewWorktree]
+  );
 
-  const highlight = (sha: string): void => {
+  const highlight = useCallback((sha: string): void => {
     if (sha === WIP_SHA) return;
     setSelected(sha);
     setOpenPath(null);
-  };
+  }, []);
 
   const closeDiff = useCallback((): void => {
     setOpenPath(null);
@@ -100,16 +113,18 @@ export function HistoryPanel({ sessionId }: { sessionId: string }) {
   }, []);
 
   const runAction = useCallback((label: string, task: () => Promise<unknown>): void => {
-    if (busy.current) return;
-    busy.current = true;
+    if (busy.current) {
+      setActionError(`Wait for “${busy.current}” to finish before starting another action`);
+      return;
+    }
+    busy.current = label.replace(/…$/, "");
     setAction(label);
     setActionError("");
     task()
       .catch((reason: Error) => setActionError(reason.message))
       .finally(() => {
-        busy.current = false;
+        busy.current = null;
         setAction(null);
-        setReload((value) => value + 1);
       });
   }, []);
 
@@ -120,9 +135,21 @@ export function HistoryPanel({ sessionId }: { sessionId: string }) {
         openWorktree(elsewhere.path);
         return;
       }
-      runAction(`Checking out ${branch}…`, () => window.cw.checkoutHistory(sessionId, viewWorktree, branch));
+      const owned = viewWorktree === null ? undefined : log?.worktrees.find((worktree) => worktree.path === viewWorktree && worktree.sessionId);
+      const run = (): void => runAction(`Checking out ${branch}…`, () => window.cw.checkoutHistory(sessionId, viewWorktree, branch));
+      if (!owned) {
+        run();
+        return;
+      }
+      void confirm({
+        title: `Switch ${owned.name} to ${branch}?`,
+        message: "Another cw-code session works in this worktree. Its branch changes too.",
+        confirmLabel: "Switch branch"
+      }).then((ok) => {
+        if (ok) run();
+      });
     },
-    [runAction, sessionId, viewWorktree, worktreeBranches, openWorktree]
+    [runAction, sessionId, viewWorktree, worktreeBranches, openWorktree, log, confirm]
   );
 
   const head = log?.head ?? null;
@@ -158,6 +185,7 @@ export function HistoryPanel({ sessionId }: { sessionId: string }) {
 
   return (
     <div ref={panelRef} className="inspect history">
+      {dialog}
       <div className="inspect-toolbar">
         <span className="inspect-title">
           <GitGraph size={14} /> History

@@ -5,6 +5,7 @@ import { parseUnifiedDiff, type DiffFile } from "../diffParser.js";
 import { DiffLines, STATUS_BADGE } from "../GitInspectPanel.js";
 import { FileIcon } from "../fileIcons.js";
 import { splitRepoPath } from "../turnChanges.js";
+import { useConnectionEpoch } from "../../server/topics.js";
 
 const LOAD_DELAY_MS = 120;
 const dateFormat = new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" });
@@ -22,10 +23,18 @@ export interface HistoryCommitState {
 export function useHistoryCommit(sessionId: string, sha: string | null): HistoryCommitState {
   const [detail, setDetail] = useState<HistoryCommitDetail | null>(null);
   const [error, setError] = useState("");
+  const [retry, setRetry] = useState(0);
+  const failed = useRef(false);
+  const epoch = useConnectionEpoch();
+
+  useEffect(() => {
+    if (failed.current) setRetry((value) => value + 1);
+  }, [epoch]);
 
   useEffect(() => {
     setDetail(null);
     setError("");
+    failed.current = false;
     if (!sha) return;
     let active = true;
     const timer = setTimeout(() => {
@@ -34,7 +43,9 @@ export function useHistoryCommit(sessionId: string, sha: string | null): History
           if (active) setDetail(next);
         },
         (reason: Error) => {
-          if (active) setError(reason.message);
+          if (!active) return;
+          failed.current = true;
+          setError(reason.message);
         }
       );
     }, LOAD_DELAY_MS);
@@ -42,7 +53,7 @@ export function useHistoryCommit(sessionId: string, sha: string | null): History
       active = false;
       clearTimeout(timer);
     };
-  }, [sessionId, sha]);
+  }, [sessionId, sha, retry]);
 
   const files = useMemo(() => parseUnifiedDiff(detail?.patch ?? ""), [detail]);
   return { detail, files, error };

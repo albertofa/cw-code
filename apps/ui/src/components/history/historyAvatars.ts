@@ -9,8 +9,6 @@ export interface NodeAvatar {
 
 const SHAS_PER_AUTHOR = 3;
 const BATCH_SIZE = 25;
-const RETRY_MS = 60_000;
-const MAX_RETRIES = 5;
 const STORAGE_KEY = "cw-code:history-avatars";
 const LETTER_OR_DIGIT = /[\p{L}\p{N}]+/gu;
 
@@ -101,47 +99,31 @@ export function useHistoryAvatars(
   sessionId: string,
   commits: HistoryCommit[],
   skip: (commit: HistoryCommit) => boolean,
-  enabled: boolean
+  enabled: boolean,
+  avatarsRev: number
 ): Record<string, string | null> {
   const [avatars, setAvatars] = useState<Record<string, string | null>>({});
-  const [tick, setTick] = useState(0);
-  const state = useRef({ done: new Set<string>(), inflight: new Set<string>(), retries: new Map<string, number>() });
-  const timers = useRef(new Set<ReturnType<typeof setTimeout>>());
+  const state = useRef({ done: new Set<string>(), inflight: new Set<string>(), pending: new Set<string>(), rev: avatarsRev });
   const alive = useRef(true);
 
   useEffect(() => {
     alive.current = true;
-    const owned = timers.current;
     return () => {
       alive.current = false;
-      for (const timer of owned) clearTimeout(timer);
-      owned.clear();
     };
   }, []);
 
   useEffect(() => {
     if (!enabled) return;
     const tracked = state.current;
+    if (tracked.rev !== avatarsRev) {
+      tracked.rev = avatarsRev;
+      tracked.pending.clear();
+    }
     const wanted: HistoryAvatarAuthor[] = [];
     for (const [email, shas] of latestAuthorShas(commits, skip)) {
-      if (!tracked.done.has(email) && !tracked.inflight.has(email)) wanted.push({ email, shas });
+      if (!tracked.done.has(email) && !tracked.inflight.has(email) && !tracked.pending.has(email)) wanted.push({ email, shas });
     }
-    const retryLater = (emails: string[]): void => {
-      const again: string[] = [];
-      for (const email of emails) {
-        const count = (tracked.retries.get(email) ?? 0) + 1;
-        tracked.retries.set(email, count);
-        if (count >= MAX_RETRIES) tracked.done.add(email);
-        else again.push(email);
-      }
-      if (again.length === 0) return;
-      const timer = setTimeout(() => {
-        timers.current.delete(timer);
-        for (const email of again) tracked.inflight.delete(email);
-        if (alive.current) setTick((value) => value + 1);
-      }, RETRY_MS);
-      timers.current.add(timer);
-    };
     for (let i = 0; i < wanted.length; i += BATCH_SIZE) {
       const batch = wanted.slice(i, i + BATCH_SIZE);
       for (const author of batch) tracked.inflight.add(author.email);
@@ -151,13 +133,18 @@ export function useHistoryAvatars(
             tracked.done.add(email);
             tracked.inflight.delete(email);
           }
+          for (const email of result.pending) {
+            tracked.inflight.delete(email);
+            tracked.pending.add(email);
+          }
           if (alive.current && Object.keys(result.avatars).length > 0) setAvatars((previous) => ({ ...previous, ...result.avatars }));
-          retryLater(result.pending);
         },
-        () => retryLater(batch.map((author) => author.email))
+        () => {
+          for (const author of batch) tracked.inflight.delete(author.email);
+        }
       );
     }
-  }, [sessionId, commits, skip, enabled, tick]);
+  }, [sessionId, commits, skip, enabled, avatarsRev]);
 
   return avatars;
 }
