@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { Check, Copy } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
+import { ArrowLeft, Check, Copy } from "lucide-react";
 import type { HistoryCommitDetail } from "@cw-code/contracts";
 import { DiffFileSection } from "../GitInspectPanel.js";
 import { parseUnifiedDiff } from "../diffParser.js";
@@ -11,7 +11,27 @@ function formatDate(seconds: number): string {
   return dateFormat.format(new Date(seconds * 1000));
 }
 
-export function HistoryCommitView({ sessionId, sha, onSelect }: { sessionId: string; sha: string; onSelect: (sha: string) => void }) {
+function DetailFrame({ onBack, children }: { onBack: () => void; children: ReactNode }) {
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => ref.current?.focus({ preventScroll: true }), []);
+  const onKeyDown = (event: KeyboardEvent<HTMLDivElement>): void => {
+    if (event.key !== "Escape") return;
+    event.stopPropagation();
+    onBack();
+  };
+  return (
+    <div ref={ref} className="history-detail" tabIndex={-1} onKeyDown={onKeyDown}>
+      <div className="history-detail-bar">
+        <button type="button" className="inspect-mode" onClick={onBack} title="Back to the graph (Esc)" aria-label="Back to the graph">
+          <ArrowLeft size={14} aria-hidden="true" />
+        </button>
+      </div>
+      {children}
+    </div>
+  );
+}
+
+export function HistoryCommitView({ sessionId, sha, onSelect, onBack }: { sessionId: string; sha: string; onSelect: (sha: string) => void; onBack: () => void }) {
   const [detail, setDetail] = useState<HistoryCommitDetail | null>(null);
   const [error, setError] = useState("");
   const [openByPath, setOpenByPath] = useState<Record<string, boolean>>({});
@@ -49,15 +69,15 @@ export function HistoryCommitView({ sessionId, sha, onSelect }: { sessionId: str
     );
   };
 
-  if (error) return <div className="inspect-error">Commit unavailable: {error}</div>;
-  if (!detail) return <div className="diff-empty">Loading commit…</div>;
+  if (error) return <DetailFrame onBack={onBack}><div className="inspect-error">Commit unavailable: {error}</div></DetailFrame>;
+  if (!detail) return <DetailFrame onBack={onBack}><div className="diff-empty">Loading commit…</div></DetailFrame>;
 
   const sameCommitter = detail.committerEmail === detail.authorEmail && detail.committerName === detail.authorName;
   const added = files.reduce((sum, file) => sum + file.added, 0);
   const removed = files.reduce((sum, file) => sum + file.removed, 0);
 
   return (
-    <div className="history-detail">
+    <DetailFrame onBack={onBack}>
       <div className="history-detail-head">
         <div className="history-detail-subject">{detail.subject}</div>
         {detail.body && <pre className="history-detail-body">{detail.body}</pre>}
@@ -99,6 +119,6 @@ export function HistoryCommitView({ sessionId, sha, onSelect }: { sessionId: str
           <DiffFileSection key={file.path} file={file} open={openByPath[file.path] ?? defaultOpen} onToggle={toggleFile} />
         ))}
       </div>
-    </div>
+    </DetailFrame>
   );
 }

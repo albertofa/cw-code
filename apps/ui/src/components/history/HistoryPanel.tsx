@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { ArrowDownToLine, GitGraph, UserRound } from "lucide-react";
 import type { HistoryCommit, HistoryLog, HistoryTopicData } from "@cw-code/contracts";
 import { historyTopic } from "@cw-code/shared/topics";
@@ -8,7 +8,6 @@ import { useGitStatus } from "../useGit.js";
 import { HistoryCommitView } from "./HistoryCommitView.js";
 import { HistoryGraph, WIP_SHA } from "./HistoryGraph.js";
 import { loadShowAvatars, saveShowAvatars, useHistoryAvatars } from "./historyAvatars.js";
-import { useHistorySplit } from "./useHistorySplit.js";
 
 const PAGE_SIZE = 2000;
 const MAX_LIMIT = 20000;
@@ -24,10 +23,11 @@ export function HistoryPanel({ sessionId }: { sessionId: string }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [selected, setSelected] = useState<string | null>(null);
+  const [opened, setOpened] = useState<string | null>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
   const [action, setAction] = useState<string | null>(null);
   const [actionError, setActionError] = useState("");
   const [showAvatars, setShowAvatars] = useState(loadShowAvatars);
-  const split = useHistorySplit();
   const avatars = useHistoryAvatars(sessionId, log?.commits ?? NO_COMMITS, isWip, showAvatars);
   const rev = topic?.data.rev ?? 0;
   const topicError = topic?.status === "error" ? (topic.error ?? "History unavailable") : (topic?.data.error ?? null);
@@ -59,7 +59,13 @@ export function HistoryPanel({ sessionId }: { sessionId: string }) {
       return;
     }
     setSelected(sha);
+    setOpened(sha);
   };
+
+  const back = useCallback((): void => {
+    setOpened(null);
+    requestAnimationFrame(() => panelRef.current?.querySelector<HTMLElement>(".history-scroll")?.focus({ preventScroll: true }));
+  }, []);
 
   const runAction = useCallback((label: string, task: () => Promise<unknown>): void => {
     setAction(label);
@@ -88,7 +94,7 @@ export function HistoryPanel({ sessionId }: { sessionId: string }) {
   const failure = topicError ?? (error || null);
 
   return (
-    <div className="inspect history">
+    <div ref={panelRef} className="inspect history">
       <div className="inspect-toolbar">
         <span className="inspect-title">
           <GitGraph size={14} /> History
@@ -130,31 +136,20 @@ export function HistoryPanel({ sessionId }: { sessionId: string }) {
         </div>
       )}
       {log && log.commits.length > 0 && (
-        <div ref={split.containerRef} className={`history-split${selected ? " with-detail" : ""}${split.wide ? " wide" : ""}`}>
-          <div className="history-pane" style={selected ? { flexBasis: `${split.ratio * 100}%` } : undefined}>
+        <div className="history-split">
           <HistoryGraph
             log={log}
             dirtyCount={status?.available ? status.dirtyCount : 0}
             selected={selected}
             onSelect={select}
+            onHighlight={setSelected}
             onLoadMore={limit < MAX_LIMIT ? () => setLimit((current) => Math.min(MAX_LIMIT, current + PAGE_SIZE)) : null}
             loadingMore={loading}
             avatars={avatars}
             showAvatars={showAvatars}
             onCheckout={checkout}
           />
-          </div>
-          {selected && (
-            <div
-              className="history-divider"
-              role="separator"
-              aria-orientation={split.wide ? "vertical" : "horizontal"}
-              title="Drag to resize — double-click to reset"
-              onPointerDown={split.startDrag}
-              onDoubleClick={split.reset}
-            />
-          )}
-          {selected && <HistoryCommitView key={selected} sessionId={sessionId} sha={selected} onSelect={select} />}
+          {opened && <HistoryCommitView key={opened} sessionId={sessionId} sha={opened} onSelect={select} onBack={back} />}
         </div>
       )}
     </div>

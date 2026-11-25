@@ -7641,6 +7641,7 @@ button.gitbar-checkout:hover {
 }
 
 .history-split {
+  position: relative;
   flex: 1;
   min-height: 0;
   display: flex;
@@ -7947,48 +7948,30 @@ button.gitbar-checkout:hover {
 }
 
 .history-detail {
-  flex: 1;
-  min-width: 0;
-  min-height: 0;
+  position: absolute;
+  inset: 0;
+  z-index: 4;
   display: flex;
   flex-direction: column;
-}
-
-.history-split.wide {
-  flex-direction: row;
-}
-
-.history-pane {
-  flex: 1;
   min-width: 0;
   min-height: 0;
-  display: flex;
-  flex-direction: column;
+  background: var(--bg-deep);
+  outline: none;
 }
 
-.history-split.with-detail .history-pane {
-  flex-grow: 0;
-  flex-shrink: 0;
-}
-
-.history-divider {
+.history-detail-bar {
   flex: none;
-  height: 5px;
-  background: var(--border);
-  cursor: row-resize;
-  touch-action: none;
+  display: flex;
+  align-items: center;
+  padding: 4px 6px;
+  border-bottom: 1px solid var(--border-soft);
 }
 
-.history-split.wide .history-divider {
-  width: 5px;
-  height: auto;
-  cursor: col-resize;
+.history-detail .diff-body {
+  font-size: max(11px, calc(var(--fs-code) - 2px));
+  line-height: 1.5;
 }
 
-.history-divider:hover,
-.history-divider:active {
-  background: var(--accent);
-}
 
 .history-detail-head {
   flex: none;

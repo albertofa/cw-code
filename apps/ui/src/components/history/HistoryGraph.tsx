@@ -183,7 +183,8 @@ export function HistoryGraph({
   loadingMore,
   avatars,
   showAvatars,
-  onCheckout
+  onCheckout,
+  onHighlight
 }: {
   log: HistoryLog;
   dirtyCount: number;
@@ -194,6 +195,7 @@ export function HistoryGraph({
   avatars: Record<string, string | null>;
   showAvatars: boolean;
   onCheckout: (branch: string) => void;
+  onHighlight: (sha: string) => void;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const theme = useGraphTheme();
@@ -216,6 +218,11 @@ export function HistoryGraph({
   const { start, end, scrollToIndex } = useVirtualRows(containerRef, commits.length, ROW_HEIGHT, OVERSCAN, HEADER_HEIGHT);
 
   const onKeyDown = (event: KeyboardEvent<HTMLDivElement>): void => {
+    if (event.key === "Enter" && selected) {
+      event.preventDefault();
+      onSelect(selected);
+      return;
+    }
     if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
     event.preventDefault();
     if (commits.length === 0) return;
@@ -223,7 +230,7 @@ export function HistoryGraph({
     const next = current === -1 ? 0 : Math.min(commits.length - 1, Math.max(0, current + (event.key === "ArrowDown" ? 1 : -1)));
     const target = commits[next];
     if (!target) return;
-    onSelect(target.sha);
+    onHighlight(target.sha);
     scrollToIndex(next);
   };
 
