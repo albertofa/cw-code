@@ -15,13 +15,13 @@ import {
 
 describe("isValidTopic", () => {
   it("accepts exact and prefixed topics", () => {
-    for (const topic of ["app", "sidebar", "prs", "usage", "session/sess_a", "git/sess_a", "files/sess_a", "pty/sess_a:shell", "github/runs", "github/meta", "github/view:pr:is%3Aopen", "github/view:run:"]) {
+    for (const topic of ["app", "sidebar", "prs", "usage", "session/sess_a", "git/sess_a", "history/sess_a", "files/sess_a", "pty/sess_a:shell", "github/runs", "github/meta", "github/view:pr:is%3Aopen", "github/view:run:"]) {
       expect(isValidTopic(topic)).toBe(true);
     }
   });
 
   it("rejects malformed topics", () => {
-    const rejected = ["", "session/", "git/", "unknown", "unknown/x", "session/a b", "session/" + "a".repeat(201), "github/Runs", "github/" + "a".repeat(65), "github/a_b", "app/x"];
+    const rejected = ["", "session/", "git/", "history/", "unknown", "unknown/x", "session/a b", "session/" + "a".repeat(201), "github/Runs", "github/" + "a".repeat(65), "github/a_b", "app/x"];
     for (const topic of rejected) expect(isValidTopic(topic)).toBe(false);
   });
 

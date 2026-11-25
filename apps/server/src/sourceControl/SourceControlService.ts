@@ -49,9 +49,11 @@ export class SourceControlService {
   private readonly toolEffects = new Map<string, Map<string, ToolGitEffect>>();
   private watched = new Set<string>();
   private subscribed: string[] = [];
+  private historySubscribed: string[] = [];
   private workingSet: string[] = [];
   private readonly publishedListeners = new Set<(update: GitStatusUpdate) => void>();
   private readonly failureListeners = new Set<(sessionId: string) => void>();
+  private readonly gitChangeListeners = new Set<(roots: string[]) => void>();
   private pollTimer: ReturnType<typeof setTimeout> | null = null;
   private watchGeneration = 0;
 
@@ -79,6 +81,16 @@ export class SourceControlService {
   setWatched(sessionIds: string[]): void {
     this.subscribed = [...sessionIds];
     this.applyWatched();
+  }
+
+  setHistoryWatched(sessionIds: string[]): void {
+    this.historySubscribed = [...sessionIds];
+    this.applyWatched();
+  }
+
+  onGitChange(cb: (roots: string[]) => void): () => void {
+    this.gitChangeListeners.add(cb);
+    return () => this.gitChangeListeners.delete(cb);
   }
 
   setWorkingSet(sessionIds: string[]): void {
@@ -136,6 +148,7 @@ export class SourceControlService {
   handleGitChange(roots: string[]): void {
     const scheduler = this.scheduler;
     if (!scheduler) return;
+    notifyAll(this.gitChangeListeners, `${LOG_PREFIX} git change`, roots);
     for (const root of roots) {
       const rootKey = comparableRoot(root);
       this.rootByKey.set(rootKey, root);
@@ -307,7 +320,7 @@ export class SourceControlService {
   }
 
   private applyWatched(): void {
-    const next = new Set([...this.subscribed, ...this.workingSet]);
+    const next = new Set([...this.subscribed, ...this.historySubscribed, ...this.workingSet]);
     const added = [...next].filter((id) => !this.watched.has(id));
     const removed = [...this.watched].some((id) => !next.has(id));
     this.watched = next;

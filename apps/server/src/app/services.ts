@@ -1,4 +1,5 @@
 import { homedir } from "node:os";
+import { join } from "node:path";
 import type { ShutdownReason } from "@cw-code/contracts";
 import { prKey } from "@cw-code/shared/prRef";
 import { ptyTopic } from "@cw-code/shared/topics";
@@ -24,7 +25,7 @@ import { planFor } from "../cli/harnessUpdates/installMethod.js";
 import { LatestVersionCache } from "../cli/harnessUpdates/latestVersion.js";
 import { runUpdateCommand } from "../cli/harnessUpdates/runUpdateCommand.js";
 import { PreferencesStore } from "../prefs/PreferencesStore.js";
-import { preferencesFilePath } from "../paths/appPaths.js";
+import { preferencesFilePath, userdataDir } from "../paths/appPaths.js";
 import { AutoFollowUpEngine } from "../prEngine/AutoFollowUpEngine.js";
 import { PrStore } from "../prEngine/PrStore.js";
 import { SessionPrModel } from "../prEngine/sessionPrModel.js";
@@ -38,6 +39,9 @@ import { ShutdownCoordinator } from "../shutdown/ShutdownCoordinator.js";
 import { SidebarService } from "../sidebar/SidebarService.js";
 import { SkillsStore } from "../skills/SkillsStore.js";
 import { GitTopic } from "../sourceControl/GitTopic.js";
+import { HistoryAvatarService, ghAvatarLookup } from "../history/HistoryAvatars.js";
+import { HistoryService } from "../history/HistoryService.js";
+import { HistoryTopic } from "../history/HistoryTopic.js";
 import { SourceControlService } from "../sourceControl/SourceControlService.js";
 import { SubagentsModel } from "../threads/SubagentsModel.js";
 import { ThreadService } from "../threads/ThreadService.js";
@@ -64,6 +68,9 @@ export interface Services {
   prStore: PrStore;
   sourceControl: SourceControlService;
   gitTopic: GitTopic;
+  history: HistoryService;
+  historyAvatars: HistoryAvatarService;
+  historyTopic: HistoryTopic;
   githubSearch: GitHubSearchService;
   runs: RunsService;
   runWatcher: RunWatcher;
@@ -182,6 +189,11 @@ function wireGitTopic({ gitTopic, sourceControl, sessions }: Services): void {
   sessions.onCheckoutChanged(({ sessionIds, forced }) => {
     for (const sessionId of sessionIds) void sourceControl.refresh(sessionId, { forcePullRequest: forced.includes(sessionId) });
   });
+}
+
+function wireHistoryTopic({ historyTopic, sourceControl }: Services): void {
+  sourceControl.onGitChange((roots) => historyTopic.rootsChanged(roots));
+  sourceControl.onPublished((update) => historyTopic.sessionChanged(update.sessionId));
 }
 
 function wireFilesTopic({ filesTopic, sourceControl }: Services): void {
@@ -320,6 +332,17 @@ export function createServices(stores: { sessionStore: SessionStore; settingsSto
     failure: (sessionId) => sourceControl.failure(sessionId),
     session: (sessionId) => sessions.findSession(sessionId),
     setWatched: (sessionIds) => sourceControl.setWatched(sessionIds)
+  });
+  const history = new HistoryService(() => configuredGitBinary(sessions.getSettings()));
+  const historyTopic = new HistoryTopic(hooks.topics, {
+    root: (sessionId) => sessions.sessionStatusContext(sessionId).then((context) => context.root),
+    snapshot: (root) => history.snapshot(root),
+    setWatched: (sessionIds) => sourceControl.setHistoryWatched(sessionIds)
+  });
+  const historyAvatars = new HistoryAvatarService({
+    cacheFile: join(userdataDir(), "history-avatars.json"),
+    remote: (root) => git.githubRemote(root),
+    lookup: ghAvatarLookup(() => sessions.getSettings())
   });
   const ptys = new PtyPool(() => sessions.getSettings(), undefined, hooks.claudePluginDir);
   const shutdown = new ShutdownCoordinator({ sessions, ptys, onRecovered: hooks.onShutdownRecovered, onExpired: hooks.onShutdownExpired });
@@ -545,6 +568,9 @@ export function createServices(stores: { sessionStore: SessionStore; settingsSto
     prStore,
     sourceControl,
     gitTopic,
+    history,
+    historyAvatars,
+    historyTopic,
     githubSearch,
     runs,
     runWatcher,
@@ -589,6 +615,7 @@ export function createServices(stores: { sessionStore: SessionStore; settingsSto
   wireTurnChanges(services);
   wireSidebar(services);
   wireGitTopic(services);
+  wireHistoryTopic(services);
   wireFilesTopic(services);
   wireGitHubViews(services);
   return services;

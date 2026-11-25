@@ -25,6 +25,7 @@ export function createWatchProviders(hub: TopicHub, services: Services): TopicPr
 
   return [
     services.gitTopic,
+    services.historyTopic,
     services.filesTopic,
     ptyProvider(hub, services),
     createThreadTopicProvider(services.threads, {

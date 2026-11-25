@@ -9,10 +9,10 @@ export const GITHUB_META_TOPIC = "github/meta";
 export const MAX_TOPICS_PER_CALL = 1000;
 export const MAX_TOPICS_PER_CLIENT = 5000;
 
-export type TopicPrefix = "session/" | "git/" | "files/" | "pty/" | "github/";
+export type TopicPrefix = "session/" | "git/" | "history/" | "files/" | "pty/" | "github/";
 
 const EXACT_TOPICS: ReadonlySet<string> = new Set([APP_TOPIC, SIDEBAR_TOPIC, PRS_TOPIC, USAGE_TOPIC]);
-const PREFIXES: readonly TopicPrefix[] = ["session/", "git/", "files/", "pty/", "github/"];
+const PREFIXES: readonly TopicPrefix[] = ["session/", "git/", "history/", "files/", "pty/", "github/"];
 const ID_PATTERN = /^[A-Za-z0-9_.:-]{1,200}$/;
 const GITHUB_VIEW_PATTERN = /^[a-z0-9-]{1,64}$/;
 const GITHUB_VIEW_PREFIX = "github/view:";
@@ -27,6 +27,10 @@ export function sessionTopic(sessionId: string): string {
 
 export function gitTopic(sessionId: string): string {
   return `git/${sessionId}`;
+}
+
+export function historyTopic(sessionId: string): string {
+  return `history/${sessionId}`;
 }
 
 export function filesTopic(sessionId: string): string {
