@@ -3,7 +3,7 @@ import { execFileSync } from "node:child_process";
 import { mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { GitService } from "./GitService.js";
+import { GitService, pullFailureReason } from "./GitService.js";
 
 const sandboxes: string[] = [];
 
@@ -60,5 +60,45 @@ describe("GitService.pullFastForward", () => {
     await expect(new GitService().pullFastForward(local)).rejects.toThrow(/no upstream/);
     git(local, "checkout", "-q", "--detach");
     await expect(new GitService().pullFastForward(local)).rejects.toThrow(/detached/);
+  });
+
+  it("reports the real cause when a local change blocks the pull, not the fetch summary", async () => {
+    const { local, other } = setup();
+    commitFile(other, "a.txt", "two\n", "remote edit");
+    git(other, "push", "-q", "origin", "main");
+    writeFileSync(join(local, "a.txt"), "local edit\n");
+    const failure = await new GitService().pullFastForward(local).then(
+      () => "",
+      (error: Error) => error.message
+    );
+    expect(failure).toMatch(/^Pull failed: Your local changes to the following files would be overwritten by merge/);
+    expect(failure).toContain("a.txt");
+    expect(failure).not.toContain("From ");
+  });
+});
+
+describe("pullFailureReason", () => {
+  it("skips the fetch summary and CRLF warnings and keeps the error with its files", () => {
+    const stderr = [
+      "warning: in the working copy of 'a.txt', LF will be replaced by CRLF the next time Git touches it",
+      "From https://user:secret@example.com/acme/repo",
+      "   9b3d0e3..ee2f5b4  main       -> origin/main",
+      "error: Your local changes to the following files would be overwritten by merge:",
+      "\ta.txt",
+      "\tb.txt",
+      "Please commit your changes or stash them before you merge."
+    ].join("\n");
+    const reason = pullFailureReason(stderr, 1);
+    expect(reason).toBe("Your local changes to the following files would be overwritten by merge (a.txt, b.txt)");
+    expect(reason).not.toContain("secret");
+  });
+
+  it("falls back to the first useful line, then to the exit code", () => {
+    expect(pullFailureReason("From https://x/y\nsomething odd happened\n", 1)).toBe("something odd happened");
+    expect(pullFailureReason("", 128)).toBe("git pull exited with code 128");
+  });
+
+  it("redacts credentials in a fatal line", () => {
+    expect(pullFailureReason("fatal: unable to access 'https://user:secret@example.com/r.git/': Could not resolve host", 128)).not.toContain("secret");
   });
 });

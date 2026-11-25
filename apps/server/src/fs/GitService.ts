@@ -760,6 +760,22 @@ export function redactUrlCredentials(text: string): string {
   return text.replace(/\b([a-z][a-z0-9+.-]*:\/\/)[^\s/@]+@/gi, "$1");
 }
 
+export function pullFailureReason(stderr: string, code: number | null): string {
+  const lines = redactUrlCredentials(stderr).replace(/\r/g, "").split("\n");
+  const index = lines.findIndex((line) => /^(error|fatal):/i.test(line.trim()));
+  if (index === -1) {
+    const useful = lines.map((line) => line.trim()).find((line) => line && !/^(warning|from)\b/i.test(line));
+    return (useful ?? `git pull exited with code ${code}`).slice(0, 160);
+  }
+  const headline = lines[index]!.trim().replace(/^(error|fatal):\s*/i, "");
+  const details = lines
+    .slice(index + 1)
+    .filter((line) => /^\s+\S/.test(line))
+    .slice(0, 3)
+    .map((line) => line.trim());
+  return [headline.replace(/:$/, ""), details.length > 0 ? `(${details.join(", ")})` : ""].filter(Boolean).join(" ").slice(0, 240);
+}
+
 function fetchFailureReason(error: unknown): string {
   const line = redactUrlCredentials((error as Error).message).replace(/\r/g, "").split("\n").map((part) => part.trim()).find(Boolean) ?? "unknown error";
   return line.replace(/^fatal:\s*/i, "").slice(0, 160);
@@ -1666,9 +1682,10 @@ export class GitService {
     if (upstream.code !== 0) throw new Error(`${branch} has no upstream branch to pull from`);
     let result: ExecStatusResult;
     try {
-      result = await execWithStatus(binary, ["-c", "pull.rebase=false", "pull", "--ff-only", "--no-edit"], root, PULL_TIMEOUT_MS, cleanAuthEnvironment());
+      result = await execWithStatus(binary, ["-c", "pull.rebase=false", "pull", "--quiet", "--ff-only", "--no-edit"], root, PULL_TIMEOUT_MS, cleanAuthEnvironment());
     } catch (error) {
-      throw new Error(`Pull failed: ${networkFailureReason(error)}`);
+      const timedOut = /^timed out after/.test((error as Error).message);
+      throw new Error(`Pull failed: ${timedOut ? `timed out after ${PULL_TIMEOUT_MS / 1000}s` : fetchFailureReason(error)}`);
     } finally {
       this.dropStatus(root);
       this.invalidateBranches(root);
@@ -1677,7 +1694,7 @@ export class GitService {
     if (/not possible to fast-forward|diverg/i.test(result.stderr)) {
       throw new Error(`${branch} and ${upstream.stdout.trim()} have diverged — pull only fast-forwards; merge or rebase in a terminal`);
     }
-    throw new Error(`Pull failed: ${fetchFailureReason(new Error(result.stderr || `git pull exited with code ${result.code}`))}`);
+    throw new Error(`Pull failed: ${pullFailureReason(result.stderr, result.code)}`);
   }
 
   async switchBranch(root: string, name: string, project?: Project): Promise<GitStatus> {

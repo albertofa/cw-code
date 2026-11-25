@@ -2414,6 +2414,22 @@ export class SessionManager {
     }
   }
 
+  checkoutOwner(path: string): string | null {
+    const wanted = comparableRoot(path);
+    const matches = this.store.listAllSessions().filter((session) => {
+      if (session.status === "archived" || session.status === "resolved") return false;
+      const root = this.sessionRoot(session);
+      return root !== null && comparableRoot(root) === wanted;
+    });
+    const direct = matches.find((session) => !session.subagent);
+    if (direct) return direct.id;
+    return matches.find((session) => session.subagent)?.subagent?.parentSessionId ?? null;
+  }
+
+  withUnownedCheckout<T>(root: string, run: () => Promise<T>): Promise<T> {
+    return this.withFolderLock(root, run);
+  }
+
   async pullBranch(sessionId: string): Promise<GitStatus> {
     try {
       return await this.withBranchSwitch(sessionId, async () => {
