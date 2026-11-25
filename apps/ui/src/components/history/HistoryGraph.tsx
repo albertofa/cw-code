@@ -37,6 +37,10 @@ function withWip(log: HistoryLog, dirtyCount: number): HistoryCommit[] {
 }
 
 function labelsBySha(log: HistoryLog, present: Set<string>): Map<string, RefLabel> {
+  const localBranches = {
+    names: new Set(log.refs.filter((ref) => ref.kind === "local").map((ref) => ref.name)),
+    current: log.head.detached ? null : log.head.branch
+  };
   const grouped = new Map<string, HistoryLog["refs"]>();
   for (const ref of log.refs) {
     if (!present.has(ref.target)) continue;
@@ -48,7 +52,7 @@ function labelsBySha(log: HistoryLog, present: Set<string>): Map<string, RefLabe
   if (detachedSha && !grouped.has(detachedSha)) grouped.set(detachedSha, []);
   const result = new Map<string, RefLabel>();
   for (const [sha, refs] of grouped) {
-    const label = buildRefLabel(refs, sha === detachedSha);
+    const label = buildRefLabel(refs, sha === detachedSha, localBranches);
     if (label) result.set(sha, label);
   }
   return result;
@@ -67,7 +71,9 @@ function RefIcons({ kind, isCurrent, hasLocal, hasRemote }: { kind: RefLabel["ki
 
 function entryTitle(entry: RefEntry): string {
   if (entry.isCurrent) return `${entry.name} — current branch`;
+  if (entry.checkout === null && entry.localElsewhere) return `${entry.name} — its local branch is the current one; Pull updates it`;
   if (entry.checkout === null) return entry.kind === "tag" ? `Tag ${entry.name}` : entry.name;
+  if (entry.localElsewhere) return `${entry.name} — double-click to check out the local ${entry.checkout}, which is on another commit; Pull updates it (git switch ${entry.checkout})`;
   const command = entry.kind === "remote" ? `git switch --track ${entry.checkout}` : `git switch ${entry.checkout}`;
   return `${entry.name} — double-click to check out (${command})`;
 }

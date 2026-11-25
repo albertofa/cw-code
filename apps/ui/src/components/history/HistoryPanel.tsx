@@ -8,6 +8,7 @@ import { useGitStatus } from "../useGit.js";
 import { HistoryCommitView } from "./HistoryCommitView.js";
 import { HistoryGraph, WIP_SHA } from "./HistoryGraph.js";
 import { loadShowAvatars, saveShowAvatars, useHistoryAvatars } from "./historyAvatars.js";
+import { useHistorySplit } from "./useHistorySplit.js";
 
 const PAGE_SIZE = 2000;
 const MAX_LIMIT = 20000;
@@ -26,6 +27,7 @@ export function HistoryPanel({ sessionId }: { sessionId: string }) {
   const [action, setAction] = useState<string | null>(null);
   const [actionError, setActionError] = useState("");
   const [showAvatars, setShowAvatars] = useState(loadShowAvatars);
+  const split = useHistorySplit();
   const avatars = useHistoryAvatars(sessionId, log?.commits ?? NO_COMMITS, isWip, showAvatars);
   const rev = topic?.data.rev ?? 0;
   const topicError = topic?.status === "error" ? (topic.error ?? "History unavailable") : (topic?.data.error ?? null);
@@ -128,7 +130,8 @@ export function HistoryPanel({ sessionId }: { sessionId: string }) {
         </div>
       )}
       {log && log.commits.length > 0 && (
-        <div className={`history-split${selected ? " with-detail" : ""}`}>
+        <div ref={split.containerRef} className={`history-split${selected ? " with-detail" : ""}${split.wide ? " wide" : ""}`}>
+          <div className="history-pane" style={selected ? { flexBasis: `${split.ratio * 100}%` } : undefined}>
           <HistoryGraph
             log={log}
             dirtyCount={status?.available ? status.dirtyCount : 0}
@@ -140,6 +143,17 @@ export function HistoryPanel({ sessionId }: { sessionId: string }) {
             showAvatars={showAvatars}
             onCheckout={checkout}
           />
+          </div>
+          {selected && (
+            <div
+              className="history-divider"
+              role="separator"
+              aria-orientation={split.wide ? "vertical" : "horizontal"}
+              title="Drag to resize — double-click to reset"
+              onPointerDown={split.startDrag}
+              onDoubleClick={split.reset}
+            />
+          )}
           {selected && <HistoryCommitView key={selected} sessionId={sessionId} sha={selected} onSelect={select} />}
         </div>
       )}

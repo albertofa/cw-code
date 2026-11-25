@@ -7656,10 +7656,6 @@ button.gitbar-checkout:hover {
   outline: none;
 }
 
-.history-split.with-detail .history-scroll {
-  flex: 0 0 45%;
-  border-bottom: 1px solid var(--border);
-}
 
 .history-spacer {
   position: relative;
@@ -7668,6 +7664,7 @@ button.gitbar-checkout:hover {
 .history-canvas {
   position: absolute;
   left: 0;
+  z-index: 1;
   pointer-events: none;
 }
 
@@ -7951,9 +7948,46 @@ button.gitbar-checkout:hover {
 
 .history-detail {
   flex: 1;
+  min-width: 0;
   min-height: 0;
   display: flex;
   flex-direction: column;
+}
+
+.history-split.wide {
+  flex-direction: row;
+}
+
+.history-pane {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.history-split.with-detail .history-pane {
+  flex-grow: 0;
+  flex-shrink: 0;
+}
+
+.history-divider {
+  flex: none;
+  height: 5px;
+  background: var(--border);
+  cursor: row-resize;
+  touch-action: none;
+}
+
+.history-split.wide .history-divider {
+  width: 5px;
+  height: auto;
+  cursor: col-resize;
+}
+
+.history-divider:hover,
+.history-divider:active {
+  background: var(--accent);
 }
 
 .history-detail-head {

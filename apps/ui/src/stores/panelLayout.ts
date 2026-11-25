@@ -70,7 +70,7 @@ export const DEFAULT_AUTO: TabAutoLocation = {
   files: "main",
   agents: "right",
   diff: "right",
-  history: "right",
+  history: "main",
   claude: "right",
   opencode: "right",
   codex: "right",
