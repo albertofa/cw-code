@@ -7802,8 +7802,79 @@ button.gitbar-checkout:hover {
   padding-left: 6px;
 }
 
-.history-avatars-toggle {
+.history-pull {
   margin-left: auto;
+}
+
+.history-pull-count {
+  padding: 0 4px;
+  border-radius: var(--r-sm);
+  background: var(--accent);
+  color: var(--on-accent);
+  font-size: 10px;
+  line-height: 14px;
+}
+
+.history-action-error {
+  cursor: pointer;
+}
+
+.history-ref-anchor {
+  position: relative;
+  flex: 0 1 auto;
+  display: inline-flex;
+  min-width: 0;
+}
+
+.history-ref-anchor > .history-ref {
+  max-width: 100%;
+  outline: none;
+}
+
+.history-ref-stack {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 100%;
+  max-width: 280px;
+  border: 1px solid var(--lane);
+  border-radius: var(--r-sm);
+  background: var(--bg-deep);
+  box-shadow: 0 4px 14px color-mix(in srgb, var(--bg-deep) 70%, black);
+  overflow: hidden;
+}
+
+.history-ref-stack-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 7px;
+  color: var(--text);
+  font-size: var(--t-3xs);
+  line-height: 20px;
+  white-space: nowrap;
+  cursor: default;
+}
+
+.history-ref-stack-row + .history-ref-stack-row {
+  border-top: 1px solid color-mix(in srgb, var(--lane) 35%, transparent);
+}
+
+.history-ref-stack-row.local,
+.history-ref-stack-row.head {
+  background: color-mix(in srgb, var(--lane) 62%, black);
+  color: var(--on-accent);
+}
+
+.history-ref-stack-row.current {
+  font-weight: 700;
+}
+
+.history-ref-stack-row:hover {
+  background: color-mix(in srgb, var(--lane) 40%, var(--bg-deep));
 }
 
 .history-subject {

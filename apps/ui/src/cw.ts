@@ -641,6 +641,7 @@ export interface CwApi {
   getHistoryLog(sessionId: string, limit: number): Promise<HistoryLog>;
   getHistoryCommit(sessionId: string, sha: string): Promise<HistoryCommitDetail>;
   getHistoryAvatars(sessionId: string, authors: HistoryAvatarAuthor[]): Promise<HistoryAvatars>;
+  pullHistory(sessionId: string): Promise<void>;
   undoTurn(sessionId: string, turnId: string, expectedEndSha: string): Promise<TurnChanges>;
   getSourceControlHealth(projectId?: string): Promise<SourceControlHealth>;
   setProjectGitHubAccount(projectId: string, account: { host: string; login: string } | null): Promise<Project>;

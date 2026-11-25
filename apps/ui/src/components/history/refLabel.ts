@@ -2,6 +2,16 @@ import type { HistoryRef } from "@cw-code/contracts";
 
 export type RefLabelKind = HistoryRef["kind"] | "head";
 
+export interface RefEntry {
+  key: string;
+  name: string;
+  checkout: string | null;
+  kind: RefLabelKind;
+  isCurrent: boolean;
+  hasLocal: boolean;
+  hasRemote: boolean;
+}
+
 export interface RefLabel {
   key: string;
   label: string;
@@ -11,6 +21,7 @@ export interface RefLabel {
   hasRemote: boolean;
   extra: number;
   title: string;
+  entries: RefEntry[];
 }
 
 interface Candidate {
@@ -19,6 +30,7 @@ interface Candidate {
   kind: RefLabelKind;
   isCurrent: boolean;
   hasRemote: boolean;
+  checkout: string | null;
 }
 
 const KIND_ORDER: Record<RefLabelKind, number> = { head: 0, local: 1, remote: 2, tag: 3, stash: 4 };
@@ -43,9 +55,10 @@ export function buildRefLabel(refs: HistoryRef[], detachedHead: boolean): RefLab
       kind: ref.kind,
       isCurrent: ref.isCurrent && ref.kind === "local",
       hasRemote: twinRemote !== undefined,
+      checkout: ref.kind === "local" || ref.kind === "remote" ? ref.name : null,
     });
   }
-  if (detachedHead) candidates.push({ key: "HEAD", label: "HEAD", kind: "head", isCurrent: true, hasRemote: false });
+  if (detachedHead) candidates.push({ key: "HEAD", label: "HEAD", kind: "head", isCurrent: true, hasRemote: false, checkout: null });
   if (candidates.length === 0) return null;
   candidates.sort(
     (a, b) =>
@@ -62,5 +75,14 @@ export function buildRefLabel(refs: HistoryRef[], detachedHead: boolean): RefLab
     hasRemote: primary.kind === "remote" || primary.hasRemote,
     extra: candidates.length - 1,
     title: names.join("\n"),
+    entries: candidates.map((candidate) => ({
+      key: candidate.key,
+      name: candidate.label,
+      checkout: candidate.checkout,
+      kind: candidate.kind,
+      isCurrent: candidate.isCurrent,
+      hasLocal: candidate.kind === "local",
+      hasRemote: candidate.kind === "remote" || candidate.hasRemote,
+    })),
   };
 }

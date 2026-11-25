@@ -265,6 +265,7 @@ export function createCwApi(
     getHistoryLog: (sessionId, limit) => call<HistoryLog>("history.log", { sessionId, limit }),
     getHistoryCommit: (sessionId, sha) => call<HistoryCommitDetail>("history.commit", { sessionId, sha }),
     getHistoryAvatars: (sessionId, authors) => call<HistoryAvatars>("history.avatars", { sessionId, authors }),
+    pullHistory: (sessionId) => call<void>("history.pull", { sessionId }),
     undoTurn: (sessionId, turnId, expectedEndSha) => call<TurnChanges>("git.undoTurn", { sessionId, turnId, expectedEndSha }),
     getSourceControlHealth: (projectId) => call<SourceControlHealth>("git.health", { projectId }),
     setProjectGitHubAccount: (projectId, account) => call<Project>("git.setProjectAccount", { projectId, account }),

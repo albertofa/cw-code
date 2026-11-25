@@ -1,5 +1,5 @@
-import { useEffect, useState } from "react";
-import { GitGraph, UserRound } from "lucide-react";
+import { useCallback, useEffect, useState } from "react";
+import { ArrowDownToLine, GitGraph, UserRound } from "lucide-react";
 import type { HistoryCommit, HistoryLog, HistoryTopicData } from "@cw-code/contracts";
 import { historyTopic } from "@cw-code/shared/topics";
 import { usePanelStore } from "../../stores/panelStore.js";
@@ -23,6 +23,8 @@ export function HistoryPanel({ sessionId }: { sessionId: string }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [selected, setSelected] = useState<string | null>(null);
+  const [action, setAction] = useState<string | null>(null);
+  const [actionError, setActionError] = useState("");
   const [showAvatars, setShowAvatars] = useState(loadShowAvatars);
   const avatars = useHistoryAvatars(sessionId, log?.commits ?? NO_COMMITS, isWip, showAvatars);
   const rev = topic?.data.rev ?? 0;
@@ -57,6 +59,23 @@ export function HistoryPanel({ sessionId }: { sessionId: string }) {
     setSelected(sha);
   };
 
+  const runAction = useCallback((label: string, task: () => Promise<unknown>): void => {
+    setAction(label);
+    setActionError("");
+    task().catch((reason: Error) => setActionError(reason.message)).finally(() => setAction(null));
+  }, []);
+
+  const checkout = useCallback(
+    (branch: string): void => runAction(`Checking out ${branch}…`, () => window.cw.switchGitBranch(sessionId, branch)),
+    [runAction, sessionId]
+  );
+
+  const head = topic?.data.head ?? null;
+  const currentRef = head?.branch ? topic?.data.refs.find((ref) => ref.kind === "local" && ref.isCurrent) : undefined;
+  const pullBlocked = !head?.branch ? "HEAD is detached — check out a branch to pull" : !currentRef?.upstream ? `${head.branch} has no upstream branch` : null;
+  const pullTitle = pullBlocked ?? `Fast-forward ${head?.branch} from ${currentRef?.upstream} (git pull --ff-only)`;
+  const pull = (): void => runAction("Pulling…", () => window.cw.pullHistory(sessionId));
+
   const toggleAvatars = (): void => {
     const next = !showAvatars;
     setShowAvatars(next);
@@ -74,6 +93,17 @@ export function HistoryPanel({ sessionId }: { sessionId: string }) {
         </span>
         {branch && <span className="inspect-head-ref">{branch}</span>}
         {loading && log && <span className="inspect-refreshing">Refreshing…</span>}
+        {action && <span className="inspect-refreshing">{action}</span>}
+        <button
+          type="button"
+          className="inspect-mode history-pull"
+          disabled={pullBlocked !== null || action !== null}
+          title={pullTitle}
+          onClick={pull}
+        >
+          <ArrowDownToLine size={13} /> Pull
+          {currentRef && currentRef.behind > 0 && <span className="history-pull-count">{currentRef.behind}</span>}
+        </button>
         <button
           type="button"
           className={`inspect-mode history-avatars-toggle${showAvatars ? " active" : ""}`}
@@ -85,6 +115,11 @@ export function HistoryPanel({ sessionId }: { sessionId: string }) {
         </button>
       </div>
       {failure && <div className="inspect-error">History unavailable: {failure}</div>}
+      {actionError && (
+        <div className="inspect-error history-action-error" role="alert" onClick={() => setActionError("")} title="Click to dismiss">
+          {actionError}
+        </div>
+      )}
       {!failure && !log && <div className="diff-empty">Loading history…</div>}
       {!failure && log && log.commits.length === 0 && (
         <div className="inspect-empty">
@@ -103,6 +138,7 @@ export function HistoryPanel({ sessionId }: { sessionId: string }) {
             loadingMore={loading}
             avatars={avatars}
             showAvatars={showAvatars}
+            onCheckout={checkout}
           />
           {selected && <HistoryCommitView key={selected} sessionId={sessionId} sha={selected} onSelect={select} />}
         </div>

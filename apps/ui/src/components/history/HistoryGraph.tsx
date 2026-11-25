@@ -1,4 +1,4 @@
-import { memo, useMemo, useRef, type CSSProperties, type KeyboardEvent } from "react";
+import { memo, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type MouseEvent } from "react";
 import { Check, Cloud, Monitor, Tag } from "lucide-react";
 import type { HistoryCommit, HistoryLog } from "@cw-code/contracts";
 import { computeGraphLayout } from "../../history/graphLayout.js";
@@ -6,7 +6,7 @@ import { relativeTime } from "../prDetailModel.js";
 import { GraphCanvas, graphColumnWidth, REF_COLUMN_WIDTH, ROW_HEIGHT, type NodeKind } from "./GraphCanvas.js";
 import { initialsOf, type NodeAvatar } from "./historyAvatars.js";
 import { PALETTE_SIZE, paletteVar, useGraphTheme } from "./graphTheme.js";
-import { buildRefLabel, type RefLabel } from "./refLabel.js";
+import { buildRefLabel, type RefEntry, type RefLabel } from "./refLabel.js";
 import { useVirtualRows } from "./useVirtualRows.js";
 
 export const WIP_SHA = "WIP";
@@ -54,16 +54,69 @@ function labelsBySha(log: HistoryLog, present: Set<string>): Map<string, RefLabe
   return result;
 }
 
-function RefLabelCell({ label }: { label: RefLabel }) {
+function RefIcons({ kind, isCurrent, hasLocal, hasRemote }: { kind: RefLabel["kind"]; isCurrent: boolean; hasLocal: boolean; hasRemote: boolean }) {
   return (
     <>
-      <span className={`history-ref ${label.kind}${label.isCurrent ? " current" : ""}`} title={label.title}>
-        {label.isCurrent && label.kind !== "head" && <Check size={11} className="history-ref-icon" />}
-        {label.kind === "tag" && <Tag size={11} className="history-ref-icon" />}
-        {label.hasLocal && <Monitor size={11} className="history-ref-icon" />}
-        {label.hasRemote && <Cloud size={11} className="history-ref-icon" />}
-        <span className="history-ref-text">{label.label}</span>
-        {label.extra > 0 && <span className="history-ref-extra">+{label.extra}</span>}
+      {isCurrent && kind !== "head" && <Check size={11} className="history-ref-icon" />}
+      {kind === "tag" && <Tag size={11} className="history-ref-icon" />}
+      {hasLocal && <Monitor size={11} className="history-ref-icon" />}
+      {hasRemote && <Cloud size={11} className="history-ref-icon" />}
+    </>
+  );
+}
+
+function entryTitle(entry: RefEntry): string {
+  if (entry.isCurrent) return `${entry.name} — current branch`;
+  if (entry.checkout === null) return entry.kind === "tag" ? `Tag ${entry.name}` : entry.name;
+  const command = entry.kind === "remote" ? `git switch --track ${entry.checkout}` : `git switch ${entry.checkout}`;
+  return `${entry.name} — double-click to check out (${command})`;
+}
+
+function RefLabelCell({ label, onCheckout }: { label: RefLabel; onCheckout: (branch: string) => void }) {
+  const [open, setOpen] = useState(false);
+  const stacked = label.extra > 0;
+  const primary = label.entries[0];
+  const checkout = (entry: RefEntry | undefined) => (event: MouseEvent) => {
+    event.stopPropagation();
+    if (entry?.checkout && !entry.isCurrent) onCheckout(entry.checkout);
+  };
+  return (
+    <>
+      <span
+        className="history-ref-anchor"
+        onMouseEnter={() => setOpen(stacked)}
+        onMouseLeave={() => setOpen(false)}
+        onFocus={() => setOpen(stacked)}
+        onBlur={() => setOpen(false)}
+      >
+        <span
+          className={`history-ref ${label.kind}${label.isCurrent ? " current" : ""}`}
+          title={stacked ? undefined : primary ? entryTitle(primary) : label.title}
+          tabIndex={stacked ? 0 : -1}
+          onDoubleClick={checkout(primary)}
+        >
+          <RefIcons kind={label.kind} isCurrent={label.isCurrent} hasLocal={label.hasLocal} hasRemote={label.hasRemote} />
+          <span className="history-ref-text">{label.label}</span>
+          {stacked && <span className="history-ref-extra">+{label.extra}</span>}
+        </span>
+        {open && (
+          <span className="history-ref-stack" role="list">
+            {label.entries.map((entry) => (
+              <span
+                key={entry.key}
+                className={`history-ref-stack-row ${entry.kind}${entry.isCurrent ? " current" : ""}`}
+                role="listitem"
+                title={entryTitle(entry)}
+                onDoubleClick={checkout(entry)}
+              >
+                <RefIcons kind={entry.kind} isCurrent={entry.isCurrent} hasLocal={false} hasRemote={false} />
+                <span className="history-ref-text">{entry.name}</span>
+                {entry.hasLocal && <Monitor size={11} className="history-ref-icon" />}
+                {entry.hasRemote && <Cloud size={11} className="history-ref-icon" />}
+              </span>
+            ))}
+          </span>
+        )}
       </span>
       <span className="history-ref-link" aria-hidden="true" />
     </>
@@ -79,7 +132,8 @@ const HistoryRow = memo(function HistoryRow({
   graphWidth,
   nowMs,
   selected,
-  onSelect
+  onSelect,
+  onCheckout
 }: {
   commit: HistoryCommit;
   label: RefLabel | null;
@@ -88,6 +142,7 @@ const HistoryRow = memo(function HistoryRow({
   nowMs: number;
   selected: boolean;
   onSelect: (sha: string) => void;
+  onCheckout: (branch: string) => void;
 }) {
   const isWip = commit.sha === WIP_SHA;
   const title = isWip
@@ -103,7 +158,7 @@ const HistoryRow = memo(function HistoryRow({
       onClick={() => onSelect(commit.sha)}
     >
       <span className="history-ref-cell" style={{ width: REF_COLUMN_WIDTH }}>
-        {label && <RefLabelCell label={label} />}
+        {label && <RefLabelCell label={label} onCheckout={onCheckout} />}
       </span>
       <span className="history-graph-cell" style={{ width: graphWidth }} />
       <span className="history-subject">{commit.subject}</span>
@@ -121,7 +176,8 @@ export function HistoryGraph({
   onLoadMore,
   loadingMore,
   avatars,
-  showAvatars
+  showAvatars,
+  onCheckout
 }: {
   log: HistoryLog;
   dirtyCount: number;
@@ -131,6 +187,7 @@ export function HistoryGraph({
   loadingMore: boolean;
   avatars: Record<string, string | null>;
   showAvatars: boolean;
+  onCheckout: (branch: string) => void;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const theme = useGraphTheme();
@@ -186,6 +243,7 @@ export function HistoryGraph({
               nowMs={nowMs}
               selected={commit.sha === selected}
               onSelect={onSelect}
+              onCheckout={onCheckout}
             />
           ))}
         </div>

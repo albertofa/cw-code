@@ -53,4 +53,21 @@ describe("buildRefLabel", () => {
     const label = buildRefLabel([ref("local", "main")], true);
     expect(label).toMatchObject({ label: "HEAD", kind: "head", isCurrent: true, extra: 1 });
   });
+
+  it("lists every ref as an entry in display order with its checkout target", () => {
+    const refs = [ref("tag", "v1"), ref("remote", "origin/main"), ref("local", "main"), ref("remote", "origin/feat"), ref("local", "dev", true)];
+    const label = buildRefLabel(refs, false);
+    expect(label?.entries.map((entry) => [entry.name, entry.kind, entry.checkout, entry.hasLocal, entry.hasRemote, entry.isCurrent])).toEqual([
+      ["dev", "local", "dev", true, false, true],
+      ["main", "local", "main", true, true, false],
+      ["origin/feat", "remote", "origin/feat", false, true, false],
+      ["v1", "tag", null, false, false, false]
+    ]);
+  });
+
+  it("gives a detached HEAD entry no checkout target", () => {
+    expect(buildRefLabel([], true)?.entries).toEqual([
+      { key: "HEAD", name: "HEAD", checkout: null, kind: "head", isCurrent: true, hasLocal: false, hasRemote: false }
+    ]);
+  });
 });
