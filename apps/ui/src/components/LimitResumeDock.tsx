@@ -22,7 +22,7 @@ export function modelLimitSentence(name: string, resumesAt: number | undefined, 
   const head = `${name} limit reached.`;
   if (resumesAt !== undefined && resumesAt <= now) return `${head} cw-code is about to continue this session.`;
   if (!canSwitch) {
-    if (resumesAt === undefined) return `${head} No other model is available here; send a message later or pick a model in the composer.`;
+    if (resumesAt === undefined) return `${head} Send a message later, or pick another model in the composer.`;
     return `${head} cw-code continues this session ${whenPhrase(resumesAt, now)}, once it resets.`;
   }
   if (resumesAt === undefined) return `${head} Continue on another model now, or send a message later.`;
@@ -57,16 +57,17 @@ export function LimitResumeDock({ sessionId }: { sessionId: string }) {
   const [models, setModels] = useState<ModelOption[]>([]);
   const [modelsLoaded, setModelsLoaded] = useState(false);
   const [choice, setChoice] = useState<string>("");
-  const waiting = pending != null;
   const modelScoped = pending?.scope === "model";
   const limitedModel = pending?.model;
   const limitedWindow = pending?.window;
   const fallbackModel = pending?.fallbackModel;
   const now = useNowAfter(pending?.resumesAt);
 
+  // A new limit starts without the previous one's error (e.g. a switch that failed after the dock hid).
+  const limitKey = pending ? `${pending.resetsAt ?? ""}|${pending.window ?? ""}|${pending.scope ?? ""}|${pending.model ?? ""}` : null;
   useEffect(() => {
-    if (!waiting) setError(null);
-  }, [waiting]);
+    setError(null);
+  }, [limitKey]);
 
   useEffect(() => {
     if (!modelScoped) return;
