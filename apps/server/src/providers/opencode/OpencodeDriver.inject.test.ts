@@ -73,6 +73,7 @@ interface ServerState {
   deliverOnDelete: boolean;
   messagesDelayMs: number;
   injectWithoutId: boolean;
+  deliverInjected: boolean;
 }
 
 function stubServer(sse: ReturnType<typeof controllableSse>, state: ServerState): void {
@@ -91,7 +92,10 @@ function stubServer(sse: ReturnType<typeof controllableSse>, state: ServerState)
         if (index === 1 && state.initialWithoutId) return json({ data: {} });
         if (index > 1 && state.injectWithoutId) return json({ data: {} });
         const id = index === 1 ? "msg_u" : `inbox_${index}`;
-        if (index > 1) state.inbox.add(id);
+        if (index > 1) {
+          if (state.deliverInjected) state.messages.add(id);
+          else state.inbox.add(id);
+        }
         return json({ data: { id, delivery: "steer" } });
       }
       if (method === "POST" && path.endsWith("/interrupt")) {
@@ -129,7 +133,8 @@ function newState(): ServerState {
     messages: new Set(),
     deliverOnDelete: false,
     messagesDelayMs: 0,
-    injectWithoutId: false
+    injectWithoutId: false,
+    deliverInjected: false
   };
 }
 
@@ -413,11 +418,49 @@ describe("OpencodeDriver mid-turn messages on opencode v2", () => {
     }
   });
 
-  it("retracts a message whose post was still in flight when the turn ended", async () => {
+  it("waits for a post still in flight when the turn ends and retracts it before turn.done", async () => {
     const events: ThreadEvent[] = [];
     const sse = controllableSse();
     const state = newState();
     state.injectDelayMs = 300;
+    stubServer(sse, state);
+    const driver = startDriver(events);
+    const deletesAtDone: number[] = [];
+    try {
+      const turnId = await startRunning(driver, state);
+      sse.push("session.inbox.delivered", { sessionID: SID, inboxID: "msg_u" });
+      await sleep(50);
+      let postSettled = false;
+      const pending = driver.injectMessage(turnId, injection("cw-msg-1")).finally(() => (postSettled = true));
+      await waitFor(() => state.prompts.length === 2);
+      const done = new Promise<void>((resolve) => {
+        const timer = setInterval(() => {
+          if (!events.some((e) => e.type === "turn.done")) return;
+          deletesAtDone.push(state.deletes.length);
+          clearInterval(timer);
+          resolve();
+        }, 1);
+      });
+      sse.push("session.execution.succeeded", { sessionID: SID });
+      await sleep(100);
+      expect(events.some((e) => e.type === "turn.done")).toBe(false);
+      await done;
+      expect(postSettled).toBe(true);
+      await pending;
+      expect(deletesAtDone).toEqual([1]);
+      expect(state.deletes).toEqual([`/api/session/${SID}/inbox/inbox_2`]);
+      expect(userMessages(events)).toEqual([]);
+    } finally {
+      driver.dispose();
+    }
+  });
+
+  it("reports a post that was in flight when the turn ended as delivered when the agent already took it", async () => {
+    const events: ThreadEvent[] = [];
+    const sse = controllableSse();
+    const state = newState();
+    state.injectDelayMs = 300;
+    state.deliverInjected = true;
     stubServer(sse, state);
     const driver = startDriver(events);
     try {
@@ -428,9 +471,10 @@ describe("OpencodeDriver mid-turn messages on opencode v2", () => {
       await waitFor(() => state.prompts.length === 2);
       sse.push("session.execution.succeeded", { sessionID: SID });
       await waitFor(() => events.some((e) => e.type === "turn.done"));
-      expect(((await pending.then(() => null, (error: unknown) => error)) as Error | null)?.message).toContain("ended before the message was delivered");
-      expect(state.deletes).toEqual([`/api/session/${SID}/inbox/inbox_2`]);
-      expect(userMessages(events)).toEqual([]);
+      await pending;
+      expect(state.deletes).toEqual([]);
+      expect(userMessages(events)).toMatchObject([{ turnId, messageId: "cw-msg-1" }]);
+      expect(events.findIndex((e) => e.type === "user.message")).toBeLessThan(events.findIndex((e) => e.type === "turn.done"));
     } finally {
       driver.dispose();
     }

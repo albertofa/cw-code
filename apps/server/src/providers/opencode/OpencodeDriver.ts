@@ -1761,7 +1761,23 @@ export class OpencodeDriver implements CliDriver {
     });
   }
 
+  private async settleInflightInjections(turnId: string): Promise<void> {
+    const meta = this.turnMeta.get(turnId);
+    if (!meta) return;
+    meta.executionEnded = true;
+    if (meta.inflight.size === 0) return;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    await Promise.race([
+      Promise.all(meta.inflight.values()),
+      new Promise<void>((resolve) => {
+        timer = setTimeout(resolve, OPENCODE_REQUEST_TIMEOUT_MS);
+      })
+    ]);
+    clearTimeout(timer);
+  }
+
   private async finishTurn(turnId: string): Promise<void> {
+    await this.settleInflightInjections(turnId);
     const taken = this.takeTurn(turnId);
     if (!taken) return;
     let unretracted = await this.retractLeftovers(turnId, taken);

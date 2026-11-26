@@ -37,10 +37,12 @@ Core behaviors:
   DELETE and no message with its id exists after it, because the server answers 204 even for an
   item already delivered). opencode refuses injection once the server reports the execution ended
   (`turn.ended`), since a post to an idle session would start a run cw does not track. Each
-  opencode post has its own abort controller, so a post still in flight when the turn ends is
-  retracted when it lands, and Stop retracts it before interrupting; Remove during the post fails
+  opencode post has its own abort controller; at turn end the driver waits for posts still in
+  flight (up to the request timeout; one that lands later retracts itself), and Stop retracts them
+  before interrupting; Remove during the post fails
   with "still being sent". A 2xx post without an inbox id counts as delivered (it cannot be
-  retracted or matched). At turn end the driver awaits the retract of leftover inbox items before
+  retracted or matched). At turn end the driver awaits the retract of leftover inbox items (posts
+  that were in flight included) before
   `turn.done`; an item it cannot retract that is in the session history is reported as delivered
   (`user.message`), so it is not sent again. Messages still `sending` at a successful `turn.done` become one new
   turn before auto follow-up and subagent wakes; while a parent waits on subagents
