@@ -41,6 +41,13 @@ describe("parseCommitPulls", () => {
     expect(list.map((entry) => entry.ref.number)).toEqual([9, 2, 7, 5, 1]);
   });
 
+  test("uses GitHub's casing of the repository for the ref, never another repository", () => {
+    const canonical = { base: { ref: "main", repo: { full_name: "Owner/Repo" } } };
+    expect(parseCommitPulls(JSON.stringify([pull(1, canonical)]), "github.com", "owner", "repo")[0]!.ref).toEqual({ host: "github.com", owner: "Owner", repo: "Repo", number: 1 });
+    const fork = { base: { ref: "main", repo: { full_name: "someone/else" } } };
+    expect(parseCommitPulls(JSON.stringify([pull(1, fork)]), "github.com", "owner", "repo")[0]!.ref).toEqual({ host: "github.com", owner: "owner", repo: "repo", number: 1 });
+  });
+
   test("returns an empty list for malformed input", () => {
     expect(parseCommitPulls("not json", "github.com", "o", "r")).toEqual([]);
     expect(parseCommitPulls("{}", "github.com", "o", "r")).toEqual([]);

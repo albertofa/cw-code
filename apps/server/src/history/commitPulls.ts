@@ -31,6 +31,15 @@ function text(value: unknown): string | null {
   return typeof value === "string" && value.length > 0 ? value : null;
 }
 
+// The PR store keys refs case-sensitively, so use GitHub's own casing rather than the remote URL's.
+function canonicalRepo(value: unknown, owner: string, repo: string): { owner: string; repo: string } {
+  const fullName = value !== null && typeof value === "object" ? text((value as Record<string, unknown>).full_name) : null;
+  const [canonicalOwner, canonicalName, ...rest] = fullName?.split("/") ?? [];
+  if (!canonicalOwner || !canonicalName || rest.length > 0) return { owner, repo };
+  if (canonicalOwner.toLowerCase() !== owner.toLowerCase() || canonicalName.toLowerCase() !== repo.toLowerCase()) return { owner, repo };
+  return { owner: canonicalOwner, repo: canonicalName };
+}
+
 function parseCommitPull(value: unknown, host: string, owner: string, repo: string): HistoryCommitPull | null {
   if (value === null || typeof value !== "object") return null;
   const item = value as Record<string, unknown>;
@@ -42,8 +51,9 @@ function parseCommitPull(value: unknown, host: string, owner: string, repo: stri
   const merged = Number.isFinite(mergedAt);
   const head = (item.head ?? {}) as Record<string, unknown>;
   const base = (item.base ?? {}) as Record<string, unknown>;
+  const canonical = canonicalRepo(base.repo, owner, repo);
   return {
-    ref: { host, owner, repo, number },
+    ref: { host, owner: canonical.owner, repo: canonical.repo, number },
     title,
     url,
     state: merged ? "MERGED" : item.state === "open" ? "OPEN" : "CLOSED",
