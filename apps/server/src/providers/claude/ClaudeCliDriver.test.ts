@@ -2314,8 +2314,8 @@ describe("ClaudeCliDriver mid-turn messages", () => {
     }
   });
 
-  it("does not carry an API error from the held run into the next one", async () => {
-    const { driver, events, children } = makeDriver();
+  it("ends the turn as an error and restarts the process when an API error leaves a message pending", async () => {
+    const { driver, events, children, killed } = makeDriver();
     const handle = driver.startTurn({ sessionId: "s1", cwd: "C:\\proj", prompt: "go" });
     await settle();
     children[0].stdout.write(`${replayLine("go")}\n`);
@@ -2323,11 +2323,29 @@ describe("ClaudeCliDriver mid-turn messages", () => {
     await driver.injectMessage(handle.turnId, { id: "m1", prompt: "next", cwd: "C:\\proj", attachments: [] });
     children[0].stdout.write(`${JSON.stringify({ type: "assistant", isApiErrorMessage: true, message: { content: [{ type: "text", text: "overloaded" }] } })}\n`);
     children[0].stdout.write(`${resultLine({ result: "first" })}\n`);
+    await settle();
+    expect(turnDones(events)).toEqual([expect.objectContaining({ turnId: handle.turnId, isError: true, resultText: "overloaded" })]);
+    expect(events.some((event) => event.type === "user.message")).toBe(false);
+    expect(killed).toHaveLength(1);
+    driver.startTurn({ sessionId: "s1", cwd: "C:\\proj", prompt: "again" });
+    await settle();
+    expect(children).toHaveLength(2);
+    driver.dispose();
+  });
+
+  it("does not carry an API error from a run into the held run that follows", async () => {
+    const { driver, events, children } = makeDriver();
+    const handle = driver.startTurn({ sessionId: "s1", cwd: "C:\\proj", prompt: "go" });
+    await settle();
+    children[0].stdout.write(`${replayLine("go")}\n`);
+    await settle();
+    await driver.injectMessage(handle.turnId, { id: "m1", prompt: "next", cwd: "C:\\proj", attachments: [] });
+    children[0].stdout.write(`${resultLine({ result: "first" })}\n`);
     children[0].stdout.write(`${JSON.stringify({ type: "system", subtype: "init", session_id: "native-1" })}\n`);
     children[0].stdout.write(`${replayLine("next")}\n`);
     children[0].stdout.write(`${resultLine({ result: "second" })}\n`);
     await settle();
-    expect(turnDones(events)).toEqual([expect.objectContaining({ isError: false, resultText: "second" })]);
+    expect(turnDones(events)).toEqual([expect.objectContaining({ isError: false, resultText: "second", numTurns: 2 })]);
     driver.dispose();
   });
 });

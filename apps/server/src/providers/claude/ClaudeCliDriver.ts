@@ -210,7 +210,9 @@ interface PendingInjection {
   echo: string;
 }
 
-export const CLAUDE_HELD_RESULT_TIMEOUT_MS = 10_000;
+// Above Claude Code's 60 s default hook timeout: a slow UserPromptSubmit hook keeps the CLI silent
+// between the held result and the next run's `init` (verified with a 12 s hook).
+export const CLAUDE_HELD_RESULT_TIMEOUT_MS = 120_000;
 
 function matchingEchoPrefix(pending: PendingInjection[], text: string): number {
   const target = text.trimEnd();
@@ -815,7 +817,7 @@ export class ClaudeCliDriver implements CliDriver {
     const usageLimit = state.apiErrorMessage && named && (named.scope === "model" || named.resetsAt !== undefined) ? named : undefined;
     const turnId = state.activeTurnId;
     const interrupted = this.interruptedTurns.delete(turnId);
-    if (!interrupted && !state.completedTurn && state.injected.length > 0) {
+    if (!interrupted && !state.completedTurn && state.injected.length > 0 && !state.apiErrorMessage) {
       state.heldResult = state.heldResult ? combineClaudeTurnDone(state.heldResult, info) : info;
       state.modelUsage = info.modelUsage;
       state.resumeCursor = info.resumeCursor;
@@ -893,6 +895,19 @@ export class ClaudeCliDriver implements CliDriver {
         backgroundTasks,
         ...(usageLimit ? { usageLimit } : {})
       });
+    }
+    if (!interrupted && (state.injected.length > 0 || state.deferredInjections.length > 0)) {
+      // An API error (a plan limit, for example) ended the run while injected messages still sit in the
+      // CLI's stdin. The CLI would run them on its own after this turn ended, so restart the process;
+      // the server holds them as Not sent, like any message left by a turn error.
+      state.injected = [];
+      state.deferredInjections = [];
+      state.resumeCursor = info.resumeCursor;
+      state.postCompletionOutputPending = false;
+      state.completedTurn = true;
+      this.turnToSession.delete(turnId);
+      this.terminate(state);
+      return;
     }
     state.resumeCursor = info.resumeCursor;
     state.postCompletionOutputPending = false;
