@@ -29,7 +29,10 @@ export function GitGlassDetails({
   onReset,
   onClose,
   renderCommit,
-  renderChanges
+  renderChanges,
+  renderPr,
+  renderSession,
+  renderWorktree
 }: {
   selection: GitGlassSelection | null;
   width: number;
@@ -38,6 +41,9 @@ export function GitGlassDetails({
   onClose: () => void;
   renderCommit: (sha: string) => ReactNode;
   renderChanges: (mode: GitDiffMode) => ReactNode;
+  renderPr: (ref: PrRef) => ReactNode;
+  renderSession: (sessionId: string) => ReactNode;
+  renderWorktree: (path: string) => ReactNode;
 }) {
   const begin = (event: ReactPointerEvent<HTMLDivElement>): void =>
     startWidthDrag(
@@ -49,10 +55,12 @@ export function GitGlassDetails({
     );
 
   let body: ReactNode;
-  if (selection === null) body = <div className="gg-note gg-details-empty">Select a commit to see its details.</div>;
+  if (selection === null) body = <div className="gg-note gg-details-empty">Select a commit, or a session, pull request or worktree in the sidebar.</div>;
   else if (selection.kind === "commit") body = renderCommit(selection.sha);
   else if (selection.kind === "changes") body = renderChanges(selection.mode);
-  else body = <div className="gg-note gg-details-empty">Nothing to show here yet.</div>;
+  else if (selection.kind === "pr") body = renderPr(selection.ref);
+  else if (selection.kind === "session") body = renderSession(selection.sessionId);
+  else body = renderWorktree(selection.path);
 
   return (
     <aside className="gg-details" style={{ width }} aria-label="Details">

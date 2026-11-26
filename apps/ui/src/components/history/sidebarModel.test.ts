@@ -1,0 +1,222 @@
+import { describe, expect, test } from "bun:test";
+import type { HistoryLog, HistoryRef, PrRef, PrSummary, SessionMeta, SessionRow } from "@cw-code/contracts";
+import { prKey } from "@cw-code/shared/prRef";
+import { buildSidebarModel, filterSidebarModel, groupBranches, prForBranch, projectSessions, sectionCounts, unionPrs } from "./sidebarModel.js";
+
+function ref(kind: HistoryRef["kind"], name: string, extra: Partial<HistoryRef> = {}): HistoryRef {
+  return {
+    fullName: kind === "local" ? `refs/heads/${name}` : kind === "remote" ? `refs/remotes/${name}` : kind === "tag" ? `refs/tags/${name}` : name,
+    name,
+    kind,
+    target: `sha-${name}`,
+    isCurrent: false,
+    upstream: null,
+    ahead: 0,
+    behind: 0,
+    upstreamGone: false,
+    ...extra
+  };
+}
+
+const prRef = (number: number, owner = "nuria"): PrRef => ({ host: "github.com", owner, repo: "infra", number });
+
+function summary(number: number, extra: Partial<PrSummary> = {}): PrSummary {
+  return {
+    ref: prRef(number),
+    url: `https://github.com/nuria/infra/pull/${number}`,
+    title: `PR ${number}`,
+    state: "OPEN",
+    isDraft: false,
+    author: { login: "someone", isBot: false },
+    viewerIsAuthor: false,
+    reviewRequestedFromViewer: false,
+    headRefName: `branch-${number}`,
+    headRefOid: `oid-${number}`,
+    baseRefName: "main",
+    additions: 1,
+    deletions: 1,
+    changedFiles: 1,
+    commentsCount: 0,
+    unresolvedThreads: 0,
+    ci: "passing",
+    checks: { total: 0, passed: 0, failed: 0, pending: 0 } as PrSummary["checks"],
+    review: "none",
+    mergeable: "MERGEABLE",
+    mergeStateStatus: "CLEAN",
+    labels: [],
+    reviewers: [],
+    assignees: [],
+    updatedAt: 0,
+    ...extra
+  };
+}
+
+function row(id: string, extra: Partial<SessionMeta> = {}, rowExtra: Partial<SessionRow> = {}): SessionRow {
+  return {
+    session: {
+      id,
+      projectId: "p1",
+      driver: "claude",
+      title: `Session ${id}`,
+      status: "idle",
+      resumeCursor: "",
+      createdAt: 0,
+      updatedAt: 0,
+      ...extra
+    },
+    busy: false,
+    branch: null,
+    attention: null,
+    babysit: null,
+    prBadge: null,
+    pendingQuestionIds: [],
+    latestUnseenPrUpdateAt: null,
+    prMuted: false,
+    ...rowExtra
+  };
+}
+
+const link = (number: number, owner?: string) => ({ ref: prRef(number, owner), origin: "linked" as const, lastSeenSha: "", lastSeenAt: 0 });
+
+describe("groupBranches", () => {
+  test("lists local branches with the current one first, then by name", () => {
+    const { local } = groupBranches([ref("local", "zeta"), ref("local", "alpha"), ref("local", "main", { isCurrent: true })]);
+    expect(local.map((entry) => entry.name)).toEqual(["main", "alpha", "zeta"]);
+  });
+
+  test("keeps remote-only branches and drops the twins of local branches", () => {
+    const { remoteOnly } = groupBranches([
+      ref("local", "main", { upstream: "origin/main" }),
+      ref("local", "renamed", { upstream: "origin/feat/remote-name" }),
+      ref("local", "feature"),
+      ref("remote", "origin/main"),
+      ref("remote", "origin/feat/remote-name"),
+      ref("remote", "origin/feature"),
+      ref("remote", "origin/docs/only-remote"),
+      ref("remote", "upstream/another"),
+      ref("tag", "v1.0.0")
+    ]);
+    expect(remoteOnly.map((entry) => entry.name)).toEqual(["origin/docs/only-remote", "upstream/another"]);
+  });
+});
+
+describe("projectSessions", () => {
+  test("keeps the project's visible sessions with this session first", () => {
+    const rows = [
+      row("old", { updatedAt: 1 }),
+      row("new", { updatedAt: 5 }),
+      row("me", { updatedAt: 2 }),
+      row("child", { updatedAt: 9, subagent: { parentSessionId: "me", isolation: "shared" } }),
+      row("gone", { updatedAt: 9, status: "resolved" }),
+      row("archived", { updatedAt: 9, status: "archived" }),
+      row("elsewhere", { updatedAt: 9, projectId: "p2" })
+    ];
+    expect(projectSessions(rows, "p1", "me").map((entry) => entry.session.id)).toEqual(["me", "new", "old"]);
+  });
+
+  test("lists nothing without a project", () => {
+    expect(projectSessions([row("a")], null, null)).toEqual([]);
+  });
+});
+
+describe("unionPrs", () => {
+  test("puts this session's PRs first, then other sessions', then open PRs, without duplicates", () => {
+    const sessions = [row("other", { prs: [link(151), link(145)] }), row("me", { prs: [link(145)] })];
+    const open = [summary(150), summary(151), summary(149)];
+    const prs = unionPrs(sessions, "me", open, new Map([[prKey(prRef(145)), summary(145, { title: "Runner" })]]));
+    expect(prs.map((pr) => [pr.ref.number, pr.sessionId, pr.linkedHere])).toEqual([
+      [145, "me", true],
+      [151, "other", false],
+      [150, null, false],
+      [149, null, false]
+    ]);
+    expect(prs[0]?.title).toBe("Runner");
+    expect(prs[1]?.title).toBe("PR 151");
+  });
+
+  test("treats references that differ only in case as the same PR", () => {
+    const prs = unionPrs([row("me", { prs: [link(7, "Nuria")] })], "me", [summary(7)], new Map());
+    expect(prs).toHaveLength(1);
+    expect(prs[0]?.sessionId).toBe("me");
+    expect(prs[0]?.headRefName).toBe("branch-7");
+  });
+
+  test("tags nothing as linked here in project scope", () => {
+    const prs = unionPrs([row("a", { prs: [link(1)] })], null, [], new Map());
+    expect(prs[0]?.linkedHere).toBe(false);
+    expect(prs[0]?.sessionId).toBe("a");
+  });
+});
+
+describe("prForBranch", () => {
+  const prs = unionPrs([], null, [summary(1, { headRefName: "feature", state: "MERGED" }), summary(2, { headRefName: "feature" }), summary(3, { headRefName: "remote-name" })], new Map());
+
+  test("prefers the open PR whose head is the branch", () => {
+    expect(prForBranch(prs, ref("local", "feature"))?.ref.number).toBe(2);
+  });
+
+  test("matches the tracked branch and remote branches by their short name", () => {
+    expect(prForBranch(prs, ref("local", "local", { upstream: "origin/remote-name" }))?.ref.number).toBe(3);
+    expect(prForBranch(prs, ref("remote", "origin/feature"))?.ref.number).toBe(2);
+    expect(prForBranch(prs, ref("local", "main"))).toBeNull();
+  });
+});
+
+describe("buildSidebarModel and filterSidebarModel", () => {
+  const log: HistoryLog = {
+    head: { sha: "sha-main", branch: "main", detached: false },
+    refs: [
+      ref("local", "main", { isCurrent: true, upstream: "origin/main" }),
+      ref("local", "cw/saml"),
+      ref("remote", "origin/main"),
+      ref("remote", "origin/docs/acs"),
+      ref("tag", "v0.9.0"),
+      ref("tag", "v0.10.0"),
+      ref("stash", "stash@{1}", { target: "s1" }),
+      ref("stash", "stash@{0}", { target: "s0" })
+    ],
+    commits: [
+      { sha: "s0", parents: [], authorName: "", authorEmail: "", authorDate: 0, committerDate: 0, subject: "On main: try idle.sh", isStash: true },
+      { sha: "s1", parents: [], authorName: "", authorEmail: "", authorDate: 0, committerDate: 0, subject: "WIP on cw/saml: saml", isStash: true }
+    ],
+    truncated: false,
+    worktrees: [
+      { key: "main", path: "/repo", name: "repo", branch: "main", head: "sha-main", isCurrent: false, isMain: true, sessionId: null },
+      { key: "w1", path: "/wt/sess_1", name: "sess_1", branch: "cw/saml", head: "sha-cw/saml", isCurrent: true, isMain: false, sessionId: "me" }
+    ],
+    wipCount: null,
+    github: { owner: "nuria", repo: "infra" }
+  };
+  const model = buildSidebarModel({
+    log,
+    rows: [row("me", { title: "OpenSearch SAML", prs: [link(151)] }), row("other", { title: "Elastic log config" })],
+    projectId: "p1",
+    sessionId: "me",
+    homePath: "/wt/sess_1",
+    openPrs: [summary(150, { title: "docs: ACS route notes" })],
+    summaries: new Map()
+  });
+
+  test("builds every section from the log, the sidebar rows and the open PRs", () => {
+    expect(model.tags.map((entry) => entry.name)).toEqual(["v0.10.0", "v0.9.0"]);
+    expect(model.stashes.map((entry) => [entry.ref.name, entry.subject])).toEqual([
+      ["stash@{0}", "On main: try idle.sh"],
+      ["stash@{1}", "WIP on cw/saml: saml"]
+    ]);
+    expect(model.worktrees.map((entry) => [entry.worktree.name, entry.owner?.session.id ?? null, entry.isHome])).toEqual([
+      ["repo", null, false],
+      ["sess_1", "me", true]
+    ]);
+    expect(sectionCounts(model)).toEqual({ sessions: 2, prs: 2, branches: 3, worktrees: 2, tags: 2, stashes: 2 });
+  });
+
+  test("filters every section case-insensitively and recounts", () => {
+    expect(sectionCounts(filterSidebarModel(model, "SAML"))).toEqual({ sessions: 1, prs: 1, branches: 1, worktrees: 1, tags: 0, stashes: 1 });
+    expect(sectionCounts(filterSidebarModel(model, "acs"))).toEqual({ sessions: 0, prs: 1, branches: 1, worktrees: 0, tags: 0, stashes: 0 });
+    expect(sectionCounts(filterSidebarModel(model, "#151"))).toEqual({ sessions: 0, prs: 1, branches: 0, worktrees: 0, tags: 0, stashes: 0 });
+  });
+
+  test("returns the same model for a blank filter", () => {
+    expect(filterSidebarModel(model, "   ")).toBe(model);
+  });
+});

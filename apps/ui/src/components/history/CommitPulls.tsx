@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { ExternalLink, GitPullRequest, Maximize2, MessageSquare } from "lucide-react";
-import type { HistoryCommitPull, HistoryCommitPulls, HistoryScope, PrCheck } from "@cw-code/contracts";
+import type { HistoryCommitPull, HistoryCommitPulls, HistoryScope, PrCheck, PrRef } from "@cw-code/contracts";
 import { COMMIT_PULLS_NO_GITHUB_REMOTE } from "@cw-code/shared/commitPulls";
 import { prKey } from "@cw-code/shared/prRef";
 import { useConnectionEpoch } from "../../server/topics.js";
@@ -59,7 +59,7 @@ export function useCommitPulls(scope: HistoryScope, sha: string): CommitPullsSta
   return { result, error, retry: () => setAttempt((value) => value + 1) };
 }
 
-function Note({ children }: { children: ReactNode }) {
+export function Note({ children }: { children: ReactNode }) {
   return (
     <div className="gg-note" role="status">
       {children}
@@ -67,7 +67,7 @@ function Note({ children }: { children: ReactNode }) {
   );
 }
 
-function RetryError({ children, onRetry }: { children: ReactNode; onRetry: () => void }) {
+export function RetryError({ children, onRetry }: { children: ReactNode; onRetry: () => void }) {
   return (
     <div className="pr-view-error gg-error" role="alert">
       {children}
@@ -78,8 +78,7 @@ function RetryError({ children, onRetry }: { children: ReactNode; onRetry: () =>
   );
 }
 
-function usePullDetail(pull: HistoryCommitPull) {
-  const ref = pull.ref;
+export function usePrRefDetail(ref: PrRef) {
   const key = prKey(ref);
   const entry = usePrDetail(key);
   const epoch = useConnectionEpoch();
@@ -102,10 +101,10 @@ function usePullDetail(pull: HistoryCommitPull) {
   return { detail: entry?.detail ?? null, error: entry?.error ?? loadError, retry: () => setAttempt((value) => value + 1) };
 }
 
-function CommitPrCard({ pull, linked }: { pull: HistoryCommitPull; linked: boolean }) {
+export function CommitPrCard({ pull, linked }: { pull: HistoryCommitPull; linked: boolean }) {
   const ref = pull.ref;
   const openPr = usePrStore((s) => s.openPr);
-  const { detail, error, retry } = usePullDetail(pull);
+  const { detail, error, retry } = usePrRefDetail(pull.ref);
   const status = useMemo(() => (detail ? mergeBoxState(detail) : null), [detail]);
   const unresolved = detail ? detail.threads.filter((thread) => !thread.isResolved).length : null;
   const title = detail?.title ?? pull.title;

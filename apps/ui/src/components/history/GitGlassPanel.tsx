@@ -9,12 +9,14 @@ import {
   GitFork,
   GitGraph,
   PackagePlus,
-  PanelLeft,
   SquareTerminal
 } from "lucide-react";
-import type { GitDiffMode, HistoryCommit, HistoryLog, HistoryScope, HistoryTopicData, HistoryWorktree } from "@cw-code/contracts";
+import type { GitDiffMode, HistoryCommit, HistoryLog, HistoryScope, HistoryTopicData, HistoryWorktree, PrRef } from "@cw-code/contracts";
+import { prKey } from "@cw-code/shared/prRef";
 import { historyTopic } from "@cw-code/shared/topics";
+import { useAppStore } from "../../stores/appStore.js";
 import { usePanelStore } from "../../stores/panelStore.js";
+import { usePrStore } from "../../stores/prStore.js";
 import { useConnectionEpoch, useTopic } from "../../server/topics.js";
 import { useGitStatus } from "../useGit.js";
 import { useGitDiff } from "../useGitDiff.js";
@@ -28,6 +30,11 @@ import { GitGlassStatusBar } from "./GitGlassStatusBar.js";
 import { DETAILS_DEFAULT_WIDTH, DETAILS_MAX_WIDTH, DETAILS_MIN_WIDTH, GitGlassDetails, type GitGlassSelection } from "./GitGlassDetails.js";
 import { CommitDetails } from "./CommitDetails.js";
 import { ChangesDetails } from "./ChangesDetails.js";
+import { GitGlassSidebar, GitGlassSidebarStrip, useGitGlassSidebarData, type SectionFocus } from "./GitGlassSidebar.js";
+import { PrDetails } from "./PrDetails.js";
+import { SessionDetails } from "./SessionDetails.js";
+import { WorktreeDetails } from "./WorktreeDetails.js";
+import { sidebarPrOf, type SidebarSectionId } from "./sidebarModel.js";
 import { NARROW_WIDTH } from "./gitGlassLayout.js";
 import { isEmptyQuery, matchesQuery, parseHistoryQuery, type HistorySearchScope } from "./historySearch.js";
 import { startWidthDrag, usePersistedChoice, usePersistedWidth } from "./usePersistedState.js";
@@ -72,6 +79,11 @@ function refNamesBySha(log: HistoryLog | null): Map<string, string[]> {
   return names;
 }
 
+function openSession(sessionId: string): void {
+  usePrStore.getState().openSessionView();
+  useAppStore.getState().selectSession(sessionId);
+}
+
 function soon(id: string, label: string, icon: ToolbarAction["icon"]): ToolbarAction {
   return { id, label, icon, title: COMING_SOON, disabled: true };
 }
@@ -108,6 +120,7 @@ export function GitGlassPanel({ scope: scopeProp }: { scope: HistoryScope }) {
   const busy = useRef<string | null>(null);
   const [sidebarSetting, setSidebarSetting] = usePersistedChoice("cw-code:git-glass-sidebar", TOGGLES, "on");
   const [sidebarOverlay, setSidebarOverlay] = useState(false);
+  const [sectionFocus, setSectionFocus] = useState<SectionFocus | null>(null);
   const sidebarWidth = usePersistedWidth("cw-code:git-glass-sidebar-width", SIDEBAR_MIN_WIDTH, SIDEBAR_MAX_WIDTH);
   const detailsWidth = usePersistedWidth("cw-code:git-glass-details-width", DETAILS_MIN_WIDTH, DETAILS_MAX_WIDTH);
   const refWidth = usePersistedWidth("cw-code:git-glass-ref-width", REF_COLUMN_MIN, REF_COLUMN_MAX);
@@ -180,6 +193,22 @@ export function GitGlassPanel({ scope: scopeProp }: { scope: HistoryScope }) {
     setSelection({ kind: "changes", mode });
     setOpenPath(null);
   }, []);
+
+  const pick = useCallback(
+    (next: GitGlassSelection): void => {
+      if (next.kind === "changes") {
+        openWorktree(null);
+        selectChanges(next.mode);
+      } else {
+        setSelection(next);
+        setOpenPath(null);
+      }
+      if (narrow) setSidebarOverlay(false);
+    },
+    [openWorktree, selectChanges, narrow]
+  );
+
+  const selectPr = useCallback((ref: PrRef): void => pick({ kind: "pr", ref }), [pick]);
 
   const select = useCallback(
     (sha: string): void => {
@@ -401,6 +430,19 @@ export function GitGlassPanel({ scope: scopeProp }: { scope: HistoryScope }) {
     if (narrow) setSidebarOverlay((value) => !value);
     else setSidebarSetting(sidebarSetting === "on" ? "off" : "on");
   };
+  const openSection = (id: SidebarSectionId): void => {
+    if (narrow) setSidebarOverlay(true);
+    else setSidebarSetting("on");
+    setSectionFocus((current) => ({ id, nonce: (current?.nonce ?? 0) + 1 }));
+  };
+  const sidebarData = useGitGlassSidebarData({ scope, sessionId, log, homePath, active: narrow || sidebarOpen });
+  useEffect(() => {
+    if (!sidebarOpen) setSectionFocus(null);
+  }, [sidebarOpen]);
+  const linkedKeys = useMemo(
+    () => new Set((sidebarData.thisRow?.session.prs ?? []).map((link) => prKey(link.ref))),
+    [sidebarData.thisRow]
+  );
   const currentSidebarWidth = sidebarWidth.width ?? SIDEBAR_DEFAULT_WIDTH;
   const beginSidebarResize = (event: ReactPointerEvent<HTMLDivElement>): void =>
     startWidthDrag(event, currentSidebarWidth, 1, sidebarWidth.preview, sidebarWidth.save);
@@ -457,31 +499,6 @@ export function GitGlassPanel({ scope: scopeProp }: { scope: HistoryScope }) {
           onShowAuthors: (value) => setAuthorsSetting(value ? "on" : "off")
         }}
       />
-      {worktrees.length > 1 && (
-        <div className="history-worktrees" role="tablist" aria-label="Worktrees">
-          <span className="history-worktrees-label">Worktrees</span>
-          {worktrees.map((worktree) => {
-            const home = worktree.path === homePath;
-            const active = worktree.path === activePath;
-            const owned = worktree.sessionId && !home ? " — used by another cw-code session" : "";
-            return (
-              <button
-                key={worktree.path}
-                type="button"
-                role="tab"
-                aria-selected={active}
-                className={`history-worktree-tab${active ? " active" : ""}`}
-                title={`${worktree.path} — ${worktree.branch ?? "detached"}${owned}`}
-                onClick={() => openWorktree(worktree.path)}
-              >
-                <GitFork size={12} aria-hidden="true" />
-                <span className="history-worktree-name">{home ? homeLabel : worktree.name}</span>
-                {worktree.branch && <span className="history-worktree-branch">{worktree.branch}</span>}
-              </button>
-            );
-          })}
-        </div>
-      )}
       {view !== null && (
         <div className="history-viewing" role="status">
           <GitFork size={13} aria-hidden="true" />
@@ -518,22 +535,25 @@ export function GitGlassPanel({ scope: scopeProp }: { scope: HistoryScope }) {
       )}
       <div className="gg-workspace">
         {narrow && (
-          <aside className="gg-strip" aria-label="Repository">
-            <button
-              type="button"
-              className={`gg-icon-btn${sidebarOverlay ? " on" : ""}`}
-              onClick={toggleSidebar}
-              title={sidebarOverlay ? "Hide the sidebar" : "Show the sidebar"}
-              aria-label="Toggle the sidebar"
-              aria-pressed={sidebarOverlay}
-            >
-              <PanelLeft size={15} aria-hidden="true" />
-            </button>
-          </aside>
+          <GitGlassSidebarStrip data={sidebarData} sessionScope={sessionId !== null} overlay={sidebarOverlay} onToggle={toggleSidebar} onSection={openSection} />
         )}
         {sidebarOpen && (
           <aside className={`gg-sidebar${narrow ? " overlay" : ""}`} style={{ width: currentSidebarWidth }} aria-label="Repository">
-            <div className="gg-note gg-sidebar-empty">Branches, sessions and pull requests will be listed here.</div>
+            <GitGlassSidebar
+              data={sidebarData}
+              sessionId={sessionId}
+              log={log}
+              status={status}
+              sessionBranch={sessionBranch}
+              activePath={activePath}
+              selection={selection}
+              worktreeBranches={worktreeBranches}
+              busy={action !== null}
+              focus={sectionFocus}
+              onSelect={pick}
+              onCheckout={checkout}
+              onOpenSession={openSession}
+            />
             <div
               className="gg-resize gg-resize-right"
               role="separator"
@@ -622,6 +642,39 @@ export function GitGlassPanel({ scope: scopeProp }: { scope: HistoryScope }) {
                 <div className="gg-note gg-details-empty">Changes are shown for this session's own checkout.</div>
               )
             }
+            renderPr={(ref) => (
+              <PrDetails pr={sidebarData.model.prs.find((pr) => pr.key === prKey(ref)) ?? sidebarPrOf(ref)} sessionId={sessionId} onOpenSession={openSession} />
+            )}
+            renderSession={(id) => {
+              const owned = worktrees.find((worktree) => worktree.sessionId === id) ?? null;
+              return (
+                <SessionDetails
+                  row={sidebarData.rows.find((row) => row.session.id === id)}
+                  isThis={id === sessionId}
+                  worktree={owned}
+                  viewing={owned !== null && owned.path === activePath}
+                  onOpenSession={openSession}
+                  onShowHistory={openWorktree}
+                  onSelectPr={selectPr}
+                />
+              );
+            }}
+            renderWorktree={(path) => {
+              const entry = sidebarData.model.worktrees.find((candidate) => candidate.worktree.path === path);
+              const branchName = entry?.worktree.branch ?? null;
+              return (
+                <WorktreeDetails
+                  scope={scope}
+                  entry={entry}
+                  sessionId={sessionId}
+                  branchRef={branchName ? log?.refs.find((ref) => ref.kind === "local" && ref.name === branchName) : undefined}
+                  viewing={path === activePath}
+                  linkedKeys={linkedKeys}
+                  onShowHistory={openWorktree}
+                  onOpenSession={openSession}
+                />
+              );
+            }}
           />
         )}
       </div>

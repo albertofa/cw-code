@@ -52,7 +52,7 @@ function checkoutFor(ref: HistoryRef, locals: LocalBranches): { checkout: string
 
 const KIND_ORDER: Record<RefLabelKind, number> = { head: 0, local: 1, remote: 2, tag: 3, stash: 4 };
 
-function remoteBranchName(name: string): string {
+export function remoteBranchName(name: string): string {
   const slash = name.indexOf("/");
   return slash === -1 ? name : name.slice(slash + 1);
 }
