@@ -274,6 +274,12 @@ describe("history git actions", () => {
     ]);
   });
 
+  test("check out a new branch through the session, so its stored branch follows", async () => {
+    await dispatch("history.branch", { sessionId: "s1", name: "feat", sha, checkout: true });
+    expect(calls.map((call) => call[0])).toEqual(["runCheckoutAction", "createBranch", "switchBranch"]);
+    expect(calls.at(-1)).toEqual(["switchBranch", "s1", "feat"]);
+  });
+
   test("validate branch arguments", async () => {
     await expect(dispatch("history.branch", { sessionId: "s1", name: "", sha, checkout: false })).rejects.toThrow("name must be");
     await expect(dispatch("history.branch", { sessionId: "s1", name: "x", sha: "abc", checkout: false })).rejects.toThrow("full 40-character");

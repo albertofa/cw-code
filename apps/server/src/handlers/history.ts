@@ -118,15 +118,21 @@ export function registerHistoryHandlers(router: Router, app: ServerApp): void {
     else if (target.owner) await sessions.pullBranch(target.owner);
     else await onUnowned(target, () => git.pullFastForward(target.root));
   });
-  handle(router, "history.checkout", async (raw) => {
-    const args = parseArgs(raw, "history.checkout");
-    const branch = args.branch;
-    if (typeof branch !== "string" || branch.length === 0) throw new Error("branch must be a name");
+  // A session's checkout switches through the session, so its stored branch follows (a folder
+  // session checks it before every turn).
+  const checkoutTo = async (args: Record<string, unknown>, branch: string): Promise<void> => {
     const target = await targetOf(args, true);
     const { sessions, git } = services();
     if (target.sessionId !== null && target.worktree === null) await sessions.switchBranch(target.sessionId, branch);
     else if (target.owner) await sessions.switchBranch(target.owner, branch);
     else await onUnowned(target, () => git.checkoutBranch(target.root, branch));
+  };
+
+  handle(router, "history.checkout", async (raw) => {
+    const args = parseArgs(raw, "history.checkout");
+    const branch = args.branch;
+    if (typeof branch !== "string" || branch.length === 0) throw new Error("branch must be a name");
+    await checkoutTo(args, branch);
   });
   handle(router, "history.fetch", async (raw) => {
     const args = parseArgs(raw, "history.fetch");
@@ -157,6 +163,7 @@ export function registerHistoryHandlers(router: Router, app: ServerApp): void {
     if (!isFullSha(sha)) throw new Error("sha must be a full 40-character commit id");
     if (typeof checkout !== "boolean") throw new Error("checkout must be true or false");
     const { git } = services();
-    await routeAction(args, (root) => git.createBranch(root, name, sha, checkout), checkout);
+    await routeAction(args, (root) => git.createBranch(root, name, sha, false), checkout);
+    if (checkout) await checkoutTo(args, name);
   });
 }
