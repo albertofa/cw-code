@@ -271,7 +271,7 @@ export function App() {
             <ThreadView hidden={mainView.kind !== "session"} />
             <Notifications />
           </div>
-          {rightPresence.mounted && ((topTool !== null && activeSessionId !== null) || (activeProjectId !== null && activeSessionId === null)) && (
+          {rightPresence.mounted && ((topTool !== null && activeSessionId !== null) || projectGlassShown) && (
             <aside
               className={`right${rightPresence.entered ? "" : " collapsed"}${dropRight.over || draggingTab !== null ? " drop-target-active" : ""}`}
               hidden={settingsActive}
@@ -294,7 +294,7 @@ export function App() {
                     onToolContextMenu={tabMenu.onTabContextMenu}
                   />
                 ) : (
-                  activeProjectId !== null && <ProjectGitGlassPane projectId={activeProjectId} />
+                  projectGlassShown && activeProjectId !== null && <ProjectGitGlassPane projectId={activeProjectId} />
                 )}
               </div>
             </aside>

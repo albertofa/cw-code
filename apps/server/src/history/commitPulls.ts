@@ -1,5 +1,6 @@
 import { homedir } from "node:os";
 import type { AppSettings, HistoryCommitPull, HistoryCommitPulls } from "@cw-code/contracts";
+import { COMMIT_PULLS_NO_GITHUB_REMOTE } from "@cw-code/shared/commitPulls";
 import { authenticatedEnvironment, execText, redactUrlCredentials } from "../fs/GitService.js";
 import { GH_HOST, githubCliBinary, withGitHubAccount } from "../github/githubAccount.js";
 import { OWNER_RE, REPO_RE } from "../github/githubRefs.js";
@@ -24,7 +25,7 @@ const CACHE_TTL_MS = 600_000;
 const CACHE_MAX_ENTRIES = 500;
 const GH_TIMEOUT_MS = 15_000;
 const MAX_UNAVAILABLE_LENGTH = 160;
-const NO_REMOTE = "PR lookup needs a GitHub remote";
+const NO_REMOTE = COMMIT_PULLS_NO_GITHUB_REMOTE;
 const STATE_RANK = { MERGED: 0, OPEN: 1, CLOSED: 2 } as const;
 
 function text(value: unknown): string | null {

@@ -1,6 +1,7 @@
 import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
 import { ChevronDown, ChevronRight, ExternalLink, GitPullRequest, Maximize2, MessageSquare } from "lucide-react";
 import type { HistoryCommitPull, HistoryCommitPulls, HistoryScope } from "@cw-code/contracts";
+import { COMMIT_PULLS_NO_GITHUB_REMOTE } from "@cw-code/shared/commitPulls";
 import { prKey } from "@cw-code/shared/prRef";
 import { useConnectionEpoch } from "../../server/topics.js";
 import { usePrStore } from "../../stores/prStore.js";
@@ -38,7 +39,7 @@ function useCommitPulls(scope: HistoryScope, sha: string): CommitPullsState {
       window.cw.getHistoryCommitPulls(scope, sha).then(
         (next) => {
           if (!active) return;
-          retryOnReconnect.current = next.unavailable !== null;
+          retryOnReconnect.current = next.unavailable !== null && next.unavailable !== COMMIT_PULLS_NO_GITHUB_REMOTE;
           setResult(next);
         },
         (reason: unknown) => {
@@ -165,6 +166,7 @@ function CommitPrBody({ scope, sha }: { scope: HistoryScope; sha: string }) {
 
   if (error) return <RetryError onRetry={retry}>Could not look up pull requests: {error}</RetryError>;
   if (!result) return <Note>Looking up pull requests…</Note>;
+  if (result.unavailable === COMMIT_PULLS_NO_GITHUB_REMOTE) return <Note>{result.unavailable}</Note>;
   if (result.unavailable) return <RetryError onRetry={retry}>{result.unavailable}</RetryError>;
   const first = result.pulls[0];
   if (!first) return <Note>No pull request for this commit</Note>;

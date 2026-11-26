@@ -150,7 +150,9 @@ export function GitGlassPanel({ scope: scopeProp }: { scope: HistoryScope }) {
         openWorktree(elsewhere.path);
         return;
       }
-      const owned = viewWorktree === null ? undefined : log?.worktrees.find((worktree) => worktree.path === viewWorktree && worktree.sessionId);
+      // A project's own checkout can belong to a session too, so it needs the same confirmation.
+      const checkedPath = viewWorktree ?? ("projectId" in scope ? homePath : null);
+      const owned = checkedPath === null ? undefined : log?.worktrees.find((worktree) => worktree.path === checkedPath && worktree.sessionId);
       const run = (): void => runAction(`Checking out ${branch}…`, () => window.cw.checkoutHistory(scope, viewWorktree, branch));
       if (!owned) {
         run();
@@ -158,13 +160,13 @@ export function GitGlassPanel({ scope: scopeProp }: { scope: HistoryScope }) {
       }
       void confirm({
         title: `Switch ${owned.name} to ${branch}?`,
-        message: "Another cw-code session works in this worktree. Its branch changes too.",
+        message: "A cw-code session works in this checkout. Its branch changes too.",
         confirmLabel: "Switch branch"
       }).then((ok) => {
         if (ok) run();
       });
     },
-    [runAction, scope, viewWorktree, worktreeBranches, openWorktree, log, confirm]
+    [runAction, scope, viewWorktree, homePath, worktreeBranches, openWorktree, log, confirm]
   );
 
   const head = log?.head ?? null;

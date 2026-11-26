@@ -4,6 +4,7 @@ import type { DriverName } from "../cw.js";
 import { resolveBottomActive, rightOpenTabs } from "../stores/panelLayout.js";
 import { useAppStore } from "../stores/appStore.js";
 import { selectSessionPanel, usePanelStore } from "../stores/panelStore.js";
+import { usePrStore } from "../stores/prStore.js";
 import { DriverIcon } from "./DriverIcon.js";
 import { PanelToggles } from "./PanelToggles.js";
 import { endTabDrag, startTabDrag, useDockDrop } from "./useDockDrop.js";
@@ -74,6 +75,7 @@ export function ToolRail({
   const setPendingGlassOpen = usePanelStore((s) => s.setPendingGlassOpen);
   const projectName = useAppStore((s) => s.projects.find((project) => project.id === s.activeProjectId)?.name);
   const hasProject = useAppStore((s) => s.activeProjectId !== null);
+  const onSessionView = usePrStore((s) => s.mainView.kind === "session");
   const draggingTab = usePanelStore((s) => s.draggingTab);
   const dragFromRail = usePanelStore((s) => s.dragFromRail);
   const dropRail = useDockDrop("right", sessionId, {
@@ -87,6 +89,17 @@ export function ToolRail({
   const rightShown = rightVisible && rightOpenTabs(dockByTab, isToolAvailable).length > 0;
   const dropHint = !dragFromRail && (dropRail.over || (draggingTab !== null && !rightShown));
   const bottomShown = bottomCollapsed ? null : resolveBottomActive(dockByTab, activeBottom, isToolAvailable);
+
+  // The project's Git glass lives in the new-session screen's right pane, so opening it from
+  // another main view (GitHub, a PR, usage) returns to that screen first.
+  const toggleProjectGlass = (shown: boolean) => {
+    if (shown) {
+      setPendingGlassOpen(false);
+      return;
+    }
+    if (!onSessionView) usePrStore.getState().openSessionView();
+    setPendingGlassOpen(true);
+  };
 
   const onToolClick = (id: DockableTabId, active: boolean) => {
     if (!sessionId) return;
@@ -122,14 +135,14 @@ export function ToolRail({
             const label = projectGlass
               ? `${def.title} · history of ${projectName ?? "project"}`
               : `${def.title}${detail} · ${place}`;
-            const pressed = projectGlass ? pendingGlassOpen : active;
+            const pressed = projectGlass ? pendingGlassOpen && onSessionView : active;
             return (
               <button
                 key={id}
                 className={`rail-b${pressed ? " on" : ""}${away ? " away" : ""}${parked ? " parked" : ""}`}
                 disabled={!sessionId && !projectGlass}
-                onClick={() => (projectGlass ? setPendingGlassOpen(!pendingGlassOpen) : onToolClick(id, active))}
-                onContextMenu={onToolContextMenu(id)}
+                onClick={() => (projectGlass ? toggleProjectGlass(pressed) : onToolClick(id, active))}
+                onContextMenu={projectGlass ? undefined : onToolContextMenu(id)}
                 draggable={sessionId !== undefined}
                 onDragStart={(e) => startTabDrag(e, id, sessionId, { fromRail: true })}
                 onDragEnd={endTabDrag}
