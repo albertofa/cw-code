@@ -45,6 +45,12 @@ beforeEach(() => {
       checkoutBranch: async (root: string, branch: string) => calls.push(["checkoutBranch", root, branch]),
       pullFastForward: async (root: string) => calls.push(["pullFastForward", root])
     },
+    commitPulls: {
+      resolve: async (root: string, sha: string) => {
+        calls.push(["commitPulls", root, sha]);
+        return { pulls: [], unavailable: null };
+      }
+    },
     history: {
       worktrees: async () => [
         { path: MAIN, isMain: true },
@@ -188,5 +194,28 @@ describe("history branch actions", () => {
 
   test("rejects a checkout without a branch name", async () => {
     await expect(dispatch("history.checkout", { sessionId: "s1", branch: "" })).rejects.toThrow("branch must be a name");
+  });
+});
+
+describe("history.commitPulls", () => {
+  const sha = "b".repeat(40);
+
+  test("rejects a short sha", async () => {
+    await expect(dispatch("history.commitPulls", { sessionId: "s1", sha: "abc" })).rejects.toThrow("sha must be a full 40-character commit id");
+    expect(calls).toEqual([]);
+  });
+
+  test("requires exactly one scope", async () => {
+    await expect(dispatch("history.commitPulls", { sha })).rejects.toThrow("pass either sessionId or projectId");
+    await expect(dispatch("history.commitPulls", { sessionId: "s1", projectId: "p1", sha })).rejects.toThrow("pass either sessionId or projectId");
+  });
+
+  test("passes the service result through for a session and a project", async () => {
+    expect(await dispatch("history.commitPulls", { sessionId: "s1", sha })).toEqual({ pulls: [], unavailable: null });
+    expect(await dispatch("history.commitPulls", { projectId: "p1", sha })).toEqual({ pulls: [], unavailable: null });
+    expect(calls).toEqual([
+      ["commitPulls", SESSION_ROOT, sha],
+      ["commitPulls", FREE, sha]
+    ]);
   });
 });

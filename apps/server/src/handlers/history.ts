@@ -89,6 +89,12 @@ export function registerHistoryHandlers(router: Router, app: ServerApp): void {
     const target = await targetOf(args, false);
     return services().historyAvatars.resolve(target.root, authors);
   });
+  handle(router, "history.commitPulls", async (raw) => {
+    const args = parseArgs(raw, "history.commitPulls");
+    if (!isFullSha(args.sha)) throw new Error("sha must be a full 40-character commit id");
+    const target = await targetOf(args, false);
+    return services().commitPulls.resolve(target.root, args.sha);
+  });
   handle(router, "history.pull", async (raw) => {
     const args = parseArgs(raw, "history.pull");
     const target = await targetOf(args, true);

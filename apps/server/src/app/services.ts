@@ -40,6 +40,7 @@ import { SidebarService } from "../sidebar/SidebarService.js";
 import { SkillsStore } from "../skills/SkillsStore.js";
 import { GitTopic } from "../sourceControl/GitTopic.js";
 import { HistoryAvatarService, ghAvatarLookup } from "../history/HistoryAvatars.js";
+import { CommitPullsService, ghCommitPullsLookup } from "../history/commitPulls.js";
 import { HistoryService } from "../history/HistoryService.js";
 import { HistoryTopic } from "../history/HistoryTopic.js";
 import { SourceControlService } from "../sourceControl/SourceControlService.js";
@@ -70,6 +71,7 @@ export interface Services {
   gitTopic: GitTopic;
   history: HistoryService;
   historyAvatars: HistoryAvatarService;
+  commitPulls: CommitPullsService;
   historyTopic: HistoryTopic;
   githubSearch: GitHubSearchService;
   runs: RunsService;
@@ -356,6 +358,10 @@ export function createServices(stores: { sessionStore: SessionStore; settingsSto
     remote: (root) => git.githubRemote(root),
     lookup: ghAvatarLookup(() => sessions.getSettings())
   });
+  const commitPulls = new CommitPullsService({
+    remote: (root) => git.githubRemote(root),
+    lookup: ghCommitPullsLookup(() => sessions.getSettings())
+  });
   const ptys = new PtyPool(() => sessions.getSettings(), undefined, hooks.claudePluginDir);
   const shutdown = new ShutdownCoordinator({ sessions, ptys, onRecovered: hooks.onShutdownRecovered, onExpired: hooks.onShutdownExpired });
   const preferences = new PreferencesStore(preferencesFilePath());
@@ -582,6 +588,7 @@ export function createServices(stores: { sessionStore: SessionStore; settingsSto
     gitTopic,
     history,
     historyAvatars,
+    commitPulls,
     historyTopic,
     githubSearch,
     runs,
