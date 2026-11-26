@@ -33,7 +33,7 @@ import { useAppSettings, useAppSettingsError } from "./useAppSettings.js";
 import { suggestedWorkflow } from "@cw-code/shared/workflowSuggestions";
 import { groupCommitsByDay, linkedBarState, mergeBoxState, relativeTime, threadQuoteText, threadSendTarget, type LinkedBarState } from "./prDetailModel.js";
 import { linkFor } from "./sessionPrLinks.js";
-import { requestPrDetail, usePrDetail, usePrRelations, usePrsTopicError, watchPrDetail } from "./usePrs.js";
+import { acquirePrDetailWatch, requestPrDetail, usePrDetail, usePrRelations, usePrsTopicError } from "./usePrs.js";
 import { useConnectionEpoch } from "../server/topics.js";
 import { labelChipStyle } from "./labelColor.js";
 
@@ -194,8 +194,9 @@ export function PrDetailView({ prRef }: { prRef: PrRef }) {
 
   useEffect(() => {
     void requestPrDetail(prRef);
-    return watchPrDetail(prRef);
   }, [key, epoch]);
+
+  useEffect(() => acquirePrDetailWatch(prRef), [key]);
 
   useEffect(() => {
     if (!detail) return;

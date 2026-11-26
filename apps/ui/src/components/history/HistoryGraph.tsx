@@ -245,7 +245,8 @@ export function HistoryGraph({
   onCheckout,
   onHighlight,
   worktreeBranches,
-  wipHint
+  wipHint,
+  onClearSelection
 }: {
   log: HistoryLog;
   dirtyCount: number;
@@ -259,6 +260,7 @@ export function HistoryGraph({
   onHighlight: (sha: string) => void;
   worktreeBranches: ReadonlyMap<string, HistoryWorktree>;
   wipHint: string | null;
+  onClearSelection: () => void;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const theme = useGraphTheme();
@@ -286,6 +288,12 @@ export function HistoryGraph({
   const { start, end, scrollToIndex } = useVirtualRows(containerRef, commits.length, ROW_HEIGHT, OVERSCAN, HEADER_HEIGHT);
 
   const onKeyDown = (event: KeyboardEvent<HTMLDivElement>): void => {
+    if (event.key === "Escape" && selected) {
+      event.preventDefault();
+      event.stopPropagation();
+      onClearSelection();
+      return;
+    }
     if (event.key === "Enter" && selected) {
       event.preventDefault();
       onSelect(selected);

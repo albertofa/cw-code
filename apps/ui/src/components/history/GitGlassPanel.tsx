@@ -117,6 +117,16 @@ export function GitGlassPanel({ scope: scopeProp }: { scope: HistoryScope }) {
     requestAnimationFrame(() => panelRef.current?.querySelector<HTMLElement>(".history-scroll")?.focus({ preventScroll: true }));
   }, []);
 
+  const showSessionPr = useCallback((): void => {
+    setSelected(null);
+    setOpenPath(null);
+  }, []);
+
+  const clearSelection = useCallback((): void => {
+    if (openPath) closeDiff();
+    else showSessionPr();
+  }, [openPath, closeDiff, showSessionPr]);
+
   const runAction = useCallback((label: string, task: () => Promise<unknown>): void => {
     if (busy.current) {
       setActionError(`Wait for “${busy.current}” to finish before starting another action`);
@@ -296,7 +306,7 @@ export function GitGlassPanel({ scope: scopeProp }: { scope: HistoryScope }) {
           {actionError}
         </div>
       )}
-      <GitGlassPrSection scope={scope} sha={selected} />
+      <GitGlassPrSection scope={scope} sha={selected} onShowSessionPr={showSessionPr} />
       {!failure && !log && <div className="diff-empty">Loading history…</div>}
       {!failure && log && log.commits.length === 0 && (
         <div className="inspect-empty">
@@ -320,6 +330,7 @@ export function GitGlassPanel({ scope: scopeProp }: { scope: HistoryScope }) {
               onCheckout={checkout}
               worktreeBranches={worktreeBranches}
               wipHint={sessionId ? null : "Review uncommitted changes from a session in this project"}
+              onClearSelection={clearSelection}
             />
             {selected && openPath && <HistoryFileDiff files={commit.files} path={openPath} onOpenFile={setOpenPath} onClose={closeDiff} />}
           </div>

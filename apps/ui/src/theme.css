@@ -14227,6 +14227,7 @@ button.gitbar-checkout:hover {
   max-height: 40%;
   display: flex;
   flex-direction: column;
+  overflow: hidden;
   border-bottom: 1px solid var(--border-soft);
   background: var(--bg-deep);
 }
@@ -14236,11 +14237,21 @@ button.gitbar-checkout:hover {
   display: flex;
   align-items: center;
   gap: 6px;
-  width: 100%;
   min-height: 26px;
-  padding: 3px 10px;
-  border: 0;
+  padding: 0 10px 0 0;
   background: var(--tool);
+}
+
+.git-glass-pr-toggle {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  align-self: stretch;
+  padding: 3px 0 3px 10px;
+  border: 0;
+  background: transparent;
   color: var(--dim);
   font: inherit;
   font-size: var(--t-xs);
@@ -14249,8 +14260,39 @@ button.gitbar-checkout:hover {
   cursor: pointer;
 }
 
-.git-glass-pr-head:hover {
+.git-glass-pr-toggle:hover {
   color: var(--text);
+}
+
+.git-glass-pr-session {
+  flex: none;
+  padding: 2px 7px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: var(--raised);
+  color: var(--dim);
+  font: inherit;
+  font-size: var(--t-2xs);
+  cursor: pointer;
+}
+
+.git-glass-pr-session:hover {
+  color: var(--text);
+}
+
+.git-glass-pr-line {
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+  min-height: 26px;
+  padding: 3px 10px;
+  background: var(--tool);
+  color: var(--faint);
+  font-size: var(--t-xs);
+}
+
+.git-glass-pr-body.commit {
+  min-height: 88px;
 }
 
 .git-glass-pr-aside {

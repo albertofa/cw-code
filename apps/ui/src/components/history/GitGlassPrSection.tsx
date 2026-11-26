@@ -1,13 +1,14 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { ChevronDown, ChevronRight, ExternalLink, GitPullRequest, MessageSquare } from "lucide-react";
+import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
+import { ChevronDown, ChevronRight, ExternalLink, GitPullRequest, Maximize2, MessageSquare } from "lucide-react";
 import type { HistoryCommitPull, HistoryCommitPulls, HistoryScope } from "@cw-code/contracts";
 import { prKey } from "@cw-code/shared/prRef";
 import { useConnectionEpoch } from "../../server/topics.js";
 import { usePrStore } from "../../stores/prStore.js";
 import { mergeBoxState } from "../prDetailModel.js";
 import { PrSessionPanel, StatusRow, stateLabel, useSessionLinkedPrs } from "../PrSessionPanel.js";
-import { usePrDetail, watchPrDetail } from "../usePrs.js";
+import { acquirePrDetailWatch, usePrDetail } from "../usePrs.js";
 import { errorMessage } from "../errorMessage.js";
+import { openExternalLink } from "../externalLink.js";
 
 const LOAD_DELAY_MS = 200;
 
@@ -21,26 +22,28 @@ function useCommitPulls(scope: HistoryScope, sha: string): CommitPullsState {
   const [result, setResult] = useState<HistoryCommitPulls | null>(null);
   const [error, setError] = useState("");
   const [attempt, setAttempt] = useState(0);
-  const failed = useRef(false);
+  const retryOnReconnect = useRef(false);
   const epoch = useConnectionEpoch();
 
   useEffect(() => {
-    if (failed.current) setAttempt((value) => value + 1);
+    if (retryOnReconnect.current) setAttempt((value) => value + 1);
   }, [epoch]);
 
   useEffect(() => {
     setResult(null);
     setError("");
-    failed.current = false;
+    retryOnReconnect.current = false;
     let active = true;
     const timer = setTimeout(() => {
       window.cw.getHistoryCommitPulls(scope, sha).then(
         (next) => {
-          if (active) setResult(next);
+          if (!active) return;
+          retryOnReconnect.current = next.unavailable !== null;
+          setResult(next);
         },
         (reason: unknown) => {
           if (!active) return;
-          failed.current = true;
+          retryOnReconnect.current = true;
           setError(errorMessage(reason));
         }
       );
@@ -54,10 +57,21 @@ function useCommitPulls(scope: HistoryScope, sha: string): CommitPullsState {
   return { result, error, retry: () => setAttempt((value) => value + 1) };
 }
 
-function Note({ children, alert = false }: { children: ReactNode; alert?: boolean }) {
+function Note({ children }: { children: ReactNode }) {
   return (
-    <div className={`git-glass-pr-note${alert ? " error" : ""}`} role={alert ? "alert" : undefined}>
+    <div className="git-glass-pr-note" role="status">
       {children}
+    </div>
+  );
+}
+
+function RetryError({ children, onRetry }: { children: ReactNode; onRetry: () => void }) {
+  return (
+    <div className="pr-view-error git-glass-pr-error" role="alert">
+      {children}
+      <button type="button" className="pr-view-retry" onClick={onRetry}>
+        Retry
+      </button>
     </div>
   );
 }
@@ -82,7 +96,7 @@ function CommitPrCard({ pull }: { pull: HistoryCommitPull }) {
     };
   }, [key, epoch, attempt]);
 
-  useEffect(() => watchPrDetail(ref), [key, epoch]);
+  useEffect(() => acquirePrDetailWatch(ref), [key]);
 
   const detail = entry?.detail ?? null;
   const status = useMemo(() => (detail ? mergeBoxState(detail) : null), [detail]);
@@ -99,9 +113,18 @@ function CommitPrCard({ pull }: { pull: HistoryCommitPull }) {
         <div className="pr-panel-title" title={title}>
           <span className="pr-panel-num">#{ref.number}</span> {title}
         </div>
-        <button type="button" className="pr-detail-btn sm" onClick={() => openPr(ref)} title={pull.url}>
-          <ExternalLink size={12} aria-hidden="true" />
+        <button type="button" className="pr-detail-btn sm" onClick={() => openPr(ref)} title={`Open #${ref.number} in cw-code`}>
+          <Maximize2 size={12} aria-hidden="true" />
           Open PR
+        </button>
+        <button
+          type="button"
+          className="icon-btn"
+          onClick={() => openExternalLink(pull.url)}
+          title={`Open #${ref.number} on GitHub`}
+          aria-label={`Open #${ref.number} on GitHub`}
+        >
+          <ExternalLink size={13} aria-hidden="true" />
         </button>
       </div>
       <div className="pr-panel-meta">
@@ -114,12 +137,9 @@ function CommitPrCard({ pull }: { pull: HistoryCommitPull }) {
         <span className="pr-panel-branch" title={base}>{base}</span>
       </div>
       {error && (
-        <div className="pr-view-error git-glass-pr-error" role="alert">
+        <RetryError onRetry={() => setAttempt((value) => value + 1)}>
           Could not load #{ref.number}: {error}
-          <button type="button" className="pr-view-retry" onClick={() => setAttempt((value) => value + 1)}>
-            Retry
-          </button>
-        </div>
+        </RetryError>
       )}
       {!detail && !error && <Note>Loading pull request status…</Note>}
       {status && (
@@ -143,18 +163,9 @@ function CommitPrBody({ scope, sha }: { scope: HistoryScope; sha: string }) {
   const { result, error, retry } = useCommitPulls(scope, sha);
   const [chosen, setChosen] = useState<string | null>(null);
 
-  if (error) {
-    return (
-      <div className="pr-view-error git-glass-pr-error" role="alert">
-        Could not look up pull requests: {error}
-        <button type="button" className="pr-view-retry" onClick={retry}>
-          Retry
-        </button>
-      </div>
-    );
-  }
+  if (error) return <RetryError onRetry={retry}>Could not look up pull requests: {error}</RetryError>;
   if (!result) return <Note>Looking up pull requests…</Note>;
-  if (result.unavailable) return <Note>{result.unavailable}</Note>;
+  if (result.unavailable) return <RetryError onRetry={retry}>{result.unavailable}</RetryError>;
   const first = result.pulls[0];
   if (!first) return <Note>No pull request for this commit</Note>;
   const pull = result.pulls.find((candidate) => prKey(candidate.ref) === chosen) ?? first;
@@ -163,7 +174,7 @@ function CommitPrBody({ scope, sha }: { scope: HistoryScope; sha: string }) {
   return (
     <>
       {result.pulls.length > 1 && (
-        <div className="pr-panel-switch git-glass-pr-switch" role="tablist" aria-label="Pull requests for this commit">
+        <div className="pr-panel-switch git-glass-pr-switch" role="group" aria-label="Pull requests for this commit">
           {result.pulls.map((candidate) => {
             const candidateKey = prKey(candidate.ref);
             const active = candidateKey === pullKey;
@@ -172,8 +183,7 @@ function CommitPrBody({ scope, sha }: { scope: HistoryScope; sha: string }) {
               <button
                 key={candidateKey}
                 type="button"
-                role="tab"
-                aria-selected={active}
+                aria-pressed={active}
                 className={`pr-panel-switch-btn${active ? " active" : ""}`}
                 title={`#${candidate.ref.number} · ${candidate.title}`}
                 onClick={() => setChosen(candidateKey)}
@@ -190,32 +200,85 @@ function CommitPrBody({ scope, sha }: { scope: HistoryScope; sha: string }) {
   );
 }
 
-function SessionPrBody({ sessionId }: { sessionId: string }) {
-  const linked = useSessionLinkedPrs(sessionId);
-  if (linked.length === 0) return <Note>No pull request linked to this session</Note>;
-  return <PrSessionPanel sessionId={sessionId} />;
-}
-
-export function GitGlassPrSection({ scope, sha }: { scope: HistoryScope; sha: string | null }) {
-  const [open, setOpen] = useState(true);
-  const sessionId = "sessionId" in scope ? scope.sessionId : null;
-  if (!sha && !sessionId) return null;
-  const aside = sha ? `commit ${sha.slice(0, 7)}` : "linked to this session";
+function SectionFrame({
+  open,
+  onToggle,
+  aside,
+  action,
+  bodyClass,
+  children
+}: {
+  open: boolean;
+  onToggle: () => void;
+  aside: string;
+  action?: ReactNode;
+  bodyClass?: string;
+  children: ReactNode;
+}) {
+  const bodyId = useId();
   const Chevron = open ? ChevronDown : ChevronRight;
-
   return (
     <section className="git-glass-pr" aria-label="Pull request">
-      <button type="button" className="git-glass-pr-head" aria-expanded={open} onClick={() => setOpen((value) => !value)}>
-        <Chevron size={13} aria-hidden="true" />
-        <GitPullRequest size={13} aria-hidden="true" />
-        Pull request
-        <span className="git-glass-pr-aside">{aside}</span>
-      </button>
+      <div className="git-glass-pr-head">
+        <button type="button" className="git-glass-pr-toggle" aria-expanded={open} aria-controls={bodyId} onClick={onToggle}>
+          <Chevron size={13} aria-hidden="true" />
+          <GitPullRequest size={13} aria-hidden="true" />
+          Pull request
+          <span className="git-glass-pr-aside">{aside}</span>
+        </button>
+        {action}
+      </div>
       {open && (
-        <div className="git-glass-pr-body">
-          {sha ? <CommitPrBody key={sha} scope={scope} sha={sha} /> : sessionId ? <SessionPrBody sessionId={sessionId} /> : null}
+        <div id={bodyId} className={`git-glass-pr-body${bodyClass ? ` ${bodyClass}` : ""}`}>
+          {children}
         </div>
       )}
     </section>
   );
+}
+
+function SessionPrSection({ sessionId, open, onToggle }: { sessionId: string; open: boolean; onToggle: () => void }) {
+  const linked = useSessionLinkedPrs(sessionId);
+  if (linked.length === 0) {
+    return (
+      <div className="git-glass-pr git-glass-pr-line" role="status">
+        <GitPullRequest size={13} aria-hidden="true" />
+        No pull request linked to this session
+      </div>
+    );
+  }
+  return (
+    <SectionFrame open={open} onToggle={onToggle} aside="linked to this session">
+      <PrSessionPanel sessionId={sessionId} />
+    </SectionFrame>
+  );
+}
+
+export function GitGlassPrSection({
+  scope,
+  sha,
+  onShowSessionPr
+}: {
+  scope: HistoryScope;
+  sha: string | null;
+  onShowSessionPr: () => void;
+}) {
+  const [open, setOpen] = useState(true);
+  const toggle = (): void => setOpen((value) => !value);
+  const sessionId = "sessionId" in scope ? scope.sessionId : null;
+
+  if (sha) {
+    const action = sessionId ? (
+      <button type="button" className="git-glass-pr-session" onClick={onShowSessionPr} title="Clear the commit selection (Esc)">
+        Show this session's PR
+      </button>
+    ) : undefined;
+    return (
+      <SectionFrame open={open} onToggle={toggle} aside={`commit ${sha.slice(0, 7)}`} action={action} bodyClass="commit">
+        <CommitPrBody key={sha} scope={scope} sha={sha} />
+      </SectionFrame>
+    );
+  }
+  if (sessionId) return <SessionPrSection sessionId={sessionId} open={open} onToggle={toggle} />;
+  return null;
 }
