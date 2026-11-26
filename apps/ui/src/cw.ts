@@ -32,6 +32,10 @@ import type {
   GitBranchInfo,
   GitDiffMode,
   GitDiffResult,
+  HistoryAvatarAuthor,
+  HistoryAvatars,
+  HistoryCommitDetail,
+  HistoryLog,
   GitHubAccountInfo,
   GitHubAccountSelectionSource,
   GitPullRequest,
@@ -141,6 +145,10 @@ export type {
   GitBranchInfo,
   GitDiffMode,
   GitDiffResult,
+  HistoryAvatarAuthor,
+  HistoryAvatars,
+  HistoryCommitDetail,
+  HistoryLog,
   GitHubAccountInfo,
   GitHubAccountSelectionSource,
   GitPullRequest,
@@ -635,6 +643,11 @@ export interface CwApi {
   switchGitBranch(sessionId: string, branch: string): Promise<GitStatus>;
   getGitDiff(sessionId: string, mode: GitDiffMode, baseRef?: string): Promise<GitDiffResult>;
   getTurnChanges(sessionId: string): Promise<TurnChanges | null>;
+  getHistoryLog(sessionId: string, limit: number, worktree?: string | null): Promise<HistoryLog>;
+  getHistoryCommit(sessionId: string, sha: string): Promise<HistoryCommitDetail>;
+  getHistoryAvatars(sessionId: string, authors: HistoryAvatarAuthor[]): Promise<HistoryAvatars>;
+  pullHistory(sessionId: string, worktree?: string | null): Promise<void>;
+  checkoutHistory(sessionId: string, worktree: string | null, branch: string): Promise<void>;
   undoTurn(sessionId: string, turnId: string, expectedEndSha: string): Promise<TurnChanges>;
   getSourceControlHealth(projectId?: string): Promise<SourceControlHealth>;
   setProjectGitHubAccount(projectId: string, account: { host: string; login: string } | null): Promise<Project>;

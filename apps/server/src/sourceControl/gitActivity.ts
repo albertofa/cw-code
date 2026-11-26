@@ -31,13 +31,13 @@ export function classifyToolCall(name: string, input: unknown): ToolGitEffect {
 
 const IGNORED_PREFIXES = ["objects/", "logs/", "hooks/"];
 const RELEVANT_PREFIXES = ["refs/heads/", "refs/remotes/", "refs/tags/"];
-const RELEVANT_FILES = new Set(["HEAD", "packed-refs", "config"]);
+const RELEVANT_FILES = new Set(["HEAD", "packed-refs", "config", "refs/stash", "logs/refs/stash"]);
 
 export function gitWatchEventKind(relPath: string): "relevant" | "ignored" {
   const path = relPath.replace(/\\/g, "/").replace(/^(\.\/)+/, "").replace(/^\/+/, "");
   if (path === "" || path.endsWith(".lock") || path === "index") return "ignored";
-  if (IGNORED_PREFIXES.some((prefix) => path.startsWith(prefix))) return "ignored";
   if (RELEVANT_FILES.has(path)) return "relevant";
+  if (IGNORED_PREFIXES.some((prefix) => path.startsWith(prefix))) return "ignored";
   if (RELEVANT_PREFIXES.some((prefix) => path.startsWith(prefix))) return "relevant";
   return "ignored";
 }

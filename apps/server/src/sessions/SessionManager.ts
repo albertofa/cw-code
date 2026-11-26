@@ -2419,6 +2419,35 @@ export class SessionManager {
     }
   }
 
+  checkoutOwner(path: string): string | null {
+    const wanted = comparableRoot(path);
+    const matches = this.store.listAllSessions().filter((session) => {
+      if (session.status === "archived" || session.status === "resolved") return false;
+      const root = this.sessionRoot(session);
+      return root !== null && comparableRoot(root) === wanted;
+    });
+    const direct = matches.filter((session) => !session.subagent).sort((a, b) => b.updatedAt - a.updatedAt)[0];
+    if (direct) return direct.id;
+    return matches.find(isSharedSubagent)?.subagent?.parentSessionId ?? null;
+  }
+
+  withUnownedCheckout<T>(root: string, run: () => Promise<T>): Promise<T> {
+    return this.withFolderLock(root, run);
+  }
+
+  async pullBranch(sessionId: string): Promise<GitStatus> {
+    try {
+      return await this.withBranchSwitch(sessionId, async () => {
+        const project = this.projectForSession(sessionId);
+        const root = await this.ensureWorktree(sessionId);
+        await this.git.pullFastForward(root);
+        return this.git.status(root, project);
+      });
+    } finally {
+      this.notifySessionCheckoutChanged(sessionId, [sessionId]);
+    }
+  }
+
   private switchSessionBranch(sessionId: string, branch: string): Promise<GitStatus> {
     return this.withBranchSwitch(sessionId, async () => {
       const session = this.requireSession(sessionId);

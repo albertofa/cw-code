@@ -685,6 +685,7 @@ const REMOTE_CACHE_TTL_MS = 5 * 60_000;
 const BASE_CANDIDATES = ["main", "master", "origin/main", "origin/master"];
 const DEFAULT_BASE_ORDER = ["origin/main", "origin/master", "main", "master"];
 const BASE_FETCH_TIMEOUT_MS = 20_000;
+const PULL_TIMEOUT_MS = 120_000;
 const LS_REMOTE_NO_MATCHING_REF = 2;
 const BASE_FETCH_LOCK_RETRY_MS = 300;
 const ORIGIN_PREFIX = "origin/";
@@ -757,6 +758,22 @@ type BaseFetchOutcome =
 
 export function redactUrlCredentials(text: string): string {
   return text.replace(/\b([a-z][a-z0-9+.-]*:\/\/)[^\s/@]+@/gi, "$1");
+}
+
+export function pullFailureReason(stderr: string, code: number | null): string {
+  const lines = redactUrlCredentials(stderr).replace(/\r/g, "").split("\n");
+  const index = lines.findIndex((line) => /^(error|fatal):/i.test(line.trim()));
+  if (index === -1) {
+    const useful = lines.map((line) => line.trim()).find((line) => line && !/^(warning|from)\b/i.test(line));
+    return (useful ?? `git pull exited with code ${code}`).slice(0, 160);
+  }
+  const headline = lines[index]!.trim().replace(/^(error|fatal):\s*/i, "");
+  const details = lines
+    .slice(index + 1)
+    .filter((line) => /^\s+\S/.test(line))
+    .slice(0, 3)
+    .map((line) => line.trim());
+  return [headline.replace(/:$/, ""), details.length > 0 ? `(${details.join(", ")})` : ""].filter(Boolean).join(" ").slice(0, 240);
 }
 
 function fetchFailureReason(error: unknown): string {
@@ -1645,8 +1662,11 @@ export class GitService {
 
   async checkoutBranch(root: string, name: string): Promise<string> {
     if (!name || name.startsWith("-")) throw new Error("invalid branch name");
-    const branches = await this.branches(root);
-    const target = branches.find((item) => item.name === name);
+    let target = (await this.branches(root)).find((item) => item.name === name);
+    if (!target) {
+      this.invalidateBranches(root);
+      target = (await this.branches(root)).find((item) => item.name === name);
+    }
     if (!target) throw new Error(`unknown branch '${name}'`);
     if (target.worktreePath && !sameWorktreePath(target.worktreePath, root)) throw new Error(`'${target.label}' is already checked out at ${target.worktreePath}`);
     const git = this.git(root);
@@ -1655,6 +1675,29 @@ export class GitService {
     this.dropStatus(root);
     this.invalidateBranches(root);
     return target.label;
+  }
+
+  async pullFastForward(root: string): Promise<void> {
+    const binary = this.settings().gitBinaryPath;
+    const branch = await this.currentBranch(root);
+    if (!branch) throw new Error("HEAD is detached — check out a branch before pulling");
+    const upstream = await execWithStatus(binary, ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"], root, BASE_FETCH_TIMEOUT_MS, cleanAuthEnvironment());
+    if (upstream.code !== 0) throw new Error(`${branch} has no upstream branch to pull from`);
+    let result: ExecStatusResult;
+    try {
+      result = await execWithStatus(binary, ["-c", "pull.rebase=false", "pull", "--quiet", "--ff-only", "--no-edit"], root, PULL_TIMEOUT_MS, cleanAuthEnvironment());
+    } catch (error) {
+      const timedOut = /^timed out after/.test((error as Error).message);
+      throw new Error(`Pull failed: ${timedOut ? `timed out after ${PULL_TIMEOUT_MS / 1000}s` : fetchFailureReason(error)}`);
+    } finally {
+      this.dropStatus(root);
+      this.invalidateBranches(root);
+    }
+    if (result.code === 0) return;
+    if (/not possible to fast-forward|diverg/i.test(result.stderr)) {
+      throw new Error(`${branch} and ${upstream.stdout.trim()} have diverged — pull only fast-forwards; merge or rebase in a terminal`);
+    }
+    throw new Error(`Pull failed: ${pullFailureReason(result.stderr, result.code)}`);
   }
 
   async switchBranch(root: string, name: string, project?: Project): Promise<GitStatus> {

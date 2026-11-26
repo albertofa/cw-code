@@ -1,5 +1,17 @@
 export type { SessionOpenReason, SessionStatusReason } from "./session.js";
 export type {
+  HistoryAvatarAuthor,
+  HistoryAvatars,
+  HistoryCommit,
+  HistoryCommitDetail,
+  HistoryHead,
+  HistoryLog,
+  HistoryRef,
+  HistoryRefKind,
+  HistoryTopicData,
+  HistoryWorktree
+} from "./history.js";
+export type {
   DriverKind,
   Project,
   ProjectSettings,

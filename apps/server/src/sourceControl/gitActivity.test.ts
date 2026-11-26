@@ -84,6 +84,8 @@ describe("gitWatchEventKind", () => {
     "refs/tags/v1",
     "refs\\heads\\main",
     "./HEAD",
+    "refs/stash",
+    "logs/refs/stash",
   ];
   const ignored = [
     "",
@@ -103,7 +105,7 @@ describe("gitWatchEventKind", () => {
     "ORIG_HEAD",
     "COMMIT_EDITMSG",
     "refs",
-    "refs/stash",
+    "logs/refs/stash.lock",
     "worktrees/x/HEAD",
   ];
 

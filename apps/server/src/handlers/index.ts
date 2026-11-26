@@ -5,6 +5,7 @@ import { registerDebugHandlers } from "./debug.js";
 import { registerDeviceHandlers } from "./devices.js";
 import { registerFileHandlers } from "./files.js";
 import { registerGitHandlers } from "./git.js";
+import { registerHistoryHandlers } from "./history.js";
 import { registerGitHubHandlers } from "./github.js";
 import { registerPrefsHandlers } from "./prefs.js";
 import { registerPrHandlers } from "./prs.js";
@@ -27,6 +28,7 @@ export function registerHandlers(router: Router, app: ServerApp): void {
   registerTurnHandlers(router, app);
   registerSubagentHandlers(router, app);
   registerGitHandlers(router, app);
+  registerHistoryHandlers(router, app);
   registerGitHubHandlers(router, app);
   registerPrHandlers(router, app);
   registerSessionPrHandlers(router, app);

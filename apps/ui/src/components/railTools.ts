@@ -6,7 +6,7 @@ export type RailDotTone = "success" | "danger" | "warning";
 
 export function railGroups(driver: DriverName | undefined, hasPr: boolean, hasPreview: boolean): DockableTabId[][] {
   const groups: DockableTabId[][] = [
-    ["overview", "diff", ...(hasPr ? (["pr"] as const) : []), "files", "agents"],
+    ["overview", "diff", "history", ...(hasPr ? (["pr"] as const) : []), "files", "agents"],
     ["shell", ...(driver ? [driver] : [])]
   ];
   if (hasPreview) groups.push(["preview"]);

@@ -20,7 +20,7 @@ const MODE_LABEL: Record<GitDiffMode, string> = {
 
 const MODES: GitDiffMode[] = ["working", "staged", "branch", "turn"];
 
-const STATUS_BADGE: Record<string, string> = {
+export const STATUS_BADGE: Record<string, string> = {
   added: "A",
   deleted: "D",
   renamed: "R",
@@ -60,7 +60,23 @@ function sameDiff(a: GitDiffResult, b: GitDiffResult): boolean {
   return a.patch === b.patch && a.baseRef === b.baseRef && a.headRef === b.headRef && a.mode === b.mode;
 }
 
-const DiffFileSection = memo(function DiffFileSection({
+export function DiffLines({ file }: { file: DiffFile }) {
+  return (
+    <div className="diff-body inspect-lines">
+      {file.lines.length === 0 && <div className="inspect-dfile-note">{file.binary ? "Binary file not shown" : "No textual changes"}</div>}
+      {file.lines.map((line, index) => (
+        <div key={index} className={`diff-line ${line.type}`}>
+          <span className="diff-number">{line.oldNumber ?? ""}</span>
+          <span className="diff-number">{line.newNumber ?? ""}</span>
+          <span className="diff-gutter">{line.type === "add" ? "+" : line.type === "del" ? "−" : line.type === "hunk" ? "⋯" : ""}</span>
+          <span className="diff-text">{line.text || " "}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+export const DiffFileSection = memo(function DiffFileSection({
   file,
   open,
   onToggle,
@@ -69,7 +85,7 @@ const DiffFileSection = memo(function DiffFileSection({
   file: DiffFile;
   open: boolean;
   onToggle: (path: string) => void;
-  onReveal: (path: string) => void;
+  onReveal?: (path: string) => void;
 }) {
   const { dir, name } = splitRepoPath(file.path);
   const deleted = file.status === "deleted";
@@ -91,31 +107,21 @@ const DiffFileSection = memo(function DiffFileSection({
           ) : (
             <span className="inspect-dfh-stats"><span className="add">+{file.added}</span><span className="del">−{file.removed}</span></span>
           )}
-          <button
-            type="button"
-            className="inspect-dfh-open"
-            onClick={() => onReveal(file.path)}
-            disabled={deleted}
-            title={deleted ? "File was deleted" : "Open in Files"}
-            aria-label={`Open ${file.path} in Files`}
-          >
-            <ExternalLink size={13} aria-hidden="true" />
-          </button>
+          {onReveal && (
+            <button
+              type="button"
+              className="inspect-dfh-open"
+              onClick={() => onReveal(file.path)}
+              disabled={deleted}
+              title={deleted ? "File was deleted" : "Open in Files"}
+              aria-label={`Open ${file.path} in Files`}
+            >
+              <ExternalLink size={13} aria-hidden="true" />
+            </button>
+          )}
         </span>
       </div>
-      {open && (
-        <div className="diff-body inspect-lines">
-          {file.lines.length === 0 && <div className="inspect-dfile-note">{file.binary ? "Binary file not shown" : "No textual changes"}</div>}
-          {file.lines.map((line, index) => (
-            <div key={index} className={`diff-line ${line.type}`}>
-              <span className="diff-number">{line.oldNumber ?? ""}</span>
-              <span className="diff-number">{line.newNumber ?? ""}</span>
-              <span className="diff-gutter">{line.type === "add" ? "+" : line.type === "del" ? "−" : line.type === "hunk" ? "⋯" : ""}</span>
-              <span className="diff-text">{line.text || " "}</span>
-            </div>
-          ))}
-        </div>
-      )}
+      {open && <DiffLines file={file} />}
     </section>
   );
 });

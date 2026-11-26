@@ -69,7 +69,7 @@ Core behaviors:
   (subscribing again returns a fresh one); after that the server pushes
   `{ t: "patch", topic, rev, ops }` with `upsert`/`remove`/`append`/`replace` ops, and a rev
   gap makes the client resubscribe. Topics: `app`, `sidebar`, `prs`, `usage`, `session/<id>`,
-  `git/<id>`, `files/<id>`, `pty/<id>`, `github/meta`, `github/view:<kind>:<query>` (helpers
+  `git/<id>`, `history/<id>`, `files/<id>`, `pty/<id>`, `github/meta`, `github/view:<kind>:<query>` (helpers
   in `packages/shared/src/topics.ts`, providers in `apps/server/src/topics/`). `TopicCache` is
   the only owner of `topics.subscribe`/`topics.unsubscribe` in a client: it ref-counts
   holders, applies patches, resubscribes after a reconnect and then bumps `epoch`.
