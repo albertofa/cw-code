@@ -53,10 +53,17 @@ export interface ThreadSubagentWait {
 
 /** Set while cw-code waits for a plan limit to reset before continuing the session on its own. */
 export interface ThreadLimitResume {
-  resetsAt: number;
-  /** When cw-code starts the continuation: shortly after the reset, so the first request does not land on it. */
-  resumesAt: number;
+  /** Absent when the limit names no reset; then nothing continues on its own. */
+  resetsAt?: number;
+  /** When cw-code starts the continuation: shortly after the reset, so the first request does not land on it. Set with `resetsAt`. */
+  resumesAt?: number;
   window?: string;
+  /** `model` when only the session's model is limited, so the thread offers to continue on another model now. */
+  scope?: "model";
+  /** The session's model when the limit hit, if it had one set; later composer changes do not move it. */
+  model?: string;
+  /** The harness default model to offer first, when it is set and differs from `model`. */
+  fallbackModel?: string;
 }
 
 export interface ThreadTurnChanges {

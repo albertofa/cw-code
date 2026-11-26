@@ -205,6 +205,17 @@ Core behaviors:
   running, a start error), except while subagents still run, since their wake turn continues the work. A
   harness update holding turns back keeps it pending and retries after the margin. Cancelling (or
   turning the setting off) while its turn is starting stops that turn once it has started.
+  A limit on one model only (`usageLimit.scope: "model"`: the `seven_day_opus`, `seven_day_sonnet`
+  and `seven_day_overage_included` windows, the last being Fable's weekly limit, or the
+  `model_requires_usage_credits` and `consent_unanswered` API errors) may name no reset. It is stored
+  with `scope` and, without a reset, nothing is scheduled; with `limitAutoResume` off it is kept
+  without the reset. It records the session's `model` when the limit hit; the thread entry adds it and
+  `fallbackModel` (the Claude default model unless it is that model or of the limited family, from
+  `@cw-code/shared/usageLimits`). `turns.continueWithModel` starts the continuation now on the chosen
+  model (origin `limit-resume`) and persists it as the composer model only once the turn started; it
+  refuses the limited model, a busy session, a pending answer and running subagents. The driver traces every API error line's
+  error fields (`claude.apiError`) and turns the CLI's own `system/model_consent_fallback` swap into a
+  thread notice.
 - Browser entry: a browser opens the server's own address (`/`) and pairs with a device
   token. The owner creates one in Settings (`devices.create`) and gets a link
   `<serverPublicUrl>/#token=<token>`; the UI reads the hash, removes it from the address bar and

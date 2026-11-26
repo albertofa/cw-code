@@ -243,7 +243,7 @@ function GeneralSettings() {
         </SettingsRow>
         <SettingsRow
           label="Continue after a usage limit resets"
-          hint="When a plan limit ends a turn, cw-code continues that session on its own once the limit resets. Claude only for now."
+          hint="When a plan limit ends a turn, cw-code continues that session on its own once the limit resets. When only the session's model is limited (like Fable's weekly limit), the thread also offers to continue on another model right away. Claude only for now."
           htmlFor="sp-limit-resume"
         >
           <SettingsSwitch

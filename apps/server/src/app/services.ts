@@ -404,7 +404,8 @@ export function createServices(stores: { sessionStore: SessionStore; settingsSto
     settings: () => sessions.getSettings(),
     runtime: (sessionId) => threads.runtime(sessionId),
     waitingOnSubagents: (sessionId) => sessions.subagentWaitSince(sessionId) !== null,
-    startTurn: (sessionId, prompt) => turns.start(sessionId, prompt, { auto: true, origin: "limit-resume" }),
+    startTurn: (sessionId, prompt, model) =>
+      turns.start(sessionId, prompt, { auto: true, origin: "limit-resume", ...(model ? { prefs: { model } } : {}) }),
     stopTurn: (sessionId) => {
       turns.stop(sessionId);
     },
