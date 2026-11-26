@@ -1,4 +1,4 @@
-import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
 import { ChevronDown, ChevronRight, ExternalLink, GitPullRequest, Maximize2, MessageSquare } from "lucide-react";
 import type { HistoryCommitPull, HistoryCommitPulls, HistoryScope } from "@cw-code/contracts";
 import { COMMIT_PULLS_NO_GITHUB_REMOTE } from "@cw-code/shared/commitPulls";
@@ -10,6 +10,7 @@ import { PrSessionPanel, StatusRow, stateLabel, useSessionLinkedPrs } from "../P
 import { acquirePrDetailWatch, usePrDetail } from "../usePrs.js";
 import { errorMessage } from "../errorMessage.js";
 import { openExternalLink } from "../externalLink.js";
+import { branchPulls } from "./branchPulls.js";
 
 const LOAD_DELAY_MS = 200;
 
@@ -160,24 +161,39 @@ function CommitPrCard({ pull }: { pull: HistoryCommitPull }) {
   );
 }
 
-function CommitPrBody({ scope, sha }: { scope: HistoryScope; sha: string }) {
+const ALL_PULLS = (pulls: HistoryCommitPull[]): HistoryCommitPull[] => pulls;
+
+function PullsBody({
+  scope,
+  sha,
+  pick = ALL_PULLS,
+  emptyText,
+  groupLabel
+}: {
+  scope: HistoryScope;
+  sha: string;
+  pick?: (pulls: HistoryCommitPull[]) => HistoryCommitPull[];
+  emptyText: string;
+  groupLabel: string;
+}) {
   const { result, error, retry } = useCommitPulls(scope, sha);
   const [chosen, setChosen] = useState<string | null>(null);
+  const pulls = useMemo(() => (result ? pick(result.pulls) : []), [result, pick]);
 
   if (error) return <RetryError onRetry={retry}>Could not look up pull requests: {error}</RetryError>;
   if (!result) return <Note>Looking up pull requests…</Note>;
   if (result.unavailable === COMMIT_PULLS_NO_GITHUB_REMOTE) return <Note>{result.unavailable}</Note>;
   if (result.unavailable) return <RetryError onRetry={retry}>{result.unavailable}</RetryError>;
-  const first = result.pulls[0];
-  if (!first) return <Note>No pull request for this commit</Note>;
-  const pull = result.pulls.find((candidate) => prKey(candidate.ref) === chosen) ?? first;
+  const first = pulls[0];
+  if (!first) return <Note>{emptyText}</Note>;
+  const pull = pulls.find((candidate) => prKey(candidate.ref) === chosen) ?? first;
   const pullKey = prKey(pull.ref);
 
   return (
     <>
-      {result.pulls.length > 1 && (
-        <div className="pr-panel-switch git-glass-pr-switch" role="group" aria-label="Pull requests for this commit">
-          {result.pulls.map((candidate) => {
+      {pulls.length > 1 && (
+        <div className="pr-panel-switch git-glass-pr-switch" role="group" aria-label={groupLabel}>
+          {pulls.map((candidate) => {
             const candidateKey = prKey(candidate.ref);
             const active = candidateKey === pullKey;
             const state = stateLabel(candidate);
@@ -256,31 +272,80 @@ function SessionPrSection({ sessionId, open, onToggle }: { sessionId: string; op
   );
 }
 
+function Line({ children }: { children: ReactNode }) {
+  return (
+    <div className="git-glass-pr git-glass-pr-line" role="status">
+      <GitPullRequest size={13} aria-hidden="true" />
+      {children}
+    </div>
+  );
+}
+
+function BranchPrSection({
+  scope,
+  target,
+  open,
+  onToggle
+}: {
+  scope: HistoryScope;
+  target: Extract<GitGlassPrTarget, { kind: "branch" }>;
+  open: boolean;
+  onToggle: () => void;
+}) {
+  const { branch, sha, upstream } = target;
+  const pick = useCallback((pulls: HistoryCommitPull[]) => (branch ? branchPulls(pulls, branch, upstream) : []), [branch, upstream]);
+  if (!branch) return <Line>Detached HEAD — select a commit to see its pull requests</Line>;
+  if (!sha) return <Line>No commits on {branch} yet</Line>;
+  return (
+    <SectionFrame open={open} onToggle={onToggle} aside={`branch ${branch}`} bodyClass="commit">
+      <PullsBody
+        key={`${branch}@${sha}`}
+        scope={scope}
+        sha={sha}
+        pick={pick}
+        emptyText={`No pull request for ${branch}`}
+        groupLabel={`Pull requests for ${branch}`}
+      />
+    </SectionFrame>
+  );
+}
+
+// What the PR section describes when no commit is selected: the session's linked PR on the
+// session's own checkout, the checked-out branch's PR on any other checkout.
+export type GitGlassPrTarget =
+  | { kind: "session"; sessionId: string }
+  | { kind: "branch"; branch: string | null; sha: string | null; upstream: string | null }
+  | { kind: "loading" };
+
 export function GitGlassPrSection({
   scope,
   sha,
-  onShowSessionPr
+  target,
+  onClearSelection
 }: {
   scope: HistoryScope;
   sha: string | null;
-  onShowSessionPr: () => void;
+  target: GitGlassPrTarget;
+  onClearSelection: () => void;
 }) {
   const [open, setOpen] = useState(true);
   const toggle = (): void => setOpen((value) => !value);
-  const sessionId = "sessionId" in scope ? scope.sessionId : null;
 
   if (sha) {
-    const action = sessionId ? (
-      <button type="button" className="git-glass-pr-session" onClick={onShowSessionPr} title="Clear the commit selection (Esc)">
-        Show this session's PR
+    const label =
+      target.kind === "session" ? "Show this session's PR" : target.kind === "branch" && target.branch ? `Show ${target.branch}'s PR` : null;
+    const action = label ? (
+      <button type="button" className="git-glass-pr-session" onClick={onClearSelection} title="Clear the commit selection (Esc)">
+        {label}
       </button>
     ) : undefined;
     return (
       <SectionFrame open={open} onToggle={toggle} aside={`commit ${sha.slice(0, 7)}`} action={action} bodyClass="commit">
-        <CommitPrBody key={sha} scope={scope} sha={sha} />
+        <PullsBody key={sha} scope={scope} sha={sha} emptyText="No pull request for this commit" groupLabel="Pull requests for this commit" />
       </SectionFrame>
     );
   }
-  if (sessionId) return <SessionPrSection sessionId={sessionId} open={open} onToggle={toggle} />;
+  if (target.kind === "session") return <SessionPrSection sessionId={target.sessionId} open={open} onToggle={toggle} />;
+  if (target.kind === "branch") return <BranchPrSection scope={scope} target={target} open={open} onToggle={toggle} />;
   return null;
 }

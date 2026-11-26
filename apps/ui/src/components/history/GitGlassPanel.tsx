@@ -11,7 +11,7 @@ import { loadShowAvatars, saveShowAvatars, useHistoryAvatars } from "./historyAv
 import { MenuSelect, type MenuOption } from "../MenuSelect.js";
 import { useHistorySide } from "./useHistorySide.js";
 import { useConfirm } from "../ConfirmDialog.js";
-import { GitGlassPrSection } from "./GitGlassPrSection.js";
+import { GitGlassPrSection, type GitGlassPrTarget } from "./GitGlassPrSection.js";
 
 const PAGE_SIZE = 2000;
 const MAX_LIMIT = 20000;
@@ -117,15 +117,15 @@ export function GitGlassPanel({ scope: scopeProp }: { scope: HistoryScope }) {
     requestAnimationFrame(() => panelRef.current?.querySelector<HTMLElement>(".history-scroll")?.focus({ preventScroll: true }));
   }, []);
 
-  const showSessionPr = useCallback((): void => {
+  const deselectCommit = useCallback((): void => {
     setSelected(null);
     setOpenPath(null);
   }, []);
 
   const clearSelection = useCallback((): void => {
     if (openPath) closeDiff();
-    else showSessionPr();
-  }, [openPath, closeDiff, showSessionPr]);
+    else deselectCommit();
+  }, [openPath, closeDiff, deselectCommit]);
 
   const runAction = useCallback((label: string, task: () => Promise<unknown>): void => {
     if (busy.current) {
@@ -200,6 +200,13 @@ export function GitGlassPanel({ scope: scopeProp }: { scope: HistoryScope }) {
   });
   const dirtyCount = viewWorktree === null && sessionId ? (status?.available ? status.dirtyCount : 0) : (log?.wipCount ?? 0);
   const failure = topicError ?? (error || null);
+  // Another worktree (or a project's own checkout) shows its branch's PR, never the session's.
+  const prTarget: GitGlassPrTarget =
+    sessionId && viewWorktree === null
+      ? { kind: "session", sessionId }
+      : log
+        ? { kind: "branch", branch: log.head.branch, sha: log.head.sha, upstream: currentRef?.upstream ?? null }
+        : { kind: "loading" };
 
   return (
     <div ref={panelRef} className="inspect history">
@@ -308,7 +315,7 @@ export function GitGlassPanel({ scope: scopeProp }: { scope: HistoryScope }) {
           {actionError}
         </div>
       )}
-      <GitGlassPrSection scope={scope} sha={selected} onShowSessionPr={showSessionPr} />
+      <GitGlassPrSection scope={scope} sha={selected} target={prTarget} onClearSelection={deselectCommit} />
       {!failure && !log && <div className="diff-empty">Loading history…</div>}
       {!failure && log && log.commits.length === 0 && (
         <div className="inspect-empty">
