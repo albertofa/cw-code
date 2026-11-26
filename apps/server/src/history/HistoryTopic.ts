@@ -1,5 +1,5 @@
 import type { HistoryTopicData } from "@cw-code/contracts";
-import { topicId } from "@cw-code/shared/topics";
+import { parseHistoryTopicId, topicId } from "@cw-code/shared/topics";
 import { comparableRoot } from "../sessions/worktreeCleanup.js";
 import type { TopicHub, TopicProvider } from "../topics/TopicHub.js";
 import type { TopicStore } from "../topics/TopicStore.js";
@@ -32,17 +32,6 @@ function emptyData(rev: number, avatarsRev: number, error: string | null): Histo
   return { head: null, refs: [], rev, avatarsRev, error };
 }
 
-function parseTopic(topic: string): { sessionId: string; worktreeKey: string | null } | null {
-  const id = topicId(topic, HISTORY_TOPIC_PREFIX);
-  if (!id) return null;
-  const separator = id.indexOf(":");
-  if (separator === -1) return { sessionId: id, worktreeKey: null };
-  const sessionId = id.slice(0, separator);
-  const worktreeKey = id.slice(separator + 1);
-  if (!sessionId || !/^[0-9a-f]{16}$/.test(worktreeKey)) return null;
-  return { sessionId, worktreeKey };
-}
-
 export class HistoryTopic implements TopicProvider {
   private readonly entries = new Map<string, Entry>();
   private avatarsRev = 0;
@@ -57,10 +46,11 @@ export class HistoryTopic implements TopicProvider {
   }
 
   acquire(topic: string): TopicStore<HistoryTopicData> {
-    const parsed = parseTopic(topic);
-    if (!parsed) throw new Error(`invalid history topic '${topic}'`);
+    const id = topicId(topic, HISTORY_TOPIC_PREFIX);
+    const parsed = id ? parseHistoryTopicId(id) : null;
+    if (!parsed || !("sessionId" in parsed.scope)) throw new Error(`invalid history topic '${topic}'`);
     const store = this.hub.createStore<HistoryTopicData>(topic, emptyData(0, this.avatarsRev, null));
-    this.entries.set(topic, { ...parsed, store, root: null, rootKey: null, fingerprint: null, rev: 0, generation: 0 });
+    this.entries.set(topic, { sessionId: parsed.scope.sessionId, worktreeKey: parsed.worktreeKey, store, root: null, rootKey: null, fingerprint: null, rev: 0, generation: 0 });
     this.syncWatched();
     void this.recompute(topic);
     return store;

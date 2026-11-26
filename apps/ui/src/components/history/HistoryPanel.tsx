@@ -20,7 +20,7 @@ const isWip = (commit: HistoryCommit): boolean => commit.sha === WIP_SHA;
 export function HistoryPanel({ sessionId }: { sessionId: string }) {
   const [view, setView] = useState<{ path: string; key: string } | null>(null);
   const viewWorktree = view?.path ?? null;
-  const topicName = historyTopic(sessionId, view?.key ?? null);
+  const topicName = historyTopic({ sessionId }, view?.key ?? null);
   const topic = useTopic<HistoryTopicData>(topicName);
   const status = useGitStatus(sessionId);
   const epoch = useConnectionEpoch();
