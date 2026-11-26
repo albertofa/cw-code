@@ -2333,6 +2333,28 @@ describe("ClaudeCliDriver mid-turn messages", () => {
     driver.dispose();
   });
 
+  it("reports no background tasks when an API-error restart ends the turn with one still running", async () => {
+    const { driver, events, children, killed } = makeDriver();
+    const handle = driver.startTurn({ sessionId: "s1", cwd: "C:\\proj", prompt: "go" });
+    await settle();
+    children[0].stdout.write(`${replayLine("go")}\n`);
+    children[0].stdout.write(
+      `${JSON.stringify({ type: "assistant", message: { content: [{ type: "tool_use", id: "call-bash", name: "Bash", input: { run_in_background: true } }] } })}\n`
+    );
+    children[0].stdout.write(`${taskStartedLine("task-bash", "call-bash", "local_bash")}\n`);
+    children[0].stdout.write(
+      `${JSON.stringify({ type: "user", message: { content: [{ tool_use_id: "call-bash", content: "Command running in background with ID: bash-1." }] } })}\n`
+    );
+    await settle();
+    await driver.injectMessage(handle.turnId, { id: "m1", prompt: "next", cwd: "C:\\proj", attachments: [] });
+    children[0].stdout.write(`${JSON.stringify({ type: "assistant", isApiErrorMessage: true, message: { content: [{ type: "text", text: "limit reached" }] } })}\n`);
+    children[0].stdout.write(`${resultLine({ result: "first" })}\n`);
+    await settle();
+    expect(turnDones(events)).toEqual([expect.objectContaining({ turnId: handle.turnId, isError: true, backgroundTasks: 0 })]);
+    expect(killed).toHaveLength(1);
+    driver.dispose();
+  });
+
   it("does not carry an API error from a run into the held run that follows", async () => {
     const { driver, events, children } = makeDriver();
     const handle = driver.startTurn({ sessionId: "s1", cwd: "C:\\proj", prompt: "go" });

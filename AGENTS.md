@@ -60,7 +60,8 @@ Core behaviors:
   ends the turn and the server re-sends the undelivered message as a new turn, which can duplicate
   it when the CLI was only slow. A Claude result that ends in an API error (a plan limit, for
   example) is never held: it ends the turn as an error, keeping its `usageLimit`, and restarts the
-  process so the CLI cannot run the pending message on its own; the server holds it as Not sent.
+  process so the CLI cannot run the pending message on its own (background tasks included, as on
+  Stop, so the `turn.done` reports `backgroundTasks: 0`); the server holds it as Not sent.
   A Stop with an undelivered Claude injection, or while a Claude result is held, restarts the
   Claude process (background tasks included) so the CLI cannot run it on its own. A restart can show a message Claude or Codex already received
   as `held`; sending it again duplicates it. Agents cannot call `turns.send`/`unqueue`/`flushQueue`,

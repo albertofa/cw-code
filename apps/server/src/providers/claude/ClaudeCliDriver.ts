@@ -871,7 +871,11 @@ export class ClaudeCliDriver implements CliDriver {
       this.armIdleTimer(state);
       return;
     }
-    const backgroundTasks = state.tasks.liveCount();
+    // An API error (a plan limit, for example) can end the run while injected messages still sit in
+    // the CLI's stdin; the process is restarted below, which also ends its background tasks, so the
+    // turn must report none or the server would keep waiting for them.
+    const restartForPending = !interrupted && (state.injected.length > 0 || state.deferredInjections.length > 0);
+    const backgroundTasks = restartForPending ? 0 : state.tasks.liveCount();
     state.modelUsage = info.modelUsage;
     if (info.windowTokens !== undefined) state.lastWindowTokens = info.windowTokens;
     const compactedPostTokens = state.compactedPostTokens;
@@ -896,10 +900,9 @@ export class ClaudeCliDriver implements CliDriver {
         ...(usageLimit ? { usageLimit } : {})
       });
     }
-    if (!interrupted && (state.injected.length > 0 || state.deferredInjections.length > 0)) {
-      // An API error (a plan limit, for example) ended the run while injected messages still sit in the
-      // CLI's stdin. The CLI would run them on its own after this turn ended, so restart the process;
-      // the server holds them as Not sent, like any message left by a turn error.
+    if (restartForPending) {
+      // The CLI would run the pending messages on its own after this turn ended, so restart the
+      // process; the server holds them as Not sent, like any message left by a turn error.
       state.injected = [];
       state.deferredInjections = [];
       state.resumeCursor = info.resumeCursor;
