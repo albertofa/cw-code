@@ -194,6 +194,14 @@ Core behaviors:
     An entry without models always has an `error`: no model matched, or the harness cannot run
     (message from the cached harness check, `harnessUnavailableReason`). `subagents.create` and
     `subagents.send` refuse such a harness with the same message before creating anything.
+- Git glass: `history.*` methods take exactly one of `sessionId` / `projectId`, plus an optional
+  `worktree` of the same repository. Reads: `log`, `commit`, `avatars`, `commitPulls` (GitHub
+  `commits/{sha}/pulls` through the user's `gh`, github.com only, cached). Actions: `checkout`,
+  `pull`, `fetch`, `push`, `stash`, `stashPop` (by stash sha), `branch`. An action on the session's
+  own checkout or on a checkout a session owns goes through that session (running-turn and
+  pending-switch guards, folder lock, stored branch kept in sync); a checkout nobody owns takes the
+  folder lock, and the main checkout refuses uncommitted changes for pull, pop and a branch
+  checkout. None of them is in `AGENT_METHODS`.
 - Browser entry: a browser opens the server's own address (`/`) and pairs with a device
   token. The owner creates one in Settings (`devices.create`) and gets a link
   `<serverPublicUrl>/#token=<token>`; the UI reads the hash, removes it from the address bar and
