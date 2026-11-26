@@ -227,6 +227,8 @@ export const usePanelStore = create<PanelStore>((set, get) => ({
   requestDiffMode: (sessionId, mode) => {
     diffModeNonce += 1;
     set({ diffModeRequest: { sessionId, mode, nonce: diffModeNonce } });
+    const store = get();
+    if (panelFor(store, sessionId).dockByTab.gitglass === "closed") store.moveTab(sessionId, "gitglass", "right");
     get().revealTab(sessionId, "gitglass");
   },
 

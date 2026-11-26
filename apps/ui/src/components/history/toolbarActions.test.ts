@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { actionStates, type ToolbarActionInput } from "./toolbarActions.js";
+import { actionStates, checkoutBlockedReason, type ToolbarActionInput } from "./toolbarActions.js";
 
 const SHA = "a".repeat(40);
 
@@ -10,6 +10,7 @@ const input = (overrides: Partial<ToolbarActionInput> = {}): ToolbarActionInput 
   stash: { name: "stash@{0}", subject: "On main: parked" },
   branchTarget: { sha: SHA, selected: false },
   busy: null,
+  running: null,
   ...overrides
 });
 
@@ -79,5 +80,27 @@ describe("actionStates", () => {
     expect(Object.values(states).every((state) => state.disabled && state.title === "Wait for “Pulling” to finish")).toBe(true);
     expect(states.pull.badge).toBe(3);
     expect(states.push.badge).toBe(2);
+  });
+
+  test("blocks checkout-changing actions while a session runs a turn in the checkout", () => {
+    const states = actionStates(input({ running: "Fix login" }));
+    const reason = "Fix login is running a turn in this checkout — wait for it to finish";
+    for (const id of ["fetch", "pull", "push", "stash", "pop"] as const) expect(states[id]).toMatchObject({ disabled: true, title: reason });
+    expect(states.pull.badge).toBe(3);
+    expect(states.push.badge).toBe(2);
+    expect(states.branch).toMatchObject({ disabled: false, title: "Create a branch at HEAD (aaaaaaa) — it can't be checked out until Fix login finishes its turn" });
+    expect(checkoutBlockedReason({ running: "Fix login" })).toBe(reason);
+    expect(checkoutBlockedReason({ running: null })).toBeNull();
+  });
+
+  test("keeps a more lasting reason over the running turn", () => {
+    const states = actionStates(input({ running: "Fix login", stash: null, dirtyCount: 0 }));
+    expect(states.pop.title).toBe("No stash to pop");
+    expect(states.stash.title).toBe("Nothing to stash — the working tree is clean");
+  });
+
+  test("lets a running action take precedence over a running turn", () => {
+    const states = actionStates(input({ running: "Fix login", busy: "Fetching" }));
+    expect(Object.values(states).every((state) => state.disabled && state.title === "Wait for “Fetching” to finish")).toBe(true);
   });
 });

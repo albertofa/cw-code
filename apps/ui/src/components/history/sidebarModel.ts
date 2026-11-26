@@ -203,6 +203,28 @@ export function prForBranch(prs: readonly SidebarPr[], ref: HistoryRef): Sidebar
   return matches.find((pr) => pr.state === "OPEN") ?? matches[0] ?? null;
 }
 
+export function stashBranch(subject: string): string | null {
+  const match = /^(?:WIP on|On) ([^:]+):/.exec(subject);
+  return match ? match[1]! : null;
+}
+
+export function defaultStash(stashes: readonly SidebarStash[], branch: string | null): SidebarStash | null {
+  const own = branch === null ? undefined : stashes.find((stash) => stashBranch(stash.subject) === branch);
+  return own ?? stashes[0] ?? null;
+}
+
+export function sessionRunningIn(sessions: readonly SessionRow[], worktrees: readonly HistoryWorktree[], path: string | null): SessionRow | null {
+  if (path === null) return null;
+  const target = comparablePath(path);
+  return (
+    sessions.find((row) => {
+      if (!row.busy) return false;
+      const checkout = sessionCheckout(worktrees, row.session);
+      return checkout !== null && comparablePath(checkout.path) === target;
+    }) ?? null
+  );
+}
+
 function stashIndex(name: string): number {
   const match = /\{(\d+)\}/.exec(name);
   return match ? Number(match[1]) : Number.MAX_SAFE_INTEGER;

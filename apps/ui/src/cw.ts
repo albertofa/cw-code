@@ -649,7 +649,7 @@ export interface CwApi {
   fetchHistory(scope: HistoryScope, worktree?: string | null): Promise<void>;
   pushHistory(scope: HistoryScope, worktree?: string | null): Promise<void>;
   stashHistory(scope: HistoryScope, worktree?: string | null, message?: string): Promise<void>;
-  popStashHistory(scope: HistoryScope, worktree?: string | null): Promise<void>;
+  popStashHistory(scope: HistoryScope, worktree: string | null, sha: string): Promise<void>;
   createHistoryBranch(scope: HistoryScope, worktree: string | null, args: { name: string; sha: string; checkout: boolean }): Promise<void>;
   undoTurn(sessionId: string, turnId: string, expectedEndSha: string): Promise<TurnChanges>;
   getSourceControlHealth(projectId?: string): Promise<SourceControlHealth>;

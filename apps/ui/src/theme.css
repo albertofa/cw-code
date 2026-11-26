@@ -14278,6 +14278,25 @@ button.gitbar-checkout:hover {
   cursor: pointer;
 }
 
+.gg-dialog-check.disabled {
+  cursor: default;
+  opacity: calc(1 - 0.45 * var(--fade-strength));
+}
+
+.gg-dialog-hint {
+  margin-top: 4px;
+  margin-left: 22px;
+}
+
+.gg-dialog-subject {
+  margin-bottom: 6px;
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: var(--t-xs);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 .gg-dialog-error {
   margin-top: 10px;
   padding: 8px 12px;
@@ -15012,6 +15031,21 @@ button.gitbar-checkout:hover {
   white-space: nowrap;
   color: var(--faint);
   font-size: var(--t-3xs);
+}
+
+.gg-file-line {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.gg-file-line > .gg-file {
+  flex: 1;
+}
+
+.gg-file-reveal:disabled {
+  cursor: default;
+  opacity: calc(1 - 0.55 * var(--fade-strength));
 }
 
 .gg-file-end {

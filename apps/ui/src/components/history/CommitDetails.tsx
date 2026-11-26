@@ -8,7 +8,7 @@ import { splitRepoPath } from "../turnChanges.js";
 import { relativeTime } from "../prDetailModel.js";
 import { useSessionLinkedPrs } from "../PrSessionPanel.js";
 import type { DiffFile } from "../diffParser.js";
-import { FileStats, formatCommitDate, type HistoryCommitState } from "./HistoryCommitView.js";
+import { FileStats, formatCommitDate, RevealButton, type HistoryCommitState } from "./HistoryCommitView.js";
 import { CommitPulls } from "./CommitPulls.js";
 import { RefIcons, refLabelAt } from "./HistoryGraph.js";
 import { colorOfEmail, initialsOf } from "./historyAvatars.js";
@@ -34,12 +34,24 @@ function Avatar({ name, email, url }: { name: string; email: string; url: string
   );
 }
 
-export function FileRow({ file, depth, shown, onOpen }: { file: DiffFile; depth: number | null; shown: boolean; onOpen: () => void }) {
+export function FileRow({
+  file,
+  depth,
+  shown,
+  onOpen,
+  onReveal
+}: {
+  file: DiffFile;
+  depth: number | null;
+  shown: boolean;
+  onOpen: () => void;
+  onReveal?: (path: string) => void;
+}) {
   const { dir, name } = splitRepoPath(file.path);
-  return (
+  const row = (
     <button
       type="button"
-      role="listitem"
+      role={onReveal ? undefined : "listitem"}
       className={`gg-file${shown ? " shown" : ""}`}
       style={depth === null ? undefined : { paddingLeft: 6 + depth * TREE_INDENT }}
       onClick={onOpen}
@@ -52,6 +64,13 @@ export function FileRow({ file, depth, shown, onOpen }: { file: DiffFile; depth:
         <FileStats file={file} />
       </span>
     </button>
+  );
+  if (!onReveal) return row;
+  return (
+    <div role="listitem" className="gg-file-line">
+      {row}
+      <RevealButton path={file.path} deleted={file.status === "deleted"} onReveal={onReveal} className="gg-icon-btn sm gg-file-reveal" />
+    </div>
   );
 }
 

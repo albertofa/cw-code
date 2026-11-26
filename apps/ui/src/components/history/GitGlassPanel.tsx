@@ -27,7 +27,7 @@ import { MenuSelect, type MenuOption } from "../MenuSelect.js";
 import { useConfirm } from "../ConfirmDialog.js";
 import { GitGlassToolbar, type ToolbarAction } from "./GitGlassToolbar.js";
 import { GitGlassInputDialog, type InputDialogRequest } from "./GitGlassInputDialog.js";
-import { actionStates } from "./toolbarActions.js";
+import { actionStates, checkoutBlockedReason } from "./toolbarActions.js";
 import { GitGlassStatusBar } from "./GitGlassStatusBar.js";
 import { DETAILS_DEFAULT_WIDTH, DETAILS_MAX_WIDTH, DETAILS_MIN_WIDTH, GitGlassDetails, type GitGlassSelection } from "./GitGlassDetails.js";
 import { CommitDetails } from "./CommitDetails.js";
@@ -36,7 +36,7 @@ import { GitGlassSidebar, GitGlassSidebarStrip, useGitGlassSidebarData, type Sec
 import { PrDetails } from "./PrDetails.js";
 import { SessionDetails } from "./SessionDetails.js";
 import { WorktreeDetails } from "./WorktreeDetails.js";
-import { sessionCheckout, sidebarPrOf, type SidebarSectionId } from "./sidebarModel.js";
+import { defaultStash, sessionCheckout, sessionRunningIn, sidebarPrOf, stashBranch, type SidebarSectionId } from "./sidebarModel.js";
 import { NARROW_WIDTH } from "./gitGlassLayout.js";
 import { isEmptyQuery, matchesQuery, parseHistoryQuery, type HistorySearchScope, type HistorySearchTarget } from "./historySearch.js";
 import { usePersistedChoice, usePersistedWidth } from "./usePersistedState.js";
@@ -420,15 +420,19 @@ export function GitGlassPanel({ scope: scopeProp }: { scope: HistoryScope }) {
   const currentSidebarWidth = sidebarWidth.width ?? SIDEBAR_DEFAULT_WIDTH;
 
   const dirtyCount = viewWorktree === null && sessionId ? (status?.available ? status.dirtyCount : null) : (log?.wipCount ?? null);
-  const latestStash = sidebarData.model.stashes[0] ?? null;
+  const popTarget = defaultStash(sidebarData.model.stashes, head?.branch ?? null);
   const branchTarget = selectedSha ? { sha: selectedSha, selected: true } : head?.sha ? { sha: head.sha, selected: false } : null;
+  const runningRow =
+    (viewWorktree === null && sidebarData.thisRow?.busy ? sidebarData.thisRow : null) ?? sessionRunningIn(sidebarData.model.sessions, worktrees, activePath);
+  const running = runningRow?.session.title ?? null;
   const states = actionStates({
     head,
     currentRef: currentRef ?? null,
     dirtyCount,
-    stash: latestStash ? { name: latestStash.ref.name, subject: latestStash.subject } : null,
+    stash: popTarget ? { name: popTarget.ref.name, subject: popTarget.subject } : null,
     branchTarget,
-    busy: action === null ? null : action.replace(/…$/, "")
+    busy: action === null ? null : action.replace(/…$/, ""),
+    running
   });
   const checkoutName = viewed ? `the worktree ${viewed.name}` : sessionId ? "this session's checkout" : "the project's checkout";
 
@@ -443,6 +447,7 @@ export function GitGlassPanel({ scope: scopeProp }: { scope: HistoryScope }) {
     if (!branchTarget) return;
     const { sha, selected } = branchTarget;
     const subject = log?.commits.find((candidate) => candidate.sha === sha)?.subject;
+    const checkoutBlocked = checkoutBlockedReason({ running });
     setInputDialog({
       title: "Create a branch",
       label: "Branch name",
@@ -455,7 +460,9 @@ export function GitGlassPanel({ scope: scopeProp }: { scope: HistoryScope }) {
           {ownedCheckout ? " A cw-code session works in this checkout — checking out changes its branch too." : ""}
         </>
       ),
-      checkbox: { label: "Check out after creating", initial: true },
+      checkbox: checkoutBlocked
+        ? { label: "Check out after creating", initial: false, disabled: checkoutBlocked }
+        : { label: "Check out after creating", initial: true },
       confirmLabel: "Create branch",
       busyLabel: "Creating…",
       submit: (name, checkoutAfter) =>
@@ -476,14 +483,31 @@ export function GitGlassPanel({ scope: scopeProp }: { scope: HistoryScope }) {
   };
 
   const popStash = (): void => {
-    if (!latestStash) return;
-    const { name } = latestStash.ref;
+    if (!popTarget) return;
+    const { name, target } = popTarget.ref;
+    const from = stashBranch(popTarget.subject);
+    const elsewhere = from !== null && head?.branch !== from;
     void confirm({
-      title: latestStash.subject ? `Pop ${name}: ${latestStash.subject}?` : `Pop ${name}?`,
-      message: `Applies the stash to ${checkoutName} and drops it. If it conflicts, the stash is kept.`,
+      title: `Pop ${name}?`,
+      message: (
+        <>
+          <div className="gg-dialog-subject">{popTarget.subject || "No message"}</div>
+          <div>
+            {from ? (
+              <>
+                Stashed on <b>{from}</b>
+                {elsewhere ? head?.branch ? <>, not on <b>{head.branch}</b>, the branch checked out here</> : <>; this checkout has no branch checked out</> : null}.
+              </>
+            ) : (
+              "The branch it was stashed on is unknown."
+            )}{" "}
+            Applies it to {checkoutName} and drops it. If it conflicts, the stash is kept.
+          </div>
+        </>
+      ),
       confirmLabel: "Pop"
     }).then((ok) => {
-      if (ok) void runAction(`Popping ${name}…`, () => window.cw.popStashHistory(scope, viewWorktree));
+      if (ok) void runAction(`Popping ${name}…`, () => window.cw.popStashHistory(scope, viewWorktree, target));
     });
   };
 
@@ -687,8 +711,15 @@ export function GitGlassPanel({ scope: scopeProp }: { scope: HistoryScope }) {
           {openPath && selectedSha && (
             <HistoryFileDiff files={commit.files} path={openPath} missingNote="This file is not part of the commit" onOpenFile={setOpenPath} onClose={closeDiff} />
           )}
-          {openPath && changesMode && (
-            <HistoryFileDiff files={diff.files} path={openPath} missingNote="This file has no changes in this comparison" onOpenFile={setOpenPath} onClose={closeDiff} />
+          {openPath && changesMode && sessionId && (
+            <HistoryFileDiff
+              files={diff.files}
+              path={openPath}
+              missingNote="This file has no changes in this comparison"
+              onOpenFile={setOpenPath}
+              onClose={closeDiff}
+              onReveal={(path) => usePanelStore.getState().revealFile(sessionId, path)}
+            />
           )}
         </div>
         {showDetails && (

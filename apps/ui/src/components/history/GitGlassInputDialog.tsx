@@ -7,7 +7,7 @@ export interface InputDialogRequest {
   placeholder?: string;
   note?: ReactNode;
   required?: string;
-  checkbox?: { label: string; initial: boolean };
+  checkbox?: { label: string; initial: boolean; disabled?: string };
   confirmLabel: string;
   busyLabel: string;
   submit: (value: string, checked: boolean) => Promise<string | null>;
@@ -87,10 +87,20 @@ export function GitGlassInputDialog({ request, onClose }: { request: InputDialog
           }}
         />
         {request.checkbox && (
-          <label className="gg-dialog-check">
-            <input type="checkbox" checked={checked} disabled={submitting} onChange={(event) => setChecked(event.target.checked)} />
+          <label className={`gg-dialog-check${request.checkbox.disabled ? " disabled" : ""}`} title={request.checkbox.disabled}>
+            <input
+              type="checkbox"
+              checked={checked}
+              disabled={submitting || request.checkbox.disabled !== undefined}
+              onChange={(event) => setChecked(event.target.checked)}
+            />
             {request.checkbox.label}
           </label>
+        )}
+        {request.checkbox?.disabled && (
+          <div className="gg-note gg-dialog-hint" role="note">
+            {request.checkbox.disabled}
+          </div>
         )}
         {error && (
           <div id={errorId} className="gg-dialog-error" role="alert">

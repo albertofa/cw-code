@@ -3,6 +3,7 @@ import type { HistoryLog, HistoryRef, HistoryWorktree, PrRef, PrSummary, Session
 import { prKey } from "@cw-code/shared/prRef";
 import {
   buildSidebarModel,
+  defaultStash,
   filterSidebarModel,
   groupBranches,
   hiddenOpenPrs,
@@ -11,6 +12,8 @@ import {
   remoteGroups,
   sectionCounts,
   sessionCheckout,
+  sessionRunningIn,
+  stashBranch,
   unionPrs
 } from "./sidebarModel.js";
 
@@ -144,6 +147,37 @@ describe("sessionCheckout", () => {
 
   test("finds nothing for a worktree outside this repository", () => {
     expect(sessionCheckout(worktrees, { worktreePath: "/elsewhere" })).toBeNull();
+  });
+});
+
+describe("stash defaults", () => {
+  const stash = (index: number, subject: string) => ({ ref: ref("stash", `stash@{${index}}`), subject });
+
+  test("reads the branch a stash was made on", () => {
+    expect(stashBranch("On feature/x: parked")).toBe("feature/x");
+    expect(stashBranch("WIP on main: abc1234 subject: with colon")).toBe("main");
+    expect(stashBranch("WIP on (no branch): abc1234 subject")).toBe("(no branch)");
+    expect(stashBranch("")).toBeNull();
+  });
+
+  test("prefers the newest stash made on the checked-out branch, else the top one", () => {
+    const stashes = [stash(0, "On other: top"), stash(1, "WIP on main: abc1234 mine"), stash(2, "On main: older")];
+    expect(defaultStash(stashes, "main")?.ref.name).toBe("stash@{1}");
+    expect(defaultStash(stashes, "elsewhere")?.ref.name).toBe("stash@{0}");
+    expect(defaultStash(stashes, null)?.ref.name).toBe("stash@{0}");
+    expect(defaultStash([], "main")).toBeNull();
+  });
+});
+
+describe("sessionRunningIn", () => {
+  const worktree = (path: string, isMain: boolean): HistoryWorktree => ({ key: path, path, name: path, branch: null, head: null, isCurrent: false, isMain, sessionId: null });
+  const worktrees = [worktree("/repo", true), worktree("/wt/s2", false)];
+
+  test("finds a busy session whose checkout is the given path", () => {
+    const rows = [row("s1", {}, { busy: true }), row("s2", { worktreePath: "/wt/s2" }, { busy: false })];
+    expect(sessionRunningIn(rows, worktrees, "/repo")?.session.id).toBe("s1");
+    expect(sessionRunningIn(rows, worktrees, "/wt/s2")).toBeNull();
+    expect(sessionRunningIn(rows, worktrees, null)).toBeNull();
   });
 });
 

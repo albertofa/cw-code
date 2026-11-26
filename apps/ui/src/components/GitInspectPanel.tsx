@@ -1,4 +1,3 @@
-import type { GitDiffMode } from "../cw.js";
 import type { DiffFile } from "./diffParser.js";
 
 export const STATUS_BADGE: Record<string, string> = {
@@ -7,17 +6,6 @@ export const STATUS_BADGE: Record<string, string> = {
   renamed: "R",
   modified: "M"
 };
-
-export interface DiffStatusSummary {
-  baseAhead?: number | null;
-  stagedCount?: number | null;
-}
-
-export function resolveInitialDiffMode(status: DiffStatusSummary | null | undefined): GitDiffMode {
-  if ((status?.baseAhead ?? 0) > 0) return "branch";
-  if ((status?.stagedCount ?? 0) > 0) return "staged";
-  return "working";
-}
 
 export function DiffLines({ file }: { file: DiffFile }) {
   return (

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
-import { ArrowLeft, ChevronDown, ChevronUp } from "lucide-react";
+import { ArrowLeft, ChevronDown, ChevronUp, ExternalLink } from "lucide-react";
 import type { HistoryCommitDetail, HistoryScope } from "@cw-code/contracts";
 import { parseUnifiedDiff, type DiffFile } from "../diffParser.js";
 import { DiffLines, STATUS_BADGE } from "../GitInspectPanel.js";
@@ -75,18 +75,35 @@ export function FileStats({ file }: { file: DiffFile }) {
   );
 }
 
+export function RevealButton({ path, deleted, onReveal, className }: { path: string; deleted: boolean; onReveal: (path: string) => void; className: string }) {
+  return (
+    <button
+      type="button"
+      className={className}
+      disabled={deleted}
+      onClick={() => onReveal(path)}
+      title={deleted ? "File was deleted" : "Open in Files"}
+      aria-label={`Open ${path} in Files`}
+    >
+      <ExternalLink size={13} aria-hidden="true" />
+    </button>
+  );
+}
+
 export function HistoryFileDiff({
   files,
   path,
   missingNote,
   onOpenFile,
-  onClose
+  onClose,
+  onReveal
 }: {
   files: DiffFile[];
   path: string;
   missingNote: string;
   onOpenFile: (path: string) => void;
   onClose: () => void;
+  onReveal?: (path: string) => void;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const index = files.findIndex((file) => file.path === path);
@@ -127,6 +144,7 @@ export function HistoryFileDiff({
         </span>
         {file && <FileStats file={file} />}
         <span className="history-detail-actions">
+          {onReveal && <RevealButton path={path} deleted={file?.status === "deleted"} onReveal={onReveal} className="inspect-mode" />}
           <button type="button" className="inspect-mode" disabled={!prev} onClick={() => prev && onOpenFile(prev.path)} title="Previous file (Alt+↑)" aria-label="Previous file">
             <ChevronUp size={14} aria-hidden="true" />
           </button>

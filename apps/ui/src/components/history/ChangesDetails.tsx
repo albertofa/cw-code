@@ -10,6 +10,7 @@ import { useTurnUndo, type TurnUndo } from "../TurnChangesCard.js";
 import { useGitStatus } from "../useGit.js";
 import { DIFF_MODE_LABEL, DIFF_MODES, snapshotWarning, useLastTurnSnapshot, type GitDiffState } from "../useGitDiff.js";
 import { useAppStore } from "../../stores/appStore.js";
+import { usePanelStore } from "../../stores/panelStore.js";
 import { FileRow } from "./CommitDetails.js";
 
 function tabCount(mode: GitDiffMode, diff: GitDiffState, status: GitStatus | null, undo: TurnUndo): number | null {
@@ -198,7 +199,14 @@ export function ChangesDetails({
           </div>
           <div className="gg-files" role="list" aria-label="Changed files">
             {files.map((file) => (
-              <FileRow key={file.path} file={file} depth={null} shown={file.path === openPath} onOpen={() => onOpenFile(file.path)} />
+              <FileRow
+                key={file.path}
+                file={file}
+                depth={null}
+                shown={file.path === openPath}
+                onOpen={() => onOpenFile(file.path)}
+                onReveal={(path) => usePanelStore.getState().revealFile(sessionId, path)}
+              />
             ))}
           </div>
         </>

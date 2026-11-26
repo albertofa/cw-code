@@ -531,6 +531,27 @@ describe("usePanelStore right tools", () => {
     });
   });
 
+  it("opens a closed Git glass beside the chat for a Review request", () => {
+    usePanelStore.getState().requestDiffMode("sess_a", "turn");
+    const state = usePanelStore.getState();
+    const panel = selectSessionPanel(state, "sess_a");
+    expect(panel.dockByTab.gitglass).toBe("right");
+    expect(panel.activeRight).toBe("gitglass");
+    expect(panel.rightVisible).toBe(true);
+    expect(panel.activeMain).toBe("chat");
+    expect(state.autoLocation.gitglass).toBe(DEFAULT_AUTO.gitglass);
+    expect(state.diffModeRequest).toMatchObject({ sessionId: "sess_a", mode: "turn" });
+  });
+
+  it("reveals an open Git glass where it is for a Review request", () => {
+    usePanelStore.getState().moveTab("sess_a", "gitglass", "main");
+    usePanelStore.getState().setActive("sess_a", "main", "chat");
+    usePanelStore.getState().requestDiffMode("sess_a", "working");
+    const panel = selectSessionPanel(usePanelStore.getState(), "sess_a");
+    expect(panel.dockByTab.gitglass).toBe("main");
+    expect(panel.activeMain).toBe("gitglass");
+  });
+
   it("promotes the first remaining right tool when the active right tool is closed", () => {
     const store = usePanelStore.getState();
     store.moveTab("sess_a", "files", "right");

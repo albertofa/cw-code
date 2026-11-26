@@ -272,7 +272,7 @@ export function createCwApi(
     fetchHistory: (scope, worktree) => call<void>("history.fetch", { ...scope, worktree: worktree ?? undefined }),
     pushHistory: (scope, worktree) => call<void>("history.push", { ...scope, worktree: worktree ?? undefined }),
     stashHistory: (scope, worktree, message) => call<void>("history.stash", { ...scope, worktree: worktree ?? undefined, message }),
-    popStashHistory: (scope, worktree) => call<void>("history.stashPop", { ...scope, worktree: worktree ?? undefined }),
+    popStashHistory: (scope, worktree, sha) => call<void>("history.stashPop", { ...scope, worktree: worktree ?? undefined, sha }),
     createHistoryBranch: (scope, worktree, args) => call<void>("history.branch", { ...scope, worktree: worktree ?? undefined, ...args }),
     undoTurn: (sessionId, turnId, expectedEndSha) => call<TurnChanges>("git.undoTurn", { sessionId, turnId, expectedEndSha }),
     getSourceControlHealth: (projectId) => call<SourceControlHealth>("git.health", { projectId }),

@@ -15,6 +15,7 @@ export interface ToolbarActionInput {
   stash: { name: string; subject: string } | null;
   branchTarget: { sha: string; selected: boolean } | null;
   busy: string | null;
+  running: string | null;
 }
 
 const LOADING = "The history is still loading";
@@ -24,6 +25,11 @@ const enabled = (title: string, badge: number | null = null): ToolbarActionState
 const blocked = (title: string, badge: number | null = null): ToolbarActionState => ({ disabled: true, title, badge });
 const plural = (count: number, word: string): string => `${count} ${word}${count === 1 ? "" : "s"}`;
 const short = (sha: string): string => sha.slice(0, 7);
+const CHECKOUT_ACTIONS: readonly ToolbarActionId[] = ["fetch", "pull", "push", "stash", "pop"];
+
+export function checkoutBlockedReason({ running }: Pick<ToolbarActionInput, "running">): string | null {
+  return running === null ? null : `${running} is running a turn in this checkout — wait for it to finish`;
+}
 
 function pullState({ head, currentRef }: ToolbarActionInput): ToolbarActionState {
   if (!head) return blocked(LOADING);
@@ -73,8 +79,16 @@ export function actionStates(input: ToolbarActionInput): Record<ToolbarActionId,
     stash: stashState(input),
     pop: popState(input)
   };
-  if (input.busy === null) return states;
-  const wait = `Wait for “${input.busy}” to finish`;
-  for (const id of Object.keys(states) as ToolbarActionId[]) states[id] = blocked(wait, states[id].badge);
+  if (input.busy !== null) {
+    const wait = `Wait for “${input.busy}” to finish`;
+    for (const id of Object.keys(states) as ToolbarActionId[]) states[id] = blocked(wait, states[id].badge);
+    return states;
+  }
+  const running = checkoutBlockedReason(input);
+  if (running === null) return states;
+  for (const id of CHECKOUT_ACTIONS) {
+    if (!states[id].disabled) states[id] = blocked(running, states[id].badge);
+  }
+  if (!states.branch.disabled) states.branch = enabled(`${states.branch.title} — it can't be checked out until ${input.running} finishes its turn`);
   return states;
 }
