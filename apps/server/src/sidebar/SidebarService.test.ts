@@ -235,6 +235,21 @@ describe("SidebarService", () => {
     expect(state.inboxFresh).toEqual([false, true, false]);
   });
 
+  test("the quick counts split the working set by PR link", async () => {
+    const { state, sidebar, layout } = setup([]);
+    const link: SessionPrLink = { ref: REF, origin: "linked", lastSeenSha: HEAD, lastSeenAt: 10_000 };
+    state.sessions = [
+      session("a", "holding", { prs: [link] }),
+      session("b", "holding"),
+      session("c", "holding"),
+      session("d", "idle")
+    ];
+    sidebar.invalidate();
+    await settle();
+    expect(layout().workingSet.sort()).toEqual(["a", "b", "c"]);
+    expect(layout().quickCounts).toMatchObject({ pr: 1, noPr: 2 });
+  });
+
   test("the PR attention count uses the freshest summary of each inbox item", async () => {
     const { state, sidebar, layout } = setup([]);
     const reviewRequest: PrSummary = { ...mergeReadySummary(), ref: { ...REF, number: 8 }, viewerIsAuthor: false, reviewRequestedFromViewer: true };
@@ -242,7 +257,7 @@ describe("SidebarService", () => {
     state.lookup = new Map([[prKey(REF), { ...mergeReadySummary(), ci: "failing" }]]);
     sidebar.invalidate();
     await settle();
-    expect(layout().quickCounts).toEqual({ pr: 0, prAttention: 2 });
+    expect(layout().quickCounts).toEqual({ pr: 0, noPr: 0, prAttention: 2 });
   });
 
   test("the watched working set is capped to the most recently updated sessions", () => {
@@ -257,7 +272,7 @@ describe("SidebarService", () => {
 
   test("a failing initial compute starts with an empty layout and recovers on the next recompute", async () => {
     const { sidebar, data, layout } = setup([session("a", "idle")], { failFirstCompute: true });
-    expect(data().layout).toEqual({ needsYou: [], workingSet: [], main: [], resolved: [], quickCounts: { pr: 0, prAttention: 0 } });
+    expect(data().layout).toEqual({ needsYou: [], workingSet: [], main: [], resolved: [], quickCounts: { pr: 0, noPr: 0, prAttention: 0 } });
     expect(data().defaults).toEqual({ restoreSessionId: null, restoreProjectId: null, projectsByRecency: [] });
     sidebar.invalidate();
     await settle();

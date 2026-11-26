@@ -12,6 +12,11 @@ describe("matchesQuickFilter", () => {
     expect(matchesQuickFilter("pr", facts({ linkCount: 2 }))).toBe(true);
     expect(matchesQuickFilter("pr", facts())).toBe(false);
   });
+
+  it("matches sessions without a PR link", () => {
+    expect(matchesQuickFilter("noPr", facts())).toBe(true);
+    expect(matchesQuickFilter("noPr", facts({ linkCount: 1 }))).toBe(false);
+  });
 });
 
 describe("quickFilterCounts", () => {
@@ -24,7 +29,7 @@ describe("quickFilterCounts", () => {
         facts({ status: "resolved", linkCount: 1 }),
         facts({ status: "archived", linkCount: 1 })
       ])
-    ).toEqual({ pr: 2 });
+    ).toEqual({ pr: 2, noPr: 1 });
   });
 });
 
@@ -32,6 +37,7 @@ describe("toggleQuickFilter", () => {
   it("selects a filter and clears it when picked again", () => {
     expect(toggleQuickFilter("all", "pr")).toBe("pr");
     expect(toggleQuickFilter("pr", "pr")).toBe("all");
+    expect(toggleQuickFilter("pr", "noPr")).toBe("noPr");
   });
 });
 
