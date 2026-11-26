@@ -1790,10 +1790,14 @@ export class GitService {
     try {
       const list = await this.runGitAction(root, "Pop", ["stash", "list", "--format=%H%x00%gd"], BASE_FETCH_TIMEOUT_MS, cleanAuthEnvironment());
       if (list.code !== 0) throw new Error(`Pop failed: ${gitFailureReason(list.stderr, list.code, "git stash list")}`);
-      const ref = stashRefForSha(list.stdout, sha);
-      if (!ref) throw new Error("That stash is no longer in the list — refresh and try again");
-      const result = await this.runGitAction(root, "Pop", ["stash", "pop", ref], PULL_TIMEOUT_MS, cleanAuthEnvironment());
-      if (result.code === 0) return;
+      if (!stashRefForSha(list.stdout, sha)) throw new Error("That stash is no longer in the list — refresh and try again");
+      // Apply by sha so another worktree pushing or dropping a stash meanwhile can never make us
+      // apply a different entry; only then drop the entry, found again by its sha.
+      const result = await this.runGitAction(root, "Pop", ["stash", "apply", sha], PULL_TIMEOUT_MS, cleanAuthEnvironment());
+      if (result.code === 0) {
+        await this.dropStashBySha(root, sha);
+        return;
+      }
       const existing = untrackedCollisions(result.stderr);
       if (existing.length > 0) {
         throw new Error(`Pop failed: ${existing.join(", ")} already ${existing.length === 1 ? "exists" : "exist"} in the checkout — move or delete ${existing.length === 1 ? "it" : "them"} and try again; the stash was kept`);
@@ -1805,6 +1809,16 @@ export class GitService {
     } finally {
       this.dropStatus(root);
       this.invalidateBranches(root);
+    }
+  }
+
+  private async dropStashBySha(root: string, sha: string): Promise<void> {
+    const list = await this.runGitAction(root, "Pop", ["stash", "list", "--format=%H%x00%gd"], BASE_FETCH_TIMEOUT_MS, cleanAuthEnvironment());
+    const ref = list.code === 0 ? stashRefForSha(list.stdout, sha) : null;
+    if (!ref) return;
+    const dropped = await this.runGitAction(root, "Pop", ["stash", "drop", ref], BASE_FETCH_TIMEOUT_MS, cleanAuthEnvironment());
+    if (dropped.code !== 0) {
+      throw new Error(`The stash was applied but its entry could not be removed: ${gitFailureReason(dropped.stderr, dropped.code, "git stash drop")}`);
     }
   }
 
