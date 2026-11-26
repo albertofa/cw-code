@@ -345,7 +345,7 @@ export function GitGlassSidebarStrip({
     { id: "stashes", label: "Stashes", icon: Archive, count: counts.stashes }
   ];
   return (
-    <aside className="gg-strip" aria-label="Repository">
+    <aside className="gg-strip" aria-label="Repository sections">
       <button
         type="button"
         className={`gg-icon-btn${overlay ? " on" : ""}`}

@@ -59,6 +59,14 @@ describe("visibleSlots", () => {
     expect(visibleSlots(layout, 320, 60, 1)).toEqual({ start: 10, end: 15 });
   });
 
+  it("includes separators sitting on the viewport edges", () => {
+    const days = buildSlots(["Today", "Yesterday", "Yesterday", "Last week", "October 2026"], 30, 20);
+    expect(days.slots.map((slot) => slot.top)).toEqual([0, 20, 50, 70, 100, 130, 150, 180, 200]);
+    expect(visibleSlots(days, 50, 80, 0)).toEqual({ start: 2, end: 6 });
+    expect(visibleSlots(days, 51, 79, 0)).toEqual({ start: 2, end: 6 });
+    expect(visibleSlots(days, 130, 50, 0)).toEqual({ start: 5, end: 8 });
+  });
+
   it("stays inside the list", () => {
     expect(visibleSlots(layout, 5000, 300, 5)).toEqual({ start: 95, end: 101 });
     expect(visibleSlots(buildSlots([], 30, 20), 0, 300, 5)).toEqual({ start: 0, end: 0 });

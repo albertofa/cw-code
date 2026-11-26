@@ -78,7 +78,7 @@ export function startWidthDrag(
     handle.removeEventListener("pointermove", move);
     handle.removeEventListener("pointerup", stop);
     handle.removeEventListener("pointercancel", stop);
-    onEnd(latest);
+    if (latest !== startWidth) onEnd(latest);
   };
   handle.addEventListener("pointermove", move);
   handle.addEventListener("pointerup", stop);

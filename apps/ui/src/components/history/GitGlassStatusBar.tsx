@@ -25,7 +25,7 @@ export function GitGlassStatusBar({
   onOpenPath: (() => void) | null;
 }) {
   return (
-    <div className="gg-statusbar" role="status">
+    <div className="gg-statusbar">
       {branch && (
         <span className="gg-st-item" title={branch}>
           <GitBranch size={12} aria-hidden="true" />

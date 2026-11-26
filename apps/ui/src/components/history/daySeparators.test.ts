@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { dayBucket, dayLabels } from "./daySeparators.js";
+import { dayBucket, dayLabels, msUntilNextDay } from "./daySeparators.js";
 
 const at = (year: number, month: number, day: number, hour = 12, minute = 0): number => new Date(year, month - 1, day, hour, minute).getTime();
 
@@ -39,6 +39,13 @@ describe("dayBucket", () => {
     const tuesday = at(2026, 12, 1, 10);
     expect(dayBucket(tuesday, at(2026, 11, 24)).label).toBe("Last week");
     expect(dayBucket(tuesday, at(2026, 11, 20)).label).toBe("November 2026");
+  });
+});
+
+describe("msUntilNextDay", () => {
+  it("counts down to the next local midnight", () => {
+    expect(msUntilNextDay(at(2026, 11, 25, 23, 59))).toBe(60_000);
+    expect(msUntilNextDay(at(2026, 11, 25, 0, 0))).toBe(new Date(2026, 10, 26).getTime() - at(2026, 11, 25, 0, 0));
   });
 });
 

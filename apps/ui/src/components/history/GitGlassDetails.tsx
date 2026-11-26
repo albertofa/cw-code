@@ -1,7 +1,7 @@
-import type { PointerEvent as ReactPointerEvent, ReactNode } from "react";
+import type { ReactNode } from "react";
 import { X } from "lucide-react";
 import type { GitDiffMode, PrRef } from "@cw-code/contracts";
-import { startWidthDrag } from "./usePersistedState.js";
+import { ResizeHandle } from "./ResizeHandle.js";
 
 export type GitGlassSelection =
   | { kind: "commit"; sha: string }
@@ -45,15 +45,6 @@ export function GitGlassDetails({
   renderSession: (sessionId: string) => ReactNode;
   renderWorktree: (path: string) => ReactNode;
 }) {
-  const begin = (event: ReactPointerEvent<HTMLDivElement>): void =>
-    startWidthDrag(
-      event,
-      width,
-      -1,
-      (next) => onResize(next, false),
-      (next) => onResize(next, true)
-    );
-
   let body: ReactNode;
   if (selection === null) body = <div className="gg-note gg-details-empty">Select a commit, or a session, pull request or worktree in the sidebar.</div>;
   else if (selection.kind === "commit") body = renderCommit(selection.sha);
@@ -64,14 +55,15 @@ export function GitGlassDetails({
 
   return (
     <aside className="gg-details" style={{ width }} aria-label="Details">
-      <div
+      <ResizeHandle
         className="gg-resize gg-resize-left"
-        role="separator"
-        aria-orientation="vertical"
-        aria-label="Resize the details panel"
-        title="Drag to resize (double-click resets)"
-        onPointerDown={begin}
-        onDoubleClick={onReset}
+        label="Resize the details panel"
+        value={width}
+        min={DETAILS_MIN_WIDTH}
+        max={DETAILS_MAX_WIDTH}
+        direction={-1}
+        onChange={onResize}
+        onReset={onReset}
       />
       <div className="gg-d-head">
         <span>{selection ? HEADERS[selection.kind] : "Details"}</span>

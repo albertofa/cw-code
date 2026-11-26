@@ -6,7 +6,7 @@ import { MenuSelect, type MenuOption } from "../MenuSelect.js";
 import { FileIcon } from "../fileIcons.js";
 import { splitRepoPath } from "../turnChanges.js";
 import { relativeTime } from "../prDetailModel.js";
-import { useThreadEntry } from "../useThread.js";
+import { useSessionLinkedPrs } from "../PrSessionPanel.js";
 import type { DiffFile } from "../diffParser.js";
 import { FileStats, formatCommitDate, type HistoryCommitState } from "./HistoryCommitView.js";
 import { CommitPulls } from "./CommitPulls.js";
@@ -20,8 +20,8 @@ type FileView = (typeof FILE_VIEWS)[number];
 const TREE_INDENT = 12;
 
 function useLinkedPrKeys(sessionId: string | null): ReadonlySet<string> {
-  const items = useThreadEntry(sessionId, "prItems");
-  return useMemo(() => new Set((items ?? []).filter((item) => item.link !== undefined).map((item) => prKey(item.ref))), [items]);
+  const linked = useSessionLinkedPrs(sessionId);
+  return useMemo(() => new Set(linked.map((item) => prKey(item.ref))), [linked]);
 }
 
 function Avatar({ name, email, url }: { name: string; email: string; url: string | null }) {
@@ -187,10 +187,20 @@ export function CommitDetails({
   }, [sha]);
 
   const copySha = (): void => {
-    void navigator.clipboard.writeText(sha).then(
-      () => setCopied(true),
-      () => setCopyError("Could not copy the commit id")
-    );
+    setCopyError("");
+    const clipboard = typeof navigator === "undefined" ? undefined : navigator.clipboard;
+    if (!clipboard?.writeText) {
+      setCopyError("Copying is not available here (the clipboard needs a secure connection)");
+      return;
+    }
+    try {
+      clipboard.writeText(sha).then(
+        () => setCopied(true),
+        () => setCopyError("Could not copy the commit id")
+      );
+    } catch {
+      setCopyError("Could not copy the commit id");
+    }
   };
 
   const email = base?.authorEmail.toLowerCase() ?? "";
@@ -256,7 +266,11 @@ export function CommitDetails({
             </>
           )}
         </div>
-        {copyError && <div className="gg-error-text">{copyError}</div>}
+        {copyError && (
+          <div className="gg-error-text" role="alert">
+            {copyError}
+          </div>
+        )}
       </section>
 
       <section className="gg-d-sec" aria-label="Actions">

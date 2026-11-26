@@ -44,7 +44,9 @@ export function useVirtualRows(containerRef: RefObject<HTMLElement | null>, layo
       const slot = layout.slots[index];
       if (!element || !slot) return;
       const slotBottom = slot.top + slot.height;
-      if (slot.top < element.scrollTop) element.scrollTop = slot.top;
+      const previous = layout.slots[index - 1];
+      const top = previous?.kind === "separator" ? previous.top : slot.top;
+      if (top < element.scrollTop) element.scrollTop = top;
       else if (slotBottom + topInset > element.scrollTop + element.clientHeight) {
         element.scrollTop = slotBottom + topInset - element.clientHeight;
       }

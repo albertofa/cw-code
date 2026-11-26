@@ -8,7 +8,9 @@ export const HISTORY_SEARCH_SCOPES: { id: HistorySearchScope; label: string }[] 
   { id: "ids", label: "Commit ids" }
 ];
 
-export type HistorySearchField = "any" | "message" | "author" | "ref" | "sha";
+export type HistorySearchField = "any" | "message" | "author" | "ref" | "branch" | "tag" | "sha";
+
+export type HistorySearchRefKind = "local" | "remote" | "tag" | "stash";
 
 export interface HistorySearchTerm {
   field: HistorySearchField;
@@ -24,13 +26,13 @@ export interface HistorySearchTarget {
   subject: string;
   authorName: string;
   authorEmail: string;
-  refs: readonly string[];
+  refs: readonly { name: string; kind: HistorySearchRefKind }[];
 }
 
 const PREFIXES: Record<string, HistorySearchField> = {
   author: "author",
-  branch: "ref",
-  tag: "ref",
+  branch: "branch",
+  tag: "tag",
   sha: "sha",
   message: "message"
 };
@@ -42,6 +44,9 @@ const SCOPE_FIELD: Record<HistorySearchScope, HistorySearchField> = {
   refs: "ref",
   ids: "sha"
 };
+
+const BRANCH_KINDS: readonly HistorySearchRefKind[] = ["local", "remote"];
+const TAG_KINDS: readonly HistorySearchRefKind[] = ["tag"];
 
 const TOKEN = /([A-Za-z]+):(?:"([^"]*)"?|(\S*))|"([^"]*)"?|(\S+)/g;
 
@@ -74,7 +79,9 @@ function matchesTerm(term: HistorySearchTerm, target: HistorySearchTarget): bool
   const { value } = term;
   const message = (): boolean => target.subject.toLowerCase().includes(value);
   const author = (): boolean => target.authorName.toLowerCase().includes(value) || target.authorEmail.toLowerCase().includes(value);
-  const ref = (): boolean => target.refs.some((name) => name.toLowerCase().includes(value));
+  const refOf = (kinds: readonly HistorySearchRefKind[] | null): boolean =>
+    target.refs.some((ref) => (kinds === null || kinds.includes(ref.kind)) && ref.name.toLowerCase().includes(value));
+  const ref = (): boolean => refOf(null);
   const sha = (): boolean => target.sha.toLowerCase().startsWith(value);
   switch (term.field) {
     case "message":
@@ -83,6 +90,10 @@ function matchesTerm(term: HistorySearchTerm, target: HistorySearchTarget): bool
       return author();
     case "ref":
       return ref();
+    case "branch":
+      return refOf(BRANCH_KINDS);
+    case "tag":
+      return refOf(TAG_KINDS);
     case "sha":
       return sha();
     case "any":

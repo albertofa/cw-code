@@ -1,4 +1,4 @@
-import { Fragment, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
+import { Fragment, useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { Check, ChevronDown, ChevronUp, PanelLeft, Search, SlidersHorizontal, UserRound, X } from "lucide-react";
 import { MenuSelect } from "../MenuSelect.js";
 import { HISTORY_SEARCH_SCOPES, type HistorySearchScope } from "./historySearch.js";
@@ -10,6 +10,7 @@ export interface ToolbarAction {
   title: string;
   disabled?: boolean;
   badge?: number | null;
+  badgeHint?: string;
   onClick?: () => void;
 }
 
@@ -37,7 +38,7 @@ function ActionButton({ action }: { action: ToolbarAction }) {
       className="gg-act"
       aria-disabled={action.disabled || undefined}
       title={action.title}
-      aria-label={action.label}
+      aria-label={action.badge ? `${action.label}, ${action.badge}${action.badgeHint ? ` ${action.badgeHint}` : ""}` : action.label}
       onClick={action.disabled ? undefined : action.onClick}
     >
       {action.badge ? <span className="gg-act-badge">{action.badge}</span> : null}
@@ -120,6 +121,15 @@ function SearchBox({ search, floating, onDone }: { search: ToolbarSearch; floati
 
 function ViewOptionsMenu({ options }: { options: ToolbarViewOptions }) {
   const [open, setOpen] = useState(false);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (open) panelRef.current?.querySelector<HTMLElement>("[role='menuitemcheckbox']")?.focus();
+  }, [open]);
+  const close = (): void => {
+    setOpen(false);
+    triggerRef.current?.focus();
+  };
   const rows = [
     { id: "dates", label: "Show exact dates", checked: options.absoluteDates, toggle: () => options.onAbsoluteDates(!options.absoluteDates) },
     { id: "authors", label: "Show author names", checked: options.showAuthors, toggle: () => options.onShowAuthors(!options.showAuthors) }
@@ -127,6 +137,7 @@ function ViewOptionsMenu({ options }: { options: ToolbarViewOptions }) {
   return (
     <div className="menu">
       <button
+        ref={triggerRef}
         type="button"
         className={`gg-icon-btn${open ? " on" : ""}`}
         title="View options"
@@ -134,6 +145,13 @@ function ViewOptionsMenu({ options }: { options: ToolbarViewOptions }) {
         aria-haspopup="menu"
         aria-expanded={open}
         onClick={() => setOpen((value) => !value)}
+        onKeyDown={(event) => {
+          if (event.key === "Escape" && open) {
+            event.preventDefault();
+            event.stopPropagation();
+            setOpen(false);
+          }
+        }}
       >
         <SlidersHorizontal size={15} aria-hidden="true" />
       </button>
@@ -141,13 +159,15 @@ function ViewOptionsMenu({ options }: { options: ToolbarViewOptions }) {
         <>
           <div className="menu-backdrop" onClick={() => setOpen(false)} />
           <div
+            ref={panelRef}
             className="menu-panel menu-panel-down gg-menu-end"
             role="menu"
             aria-label="View options"
             onKeyDown={(event) => {
               if (event.key === "Escape") {
+                event.preventDefault();
                 event.stopPropagation();
-                setOpen(false);
+                close();
               }
             }}
           >

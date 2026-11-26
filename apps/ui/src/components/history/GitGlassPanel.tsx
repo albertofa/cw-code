@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type PointerEvent as ReactPointerEvent, type RefObject } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type RefObject } from "react";
 import {
   ArchiveRestore,
   ArrowDownToLine,
@@ -36,8 +36,9 @@ import { SessionDetails } from "./SessionDetails.js";
 import { WorktreeDetails } from "./WorktreeDetails.js";
 import { sidebarPrOf, type SidebarSectionId } from "./sidebarModel.js";
 import { NARROW_WIDTH } from "./gitGlassLayout.js";
-import { isEmptyQuery, matchesQuery, parseHistoryQuery, type HistorySearchScope } from "./historySearch.js";
-import { startWidthDrag, usePersistedChoice, usePersistedWidth } from "./usePersistedState.js";
+import { isEmptyQuery, matchesQuery, parseHistoryQuery, type HistorySearchScope, type HistorySearchTarget } from "./historySearch.js";
+import { usePersistedChoice, usePersistedWidth } from "./usePersistedState.js";
+import { ResizeHandle } from "./ResizeHandle.js";
 
 const PAGE_SIZE = 2000;
 const MAX_LIMIT = 20000;
@@ -69,14 +70,15 @@ function useNarrow(ref: RefObject<HTMLElement | null>): boolean {
   return narrow;
 }
 
-function refNamesBySha(log: HistoryLog | null): Map<string, string[]> {
-  const names = new Map<string, string[]>();
+function refsBySha(log: HistoryLog | null): Map<string, HistorySearchTarget["refs"][number][]> {
+  const refs = new Map<string, HistorySearchTarget["refs"][number][]>();
   for (const ref of log?.refs ?? []) {
-    const list = names.get(ref.target);
-    if (list) list.push(ref.name);
-    else names.set(ref.target, [ref.name]);
+    const entry = { name: ref.name, kind: ref.kind };
+    const list = refs.get(ref.target);
+    if (list) list.push(entry);
+    else refs.set(ref.target, [entry]);
   }
-  return names;
+  return refs;
 }
 
 function openSession(sessionId: string): void {
@@ -299,7 +301,7 @@ export function GitGlassPanel({ scope: scopeProp }: { scope: HistoryScope }) {
   const query = useMemo(() => parseHistoryQuery(searchText, searchScope), [searchText, searchScope]);
   const searchMatches = useMemo<string[] | null>(() => {
     if (!log || isEmptyQuery(query)) return null;
-    const refs = refNamesBySha(log);
+    const refs = refsBySha(log);
     return log.commits
       .filter((candidate) =>
         matchesQuery(query, {
@@ -316,7 +318,7 @@ export function GitGlassPanel({ scope: scopeProp }: { scope: HistoryScope }) {
   const logIndex = useMemo(() => new Map((log?.commits ?? []).map((candidate, index) => [candidate.sha, index])), [log]);
   const matchPosition = searchMatches && selectedSha ? searchMatches.indexOf(selectedSha) : -1;
   const searchCounter =
-    searchMatches === null ? null : searchMatches.length === 0 ? "No results" : `${matchPosition === -1 ? "?" : matchPosition + 1} of ${searchMatches.length}`;
+    searchMatches === null ? null : searchMatches.length === 0 ? "No results" : `${matchPosition === -1 ? "–" : matchPosition + 1} of ${searchMatches.length}`;
 
   const jumpMatch = (direction: 1 | -1): void => {
     if (!searchMatches || searchMatches.length === 0) return;
@@ -400,9 +402,10 @@ export function GitGlassPanel({ scope: scopeProp }: { scope: HistoryScope }) {
         id: "pull",
         label: "Pull",
         icon: <ArrowDownToLine size={ACTION_ICON} aria-hidden="true" />,
-        title: pullTitle,
+        title: action !== null ? `Wait for “${action.replace(/…$/, "")}” to finish` : pullTitle,
         disabled: pullBlocked !== null || action !== null,
         badge: currentRef && currentRef.behind > 0 ? currentRef.behind : null,
+        badgeHint: "behind",
         onClick: pull
       },
       soon("push", "Push", <ArrowUpFromLine size={ACTION_ICON} aria-hidden="true" />)
@@ -444,8 +447,6 @@ export function GitGlassPanel({ scope: scopeProp }: { scope: HistoryScope }) {
     [sidebarData.thisRow]
   );
   const currentSidebarWidth = sidebarWidth.width ?? SIDEBAR_DEFAULT_WIDTH;
-  const beginSidebarResize = (event: ReactPointerEvent<HTMLDivElement>): void =>
-    startWidthDrag(event, currentSidebarWidth, 1, sidebarWidth.preview, sidebarWidth.save);
 
   const resizeColumn = (column: ColumnId, width: number | null, commit: boolean): void => {
     const target = column === "ref" ? refWidth : graphWidth;
@@ -469,7 +470,8 @@ export function GitGlassPanel({ scope: scopeProp }: { scope: HistoryScope }) {
     window.cw.local?.openPath(activePath).catch((reason: Error) => setActionError(reason.message));
   } : null;
 
-  const showDetails = !narrow || selection !== null;
+  const diffOpen = openPath !== null && (selectedSha !== null || changesMode !== null);
+  const showDetails = !narrow || (selection !== null && !diffOpen);
 
   return (
     <div ref={panelRef} className={`git-glass${narrow ? " narrow" : ""}`} onKeyDown={onPanelKeyDown}>
@@ -554,14 +556,15 @@ export function GitGlassPanel({ scope: scopeProp }: { scope: HistoryScope }) {
               onCheckout={checkout}
               onOpenSession={openSession}
             />
-            <div
+            <ResizeHandle
               className="gg-resize gg-resize-right"
-              role="separator"
-              aria-orientation="vertical"
-              aria-label="Resize the sidebar"
-              title="Drag to resize (double-click resets)"
-              onPointerDown={beginSidebarResize}
-              onDoubleClick={() => sidebarWidth.save(null)}
+              label="Resize the sidebar"
+              value={currentSidebarWidth}
+              min={SIDEBAR_MIN_WIDTH}
+              max={SIDEBAR_MAX_WIDTH}
+              direction={1}
+              onChange={(width, commit) => (commit ? sidebarWidth.save(width) : sidebarWidth.preview(width))}
+              onReset={() => sidebarWidth.save(null)}
             />
           </aside>
         )}

@@ -58,7 +58,7 @@ function ThreadRow({ thread, onSend }: { thread: PrReviewThread; onSend: () => v
   );
 }
 
-function useSessionPrItems(sessionId: string): SessionPrItem[] {
+function useSessionPrItems(sessionId: string | null): SessionPrItem[] {
   return useThreadEntry(sessionId, "prItems") ?? NO_ITEMS;
 }
 
@@ -66,7 +66,7 @@ function useSessionPrDock(sessionId: string): PrDockEntry[] {
   return useThreadEntry(sessionId, "prDock") ?? NO_DOCK;
 }
 
-export function useSessionLinkedPrs(sessionId: string): SessionPrItem[] {
+export function useSessionLinkedPrs(sessionId: string | null): SessionPrItem[] {
   const items = useSessionPrItems(sessionId);
   return useMemo(() => items.filter((item) => item.link !== undefined), [items]);
 }

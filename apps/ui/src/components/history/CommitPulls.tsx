@@ -174,13 +174,31 @@ function pipClass(check: PrCheck): string {
 }
 
 function PullChecks({ pull }: { pull: HistoryCommitPull }) {
-  const detail = usePrDetail(prKey(pull.ref))?.detail ?? null;
+  const entry = usePrDetail(prKey(pull.ref));
+  const detail = entry?.detail ?? null;
   const openPr = usePrStore((s) => s.openPr);
-  if (!detail) return <Note>Loading checks…</Note>;
+  if (!detail && !entry?.error) return null;
+  const header = (
+    <h4 className="gg-d-h">
+      Checks
+      <span className="gg-d-h-aside">#{pull.ref.number}</span>
+    </h4>
+  );
+  if (!detail) {
+    return (
+      <section className="gg-d-sec" aria-label="Checks">
+        {header}
+        <div className="gg-error-text" role="alert">
+          Checks unavailable: {entry?.error}
+        </div>
+      </section>
+    );
+  }
   const ci = mergeBoxState(detail).ci;
   const runs = detail.checkRuns;
   return (
-    <>
+    <section className="gg-d-sec" aria-label="Checks">
+      {header}
       <StatusRow row={ci} />
       {runs.length > 0 && (
         <div className="gg-pips" aria-hidden="true">
@@ -194,7 +212,7 @@ function PullChecks({ pull }: { pull: HistoryCommitPull }) {
           Show all {runs.length} {runs.length === 1 ? "check" : "checks"}
         </button>
       )}
-    </>
+    </section>
   );
 }
 
@@ -220,15 +238,7 @@ export function CommitPulls({ scope, sha, linkedKeys }: { scope: HistoryScope; s
         </h4>
         {body}
       </section>
-      {first && (
-        <section className="gg-d-sec" aria-label="Checks">
-          <h4 className="gg-d-h">
-            Checks
-            <span className="gg-d-h-aside">#{first.ref.number}</span>
-          </h4>
-          <PullChecks pull={first} />
-        </section>
-      )}
+      {first && <PullChecks pull={first} />}
     </>
   );
 }

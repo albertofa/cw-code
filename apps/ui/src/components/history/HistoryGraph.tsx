@@ -7,7 +7,6 @@ import {
   type CSSProperties,
   type FocusEvent,
   type KeyboardEvent,
-  type PointerEvent as ReactPointerEvent,
   type SyntheticEvent
 } from "react";
 import { Check, Cloud, GitFork, Monitor, Tag } from "lucide-react";
@@ -20,8 +19,8 @@ import { PALETTE_SIZE, paletteVar, useGraphTheme } from "./graphTheme.js";
 import { buildRefLabel, type LocalBranches, type RefEntry, type RefLabel } from "./refLabel.js";
 import { useVirtualRows } from "./useVirtualRows.js";
 import { buildSlots, ROW_HEIGHT, SEPARATOR_HEIGHT, type Slot } from "./gitGlassLayout.js";
-import { dayLabels } from "./daySeparators.js";
-import { startWidthDrag } from "./usePersistedState.js";
+import { dayLabels, msUntilNextDay } from "./daySeparators.js";
+import { ResizeHandle } from "./ResizeHandle.js";
 
 export const WIP_SHA = "WIP";
 export const REF_COLUMN_DEFAULT = 170;
@@ -296,6 +295,15 @@ const HistoryRow = memo(function HistoryRow({
   );
 });
 
+function useDayTick(): number {
+  const [tick, setTick] = useState(0);
+  useEffect(() => {
+    const timer = setTimeout(() => setTick((value) => value + 1), msUntilNextDay(Date.now()) + 1000);
+    return () => clearTimeout(timer);
+  }, [tick]);
+  return tick;
+}
+
 function SeparatorRow({ slot }: { slot: Extract<Slot, { kind: "separator" }> }) {
   return (
     <div className="history-separator" style={{ height: slot.height }} role="presentation">
@@ -304,27 +312,6 @@ function SeparatorRow({ slot }: { slot: Extract<Slot, { kind: "separator" }> }) 
   );
 }
 
-function ColumnHandle({ label, width, onResize, onReset }: { label: string; width: number; onResize: (width: number, commit: boolean) => void; onReset: () => void }) {
-  const begin = (event: ReactPointerEvent<HTMLSpanElement>): void =>
-    startWidthDrag(
-      event,
-      width,
-      1,
-      (next) => onResize(next, false),
-      (next) => onResize(next, true)
-    );
-  return (
-    <span
-      className="history-col-handle"
-      role="separator"
-      aria-orientation="vertical"
-      aria-label={`Resize the ${label} column`}
-      title="Drag to resize (double-click resets)"
-      onPointerDown={begin}
-      onDoubleClick={onReset}
-    />
-  );
-}
 
 export function HistoryGraph({
   log,
@@ -374,7 +361,8 @@ export function HistoryGraph({
   const hasWip = wip !== null && wip.files > 0;
   const commits = useMemo(() => withWip(log, hasWip), [log, hasWip]);
   const indexBySha = useMemo(() => new Map(commits.map((commit, index) => [commit.sha, index])), [commits]);
-  const nowMs = useMemo(() => Date.now(), [commits]);
+  const dayTick = useDayTick();
+  const nowMs = useMemo(() => Date.now(), [commits, dayTick]);
   const layout = useMemo(() => computeGraphLayout(commits, PALETTE_SIZE), [commits]);
   const slotLayout = useMemo(
     () =>
@@ -391,7 +379,7 @@ export function HistoryGraph({
   const kinds = useMemo(() => commits.map(nodeKind), [commits]);
   const labels = useMemo(() => labelsBySha(log, new Set(commits.map((commit) => commit.sha))), [log, commits]);
   const labeled = useMemo(() => commits.map((commit) => labels.has(commit.sha)), [commits, labels]);
-  const dimmed = useMemo(() => (matches ? commits.map((commit) => !matches.has(commit.sha)) : null), [commits, matches]);
+  const dimmed = useMemo(() => (matches ? commits.map((commit) => commit.sha !== WIP_SHA && !matches.has(commit.sha)) : null), [commits, matches]);
   const nodeAvatars = useMemo<(NodeAvatar | null)[] | null>(() => {
     if (!showAvatars) return null;
     return commits.map((commit, index) => {
@@ -446,19 +434,27 @@ export function HistoryGraph({
       <div className="history-header" style={{ height: HEADER_HEIGHT }}>
         <span className="history-header-cell">
           Branch / Tag
-          <ColumnHandle
-            label="branch and tag"
-            width={refWidth}
-            onResize={(width, commit) => onColumnResize("ref", width, commit)}
+          <ResizeHandle
+            className="history-col-handle"
+            label="Resize the branch and tag column"
+            value={refWidth}
+            min={REF_COLUMN_MIN}
+            max={REF_COLUMN_MAX}
+            direction={1}
+            onChange={(width, commit) => onColumnResize("ref", width, commit)}
             onReset={() => onColumnResize("ref", null, true)}
           />
         </span>
         <span className="history-header-cell">
           Graph
-          <ColumnHandle
-            label="graph"
-            width={graphWidth}
-            onResize={(width, commit) => onColumnResize("graph", width, commit)}
+          <ResizeHandle
+            className="history-col-handle"
+            label="Resize the graph column"
+            value={graphWidth}
+            min={GRAPH_COLUMN_MIN}
+            max={GRAPH_COLUMN_MAX}
+            direction={1}
+            onChange={(width, commit) => onColumnResize("graph", width, commit)}
             onReset={() => onColumnResize("graph", null, true)}
           />
         </span>

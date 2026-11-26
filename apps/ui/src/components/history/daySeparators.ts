@@ -22,6 +22,10 @@ function startOfMonth(ms: number): number {
   return new Date(date.getFullYear(), date.getMonth(), 1).getTime();
 }
 
+export function msUntilNextDay(now: number): number {
+  return shiftDays(startOfDay(now), 1) - now;
+}
+
 export function dayBucket(now: number, ts: number): DayBucket {
   const today = startOfDay(now);
   if (ts >= today) return { label: "Today", start: today };

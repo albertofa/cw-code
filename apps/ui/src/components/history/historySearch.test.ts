@@ -6,7 +6,11 @@ const commit: HistorySearchTarget = {
   subject: "fix(opensearch): send Dashboards SAML login through Google",
   authorName: "Lucas Passos",
   authorEmail: "lucas.passos@example.com",
-  refs: ["origin/master", "v0.9.0"]
+  refs: [
+    { name: "origin/master", kind: "remote" },
+    { name: "feature/login", kind: "local" },
+    { name: "v0.9.0", kind: "tag" }
+  ]
 };
 
 describe("parseHistoryQuery", () => {
@@ -24,8 +28,8 @@ describe("parseHistoryQuery", () => {
   it("reads prefixes whatever the scope", () => {
     expect(parseHistoryQuery("author:Lucas branch:master tag:v0 sha:D341 message:saml", "messages").terms).toEqual([
       { field: "author", value: "lucas" },
-      { field: "ref", value: "master" },
-      { field: "ref", value: "v0" },
+      { field: "branch", value: "master" },
+      { field: "tag", value: "v0" },
       { field: "sha", value: "d341" },
       { field: "message", value: "saml" }
     ]);
@@ -70,6 +74,15 @@ describe("matchesQuery", () => {
     expect(match("lucas", "authors")).toBe(true);
     expect(match("master", "messages")).toBe(false);
     expect(match("master", "refs")).toBe(true);
+  });
+
+  it("keeps branch: to branches and tag: to tags", () => {
+    expect(match("branch:master")).toBe(true);
+    expect(match("branch:login")).toBe(true);
+    expect(match("branch:v0.9")).toBe(false);
+    expect(match("tag:v0.9")).toBe(true);
+    expect(match("tag:master")).toBe(false);
+    expect(match("v0.9", "refs")).toBe(true);
   });
 
   it("matches commit ids by prefix only", () => {
