@@ -1,4 +1,4 @@
-import { Activity, Bot, Code, Eye, Folder, GitBranch, GitGraph, Orbit, Sparkles, Terminal, type LucideIcon } from "lucide-react";
+import { Activity, Bot, Code, Eye, Folder, GitGraph, Orbit, Sparkles, Terminal, type LucideIcon } from "lucide-react";
 import type { DockableTabId } from "@cw-code/contracts";
 import type { DriverName } from "../cw.js";
 
@@ -13,7 +13,6 @@ export const TOOL_TABS: ToolTabDef[] = [
   { id: "overview", title: "Session overview", Icon: Activity },
   { id: "files", title: "Files", Icon: Folder },
   { id: "agents", title: "Subagents", Icon: Bot },
-  { id: "diff", title: "Git diff", Icon: GitBranch },
   { id: "gitglass", title: "Git glass", Icon: GitGraph },
   { id: "claude", title: "Claude CLI", Icon: Sparkles, driver: "claude" },
   { id: "opencode", title: "OpenCode CLI", Icon: Code, driver: "opencode" },

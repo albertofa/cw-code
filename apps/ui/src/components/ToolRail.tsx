@@ -22,7 +22,7 @@ export interface SubagentStats {
   running: number;
 }
 
-function PrDot({ sessionId }: { sessionId: string }) {
+function PrDot({ sessionId, below }: { sessionId: string; below: boolean }) {
   const items = useThreadEntry(sessionId, "prItems") ?? EMPTY_PR_ITEMS;
   const summaries = usePrSummaries();
   const details = usePrDetails();
@@ -32,13 +32,17 @@ function PrDot({ sessionId }: { sessionId: string }) {
   const linked = checksTone(items.flatMap((item) => (item.link ? ((summaries.get(item.key) ?? details[item.key])?.ci ?? []) : [])));
   const tone: RailDotTone | null = linked ?? checkCountsTone(fallback);
   if (tone === null) return null;
-  return <span className={`rail-dot ${tone}`} aria-hidden="true" />;
+  return <span className={`rail-dot ${tone}${below ? " below" : ""}`} aria-hidden="true" />;
 }
 
-function DiffBadge({ sessionId }: { sessionId: string }) {
+function GlassMarks({ sessionId }: { sessionId: string }) {
   const dirtyCount = useGitStatus(sessionId)?.dirtyCount ?? 0;
-  if (dirtyCount === 0) return null;
-  return <span className="rail-badge" aria-hidden="true">{dirtyCount > 99 ? "99+" : dirtyCount}</span>;
+  return (
+    <>
+      {dirtyCount > 0 && <span className="rail-badge" aria-hidden="true">{dirtyCount > 99 ? "99+" : dirtyCount}</span>}
+      <PrDot sessionId={sessionId} below={dirtyCount > 0} />
+    </>
+  );
 }
 
 function subagentTitle(stats: SubagentStats): string {
@@ -152,8 +156,7 @@ export function ToolRail({
                 aria-pressed={pressed}
               >
                 {isHarnessTabId(id) ? <DriverIcon driver={id} size={16} /> : <def.Icon size={16} aria-hidden="true" />}
-                {id === "diff" && sessionId && <DiffBadge sessionId={sessionId} />}
-                {id === "gitglass" && sessionId && <PrDot sessionId={sessionId} />}
+                {id === "gitglass" && sessionId && <GlassMarks sessionId={sessionId} />}
                 {showAgents && (
                   <span className={`rail-badge${subagents.running > 0 ? " run" : ""}`} aria-hidden="true">
                     {subagents.total > 99 ? "99+" : subagents.total}

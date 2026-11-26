@@ -28,7 +28,8 @@ export function GitGlassDetails({
   onResize,
   onReset,
   onClose,
-  renderCommit
+  renderCommit,
+  renderChanges
 }: {
   selection: GitGlassSelection | null;
   width: number;
@@ -36,6 +37,7 @@ export function GitGlassDetails({
   onReset: () => void;
   onClose: () => void;
   renderCommit: (sha: string) => ReactNode;
+  renderChanges: (mode: GitDiffMode) => ReactNode;
 }) {
   const begin = (event: ReactPointerEvent<HTMLDivElement>): void =>
     startWidthDrag(
@@ -49,6 +51,7 @@ export function GitGlassDetails({
   let body: ReactNode;
   if (selection === null) body = <div className="gg-note gg-details-empty">Select a commit to see its details.</div>;
   else if (selection.kind === "commit") body = renderCommit(selection.sha);
+  else if (selection.kind === "changes") body = renderChanges(selection.mode);
   else body = <div className="gg-note gg-details-empty">Nothing to show here yet.</div>;
 
   return (

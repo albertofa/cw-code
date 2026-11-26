@@ -15,9 +15,9 @@ interface ScrollEdges {
 }
 
 function usePaneSummary(tab: DockableTabId, sessionId: string | undefined): string | undefined {
-  const gitStatus = useGitStatus(tab === "diff" ? sessionId : null) ?? undefined;
-  const turnDiffSummary = usePanelStore((s) => (sessionId && tab === "diff" ? s.turnDiffSummaryBySession[sessionId] : undefined));
-  return tab === "diff" ? paneDiffSummary(gitStatus, turnDiffSummary) : undefined;
+  const gitStatus = useGitStatus(tab === "gitglass" ? sessionId : null) ?? undefined;
+  const turnDiffSummary = usePanelStore((s) => (sessionId && tab === "gitglass" ? s.turnDiffSummaryBySession[sessionId] : undefined));
+  return tab === "gitglass" ? paneDiffSummary(gitStatus, turnDiffSummary) : undefined;
 }
 
 function useScrollEdges(content: string) {

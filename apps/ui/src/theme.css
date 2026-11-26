@@ -15004,6 +15004,181 @@ button.gitbar-checkout:hover {
   margin-left: auto;
 }
 
+.gg-changes {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.gg-ch-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+}
+
+.gg-ch-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 9px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: transparent;
+  color: var(--dim);
+  font-family: var(--sans);
+  font-size: var(--t-xs);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.gg-ch-tab:hover:not([aria-disabled="true"]) {
+  color: var(--text);
+  border-color: var(--border-strong);
+}
+
+.gg-ch-tab.on {
+  border-color: var(--violet-line);
+  background: var(--violet-soft);
+  color: var(--text);
+}
+
+.gg-ch-tab[aria-disabled="true"] {
+  opacity: calc(1 - 0.55 * var(--fade-strength));
+  cursor: default;
+}
+
+.gg-ch-count {
+  color: var(--faint);
+  font-family: var(--mono);
+  font-size: var(--t-3xs);
+}
+
+.gg-ch-refresh {
+  width: 24px;
+  height: 24px;
+  margin-left: auto;
+}
+
+.gg-ch-warning {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  color: var(--warning);
+  font-size: var(--t-2xs);
+}
+
+.gg-ch-warning > svg {
+  flex: none;
+}
+
+.gg-ch-warning > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gg-ch-warning .gg-link {
+  flex: none;
+  margin-left: auto;
+}
+
+.gg-error-text .gg-link {
+  margin-left: 4px;
+}
+
+.gg-ch-undone {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.gg-ch-blocker {
+  margin-top: 6px;
+}
+
+.gg-compare {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 5px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--bg-deep);
+  color: var(--dim);
+  font-family: var(--mono);
+  font-size: var(--t-3xs);
+}
+
+.gg-compare > svg {
+  flex: none;
+}
+
+.gg-compare .menu {
+  min-width: 0;
+  max-width: 55%;
+}
+
+.gg-compare .menu-btn {
+  max-width: 100%;
+  padding: 2px 6px;
+}
+
+.gg-compare-sep {
+  flex: none;
+  color: var(--faint);
+}
+
+.gg-compare-head {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text);
+}
+
+.gg-ch-summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--mono);
+  font-size: var(--t-3xs);
+  color: var(--dim);
+}
+
+.gg-ch-summary .add {
+  color: var(--success);
+}
+
+.gg-ch-summary .del {
+  color: var(--danger);
+}
+
+.gg-ch-refreshing {
+  color: var(--faint);
+}
+
+.gg-ch-aside {
+  margin-left: auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--faint);
+}
+
+.gg-action.danger {
+  color: var(--danger-ink);
+  border-color: color-mix(in srgb, var(--danger) 45%, transparent);
+}
+
+.gg-action.danger:hover:not([aria-disabled="true"]) {
+  color: var(--danger-ink);
+  border-color: var(--danger);
+}
+
 .gg-statusbar {
   flex: none;
   display: flex;

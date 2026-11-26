@@ -34,7 +34,7 @@ function Avatar({ name, email, url }: { name: string; email: string; url: string
   );
 }
 
-function FileRow({ file, depth, shown, onOpen }: { file: DiffFile; depth: number | null; shown: boolean; onOpen: () => void }) {
+export function FileRow({ file, depth, shown, onOpen }: { file: DiffFile; depth: number | null; shown: boolean; onOpen: () => void }) {
   const { dir, name } = splitRepoPath(file.path);
   return (
     <button

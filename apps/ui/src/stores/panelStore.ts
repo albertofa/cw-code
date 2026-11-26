@@ -227,7 +227,7 @@ export const usePanelStore = create<PanelStore>((set, get) => ({
   requestDiffMode: (sessionId, mode) => {
     diffModeNonce += 1;
     set({ diffModeRequest: { sessionId, mode, nonce: diffModeNonce } });
-    get().revealTab(sessionId, "diff");
+    get().revealTab(sessionId, "gitglass");
   },
 
   clearDiffModeRequest: (nonce) => {

@@ -11,7 +11,6 @@ export const DOCKABLE_TABS: readonly DockableTabId[] = [
   "overview",
   "files",
   "agents",
-  "diff",
   "gitglass",
   "claude",
   "opencode",
@@ -54,7 +53,6 @@ export const DEFAULT_DOCK: TabDockState = {
   overview: "closed",
   files: "closed",
   agents: "closed",
-  diff: "closed",
   gitglass: "closed",
   claude: "closed",
   opencode: "closed",
@@ -67,7 +65,6 @@ export const DEFAULT_AUTO: TabAutoLocation = {
   overview: "right",
   files: "main",
   agents: "right",
-  diff: "right",
   gitglass: "main",
   claude: "right",
   opencode: "right",
@@ -185,15 +182,22 @@ function migrateDockMap(raw: unknown, allowClosed: boolean): unknown {
   return { ...rest, gitglass };
 }
 
+function migrateDiffDock(raw: unknown, allowClosed: boolean): unknown {
+  if (typeof raw !== "object" || raw === null || !("diff" in raw)) return raw;
+  const { diff, ...rest } = raw as Record<string, unknown>;
+  if (allowClosed && isPanelId(diff) && !isPanelId(rest.gitglass)) return { ...rest, gitglass: diff };
+  return rest;
+}
+
 function migrateTabId(value: unknown): unknown {
-  return value === "history" || value === "pr" ? "gitglass" : value;
+  return value === "history" || value === "pr" || value === "diff" ? "gitglass" : value;
 }
 
 function migrateLayout(raw: Record<string, unknown>): Record<string, unknown> {
   const out: Record<string, unknown> = {
     ...raw,
-    dockByTab: migrateDockMap(raw.dockByTab, true),
-    autoLocation: migrateDockMap(raw.autoLocation, false),
+    dockByTab: migrateDiffDock(migrateDockMap(raw.dockByTab, true), true),
+    autoLocation: migrateDiffDock(migrateDockMap(raw.autoLocation, false), false),
     activeMain: migrateTabId(raw.activeMain),
     activeRight: migrateTabId(raw.activeRight),
     activeBottom: migrateTabId(raw.activeBottom)

@@ -78,11 +78,13 @@ export function FileStats({ file }: { file: DiffFile }) {
 export function HistoryFileDiff({
   files,
   path,
+  missingNote,
   onOpenFile,
   onClose
 }: {
   files: DiffFile[];
   path: string;
+  missingNote: string;
   onOpenFile: (path: string) => void;
   onClose: () => void;
 }) {
@@ -133,7 +135,7 @@ export function HistoryFileDiff({
           </button>
         </span>
       </div>
-      {!file && <div className="inspect-dfile-note">This file is not part of the commit</div>}
+      {!file && <div className="inspect-dfile-note">{missingNote}</div>}
       {file && <DiffLines file={file} />}
     </div>
   );

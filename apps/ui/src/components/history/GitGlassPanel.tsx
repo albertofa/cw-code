@@ -12,11 +12,12 @@ import {
   PanelLeft,
   SquareTerminal
 } from "lucide-react";
-import type { HistoryCommit, HistoryLog, HistoryScope, HistoryTopicData, HistoryWorktree } from "@cw-code/contracts";
+import type { GitDiffMode, HistoryCommit, HistoryLog, HistoryScope, HistoryTopicData, HistoryWorktree } from "@cw-code/contracts";
 import { historyTopic } from "@cw-code/shared/topics";
 import { usePanelStore } from "../../stores/panelStore.js";
 import { useConnectionEpoch, useTopic } from "../../server/topics.js";
 import { useGitStatus } from "../useGit.js";
+import { useGitDiff } from "../useGitDiff.js";
 import { HistoryFileDiff, useHistoryCommit } from "./HistoryCommitView.js";
 import { GRAPH_COLUMN_MAX, GRAPH_COLUMN_MIN, HistoryGraph, REF_COLUMN_DEFAULT, REF_COLUMN_MAX, REF_COLUMN_MIN, WIP_SHA, type ColumnId, type WipSummary } from "./HistoryGraph.js";
 import { loadShowAvatars, saveShowAvatars, useHistoryAvatars } from "./historyAvatars.js";
@@ -26,6 +27,7 @@ import { GitGlassToolbar, type ToolbarAction } from "./GitGlassToolbar.js";
 import { GitGlassStatusBar } from "./GitGlassStatusBar.js";
 import { DETAILS_DEFAULT_WIDTH, DETAILS_MAX_WIDTH, DETAILS_MIN_WIDTH, GitGlassDetails, type GitGlassSelection } from "./GitGlassDetails.js";
 import { CommitDetails } from "./CommitDetails.js";
+import { ChangesDetails } from "./ChangesDetails.js";
 import { NARROW_WIDTH } from "./gitGlassLayout.js";
 import { isEmptyQuery, matchesQuery, parseHistoryQuery, type HistorySearchScope } from "./historySearch.js";
 import { startWidthDrag, usePersistedChoice, usePersistedWidth } from "./usePersistedState.js";
@@ -93,6 +95,10 @@ export function GitGlassPanel({ scope: scopeProp }: { scope: HistoryScope }) {
   const [openPath, setOpenPath] = useState<string | null>(null);
   const selectedSha = selection?.kind === "commit" ? selection.sha : null;
   const commit = useHistoryCommit(scope, selectedSha);
+  const changesMode = selection?.kind === "changes" && sessionId && viewWorktree === null ? selection.mode : null;
+  const diff = useGitDiff(changesMode ? sessionId : null, changesMode ?? "working");
+  const diffModeRequest = usePanelStore((s) => s.diffModeRequest);
+  const handledRequest = useRef(0);
   const { confirm, dialog } = useConfirm();
   const panelRef = useRef<HTMLDivElement>(null);
   const narrow = useNarrow(panelRef);
@@ -170,16 +176,35 @@ export function GitGlassPanel({ scope: scopeProp }: { scope: HistoryScope }) {
     setOpenPath(null);
   }, []);
 
+  const selectChanges = useCallback((mode: GitDiffMode): void => {
+    setSelection({ kind: "changes", mode });
+    setOpenPath(null);
+  }, []);
+
   const select = useCallback(
     (sha: string): void => {
       if (sha === WIP_SHA) {
-        if (viewWorktree === null && sessionId) usePanelStore.getState().requestDiffMode(sessionId, "working");
+        if (viewWorktree === null && sessionId && selection?.kind !== "changes") selectChanges("working");
         return;
       }
       selectCommit(sha);
     },
-    [sessionId, viewWorktree, selectCommit]
+    [sessionId, viewWorktree, selection, selectCommit, selectChanges]
   );
+
+  useEffect(() => {
+    if (!sessionId || !diffModeRequest) return;
+    const { clearDiffModeRequest, clearStaleDiffModeRequest } = usePanelStore.getState();
+    if (diffModeRequest.sessionId !== sessionId) {
+      clearStaleDiffModeRequest(sessionId);
+      return;
+    }
+    if (diffModeRequest.nonce === handledRequest.current) return;
+    handledRequest.current = diffModeRequest.nonce;
+    openWorktree(null);
+    selectChanges(diffModeRequest.mode);
+    clearDiffModeRequest(diffModeRequest.nonce);
+  }, [diffModeRequest, sessionId, openWorktree, selectChanges]);
 
   const highlight = useCallback(
     (sha: string): void => {
@@ -534,7 +559,7 @@ export function GitGlassPanel({ scope: scopeProp }: { scope: HistoryScope }) {
             <HistoryGraph
               log={log}
               wip={wip}
-              selected={selectedSha}
+              selected={changesMode ? WIP_SHA : selectedSha}
               onSelect={select}
               onHighlight={highlight}
               onLoadMore={limit < MAX_LIMIT ? () => setLimit((current) => Math.min(MAX_LIMIT, current + PAGE_SIZE)) : null}
@@ -554,7 +579,12 @@ export function GitGlassPanel({ scope: scopeProp }: { scope: HistoryScope }) {
               absoluteDates={datesSetting === "on"}
             />
           )}
-          {selectedSha && openPath && <HistoryFileDiff files={commit.files} path={openPath} onOpenFile={setOpenPath} onClose={closeDiff} />}
+          {openPath && selectedSha && (
+            <HistoryFileDiff files={commit.files} path={openPath} missingNote="This file is not part of the commit" onOpenFile={setOpenPath} onClose={closeDiff} />
+          )}
+          {openPath && changesMode && (
+            <HistoryFileDiff files={diff.files} path={openPath} missingNote="This file has no changes in this comparison" onOpenFile={setOpenPath} onClose={closeDiff} />
+          )}
         </div>
         {showDetails && (
           <GitGlassDetails
@@ -584,6 +614,13 @@ export function GitGlassPanel({ scope: scopeProp }: { scope: HistoryScope }) {
                   worktreeBranches={worktreeBranches}
                 />
               ) : null
+            }
+            renderChanges={() =>
+              changesMode && sessionId ? (
+                <ChangesDetails sessionId={sessionId} diff={diff} onMode={selectChanges} openPath={openPath} onOpenFile={setOpenPath} />
+              ) : (
+                <div className="gg-note gg-details-empty">Changes are shown for this session's own checkout.</div>
+              )
             }
           />
         )}

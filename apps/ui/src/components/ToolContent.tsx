@@ -1,7 +1,6 @@
 import { lazy, Suspense } from "react";
 import type { DockableTabId, PanelId } from "@cw-code/contracts";
 import { AgentsPanel } from "./AgentsPanel.js";
-import { GitInspectPanel } from "./GitInspectPanel.js";
 import { GitGlassPanel } from "./history/GitGlassPanel.js";
 import { PreviewPanel } from "./PreviewPanel.js";
 import { PtyTab } from "./PtyTab.js";
@@ -29,7 +28,6 @@ export function ToolContent({ tab, sessionId, panel }: { tab: DockableTabId; ses
     );
   }
   if (tab === "agents") return <AgentsPanel sessionId={sessionId} />;
-  if (tab === "diff") return <GitInspectPanel sessionId={sessionId} />;
   if (tab === "gitglass") return <GitGlassPanel key={sessionId} scope={{ sessionId }} />;
   if (tab === "preview") {
     if (!preview) return null;
