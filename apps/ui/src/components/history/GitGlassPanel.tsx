@@ -1,22 +1,78 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ArrowDownToLine, GitFork, GitGraph, UserRound } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type PointerEvent as ReactPointerEvent, type RefObject } from "react";
+import {
+  ArchiveRestore,
+  ArrowDownToLine,
+  ArrowUpFromLine,
+  CloudDownload,
+  GitBranch,
+  GitBranchPlus,
+  GitFork,
+  GitGraph,
+  PackagePlus,
+  PanelLeft,
+  SquareTerminal
+} from "lucide-react";
 import type { HistoryCommit, HistoryLog, HistoryScope, HistoryTopicData, HistoryWorktree } from "@cw-code/contracts";
 import { historyTopic } from "@cw-code/shared/topics";
 import { usePanelStore } from "../../stores/panelStore.js";
 import { useConnectionEpoch, useTopic } from "../../server/topics.js";
 import { useGitStatus } from "../useGit.js";
-import { HistoryCommitSidebar, HistoryFileDiff, useHistoryCommit } from "./HistoryCommitView.js";
-import { HistoryGraph, WIP_SHA } from "./HistoryGraph.js";
+import { HistoryFileDiff, useHistoryCommit } from "./HistoryCommitView.js";
+import { GRAPH_COLUMN_MAX, GRAPH_COLUMN_MIN, HistoryGraph, REF_COLUMN_DEFAULT, REF_COLUMN_MAX, REF_COLUMN_MIN, WIP_SHA, type ColumnId, type WipSummary } from "./HistoryGraph.js";
 import { loadShowAvatars, saveShowAvatars, useHistoryAvatars } from "./historyAvatars.js";
 import { MenuSelect, type MenuOption } from "../MenuSelect.js";
-import { useHistorySide } from "./useHistorySide.js";
 import { useConfirm } from "../ConfirmDialog.js";
-import { GitGlassPrSection, type GitGlassPrTarget } from "./GitGlassPrSection.js";
+import { GitGlassToolbar, type ToolbarAction } from "./GitGlassToolbar.js";
+import { GitGlassStatusBar } from "./GitGlassStatusBar.js";
+import { DETAILS_DEFAULT_WIDTH, DETAILS_MAX_WIDTH, DETAILS_MIN_WIDTH, GitGlassDetails, type GitGlassSelection } from "./GitGlassDetails.js";
+import { CommitDetails } from "./CommitDetails.js";
+import { NARROW_WIDTH } from "./gitGlassLayout.js";
+import { isEmptyQuery, matchesQuery, parseHistoryQuery, type HistorySearchScope } from "./historySearch.js";
+import { startWidthDrag, usePersistedChoice, usePersistedWidth } from "./usePersistedState.js";
 
 const PAGE_SIZE = 2000;
 const MAX_LIMIT = 20000;
 const NO_COMMITS: HistoryCommit[] = [];
+const SIDEBAR_MIN_WIDTH = 180;
+const SIDEBAR_MAX_WIDTH = 420;
+const SIDEBAR_DEFAULT_WIDTH = 250;
+const COMING_SOON = "Coming in this change";
+const TOGGLES = ["on", "off"] as const;
+const ACTION_ICON = 17;
 const isWip = (commit: HistoryCommit): boolean => commit.sha === WIP_SHA;
+
+function baseName(path: string): string {
+  return path.split(/[\\/]/).filter(Boolean).pop() ?? path;
+}
+
+function useNarrow(ref: RefObject<HTMLElement | null>): boolean {
+  const [narrow, setNarrow] = useState(false);
+  useEffect(() => {
+    const element = ref.current;
+    if (!element) return;
+    const observer = new ResizeObserver((entries) => {
+      const width = entries[0]?.contentRect.width ?? 0;
+      setNarrow(width > 0 && width < NARROW_WIDTH);
+    });
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [ref]);
+  return narrow;
+}
+
+function refNamesBySha(log: HistoryLog | null): Map<string, string[]> {
+  const names = new Map<string, string[]>();
+  for (const ref of log?.refs ?? []) {
+    const list = names.get(ref.target);
+    if (list) list.push(ref.name);
+    else names.set(ref.target, [ref.name]);
+  }
+  return names;
+}
+
+function soon(id: string, label: string, icon: ToolbarAction["icon"]): ToolbarAction {
+  return { id, label, icon, title: COMING_SOON, disabled: true };
+}
 
 export function GitGlassPanel({ scope: scopeProp }: { scope: HistoryScope }) {
   const scopeKey = historyTopic(scopeProp);
@@ -33,16 +89,27 @@ export function GitGlassPanel({ scope: scopeProp }: { scope: HistoryScope }) {
   const [log, setLog] = useState<HistoryLog | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const [selected, setSelected] = useState<string | null>(null);
+  const [selection, setSelection] = useState<GitGlassSelection | null>(null);
   const [openPath, setOpenPath] = useState<string | null>(null);
-  const commit = useHistoryCommit(scope, selected);
-  const side = useHistorySide();
+  const selectedSha = selection?.kind === "commit" ? selection.sha : null;
+  const commit = useHistoryCommit(scope, selectedSha);
   const { confirm, dialog } = useConfirm();
   const panelRef = useRef<HTMLDivElement>(null);
+  const narrow = useNarrow(panelRef);
   const [action, setAction] = useState<string | null>(null);
   const [actionError, setActionError] = useState("");
   const [homePath, setHomePath] = useState<string | null>(null);
   const busy = useRef<string | null>(null);
+  const [sidebarSetting, setSidebarSetting] = usePersistedChoice("cw-code:git-glass-sidebar", TOGGLES, "on");
+  const [sidebarOverlay, setSidebarOverlay] = useState(false);
+  const sidebarWidth = usePersistedWidth("cw-code:git-glass-sidebar-width", SIDEBAR_MIN_WIDTH, SIDEBAR_MAX_WIDTH);
+  const detailsWidth = usePersistedWidth("cw-code:git-glass-details-width", DETAILS_MIN_WIDTH, DETAILS_MAX_WIDTH);
+  const refWidth = usePersistedWidth("cw-code:git-glass-ref-width", REF_COLUMN_MIN, REF_COLUMN_MAX);
+  const graphWidth = usePersistedWidth("cw-code:git-glass-graph-width", GRAPH_COLUMN_MIN, GRAPH_COLUMN_MAX);
+  const [datesSetting, setDatesSetting] = usePersistedChoice("cw-code:git-glass-exact-dates", TOGGLES, "off");
+  const [authorsSetting, setAuthorsSetting] = usePersistedChoice("cw-code:git-glass-authors", TOGGLES, "on");
+  const [searchText, setSearchText] = useState("");
+  const [searchScope, setSearchScope] = useState<HistorySearchScope>("everything");
   const worktreeBranches = useMemo<ReadonlyMap<string, HistoryWorktree>>(() => {
     const byBranch = new Map<string, HistoryWorktree>();
     for (const worktree of log?.worktrees ?? []) {
@@ -79,6 +146,10 @@ export function GitGlassPanel({ scope: scopeProp }: { scope: HistoryScope }) {
     };
   }, [topicName, rev, limit, epoch]);
 
+  useEffect(() => {
+    if (!narrow) setSidebarOverlay(false);
+  }, [narrow]);
+
   const openWorktree = useCallback(
     (path: string | null): void => {
       const target = path === null || path === homePath ? null : (log?.worktrees.find((worktree) => worktree.path === path) ?? null);
@@ -87,12 +158,17 @@ export function GitGlassPanel({ scope: scopeProp }: { scope: HistoryScope }) {
       setView(next);
       setLog(null);
       setError("");
-      setSelected(null);
+      setSelection(null);
       setOpenPath(null);
       setActionError("");
     },
     [homePath, log, view]
   );
+
+  const selectCommit = useCallback((sha: string): void => {
+    setSelection({ kind: "commit", sha });
+    setOpenPath(null);
+  }, []);
 
   const select = useCallback(
     (sha: string): void => {
@@ -100,32 +176,30 @@ export function GitGlassPanel({ scope: scopeProp }: { scope: HistoryScope }) {
         if (viewWorktree === null && sessionId) usePanelStore.getState().requestDiffMode(sessionId, "working");
         return;
       }
-      setSelected(sha);
-      setOpenPath(null);
+      selectCommit(sha);
     },
-    [sessionId, viewWorktree]
+    [sessionId, viewWorktree, selectCommit]
   );
 
-  const highlight = useCallback((sha: string): void => {
-    if (sha === WIP_SHA) return;
-    setSelected(sha);
-    setOpenPath(null);
-  }, []);
+  const highlight = useCallback(
+    (sha: string): void => {
+      if (sha !== WIP_SHA) selectCommit(sha);
+    },
+    [selectCommit]
+  );
 
   const closeDiff = useCallback((): void => {
     setOpenPath(null);
     requestAnimationFrame(() => panelRef.current?.querySelector<HTMLElement>(".history-scroll")?.focus({ preventScroll: true }));
   }, []);
 
-  const deselectCommit = useCallback((): void => {
-    setSelected(null);
-    setOpenPath(null);
-  }, []);
-
   const clearSelection = useCallback((): void => {
     if (openPath) closeDiff();
-    else deselectCommit();
-  }, [openPath, closeDiff, deselectCommit]);
+    else {
+      setSelection(null);
+      setOpenPath(null);
+    }
+  }, [openPath, closeDiff]);
 
   const runAction = useCallback((label: string, task: () => Promise<unknown>): void => {
     if (busy.current) {
@@ -150,7 +224,6 @@ export function GitGlassPanel({ scope: scopeProp }: { scope: HistoryScope }) {
         openWorktree(elsewhere.path);
         return;
       }
-      // A project's own checkout can belong to a session too, so it needs the same confirmation.
       const checkedPath = viewWorktree ?? ("projectId" in scope ? homePath : null);
       const owned = checkedPath === null ? undefined : log?.worktrees.find((worktree) => worktree.path === checkedPath && worktree.sessionId);
       const run = (): void => runAction(`Checking out ${branch}…`, () => window.cw.checkoutHistory(scope, viewWorktree, branch));
@@ -169,6 +242,40 @@ export function GitGlassPanel({ scope: scopeProp }: { scope: HistoryScope }) {
     [runAction, scope, viewWorktree, homePath, worktreeBranches, openWorktree, log, confirm]
   );
 
+  const query = useMemo(() => parseHistoryQuery(searchText, searchScope), [searchText, searchScope]);
+  const searchMatches = useMemo<string[] | null>(() => {
+    if (!log || isEmptyQuery(query)) return null;
+    const refs = refNamesBySha(log);
+    return log.commits
+      .filter((candidate) =>
+        matchesQuery(query, {
+          sha: candidate.sha,
+          subject: candidate.subject,
+          authorName: candidate.authorName,
+          authorEmail: candidate.authorEmail,
+          refs: refs.get(candidate.sha) ?? []
+        })
+      )
+      .map((candidate) => candidate.sha);
+  }, [log, query]);
+  const matchSet = useMemo(() => (searchMatches ? new Set(searchMatches) : null), [searchMatches]);
+  const logIndex = useMemo(() => new Map((log?.commits ?? []).map((candidate, index) => [candidate.sha, index])), [log]);
+  const matchPosition = searchMatches && selectedSha ? searchMatches.indexOf(selectedSha) : -1;
+  const searchCounter =
+    searchMatches === null ? null : searchMatches.length === 0 ? "No results" : `${matchPosition === -1 ? "?" : matchPosition + 1} of ${searchMatches.length}`;
+
+  const jumpMatch = (direction: 1 | -1): void => {
+    if (!searchMatches || searchMatches.length === 0) return;
+    const current = selectedSha ? (logIndex.get(selectedSha) ?? -1) : -1;
+    const ordered = direction === 1 ? searchMatches : [...searchMatches].reverse();
+    const next =
+      ordered.find((sha) => {
+        const index = logIndex.get(sha) ?? -1;
+        return direction === 1 ? index > current : current === -1 || index < current;
+      }) ?? ordered[0];
+    if (next) selectCommit(next);
+  };
+
   const head = log?.head ?? null;
   const currentRef = head?.branch ? log?.refs.find((ref) => ref.kind === "local" && ref.isCurrent) : undefined;
   const pullBlocked = !head?.branch ? "HEAD is detached — check out a branch to pull" : !currentRef?.upstream ? `${head.branch} has no upstream branch` : null;
@@ -185,7 +292,9 @@ export function GitGlassPanel({ scope: scopeProp }: { scope: HistoryScope }) {
   const worktrees = log?.worktrees ?? [];
   const activePath = viewWorktree ?? homePath;
   const viewed = viewWorktree === null ? undefined : worktrees.find((worktree) => worktree.path === viewWorktree);
-  const viewName = view === null ? "" : (view.path.split(/[\\/]/).filter(Boolean).pop() ?? view.path);
+  const viewName = view === null ? "" : baseName(view.path);
+  const mainWorktree = worktrees.find((worktree) => worktree.isMain);
+  const repoName = mainWorktree ? baseName(mainWorktree.path) : activePath ? baseName(activePath) : null;
   const sessionBranch = worktrees.find((worktree) => worktree.path === homePath)?.branch ?? null;
   const worktreeOptions: MenuOption[] = worktrees.map((worktree) => {
     const home = worktree.path === homePath;
@@ -198,64 +307,131 @@ export function GitGlassPanel({ scope: scopeProp }: { scope: HistoryScope }) {
       icon: <GitFork size={13} />
     };
   });
-  const dirtyCount = viewWorktree === null && sessionId ? (status?.available ? status.dirtyCount : 0) : (log?.wipCount ?? 0);
+  const branchDisplay = branch ? (viewed ? `${viewed.name} · ${branch}` : branch) : "";
+  const branchPicker =
+    worktrees.length > 1 && activePath ? (
+      <MenuSelect
+        label="Switch worktree"
+        title="Switch worktree — each one has its own branch and changes"
+        direction="down"
+        value={activePath}
+        display={branchDisplay || (viewed ? viewed.name : homeLabel)}
+        icon={<GitBranch size={12} aria-hidden="true" />}
+        options={worktreeOptions}
+        onPick={openWorktree}
+        searchable
+        searchPlaceholder="Filter worktrees…"
+      />
+    ) : branchDisplay ? (
+      <span className="gg-repo-branch" title={viewed ? viewed.path : undefined}>
+        <GitBranch size={12} aria-hidden="true" />
+        {branchDisplay}
+      </span>
+    ) : null;
+
+  const wip: WipSummary | null =
+    viewWorktree === null && sessionId
+      ? status?.available
+        ? { files: status.dirtyCount, added: status.addedLines, deleted: status.deletedLines }
+        : null
+      : log?.wipCount
+        ? { files: log.wipCount, added: null, deleted: null }
+        : null;
   const failure = topicError ?? (error || null);
-  // Another worktree (or a project's own checkout) shows its branch's PR, never the session's.
-  const prTarget: GitGlassPrTarget =
-    sessionId && viewWorktree === null
-      ? { kind: "session", sessionId }
-      : log
-        ? { kind: "branch", branch: log.head.branch, sha: log.head.sha, upstream: currentRef?.upstream ?? null }
-        : { kind: "loading" };
+
+  const groups: ToolbarAction[][] = [
+    [
+      soon("fetch", "Fetch", <CloudDownload size={ACTION_ICON} aria-hidden="true" />),
+      {
+        id: "pull",
+        label: "Pull",
+        icon: <ArrowDownToLine size={ACTION_ICON} aria-hidden="true" />,
+        title: pullTitle,
+        disabled: pullBlocked !== null || action !== null,
+        badge: currentRef && currentRef.behind > 0 ? currentRef.behind : null,
+        onClick: pull
+      },
+      soon("push", "Push", <ArrowUpFromLine size={ACTION_ICON} aria-hidden="true" />)
+    ],
+    [
+      soon("branch", "Branch", <GitBranchPlus size={ACTION_ICON} aria-hidden="true" />),
+      soon("stash", "Stash", <PackagePlus size={ACTION_ICON} aria-hidden="true" />),
+      soon("pop", "Pop", <ArchiveRestore size={ACTION_ICON} aria-hidden="true" />)
+    ],
+    sessionId
+      ? [
+          {
+            id: "terminal",
+            label: "Terminal",
+            icon: <SquareTerminal size={ACTION_ICON} aria-hidden="true" />,
+            title: "Open this session's terminal",
+            onClick: () => usePanelStore.getState().revealTab(sessionId, "shell")
+          }
+        ]
+      : []
+  ];
+
+  const sidebarOpen = narrow ? sidebarOverlay : sidebarSetting === "on";
+  const toggleSidebar = (): void => {
+    if (narrow) setSidebarOverlay((value) => !value);
+    else setSidebarSetting(sidebarSetting === "on" ? "off" : "on");
+  };
+  const currentSidebarWidth = sidebarWidth.width ?? SIDEBAR_DEFAULT_WIDTH;
+  const beginSidebarResize = (event: ReactPointerEvent<HTMLDivElement>): void =>
+    startWidthDrag(event, currentSidebarWidth, 1, sidebarWidth.preview, sidebarWidth.save);
+
+  const resizeColumn = (column: ColumnId, width: number | null, commit: boolean): void => {
+    const target = column === "ref" ? refWidth : graphWidth;
+    if (commit) target.save(width);
+    else target.preview(width);
+  };
+
+  const onPanelKeyDown = (event: KeyboardEvent<HTMLDivElement>): void => {
+    if (event.key !== "Escape" || event.defaultPrevented) return;
+    if ((event.target as HTMLElement).closest(".menu, [role='dialog'], .confirm-backdrop")) return;
+    if (openPath || selection) {
+      event.preventDefault();
+      clearSelection();
+    } else if (sidebarOverlay) {
+      event.preventDefault();
+      setSidebarOverlay(false);
+    }
+  };
+
+  const openActivePath = activePath && window.cw.local ? (): void => {
+    window.cw.local?.openPath(activePath).catch((reason: Error) => setActionError(reason.message));
+  } : null;
+
+  const showDetails = !narrow || selection !== null;
 
   return (
-    <div ref={panelRef} className="inspect history">
+    <div ref={panelRef} className={`git-glass${narrow ? " narrow" : ""}`} onKeyDown={onPanelKeyDown}>
       {dialog}
-      <div className="inspect-toolbar">
-        <span className="inspect-title">
-          <GitGraph size={14} /> Git glass
-        </span>
-        {worktrees.length > 1 && activePath && (
-          <MenuSelect
-            label="Switch worktree"
-            title="Switch worktree — each one has its own branch and changes"
-            direction="down"
-            value={activePath}
-            display={viewed ? viewed.name : homeLabel}
-            icon={<GitFork size={13} aria-hidden="true" />}
-            options={worktreeOptions}
-            onPick={openWorktree}
-            searchable
-            searchPlaceholder="Filter worktrees…"
-          />
-        )}
-        {branch && (
-          <span className="inspect-head-ref" title={viewed ? viewed.path : undefined}>
-            {viewed ? `${viewed.name} · ${branch}` : branch}
-          </span>
-        )}
-        {loading && log && <span className="inspect-refreshing">Refreshing…</span>}
-        {action && <span className="inspect-refreshing">{action}</span>}
-        <button
-          type="button"
-          className="inspect-mode history-pull"
-          disabled={pullBlocked !== null || action !== null}
-          title={pullTitle}
-          onClick={pull}
-        >
-          <ArrowDownToLine size={13} /> Pull
-          {currentRef && currentRef.behind > 0 && <span className="history-pull-count">{currentRef.behind}</span>}
-        </button>
-        <button
-          type="button"
-          className={`inspect-mode history-avatars-toggle${showAvatars ? " active" : ""}`}
-          aria-pressed={showAvatars}
-          title="Show author photos from GitHub on commits"
-          onClick={toggleAvatars}
-        >
-          <UserRound size={13} /> Photos
-        </button>
-      </div>
+      <GitGlassToolbar
+        narrow={narrow}
+        sidebarOpen={sidebarOpen}
+        onToggleSidebar={toggleSidebar}
+        repoName={repoName}
+        branchPicker={branchPicker}
+        groups={groups}
+        search={{
+          text: searchText,
+          scope: searchScope,
+          counter: searchCounter,
+          onText: setSearchText,
+          onScope: setSearchScope,
+          onNext: () => jumpMatch(1),
+          onPrevious: () => jumpMatch(-1)
+        }}
+        showAvatars={showAvatars}
+        onToggleAvatars={toggleAvatars}
+        viewOptions={{
+          absoluteDates: datesSetting === "on",
+          showAuthors: authorsSetting === "on",
+          onAbsoluteDates: (value) => setDatesSetting(value ? "on" : "off"),
+          onShowAuthors: (value) => setAuthorsSetting(value ? "on" : "off")
+        }}
+      />
       {worktrees.length > 1 && (
         <div className="history-worktrees" role="tablist" aria-label="Worktrees">
           <span className="history-worktrees-label">Worktrees</span>
@@ -315,21 +491,50 @@ export function GitGlassPanel({ scope: scopeProp }: { scope: HistoryScope }) {
           {actionError}
         </div>
       )}
-      <GitGlassPrSection scope={scope} sha={selected} target={prTarget} onClearSelection={deselectCommit} />
-      {!failure && !log && <div className="diff-empty">Loading history…</div>}
-      {!failure && log && log.commits.length === 0 && (
-        <div className="inspect-empty">
-          <GitGraph size={24} />
-          <span>No commits yet</span>
-        </div>
-      )}
-      {log && log.commits.length > 0 && (
-        <div className="history-split">
-          <div className="history-main">
+      <div className="gg-workspace">
+        {narrow && (
+          <aside className="gg-strip" aria-label="Repository">
+            <button
+              type="button"
+              className={`gg-icon-btn${sidebarOverlay ? " on" : ""}`}
+              onClick={toggleSidebar}
+              title={sidebarOverlay ? "Hide the sidebar" : "Show the sidebar"}
+              aria-label="Toggle the sidebar"
+              aria-pressed={sidebarOverlay}
+            >
+              <PanelLeft size={15} aria-hidden="true" />
+            </button>
+          </aside>
+        )}
+        {sidebarOpen && (
+          <aside className={`gg-sidebar${narrow ? " overlay" : ""}`} style={{ width: currentSidebarWidth }} aria-label="Repository">
+            <div className="gg-note gg-sidebar-empty">Branches, sessions and pull requests will be listed here.</div>
+            <div
+              className="gg-resize gg-resize-right"
+              role="separator"
+              aria-orientation="vertical"
+              aria-label="Resize the sidebar"
+              title="Drag to resize (double-click resets)"
+              onPointerDown={beginSidebarResize}
+              onDoubleClick={() => sidebarWidth.save(null)}
+            />
+          </aside>
+        )}
+        <div className="gg-center">
+          {action && <div className="gg-progress">{action}</div>}
+          {loading && log && !action && <div className="gg-progress">Refreshing…</div>}
+          {!failure && !log && <div className="diff-empty">Loading history…</div>}
+          {!failure && log && log.commits.length === 0 && (
+            <div className="inspect-empty">
+              <GitGraph size={24} />
+              <span>No commits yet</span>
+            </div>
+          )}
+          {log && log.commits.length > 0 && (
             <HistoryGraph
               log={log}
-              dirtyCount={dirtyCount}
-              selected={selected}
+              wip={wip}
+              selected={selectedSha}
               onSelect={select}
               onHighlight={highlight}
               onLoadMore={limit < MAX_LIMIT ? () => setLimit((current) => Math.min(MAX_LIMIT, current + PAGE_SIZE)) : null}
@@ -340,26 +545,57 @@ export function GitGlassPanel({ scope: scopeProp }: { scope: HistoryScope }) {
               worktreeBranches={worktreeBranches}
               wipHint={sessionId ? null : "Review uncommitted changes from a session in this project"}
               onClearSelection={clearSelection}
+              matches={matchSet}
+              refWidth={refWidth.width ?? REF_COLUMN_DEFAULT}
+              graphWidth={graphWidth.width}
+              onColumnResize={resizeColumn}
+              narrow={narrow}
+              showAuthors={authorsSetting === "on"}
+              absoluteDates={datesSetting === "on"}
             />
-            {selected && openPath && <HistoryFileDiff files={commit.files} path={openPath} onOpenFile={setOpenPath} onClose={closeDiff} />}
-          </div>
-          {selected && (
-            <>
-              <div
-                className="history-side-handle"
-                role="separator"
-                aria-orientation="horizontal"
-                title="Drag to resize (double-click resets)"
-                onPointerDown={side.startDrag}
-                onDoubleClick={side.reset}
-              />
-              <aside className="history-side" style={{ height: side.height }} aria-label="Commit detail">
-                <HistoryCommitSidebar commit={commit} openPath={openPath} onOpenFile={setOpenPath} onSelect={select} />
-              </aside>
-            </>
           )}
+          {selectedSha && openPath && <HistoryFileDiff files={commit.files} path={openPath} onOpenFile={setOpenPath} onClose={closeDiff} />}
         </div>
-      )}
+        {showDetails && (
+          <GitGlassDetails
+            selection={selection}
+            width={detailsWidth.width ?? DETAILS_DEFAULT_WIDTH}
+            onResize={(width, commit) => (commit ? detailsWidth.save(width) : detailsWidth.preview(width))}
+            onReset={() => detailsWidth.save(null)}
+            onClose={() => {
+              setSelection(null);
+              setOpenPath(null);
+            }}
+            renderCommit={(sha) =>
+              log ? (
+                <CommitDetails
+                  scope={scope}
+                  sessionId={sessionId}
+                  log={log}
+                  sha={sha}
+                  commit={commit}
+                  avatars={avatars}
+                  showAvatars={showAvatars}
+                  openPath={openPath}
+                  onOpenFile={setOpenPath}
+                  onSelectCommit={selectCommit}
+                  onCheckout={checkout}
+                  busy={action !== null}
+                  worktreeBranches={worktreeBranches}
+                />
+              ) : null
+            }
+          />
+        )}
+      </div>
+      <GitGlassStatusBar
+        branch={branch}
+        upstream={currentRef?.upstream ? { name: currentRef.upstream, ahead: currentRef.ahead, behind: currentRef.behind, gone: currentRef.upstreamGone } : null}
+        commits={log ? log.commits.length : null}
+        truncated={log?.truncated ?? false}
+        path={activePath}
+        onOpenPath={openActivePath}
+      />
     </div>
   );
 }

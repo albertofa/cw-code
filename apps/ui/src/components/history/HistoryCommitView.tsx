@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
-import { ArrowLeft, Check, ChevronDown, ChevronUp, Copy } from "lucide-react";
+import { ArrowLeft, ChevronDown, ChevronUp } from "lucide-react";
 import type { HistoryCommitDetail, HistoryScope } from "@cw-code/contracts";
 import { parseUnifiedDiff, type DiffFile } from "../diffParser.js";
 import { DiffLines, STATUS_BADGE } from "../GitInspectPanel.js";
@@ -10,7 +10,7 @@ import { useConnectionEpoch } from "../../server/topics.js";
 const LOAD_DELAY_MS = 120;
 const dateFormat = new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" });
 
-function formatDate(seconds: number): string {
+export function formatCommitDate(seconds: number): string {
   return dateFormat.format(new Date(seconds * 1000));
 }
 
@@ -59,7 +59,7 @@ export function useHistoryCommit(scope: HistoryScope, sha: string | null): Histo
   return { detail, files, error };
 }
 
-function FileStats({ file }: { file: DiffFile }) {
+export function FileStats({ file }: { file: DiffFile }) {
   return (
     <>
       <span className={`diff-badge ${file.status}`}>{STATUS_BADGE[file.status]}</span>
@@ -71,109 +71,6 @@ function FileStats({ file }: { file: DiffFile }) {
           <span className="del">−{file.removed}</span>
         </span>
       )}
-    </>
-  );
-}
-
-export function HistoryCommitSidebar({
-  commit,
-  openPath,
-  onOpenFile,
-  onSelect
-}: {
-  commit: HistoryCommitState;
-  openPath: string | null;
-  onOpenFile: (path: string) => void;
-  onSelect: (sha: string) => void;
-}) {
-  const { detail, files, error } = commit;
-  const [copied, setCopied] = useState(false);
-  const [copyError, setCopyError] = useState("");
-
-  useEffect(() => {
-    setCopied(false);
-    setCopyError("");
-  }, [detail?.sha]);
-
-  if (error) return <div className="inspect-error">Commit unavailable: {error}</div>;
-  if (!detail) return <div className="diff-empty">Loading commit…</div>;
-
-  const copySha = (): void => {
-    void navigator.clipboard.writeText(detail.sha).then(
-      () => setCopied(true),
-      () => setCopyError("Could not copy the commit id")
-    );
-  };
-
-  const sameCommitter = detail.committerEmail === detail.authorEmail && detail.committerName === detail.authorName;
-  const added = files.reduce((sum, file) => sum + file.added, 0);
-  const removed = files.reduce((sum, file) => sum + file.removed, 0);
-
-  return (
-    <>
-      <div className="history-side-info">
-      <div className="history-detail-head">
-        <div className="history-detail-subject">{detail.subject}</div>
-        {detail.body && <pre className="history-detail-body">{detail.body}</pre>}
-        <div className="history-detail-meta">
-          <span>
-            {detail.authorName} &lt;{detail.authorEmail}&gt; · {formatDate(detail.authorDate)}
-          </span>
-          {!sameCommitter && (
-            <span>
-              Committed by {detail.committerName} &lt;{detail.committerEmail}&gt; · {formatDate(detail.committerDate)}
-            </span>
-          )}
-          <span className="history-detail-ids">
-            <button type="button" className="history-sha" onClick={copySha} title="Copy commit id">
-              {copied ? <Check size={12} aria-hidden="true" /> : <Copy size={12} aria-hidden="true" />}
-              {detail.sha.slice(0, 10)}
-            </button>
-            {detail.parents.length > 0 && <span className="history-parents-label">{detail.parents.length > 1 ? "parents" : "parent"}</span>}
-            {detail.parents.map((parent) => (
-              <button key={parent} type="button" className="history-parent" onClick={() => onSelect(parent)} title={parent}>
-                {parent.slice(0, 7)}
-              </button>
-            ))}
-          </span>
-          {copyError && <span className="inspect-error">{copyError}</span>}
-        </div>
-      </div>
-      <div className="inspect-summary">
-        <span>
-          {files.length} file{files.length === 1 ? "" : "s"}
-        </span>
-        <span className="add">+{added}</span>
-        <span className="del">−{removed}</span>
-        {detail.parents.length > 1 && <span className="inspect-range">vs first parent</span>}
-      </div>
-      {detail.patchTruncated && <div className="inspect-note">This commit is too large to show in full; later files are cut off.</div>}
-      </div>
-      <div className="history-files" role="list" aria-label="Changed files">
-        {files.length === 0 && <div className="inspect-dfile-note">No file changes</div>}
-        {files.map((file) => {
-          const { dir, name } = splitRepoPath(file.path);
-          return (
-            <button
-              key={file.path}
-              type="button"
-              role="listitem"
-              className={`history-file${file.path === openPath ? " active" : ""}`}
-              onClick={() => onOpenFile(file.path)}
-              title={file.path}
-            >
-              <FileIcon name={name} size={13} />
-              <span className="history-file-path">
-                <span className="history-file-name">{name}</span>
-                {dir && <span className="history-file-dir">{dir}</span>}
-              </span>
-              <span className="history-file-end">
-                <FileStats file={file} />
-              </span>
-            </button>
-          );
-        })}
-      </div>
     </>
   );
 }
