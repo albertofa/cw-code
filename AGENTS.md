@@ -8,8 +8,10 @@ SDK or AI-API calls for inference.
 
 Layout is a single window: left sidebar with projects grouping their sessions,
 center chat thread with tool-call cards and a usage/cost footer, right pane with
-file editor, git diff view, and live terminal tabs embedding the real interactive
-CLIs as a fallback for anything the headless chat cannot render.
+file editor, git diff view, Git glass (commit graph with the pull requests of the selected
+commit; also opens for a project from the new-session screen, without a session), and live
+terminal tabs embedding the real interactive CLIs as a fallback for anything the headless chat
+cannot render.
 
 Core behaviors:
 
@@ -69,7 +71,8 @@ Core behaviors:
   (subscribing again returns a fresh one); after that the server pushes
   `{ t: "patch", topic, rev, ops }` with `upsert`/`remove`/`append`/`replace` ops, and a rev
   gap makes the client resubscribe. Topics: `app`, `sidebar`, `prs`, `usage`, `session/<id>`,
-  `git/<id>`, `history/<id>`, `files/<id>`, `pty/<id>`, `github/meta`, `github/view:<kind>:<query>` (helpers
+  `git/<id>`, `history/<sessionId>` or `history/project.<projectId>` (plus `:<worktreeKey>`
+  for another worktree), `files/<id>`, `pty/<id>`, `github/meta`, `github/view:<kind>:<query>` (helpers
   in `packages/shared/src/topics.ts`, providers in `apps/server/src/topics/`). `TopicCache` is
   the only owner of `topics.subscribe`/`topics.unsubscribe` in a client: it ref-counts
   holders, applies patches, resubscribes after a reconnect and then bumps `epoch`.
