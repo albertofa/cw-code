@@ -337,8 +337,8 @@ export function createServices(stores: { sessionStore: SessionStore; settingsSto
   });
   const history = new HistoryService(() => configuredGitBinary(sessions.getSettings()));
   const historyTopic = new HistoryTopic(hooks.topics, {
-    root: async (sessionId, key) => {
-      const root = (await sessions.sessionStatusContext(sessionId)).root;
+    root: async (scope, key) => {
+      const root = "projectId" in scope ? sessions.getProject(scope.projectId).rootPath : (await sessions.sessionStatusContext(scope.sessionId)).root;
       if (key === null) return root;
       const match = (await history.worktrees(root)).find((worktree) => worktree.key === key);
       if (!match) throw new Error("This worktree no longer exists");

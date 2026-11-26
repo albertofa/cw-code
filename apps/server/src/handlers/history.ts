@@ -6,11 +6,19 @@ import type { Router } from "../transport/Router.js";
 import { handle, knownSessionId, parseArgs } from "./shared.js";
 
 interface HistoryTarget {
-  sessionId: string;
+  sessionId: string | null;
   root: string;
   worktree: string | null;
   owner: string | null;
   isMain: boolean;
+}
+
+type ScopeArgs = { sessionId: string } | { projectId: string };
+
+function parseScope(args: Record<string, unknown>): ScopeArgs {
+  const has = (value: unknown): boolean => typeof value === "string" && value.length > 0;
+  if (has(args.sessionId) === has(args.projectId)) throw new Error("pass either sessionId or projectId");
+  return has(args.sessionId) ? { sessionId: args.sessionId as string } : { projectId: args.projectId as string };
 }
 
 export function registerHistoryHandlers(router: Router, app: ServerApp): void {
@@ -18,16 +26,29 @@ export function registerHistoryHandlers(router: Router, app: ServerApp): void {
 
   const ownerOf = (path: string): string | null => services().sessions.checkoutOwner(path);
 
-  const targetOf = async (sessionId: unknown, worktree: unknown): Promise<HistoryTarget> => {
+  const baseRoot = async (scope: ScopeArgs): Promise<string> => {
+    const { sessions } = services();
+    if ("projectId" in scope) return sessions.getProject(scope.projectId).rootPath;
+    return (await sessions.sessionStatusContext(knownSessionId(sessions, scope.sessionId))).root;
+  };
+
+  const targetOf = async (args: Record<string, unknown>, withWorktree: boolean): Promise<HistoryTarget> => {
     const { sessions, history } = services();
-    const id = knownSessionId(sessions, sessionId);
-    const root = (await sessions.sessionStatusContext(id)).root;
-    if (worktree === undefined || worktree === null) return { sessionId: id, root, worktree: null, owner: null, isMain: false };
+    const scope = parseScope(args);
+    const sessionId = "sessionId" in scope ? knownSessionId(sessions, scope.sessionId) : null;
+    const root = await baseRoot(scope);
+    const worktree = withWorktree ? args.worktree : undefined;
+    if (worktree === undefined || worktree === null) {
+      if (sessionId !== null) return { sessionId, root, worktree: null, owner: null, isMain: false };
+      const wanted = comparableGitPath(root);
+      const match = (await history.worktrees(root)).find((entry) => comparableGitPath(entry.path) === wanted);
+      return { sessionId, root, worktree: root, owner: ownerOf(root), isMain: match ? match.isMain : true };
+    }
     if (typeof worktree !== "string" || worktree.length === 0) throw new Error("worktree must be a path");
     const wanted = comparableGitPath(worktree);
     const match = (await history.worktrees(root)).find((entry) => comparableGitPath(entry.path) === wanted);
     if (!match) throw new Error(`${worktree} is not a worktree of this repository`);
-    return { sessionId: id, root: match.path, worktree: match.path, owner: ownerOf(match.path), isMain: match.isMain };
+    return { sessionId, root: match.path, worktree: match.path, owner: ownerOf(match.path), isMain: match.isMain };
   };
 
   const onUnowned = async <T>(target: HistoryTarget, run: () => Promise<T>): Promise<T> => {
@@ -48,7 +69,7 @@ export function registerHistoryHandlers(router: Router, app: ServerApp): void {
   handle(router, "history.log", async (raw) => {
     const args = parseArgs(raw, "history.log");
     const limit = parseHistoryLimit(args.limit);
-    const target = await targetOf(args.sessionId, args.worktree);
+    const target = await targetOf(args, true);
     const { history } = services();
     const [log, wipCount] = await Promise.all([
       history.log(target.root, limit),
@@ -59,20 +80,20 @@ export function registerHistoryHandlers(router: Router, app: ServerApp): void {
   handle(router, "history.commit", async (raw) => {
     const args = parseArgs(raw, "history.commit");
     if (!isFullSha(args.sha)) throw new Error("sha must be a full 40-character commit id");
-    const target = await targetOf(args.sessionId, undefined);
+    const target = await targetOf(args, false);
     return services().history.commit(target.root, args.sha);
   });
   handle(router, "history.avatars", async (raw) => {
     const args = parseArgs(raw, "history.avatars");
     const authors = parseAvatarAuthors(args.authors);
-    const target = await targetOf(args.sessionId, undefined);
+    const target = await targetOf(args, false);
     return services().historyAvatars.resolve(target.root, authors);
   });
   handle(router, "history.pull", async (raw) => {
     const args = parseArgs(raw, "history.pull");
-    const target = await targetOf(args.sessionId, args.worktree);
+    const target = await targetOf(args, true);
     const { sessions, git } = services();
-    if (target.worktree === null) await sessions.pullBranch(target.sessionId);
+    if (target.sessionId !== null && target.worktree === null) await sessions.pullBranch(target.sessionId);
     else if (target.owner) await sessions.pullBranch(target.owner);
     else await onUnowned(target, () => git.pullFastForward(target.root));
   });
@@ -80,9 +101,9 @@ export function registerHistoryHandlers(router: Router, app: ServerApp): void {
     const args = parseArgs(raw, "history.checkout");
     const branch = args.branch;
     if (typeof branch !== "string" || branch.length === 0) throw new Error("branch must be a name");
-    const target = await targetOf(args.sessionId, args.worktree);
+    const target = await targetOf(args, true);
     const { sessions, git } = services();
-    if (target.worktree === null) await sessions.switchBranch(target.sessionId, branch);
+    if (target.sessionId !== null && target.worktree === null) await sessions.switchBranch(target.sessionId, branch);
     else if (target.owner) await sessions.switchBranch(target.owner, branch);
     else await onUnowned(target, () => git.checkoutBranch(target.root, branch));
   });

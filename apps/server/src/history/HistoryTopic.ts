@@ -1,4 +1,4 @@
-import type { HistoryTopicData } from "@cw-code/contracts";
+import type { HistoryScope, HistoryTopicData } from "@cw-code/contracts";
 import { parseHistoryTopicId, topicId } from "@cw-code/shared/topics";
 import { comparableRoot } from "../sessions/worktreeCleanup.js";
 import type { TopicHub, TopicProvider } from "../topics/TopicHub.js";
@@ -8,13 +8,13 @@ import type { HistorySnapshot } from "./HistoryService.js";
 export const HISTORY_TOPIC_PREFIX = "history/";
 
 export interface HistoryTopicDeps {
-  root(sessionId: string, worktreeKey: string | null): Promise<string>;
+  root(scope: HistoryScope, worktreeKey: string | null): Promise<string>;
   snapshot(root: string, withWip: boolean): Promise<HistorySnapshot>;
   setWatched(sessionIds: string[], worktreeRoots: string[]): void;
 }
 
 interface Entry {
-  sessionId: string;
+  scope: HistoryScope;
   worktreeKey: string | null;
   store: TopicStore<HistoryTopicData>;
   root: string | null;
@@ -22,6 +22,10 @@ interface Entry {
   fingerprint: string | null;
   rev: number;
   generation: number;
+}
+
+function isRootOnly(entry: Entry): boolean {
+  return entry.worktreeKey !== null || "projectId" in entry.scope;
 }
 
 function describeError(error: unknown): string {
@@ -48,9 +52,9 @@ export class HistoryTopic implements TopicProvider {
   acquire(topic: string): TopicStore<HistoryTopicData> {
     const id = topicId(topic, HISTORY_TOPIC_PREFIX);
     const parsed = id ? parseHistoryTopicId(id) : null;
-    if (!parsed || !("sessionId" in parsed.scope)) throw new Error(`invalid history topic '${topic}'`);
+    if (!parsed) throw new Error(`invalid history topic '${topic}'`);
     const store = this.hub.createStore<HistoryTopicData>(topic, emptyData(0, this.avatarsRev, null));
-    this.entries.set(topic, { sessionId: parsed.scope.sessionId, worktreeKey: parsed.worktreeKey, store, root: null, rootKey: null, fingerprint: null, rev: 0, generation: 0 });
+    this.entries.set(topic, { scope: parsed.scope, worktreeKey: parsed.worktreeKey, store, root: null, rootKey: null, fingerprint: null, rev: 0, generation: 0 });
     this.syncWatched();
     void this.recompute(topic);
     return store;
@@ -75,13 +79,13 @@ export class HistoryTopic implements TopicProvider {
 
   sessionChanged(sessionId: string): void {
     for (const [topic, entry] of this.entries) {
-      if (entry.sessionId === sessionId && entry.worktreeKey === null) void this.recompute(topic);
+      if ("sessionId" in entry.scope && entry.scope.sessionId === sessionId && entry.worktreeKey === null) void this.recompute(topic);
     }
   }
 
   pollWorktrees(): void {
     for (const [topic, entry] of this.entries) {
-      if (entry.worktreeKey !== null) void this.recompute(topic);
+      if (isRootOnly(entry)) void this.recompute(topic);
     }
   }
 
@@ -92,14 +96,14 @@ export class HistoryTopic implements TopicProvider {
     const current = (): boolean => this.entries.get(topic) === entry && entry.generation === generation;
     let snapshot: HistorySnapshot;
     try {
-      const root = await this.deps.root(entry.sessionId, entry.worktreeKey);
+      const root = await this.deps.root(entry.scope, entry.worktreeKey);
       if (!current()) return;
       const rootKey = comparableRoot(root);
       const moved = entry.rootKey !== rootKey;
       entry.root = root;
       entry.rootKey = rootKey;
-      if (moved && entry.worktreeKey !== null) this.syncWatched();
-      snapshot = await this.deps.snapshot(root, entry.worktreeKey !== null);
+      if (moved && isRootOnly(entry)) this.syncWatched();
+      snapshot = await this.deps.snapshot(root, isRootOnly(entry));
     } catch (error) {
       if (!current()) return;
       entry.fingerprint = null;
@@ -124,8 +128,8 @@ export class HistoryTopic implements TopicProvider {
     const sessionIds = new Set<string>();
     const worktreeRoots = new Map<string, string>();
     for (const entry of this.entries.values()) {
-      sessionIds.add(entry.sessionId);
-      if (entry.worktreeKey !== null && entry.root !== null && entry.rootKey !== null) worktreeRoots.set(entry.rootKey, entry.root);
+      if ("sessionId" in entry.scope) sessionIds.add(entry.scope.sessionId);
+      if (isRootOnly(entry) && entry.root !== null && entry.rootKey !== null) worktreeRoots.set(entry.rootKey, entry.root);
     }
     this.deps.setWatched([...sessionIds], [...worktreeRoots.values()]);
   }
