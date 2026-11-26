@@ -8,10 +8,12 @@ SDK or AI-API calls for inference.
 
 Layout is a single window: left sidebar with projects grouping their sessions,
 center chat thread with tool-call cards and a usage/cost footer, right pane with
-file editor, git diff view, Git glass (commit graph with the pull requests of the selected
-commit; also opens for a project from the new-session screen, without a session), and live
-terminal tabs embedding the real interactive CLIs as a fallback for anything the headless chat
-cannot render.
+file editor, Git glass (the single git tool: commit graph, a session-centric sidebar of the
+session's branch and PRs, the project's sessions, PRs, branches, worktrees, tags and stashes, a
+details panel for commits, PRs, sessions, worktrees and the session's Changes / Staged / Branch /
+Last turn diffs, and fetch / pull / push / branch / stash / pop actions; it also opens for a
+project from the new-session screen, without a session), and live terminal tabs embedding the
+real interactive CLIs as a fallback for anything the headless chat cannot render.
 
 Core behaviors:
 
