@@ -163,34 +163,144 @@ function CommitPrCard({ pull }: { pull: HistoryCommitPull }) {
 
 const ALL_PULLS = (pulls: HistoryCommitPull[]): HistoryCommitPull[] => pulls;
 
-function PullsBody({
+type HeaderTone = "empty" | "error";
+
+// One header row in every state. It only expands (chevron, button) when there is a pull request
+// to show; otherwise the row itself carries the answer and stays collapsed.
+function PrSectionView({
+  summary,
+  aside,
+  tone,
+  action,
+  expandable,
+  open,
+  onToggle,
+  bodyClass,
+  children
+}: {
+  summary: ReactNode;
+  aside: string;
+  tone?: HeaderTone;
+  action?: ReactNode;
+  expandable: boolean;
+  open: boolean;
+  onToggle: () => void;
+  bodyClass?: string;
+  children?: ReactNode;
+}) {
+  const bodyId = useId();
+  const shown = expandable && open;
+  const Chevron = shown ? ChevronDown : ChevronRight;
+  const content = (
+    <>
+      <span className="git-glass-pr-chevron" aria-hidden="true">
+        {expandable && <Chevron size={14} />}
+      </span>
+      <GitPullRequest size={14} className="git-glass-pr-icon" aria-hidden="true" />
+      <span className="git-glass-pr-label">Pull request</span>
+      <span className="git-glass-pr-summary">{summary}</span>
+      <span className="git-glass-pr-aside">{aside}</span>
+    </>
+  );
+  return (
+    <section className={`git-glass-pr${shown ? " open" : ""}`} aria-label="Pull request">
+      <div className={`git-glass-pr-head${tone ? ` ${tone}` : ""}`}>
+        {expandable ? (
+          <button
+            type="button"
+            className="git-glass-pr-toggle"
+            aria-expanded={shown}
+            aria-controls={bodyId}
+            title={shown ? "Hide the pull request details" : "Show the pull request details"}
+            onClick={onToggle}
+          >
+            {content}
+          </button>
+        ) : (
+          <div className="git-glass-pr-toggle static" role={tone === "error" ? "alert" : "status"}>
+            {content}
+          </div>
+        )}
+        {action}
+      </div>
+      {shown && (
+        <div id={bodyId} className={`git-glass-pr-body${bodyClass ? ` ${bodyClass}` : ""}`}>
+          {children}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function PullSummary({ number, title, state, extra }: { number: number; title: string; state: { label: string; tone: string }; extra: number }) {
+  return (
+    <>
+      <span className={`pr-panel-state ${state.tone}`}>{state.label}</span>
+      <span className="git-glass-pr-summary-text" title={title}>
+        <span className="pr-panel-num">#{number}</span> {title}
+      </span>
+      {extra > 0 && <span className="git-glass-pr-extra">+{extra}</span>}
+    </>
+  );
+}
+
+function RetryButton({ onRetry }: { onRetry: () => void }) {
+  return (
+    <button type="button" className="git-glass-pr-session" onClick={onRetry}>
+      Retry
+    </button>
+  );
+}
+
+function PullsSection({
   scope,
   sha,
   pick = ALL_PULLS,
   emptyText,
-  groupLabel
+  groupLabel,
+  aside,
+  action,
+  open,
+  onToggle
 }: {
   scope: HistoryScope;
   sha: string;
   pick?: (pulls: HistoryCommitPull[]) => HistoryCommitPull[];
   emptyText: string;
   groupLabel: string;
+  aside: string;
+  action?: ReactNode;
+  open: boolean;
+  onToggle: () => void;
 }) {
   const { result, error, retry } = useCommitPulls(scope, sha);
   const [chosen, setChosen] = useState<string | null>(null);
   const pulls = useMemo(() => (result ? pick(result.pulls) : []), [result, pick]);
+  const frame = { aside, open, onToggle, expandable: false } as const;
+  const withRetry = (
+    <>
+      <RetryButton onRetry={retry} />
+      {action}
+    </>
+  );
 
-  if (error) return <RetryError onRetry={retry}>Could not look up pull requests: {error}</RetryError>;
-  if (!result) return <Note>Looking up pull requests…</Note>;
-  if (result.unavailable === COMMIT_PULLS_NO_GITHUB_REMOTE) return <Note>{result.unavailable}</Note>;
-  if (result.unavailable) return <RetryError onRetry={retry}>{result.unavailable}</RetryError>;
+  if (error) return <PrSectionView {...frame} tone="error" action={withRetry} summary={`Could not look up pull requests: ${error}`} />;
+  if (!result) return <PrSectionView {...frame} tone="empty" action={action} summary="Looking up pull requests…" />;
+  if (result.unavailable === COMMIT_PULLS_NO_GITHUB_REMOTE) return <PrSectionView {...frame} tone="empty" action={action} summary={result.unavailable} />;
+  if (result.unavailable) return <PrSectionView {...frame} tone="error" action={withRetry} summary={result.unavailable} />;
   const first = pulls[0];
-  if (!first) return <Note>{emptyText}</Note>;
+  if (!first) return <PrSectionView {...frame} tone="empty" action={action} summary={emptyText} />;
   const pull = pulls.find((candidate) => prKey(candidate.ref) === chosen) ?? first;
   const pullKey = prKey(pull.ref);
 
   return (
-    <>
+    <PrSectionView
+      {...frame}
+      expandable
+      action={action}
+      bodyClass="commit"
+      summary={<PullSummary number={pull.ref.number} title={pull.title} state={stateLabel(pull)} extra={pulls.length - 1} />}
+    >
       {pulls.length > 1 && (
         <div className="pr-panel-switch git-glass-pr-switch" role="group" aria-label={groupLabel}>
           {pulls.map((candidate) => {
@@ -214,70 +324,30 @@ function PullsBody({
         </div>
       )}
       <CommitPrCard key={pullKey} pull={pull} />
-    </>
-  );
-}
-
-function SectionFrame({
-  open,
-  onToggle,
-  aside,
-  action,
-  bodyClass,
-  children
-}: {
-  open: boolean;
-  onToggle: () => void;
-  aside: string;
-  action?: ReactNode;
-  bodyClass?: string;
-  children: ReactNode;
-}) {
-  const bodyId = useId();
-  const Chevron = open ? ChevronDown : ChevronRight;
-  return (
-    <section className="git-glass-pr" aria-label="Pull request">
-      <div className="git-glass-pr-head">
-        <button type="button" className="git-glass-pr-toggle" aria-expanded={open} aria-controls={bodyId} onClick={onToggle}>
-          <Chevron size={13} aria-hidden="true" />
-          <GitPullRequest size={13} aria-hidden="true" />
-          Pull request
-          <span className="git-glass-pr-aside">{aside}</span>
-        </button>
-        {action}
-      </div>
-      {open && (
-        <div id={bodyId} className={`git-glass-pr-body${bodyClass ? ` ${bodyClass}` : ""}`}>
-          {children}
-        </div>
-      )}
-    </section>
+    </PrSectionView>
   );
 }
 
 function SessionPrSection({ sessionId, open, onToggle }: { sessionId: string; open: boolean; onToggle: () => void }) {
   const linked = useSessionLinkedPrs(sessionId);
-  if (linked.length === 0) {
-    return (
-      <div className="git-glass-pr git-glass-pr-line" role="status">
-        <GitPullRequest size={13} aria-hidden="true" />
-        No pull request linked to this session
-      </div>
-    );
+  const first = linked[0];
+  if (!first) {
+    return <PrSectionView aside="this session" tone="empty" expandable={false} open={open} onToggle={onToggle} summary="No pull request linked to this session" />;
   }
-  return (
-    <SectionFrame open={open} onToggle={onToggle} aside="linked to this session">
-      <PrSessionPanel sessionId={sessionId} />
-    </SectionFrame>
+  const summary = first.title ? (
+    <span className="git-glass-pr-summary-text" title={first.title}>
+      <span className="pr-panel-num">#{first.ref.number}</span> {first.title}
+      {linked.length > 1 && <span className="git-glass-pr-extra">+{linked.length - 1}</span>}
+    </span>
+  ) : (
+    <span className="git-glass-pr-summary-text">
+      <span className="pr-panel-num">#{first.ref.number}</span>
+    </span>
   );
-}
-
-function Line({ children }: { children: ReactNode }) {
   return (
-    <div className="git-glass-pr git-glass-pr-line" role="status">
-      <GitPullRequest size={13} aria-hidden="true" />
-      {children}
-    </div>
+    <PrSectionView aside="linked to this session" expandable open={open} onToggle={onToggle} summary={summary}>
+      <PrSessionPanel sessionId={sessionId} />
+    </PrSectionView>
   );
 }
 
@@ -294,19 +364,26 @@ function BranchPrSection({
 }) {
   const { branch, sha, upstream } = target;
   const pick = useCallback((pulls: HistoryCommitPull[]) => (branch ? branchPulls(pulls, branch, upstream) : []), [branch, upstream]);
-  if (!branch) return <Line>Detached HEAD — select a commit to see its pull requests</Line>;
-  if (!sha) return <Line>No commits on {branch} yet</Line>;
+  if (!branch) {
+    return (
+      <PrSectionView aside="detached HEAD" tone="empty" expandable={false} open={open} onToggle={onToggle} summary="Select a commit to see its pull requests" />
+    );
+  }
+  if (!sha) {
+    return <PrSectionView aside={`branch ${branch}`} tone="empty" expandable={false} open={open} onToggle={onToggle} summary={`No commits on ${branch} yet`} />;
+  }
   return (
-    <SectionFrame open={open} onToggle={onToggle} aside={`branch ${branch}`} bodyClass="commit">
-      <PullsBody
-        key={`${branch}@${sha}`}
-        scope={scope}
-        sha={sha}
-        pick={pick}
-        emptyText={`No pull request for ${branch}`}
-        groupLabel={`Pull requests for ${branch}`}
-      />
-    </SectionFrame>
+    <PullsSection
+      key={`${branch}@${sha}`}
+      scope={scope}
+      sha={sha}
+      pick={pick}
+      emptyText={`No pull request for ${branch}`}
+      groupLabel={`Pull requests for ${branch}`}
+      aside={`branch ${branch}`}
+      open={open}
+      onToggle={onToggle}
+    />
   );
 }
 
@@ -328,6 +405,7 @@ export function GitGlassPrSection({
   target: GitGlassPrTarget;
   onClearSelection: () => void;
 }) {
+  // Kept across commits, so collapsing the details stays collapsed while browsing.
   const [open, setOpen] = useState(true);
   const toggle = (): void => setOpen((value) => !value);
 
@@ -340,9 +418,17 @@ export function GitGlassPrSection({
       </button>
     ) : undefined;
     return (
-      <SectionFrame open={open} onToggle={toggle} aside={`commit ${sha.slice(0, 7)}`} action={action} bodyClass="commit">
-        <PullsBody key={sha} scope={scope} sha={sha} emptyText="No pull request for this commit" groupLabel="Pull requests for this commit" />
-      </SectionFrame>
+      <PullsSection
+        key={sha}
+        scope={scope}
+        sha={sha}
+        emptyText="No pull request for this commit"
+        groupLabel="Pull requests for this commit"
+        aside={`commit ${sha.slice(0, 7)}`}
+        action={action}
+        open={open}
+        onToggle={toggle}
+      />
     );
   }
   if (target.kind === "session") return <SessionPrSection sessionId={target.sessionId} open={open} onToggle={toggle} />;

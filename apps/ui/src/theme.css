@@ -14237,7 +14237,7 @@ button.gitbar-checkout:hover {
   display: flex;
   align-items: center;
   gap: 6px;
-  min-height: 26px;
+  min-height: 28px;
   padding: 0 10px 0 0;
   background: var(--tool);
 }
@@ -14249,19 +14249,86 @@ button.gitbar-checkout:hover {
   align-items: center;
   gap: 6px;
   align-self: stretch;
-  padding: 3px 0 3px 10px;
+  padding: 4px 8px 4px 6px;
   border: 0;
   background: transparent;
   color: var(--dim);
   font: inherit;
   font-size: var(--t-xs);
-  font-weight: 650;
   text-align: left;
   cursor: pointer;
 }
 
 .git-glass-pr-toggle:hover {
+  background: var(--control-bg-hover);
   color: var(--text);
+}
+
+.git-glass-pr-toggle:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.git-glass-pr-toggle.static {
+  cursor: default;
+}
+
+.git-glass-pr-toggle.static:hover {
+  background: transparent;
+  color: var(--dim);
+}
+
+.git-glass-pr-chevron {
+  flex: none;
+  display: inline-flex;
+  width: 14px;
+  color: var(--dim);
+}
+
+.git-glass-pr-toggle:hover .git-glass-pr-chevron {
+  color: var(--text);
+}
+
+.git-glass-pr-icon {
+  flex: none;
+  color: var(--dim);
+}
+
+.git-glass-pr-label {
+  flex: none;
+  font-weight: 650;
+}
+
+.git-glass-pr-summary {
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  overflow: hidden;
+  color: var(--text);
+  white-space: nowrap;
+}
+
+.git-glass-pr-summary-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.git-glass-pr-extra {
+  flex: none;
+  color: var(--faint);
+  font-size: var(--t-2xs);
+}
+
+.git-glass-pr-head.empty .git-glass-pr-summary,
+.git-glass-pr-head.empty .git-glass-pr-icon {
+  color: var(--faint);
+}
+
+.git-glass-pr-head.error .git-glass-pr-summary,
+.git-glass-pr-head.error .git-glass-pr-icon {
+  color: var(--danger);
 }
 
 .git-glass-pr-session {
@@ -14278,17 +14345,6 @@ button.gitbar-checkout:hover {
 
 .git-glass-pr-session:hover {
   color: var(--text);
-}
-
-.git-glass-pr-line {
-  flex-direction: row;
-  align-items: center;
-  gap: 6px;
-  min-height: 26px;
-  padding: 3px 10px;
-  background: var(--tool);
-  color: var(--faint);
-  font-size: var(--t-xs);
 }
 
 .git-glass-pr-body.commit {
