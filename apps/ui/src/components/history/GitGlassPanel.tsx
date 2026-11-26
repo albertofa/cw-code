@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ArrowDownToLine, GitFork, GitGraph, UserRound } from "lucide-react";
-import type { HistoryCommit, HistoryLog, HistoryTopicData, HistoryWorktree } from "@cw-code/contracts";
+import type { HistoryCommit, HistoryLog, HistoryScope, HistoryTopicData, HistoryWorktree } from "@cw-code/contracts";
 import { historyTopic } from "@cw-code/shared/topics";
 import { usePanelStore } from "../../stores/panelStore.js";
 import { useConnectionEpoch, useTopic } from "../../server/topics.js";
@@ -11,16 +11,21 @@ import { loadShowAvatars, saveShowAvatars, useHistoryAvatars } from "./historyAv
 import { MenuSelect, type MenuOption } from "../MenuSelect.js";
 import { useHistorySide } from "./useHistorySide.js";
 import { useConfirm } from "../ConfirmDialog.js";
+import { GitGlassPrSection } from "./GitGlassPrSection.js";
 
 const PAGE_SIZE = 2000;
 const MAX_LIMIT = 20000;
 const NO_COMMITS: HistoryCommit[] = [];
 const isWip = (commit: HistoryCommit): boolean => commit.sha === WIP_SHA;
 
-export function HistoryPanel({ sessionId }: { sessionId: string }) {
+export function GitGlassPanel({ scope: scopeProp }: { scope: HistoryScope }) {
+  const scopeKey = historyTopic(scopeProp);
+  const scope = useMemo(() => scopeProp, [scopeKey]);
+  const sessionId = "sessionId" in scope ? scope.sessionId : null;
+  const homeLabel = sessionId ? "This session" : "Project checkout";
   const [view, setView] = useState<{ path: string; key: string } | null>(null);
   const viewWorktree = view?.path ?? null;
-  const topicName = historyTopic({ sessionId }, view?.key ?? null);
+  const topicName = historyTopic(scope, view?.key ?? null);
   const topic = useTopic<HistoryTopicData>(topicName);
   const status = useGitStatus(sessionId);
   const epoch = useConnectionEpoch();
@@ -30,7 +35,7 @@ export function HistoryPanel({ sessionId }: { sessionId: string }) {
   const [error, setError] = useState("");
   const [selected, setSelected] = useState<string | null>(null);
   const [openPath, setOpenPath] = useState<string | null>(null);
-  const commit = useHistoryCommit(sessionId, selected);
+  const commit = useHistoryCommit(scope, selected);
   const side = useHistorySide();
   const { confirm, dialog } = useConfirm();
   const panelRef = useRef<HTMLDivElement>(null);
@@ -46,7 +51,7 @@ export function HistoryPanel({ sessionId }: { sessionId: string }) {
     return byBranch;
   }, [log]);
   const [showAvatars, setShowAvatars] = useState(loadShowAvatars);
-  const avatars = useHistoryAvatars(sessionId, log?.commits ?? NO_COMMITS, isWip, showAvatars, topic?.data.avatarsRev ?? 0);
+  const avatars = useHistoryAvatars(scope, log?.commits ?? NO_COMMITS, isWip, showAvatars, topic?.data.avatarsRev ?? 0);
   const rev = topic?.data.rev ?? 0;
   const topicError = topic?.status === "error" ? (topic.error ?? "History unavailable") : (topic?.data.error ?? null);
 
@@ -54,7 +59,7 @@ export function HistoryPanel({ sessionId }: { sessionId: string }) {
     if (rev === 0) return;
     let active = true;
     setLoading(true);
-    window.cw.getHistoryLog(sessionId, limit, viewWorktree).then(
+    window.cw.getHistoryLog(scope, limit, viewWorktree).then(
       (next) => {
         if (!active) return;
         setLog(next);
@@ -92,7 +97,7 @@ export function HistoryPanel({ sessionId }: { sessionId: string }) {
   const select = useCallback(
     (sha: string): void => {
       if (sha === WIP_SHA) {
-        if (viewWorktree === null) usePanelStore.getState().requestDiffMode(sessionId, "working");
+        if (viewWorktree === null && sessionId) usePanelStore.getState().requestDiffMode(sessionId, "working");
         return;
       }
       setSelected(sha);
@@ -136,7 +141,7 @@ export function HistoryPanel({ sessionId }: { sessionId: string }) {
         return;
       }
       const owned = viewWorktree === null ? undefined : log?.worktrees.find((worktree) => worktree.path === viewWorktree && worktree.sessionId);
-      const run = (): void => runAction(`Checking out ${branch}…`, () => window.cw.checkoutHistory(sessionId, viewWorktree, branch));
+      const run = (): void => runAction(`Checking out ${branch}…`, () => window.cw.checkoutHistory(scope, viewWorktree, branch));
       if (!owned) {
         run();
         return;
@@ -149,14 +154,14 @@ export function HistoryPanel({ sessionId }: { sessionId: string }) {
         if (ok) run();
       });
     },
-    [runAction, sessionId, viewWorktree, worktreeBranches, openWorktree, log, confirm]
+    [runAction, scope, viewWorktree, worktreeBranches, openWorktree, log, confirm]
   );
 
   const head = log?.head ?? null;
   const currentRef = head?.branch ? log?.refs.find((ref) => ref.kind === "local" && ref.isCurrent) : undefined;
   const pullBlocked = !head?.branch ? "HEAD is detached — check out a branch to pull" : !currentRef?.upstream ? `${head.branch} has no upstream branch` : null;
   const pullTitle = pullBlocked ?? `Fast-forward ${head?.branch} from ${currentRef?.upstream} (git pull --ff-only)`;
-  const pull = (): void => runAction("Pulling…", () => window.cw.pullHistory(sessionId, viewWorktree));
+  const pull = (): void => runAction("Pulling…", () => window.cw.pullHistory(scope, viewWorktree));
 
   const toggleAvatars = (): void => {
     const next = !showAvatars;
@@ -175,13 +180,13 @@ export function HistoryPanel({ sessionId }: { sessionId: string }) {
     const owner = worktree.sessionId && !home ? " · used by another cw-code session" : "";
     return {
       id: worktree.path,
-      label: home ? "This session" : worktree.name,
+      label: home ? homeLabel : worktree.name,
       hint: worktree.branch ?? "detached",
       description: `${worktree.path}${owner}`,
       icon: <GitFork size={13} />
     };
   });
-  const dirtyCount = viewWorktree === null ? (status?.available ? status.dirtyCount : 0) : (log?.wipCount ?? 0);
+  const dirtyCount = viewWorktree === null && sessionId ? (status?.available ? status.dirtyCount : 0) : (log?.wipCount ?? 0);
   const failure = topicError ?? (error || null);
 
   return (
@@ -189,7 +194,7 @@ export function HistoryPanel({ sessionId }: { sessionId: string }) {
       {dialog}
       <div className="inspect-toolbar">
         <span className="inspect-title">
-          <GitGraph size={14} /> History
+          <GitGraph size={14} /> Git glass
         </span>
         {worktrees.length > 1 && activePath && (
           <MenuSelect
@@ -197,7 +202,7 @@ export function HistoryPanel({ sessionId }: { sessionId: string }) {
             title="Switch worktree — each one has its own branch and changes"
             direction="down"
             value={activePath}
-            display={viewed ? viewed.name : "This session"}
+            display={viewed ? viewed.name : homeLabel}
             icon={<GitFork size={13} aria-hidden="true" />}
             options={worktreeOptions}
             onPick={openWorktree}
@@ -250,7 +255,7 @@ export function HistoryPanel({ sessionId }: { sessionId: string }) {
                 onClick={() => openWorktree(worktree.path)}
               >
                 <GitFork size={12} aria-hidden="true" />
-                <span className="history-worktree-name">{home ? "This session" : worktree.name}</span>
+                <span className="history-worktree-name">{home ? homeLabel : worktree.name}</span>
                 {worktree.branch && <span className="history-worktree-branch">{worktree.branch}</span>}
               </button>
             );
@@ -263,8 +268,9 @@ export function HistoryPanel({ sessionId }: { sessionId: string }) {
           {viewed ? (
             <span className="history-viewing-text">
               You are viewing the worktree <b>{viewed.name}</b>
-              {viewed.branch ? <> on <b>{viewed.branch}</b></> : null}, not your session's checkout
-              {sessionBranch ? <> (<b>{sessionBranch}</b>)</> : null}. Switching branches and pulling here do not change your session.
+              {viewed.branch ? <> on <b>{viewed.branch}</b></> : null}, {sessionId ? "not your session's checkout" : "not the project's checkout"}
+              {sessionBranch ? <> (<b>{sessionBranch}</b>)</> : null}. Switching branches and pulling here do not change{" "}
+              {sessionId ? "your session" : "the project's checkout"}.
             </span>
           ) : (
             <span className="history-viewing-text" title={view.path}>
@@ -280,7 +286,7 @@ export function HistoryPanel({ sessionId }: { sessionId: string }) {
             </span>
           )}
           <button type="button" className="inspect-mode" onClick={() => openWorktree(null)}>
-            Back to this session
+            {sessionId ? "Back to this session" : "Back to the project's checkout"}
           </button>
         </div>
       )}
@@ -290,6 +296,7 @@ export function HistoryPanel({ sessionId }: { sessionId: string }) {
           {actionError}
         </div>
       )}
+      <GitGlassPrSection scope={scope} sha={selected} />
       {!failure && !log && <div className="diff-empty">Loading history…</div>}
       {!failure && log && log.commits.length === 0 && (
         <div className="inspect-empty">
@@ -312,6 +319,7 @@ export function HistoryPanel({ sessionId }: { sessionId: string }) {
               showAvatars={showAvatars}
               onCheckout={checkout}
               worktreeBranches={worktreeBranches}
+              wipHint={sessionId ? null : "Review uncommitted changes from a session in this project"}
             />
             {selected && openPath && <HistoryFileDiff files={commit.files} path={openPath} onOpenFile={setOpenPath} onClose={closeDiff} />}
           </div>

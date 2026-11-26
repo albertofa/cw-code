@@ -14222,6 +14222,115 @@ button.gitbar-checkout:hover {
   min-width: 0;
 }
 
+.git-glass-pr {
+  flex: none;
+  max-height: 40%;
+  display: flex;
+  flex-direction: column;
+  border-bottom: 1px solid var(--border-soft);
+  background: var(--bg-deep);
+}
+
+.git-glass-pr-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  min-height: 26px;
+  padding: 3px 10px;
+  border: 0;
+  background: var(--tool);
+  color: var(--dim);
+  font: inherit;
+  font-size: var(--t-xs);
+  font-weight: 650;
+  text-align: left;
+  cursor: pointer;
+}
+
+.git-glass-pr-head:hover {
+  color: var(--text);
+}
+
+.git-glass-pr-aside {
+  min-width: 0;
+  margin-left: auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--faint);
+  font-family: var(--mono);
+  font-size: var(--t-2xs);
+  font-weight: 400;
+}
+
+.git-glass-pr-body {
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: auto;
+}
+
+.git-glass-pr-note {
+  padding: 6px 12px;
+  color: var(--faint);
+  font-size: var(--t-xs);
+}
+
+.git-glass-pr-error {
+  margin: 6px 10px;
+  font-size: var(--t-xs);
+}
+
+.git-glass-pr-switch {
+  padding: 6px 12px 0;
+}
+
+.git-glass-pr-switch-num {
+  color: var(--dim);
+  font-size: var(--t-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.git-glass-pr-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 12px 10px;
+}
+
+.git-glass-pr-card .pr-panel-title-row {
+  align-items: center;
+}
+
+.git-glass-pr-card .pr-panel-meta {
+  margin-top: 0;
+}
+
+.git-glass-pr-card .git-glass-pr-note,
+.git-glass-pr-card .git-glass-pr-error {
+  margin: 0;
+  padding: 0;
+}
+
+.git-glass-pr-card .git-glass-pr-error {
+  padding: 6px 10px;
+}
+
+.git-glass-pr-status .pr-panel-status-row {
+  padding: 1px 0;
+  font-size: var(--t-xs);
+}
+
+.git-glass-pr-threads {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--dim);
+  font-size: var(--t-xs);
+}
+
 .history-worktrees-label {
   flex: none;
   align-self: center;

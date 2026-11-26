@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { ArrowLeft, Check, ChevronDown, ChevronUp, Copy } from "lucide-react";
-import type { HistoryCommitDetail } from "@cw-code/contracts";
+import type { HistoryCommitDetail, HistoryScope } from "@cw-code/contracts";
 import { parseUnifiedDiff, type DiffFile } from "../diffParser.js";
 import { DiffLines, STATUS_BADGE } from "../GitInspectPanel.js";
 import { FileIcon } from "../fileIcons.js";
@@ -20,7 +20,7 @@ export interface HistoryCommitState {
   error: string;
 }
 
-export function useHistoryCommit(sessionId: string, sha: string | null): HistoryCommitState {
+export function useHistoryCommit(scope: HistoryScope, sha: string | null): HistoryCommitState {
   const [detail, setDetail] = useState<HistoryCommitDetail | null>(null);
   const [error, setError] = useState("");
   const [retry, setRetry] = useState(0);
@@ -38,7 +38,7 @@ export function useHistoryCommit(sessionId: string, sha: string | null): History
     if (!sha) return;
     let active = true;
     const timer = setTimeout(() => {
-      window.cw.getHistoryCommit(sessionId, sha).then(
+      window.cw.getHistoryCommit(scope, sha).then(
         (next) => {
           if (active) setDetail(next);
         },
@@ -53,7 +53,7 @@ export function useHistoryCommit(sessionId: string, sha: string | null): History
       active = false;
       clearTimeout(timer);
     };
-  }, [sessionId, sha, retry]);
+  }, [scope, sha, retry]);
 
   const files = useMemo(() => parseUnifiedDiff(detail?.patch ?? ""), [detail]);
   return { detail, files, error };

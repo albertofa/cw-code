@@ -193,7 +193,8 @@ const HistoryRow = memo(function HistoryRow({
   selected,
   onSelect,
   onCheckout,
-  worktreeBranches
+  worktreeBranches,
+  hint
 }: {
   commit: HistoryCommit;
   label: RefLabel | null;
@@ -204,10 +205,13 @@ const HistoryRow = memo(function HistoryRow({
   onSelect: (sha: string) => void;
   onCheckout: (branch: string) => void;
   worktreeBranches: ReadonlyMap<string, HistoryWorktree>;
+  hint: string | null;
 }) {
   const isWip = commit.sha === WIP_SHA;
   const title = isWip
-    ? commit.subject
+    ? hint
+      ? `${commit.subject}\n${hint}`
+      : commit.subject
     : `${commit.subject}\n${commit.authorName} <${commit.authorEmail}>\n${absoluteFormat.format(new Date(commit.authorDate * 1000))}\n${commit.sha}`;
   return (
     <div
@@ -240,7 +244,8 @@ export function HistoryGraph({
   showAvatars,
   onCheckout,
   onHighlight,
-  worktreeBranches
+  worktreeBranches,
+  wipHint
 }: {
   log: HistoryLog;
   dirtyCount: number;
@@ -253,6 +258,7 @@ export function HistoryGraph({
   onCheckout: (branch: string) => void;
   onHighlight: (sha: string) => void;
   worktreeBranches: ReadonlyMap<string, HistoryWorktree>;
+  wipHint: string | null;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const theme = useGraphTheme();
@@ -321,6 +327,7 @@ export function HistoryGraph({
               onSelect={onSelect}
               onCheckout={onCheckout}
               worktreeBranches={worktreeBranches}
+              hint={commit.sha === WIP_SHA ? wipHint : null}
             />
           ))}
         </div>
