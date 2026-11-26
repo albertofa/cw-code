@@ -1,4 +1,4 @@
-import type { HistoryLog, HistoryRef, HistoryWorktree, PrCiState, PrRef, PrSummary, SessionRow, SessionStatus } from "@cw-code/contracts";
+import type { HistoryLog, HistoryRef, HistoryWorktree, PrCiState, PrRef, PrSummary, SessionMeta, SessionRow, SessionStatus } from "@cw-code/contracts";
 import { prKey } from "@cw-code/shared/prRef";
 import { remoteBranchName } from "./refLabel.js";
 
@@ -15,6 +15,7 @@ export interface SidebarPr {
   isDraft: boolean;
   ci: PrCiState | null;
   headRefName: string | null;
+  baseRefName: string | null;
   headRefOid: string | null;
   sessionId: string | null;
   sessionTitle: string | null;
@@ -40,7 +41,15 @@ export interface SidebarModel {
   worktrees: SidebarWorktree[];
   tags: HistoryRef[];
   stashes: SidebarStash[];
+  hiddenOpenPrs: number;
 }
+
+export interface RemoteGroup {
+  remote: string;
+  refs: HistoryRef[];
+}
+
+export type GitHubRepo = { owner: string; repo: string };
 
 export interface SidebarInput {
   log: HistoryLog | null;
@@ -49,6 +58,7 @@ export interface SidebarInput {
   sessionId: string | null;
   homePath: string | null;
   openPrs: readonly PrSummary[];
+  openCount: number | null;
   summaries: ReadonlyMap<string, PrSummary>;
 }
 
@@ -61,7 +71,8 @@ export const EMPTY_SIDEBAR_MODEL: SidebarModel = {
   remoteBranches: [],
   worktrees: [],
   tags: [],
-  stashes: []
+  stashes: [],
+  hiddenOpenPrs: 0
 };
 
 export function projectSessions(rows: readonly SessionRow[], projectId: string | null, sessionId: string | null): SessionRow[] {
@@ -83,6 +94,35 @@ export function groupBranches(refs: readonly HistoryRef[]): { local: HistoryRef[
   return { local, remoteOnly };
 }
 
+export function remoteGroups(remoteOnly: readonly HistoryRef[]): RemoteGroup[] {
+  const groups = new Map<string, HistoryRef[]>();
+  for (const ref of remoteOnly) {
+    const slash = ref.name.indexOf("/");
+    const remote = slash === -1 ? ref.name : ref.name.slice(0, slash);
+    const list = groups.get(remote);
+    if (list) list.push(ref);
+    else groups.set(remote, [ref]);
+  }
+  return [...groups]
+    .sort(([a], [b]) => Number(b === "origin") - Number(a === "origin") || a.localeCompare(b))
+    .map(([remote, refs]) => ({ remote, refs }));
+}
+
+function comparablePath(path: string): string {
+  const unified = path.replace(/\\/g, "/").replace(/\/+$/, "");
+  return /^[a-z]:\//i.test(unified) ? unified.toLowerCase() : unified;
+}
+
+export function sessionCheckout(worktrees: readonly HistoryWorktree[], session: Pick<SessionMeta, "worktreePath">): HistoryWorktree | null {
+  if (!session.worktreePath) return worktrees.find((worktree) => worktree.isMain) ?? null;
+  const target = comparablePath(session.worktreePath);
+  return worktrees.find((worktree) => comparablePath(worktree.path) === target) ?? null;
+}
+
+function inRepo(ref: PrRef, repo: GitHubRepo | null): boolean {
+  return repo === null || (ref.owner.toLowerCase() === repo.owner.toLowerCase() && ref.repo.toLowerCase() === repo.repo.toLowerCase());
+}
+
 function dedupeKey(ref: PrRef): string {
   return prKey(ref).toLowerCase();
 }
@@ -97,6 +137,7 @@ function sidebarPr(ref: PrRef, summary: PrSummary | undefined, owner: SessionRow
     isDraft: summary?.isDraft ?? false,
     ci: summary?.ci ?? null,
     headRefName: summary?.headRefName ?? null,
+    baseRefName: summary?.baseRefName ?? null,
     headRefOid: summary?.headRefOid ?? null,
     sessionId: owner?.session.id ?? null,
     sessionTitle: owner?.session.title ?? null,
@@ -124,7 +165,8 @@ export function unionPrs(
   sessions: readonly SessionRow[],
   sessionId: string | null,
   openPrs: readonly PrSummary[],
-  summaries: ReadonlyMap<string, PrSummary>
+  summaries: ReadonlyMap<string, PrSummary>,
+  repo: GitHubRepo | null = null
 ): SidebarPr[] {
   const openByKey = new Map(openPrs.map((pr) => [dedupeKey(pr.ref), pr]));
   const seen = new Set<string>();
@@ -132,6 +174,7 @@ export function unionPrs(
   const ordered = [...sessions].sort((a, b) => Number(b.session.id === sessionId) - Number(a.session.id === sessionId));
   for (const row of ordered) {
     for (const link of row.session.prs ?? []) {
+      if (!inRepo(link.ref, repo)) continue;
       const key = dedupeKey(link.ref);
       if (seen.has(key)) continue;
       seen.add(key);
@@ -154,7 +197,9 @@ export function prForBranch(prs: readonly SidebarPr[], ref: HistoryRef): Sidebar
     names.add(ref.name);
     if (ref.upstream) names.add(remoteBranchName(ref.upstream));
   }
-  const matches = prs.filter((pr) => pr.headRefName !== null && names.has(pr.headRefName));
+  // Summaries carry no head repository, so a fork PR from `contributor:main` would match the local
+  // `main`. A PR whose head and base names are equal can only come from another repository, so skip it.
+  const matches = prs.filter((pr) => pr.headRefName !== null && pr.headRefName !== pr.baseRefName && names.has(pr.headRefName));
   return matches.find((pr) => pr.state === "OPEN") ?? matches[0] ?? null;
 }
 
@@ -170,9 +215,11 @@ export function buildSidebarModel(input: SidebarInput): SidebarModel {
   const refs = log?.refs ?? [];
   const { local, remoteOnly } = groupBranches(refs);
   const subjects = new Map((log?.commits ?? []).map((commit) => [commit.sha, commit.subject]));
+  const repo = log?.github ?? null;
+  const prs = unionPrs(sessions, input.sessionId, input.openPrs, input.summaries, repo);
   return {
     sessions,
-    prs: unionPrs(sessions, input.sessionId, input.openPrs, input.summaries),
+    prs,
     branches: local,
     remoteBranches: remoteOnly,
     worktrees: (log?.worktrees ?? []).map((worktree) => ({
@@ -184,8 +231,16 @@ export function buildSidebarModel(input: SidebarInput): SidebarModel {
     stashes: refs
       .filter((ref) => ref.kind === "stash")
       .sort((a, b) => stashIndex(a.name) - stashIndex(b.name))
-      .map((ref) => ({ ref, subject: subjects.get(ref.target) ?? "" }))
+      .map((ref) => ({ ref, subject: subjects.get(ref.target) ?? "" })),
+    hiddenOpenPrs: hiddenOpenPrs(prs, input.openPrs, input.openCount)
   };
+}
+
+export function hiddenOpenPrs(prs: readonly SidebarPr[], openPrs: readonly PrSummary[], openCount: number | null): number {
+  if (openCount === null) return 0;
+  const loaded = new Set(openPrs.map((pr) => dedupeKey(pr.ref)));
+  const linkedOpenElsewhere = prs.filter((pr) => pr.state === "OPEN" && !loaded.has(dedupeKey(pr.ref))).length;
+  return Math.max(0, openCount - loaded.size - linkedOpenElsewhere);
 }
 
 export function filterSidebarModel(model: SidebarModel, filter: string): SidebarModel {
@@ -199,14 +254,15 @@ export function filterSidebarModel(model: SidebarModel, filter: string): Sidebar
     remoteBranches: model.remoteBranches.filter((ref) => hit(ref.name)),
     worktrees: model.worktrees.filter((entry) => hit(entry.worktree.name, entry.worktree.branch, entry.worktree.path, entry.owner?.session.title)),
     tags: model.tags.filter((ref) => hit(ref.name)),
-    stashes: model.stashes.filter((stash) => hit(stash.ref.name, stash.subject))
+    stashes: model.stashes.filter((stash) => hit(stash.ref.name, stash.subject)),
+    hiddenOpenPrs: 0
   };
 }
 
 export function sectionCounts(model: SidebarModel): Record<SidebarCountedSection, number> {
   return {
     sessions: model.sessions.length,
-    prs: model.prs.length,
+    prs: model.prs.length + model.hiddenOpenPrs,
     branches: model.branches.length + model.remoteBranches.length,
     worktrees: model.worktrees.length,
     tags: model.tags.length,

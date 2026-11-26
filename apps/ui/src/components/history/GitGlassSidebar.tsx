@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   Archive,
   ArrowDown,
@@ -23,18 +23,20 @@ import type { GitHubRow, GitHubViewTopicData, GitStatus, HistoryLog, HistoryRef,
 import { normalizeQuery } from "@cw-code/shared/githubQueryDsl";
 import { prKey } from "@cw-code/shared/prRef";
 import { githubViewTopic } from "@cw-code/shared/topics";
-import { useTopic } from "../../server/topics.js";
+import { acquireTopic, useTopic } from "../../server/topics.js";
 import { useSessions } from "../useSessions.js";
 import { usePrSummaries } from "../usePrs.js";
 import { useSessionLinkedPrs } from "../PrSessionPanel.js";
 import { PrChipBadge } from "../PrChipBadge.js";
 import { errorMessage } from "../errorMessage.js";
+import { openExternalLink } from "../externalLink.js";
 import type { GitGlassSelection } from "./GitGlassDetails.js";
 import {
   buildSidebarModel,
   filterSidebarModel,
   prForBranch,
   prTone,
+  remoteGroups,
   sectionCounts,
   sessionDotStatus,
   sessionStatusText,
@@ -54,8 +56,11 @@ export interface SidebarData {
   rows: SessionRow[];
   thisRow: SessionRow | undefined;
   prsTopic: string | null;
+  prsTopicFailed: boolean;
   prsError: string | null;
   prsLoading: boolean;
+  prsHasMore: boolean;
+  prsLoadingMore: boolean;
 }
 
 export interface SectionFocus {
@@ -91,13 +96,27 @@ export function useGitGlassSidebarData({
         : NO_PRS,
     [viewData]
   );
-  const prsError = prsTopic === null ? null : viewState?.status === "error" ? (viewState.error ?? "GitHub is unavailable") : (viewData?.view?.error ?? null);
-  const prsLoading = prsTopic !== null && prsError === null && (viewState === undefined || viewState.status === "subscribing" || (viewData?.view?.loading ?? true));
+  const view = viewData?.view;
+  const prsTopicFailed = prsTopic !== null && viewState?.status === "error";
+  const prsError = prsTopic === null ? null : prsTopicFailed ? (viewState?.error ?? "GitHub is unavailable") : (view?.error ?? null);
+  const prsLoading =
+    prsTopic !== null && prsError === null && openPrs.length === 0 && (viewState === undefined || viewState.status === "subscribing" || (view?.loading ?? true));
+  const openCount = prsTopic !== null && view ? view.openCount : null;
   const model = useMemo(
-    () => buildSidebarModel({ log, rows, projectId, sessionId, homePath, openPrs, summaries }),
-    [log, rows, projectId, sessionId, homePath, openPrs, summaries]
+    () => buildSidebarModel({ log, rows, projectId, sessionId, homePath, openPrs, openCount, summaries }),
+    [log, rows, projectId, sessionId, homePath, openPrs, openCount, summaries]
   );
-  return { model, rows, thisRow, prsTopic, prsError, prsLoading };
+  return {
+    model,
+    rows,
+    thisRow,
+    prsTopic,
+    prsTopicFailed,
+    prsError,
+    prsLoading,
+    prsHasMore: prsTopic !== null && (view?.hasMore ?? false),
+    prsLoadingMore: view?.loadingMore ?? false
+  };
 }
 
 function Section({
@@ -119,6 +138,7 @@ function Section({
 }) {
   const [state, setState] = usePersistedChoice(`cw-code:git-glass-section-${id}`, SECTION_STATES, defaultOpen ? "open" : "closed");
   const ref = useRef<HTMLElement>(null);
+  const bodyId = useId();
   const open = forceOpen || state === "open";
   const focusNonce = focus?.id === id ? focus.nonce : 0;
 
@@ -130,12 +150,24 @@ function Section({
 
   return (
     <section ref={ref} className={`gg-sb-sec${open ? "" : " collapsed"}`} aria-label={title}>
-      <button type="button" className="gg-sb-sec-h" aria-expanded={open} onClick={() => setState(open ? "closed" : "open")}>
+      <button
+        type="button"
+        className="gg-sb-sec-h"
+        aria-expanded={open}
+        aria-controls={bodyId}
+        aria-disabled={forceOpen ? "true" : undefined}
+        title={forceOpen ? "Clear the filter to collapse sections" : undefined}
+        onClick={() => {
+          if (!forceOpen) setState(open ? "closed" : "open");
+        }}
+      >
         <ChevronDown size={12} className="gg-sb-chev" aria-hidden="true" />
         <span>{title}</span>
         {count !== null && <span className="gg-sb-count">{count}</span>}
       </button>
-      {open && <div className="gg-sb-sec-b">{children}</div>}
+      <div id={bodyId} className="gg-sb-sec-b" hidden={!open}>
+        {open && children}
+      </div>
     </section>
   );
 }
@@ -312,11 +344,11 @@ function BranchItem({
               <PrIcon pr={pr} />#{pr.ref.number}
             </span>
           )}
-          {elsewhere && <GitFork size={12} aria-label={`Checked out in ${elsewhere.name}`} />}
+          {elsewhere && <GitFork size={12} role="img" aria-label={`Checked out in ${elsewhere.name}`} />}
         </>
       }
       onClick={onSelect}
-      onDoubleClick={branch.isCurrent || busy ? undefined : onCheckout}
+      onDoubleClick={branch.isCurrent || (busy && !elsewhere) ? undefined : onCheckout}
     />
   );
 }
@@ -374,10 +406,37 @@ export function GitGlassSidebarStrip({
   );
 }
 
+function RemoteBranchGroup({ remote, count, forceOpen, children }: { remote: string; count: number; forceOpen: boolean; children: ReactNode }) {
+  const [state, setState] = usePersistedChoice(`cw-code:git-glass-remote-${remote}`, SECTION_STATES, "closed");
+  const bodyId = useId();
+  const open = forceOpen || state === "open";
+  return (
+    <>
+      <button
+        type="button"
+        className="gg-sb-group"
+        aria-expanded={open}
+        aria-controls={bodyId}
+        aria-disabled={forceOpen ? "true" : undefined}
+        onClick={() => {
+          if (!forceOpen) setState(open ? "closed" : "open");
+        }}
+      >
+        <ChevronDown size={11} className="gg-sb-chev" aria-hidden="true" />
+        Only on {remote} · {count}
+      </button>
+      <div id={bodyId} hidden={!open}>
+        {open && children}
+      </div>
+    </>
+  );
+}
+
 export function GitGlassSidebar({
   data,
   sessionId,
   log,
+  logFailure,
   status,
   sessionBranch,
   activePath,
@@ -392,6 +451,7 @@ export function GitGlassSidebar({
   data: SidebarData;
   sessionId: string | null;
   log: HistoryLog | null;
+  logFailure: string | null;
   status: GitStatus | null;
   sessionBranch: string | null;
   activePath: string | null;
@@ -404,30 +464,48 @@ export function GitGlassSidebar({
   onOpenSession: (sessionId: string) => void;
 }) {
   const [filter, setFilter] = useState("");
-  const [remoteState, setRemoteState] = usePersistedChoice("cw-code:git-glass-remote-branches", SECTION_STATES, "closed");
   const [linkingKey, setLinkingKey] = useState<string | null>(null);
-  const [linkError, setLinkError] = useState("");
+  const [sidebarError, setSidebarError] = useState("");
   const filtering = filter.trim() !== "";
   const model = useMemo(() => filterSidebarModel(data.model, filter), [data.model, filter]);
   const counts = useMemo(() => sectionCounts(model), [model]);
   const allPrs = data.model.prs;
   const selectedSha = selection?.kind === "commit" ? selection.sha : null;
   const selectedPr = selection?.kind === "pr" ? prKey(selection.ref) : null;
-  const remoteOpen = filtering || remoteState === "open";
+  const remotes = useMemo(() => remoteGroups(model.remoteBranches), [model.remoteBranches]);
+  const hiddenPrs = data.model.hiddenOpenPrs;
+  const github = log?.github ?? null;
+  const unavailable = logFailure ? "Unavailable while the history cannot be loaded." : null;
 
   const link = (pr: SidebarPr): void => {
     if (!sessionId || !pr.headRefOid || linkingKey !== null) return;
     setLinkingKey(pr.key);
-    setLinkError("");
+    setSidebarError("");
     window.cw
       .linkSessionPr(sessionId, { ref: pr.ref, origin: "linked", lastSeenSha: pr.headRefOid, lastSeenAt: Date.now() })
-      .catch((reason: unknown) => setLinkError(`Could not link #${pr.ref.number}: ${errorMessage(reason)}`))
+      .then(
+        () => setSidebarError(""),
+        (reason: unknown) => setSidebarError(`Could not link #${pr.ref.number}: ${errorMessage(reason)}`)
+      )
       .finally(() => setLinkingKey(null));
   };
 
   const retryPrs = (): void => {
-    if (!data.prsTopic) return;
-    window.cw.refreshGitHubView(data.prsTopic, true).catch((reason: unknown) => setLinkError(`Could not reload pull requests: ${errorMessage(reason)}`));
+    const topic = data.prsTopic;
+    if (!topic) return;
+    setSidebarError("");
+    if (data.prsTopicFailed) {
+      acquireTopic(topic)();
+      return;
+    }
+    window.cw.refreshGitHubView(topic, true).catch((reason: unknown) => setSidebarError(`Could not reload pull requests: ${errorMessage(reason)}`));
+  };
+
+  const loadMorePrs = (): void => {
+    const topic = data.prsTopic;
+    if (!topic || data.prsLoadingMore) return;
+    setSidebarError("");
+    window.cw.loadMoreGitHubView(topic).catch((reason: unknown) => setSidebarError(`Could not load more pull requests: ${errorMessage(reason)}`));
   };
 
   const branchItem = (branch: HistoryRef) => (
@@ -469,9 +547,12 @@ export function GitGlassSidebar({
           )}
         </label>
       </div>
-      {linkError && (
-        <div className="inspect-error gg-sb-error" role="alert" onClick={() => setLinkError("")} title="Click to dismiss">
-          {linkError}
+      {sidebarError && (
+        <div className="pr-view-error gg-sb-error" role="alert">
+          <span>{sidebarError}</span>
+          <button type="button" className="pr-view-retry" onClick={() => setSidebarError("")}>
+            Dismiss
+          </button>
         </div>
       )}
       <div className="gg-sb-scroll">
@@ -576,26 +657,47 @@ export function GitGlassSidebar({
               />
             );
           })}
+          {hiddenPrs > 0 && !filtering && (
+            <div className="gg-sb-more">
+              <span>
+                {hiddenPrs} more open on GitHub
+              </span>
+              {data.prsHasMore && (
+                <button type="button" className="gg-mini" aria-disabled={data.prsLoadingMore ? "true" : undefined} onClick={loadMorePrs}>
+                  {data.prsLoadingMore ? "Loading…" : "Load more"}
+                </button>
+              )}
+              {github && (
+                <button
+                  type="button"
+                  className="gg-mini"
+                  onClick={() => openExternalLink(`https://github.com/${github.owner}/${github.repo}/pulls`)}
+                  title={`Open the pull requests of ${github.owner}/${github.repo} on GitHub`}
+                >
+                  GitHub
+                </button>
+              )}
+            </div>
+          )}
+          {data.model.hiddenOpenPrs > 0 && filtering && (
+            <div className="gg-sb-note">The filter covers loaded pull requests only; {data.model.hiddenOpenPrs} more are on GitHub.</div>
+          )}
         </Section>
 
         <Section id="branches" title="Branches" count={counts.branches} defaultOpen forceOpen={filtering} focus={focus}>
           {model.branches.length === 0 && model.remoteBranches.length === 0 && (
-            <div className="gg-sb-note">{filtering ? "No branch matches." : log ? "No branches yet." : "Loading branches…"}</div>
+            <div className="gg-sb-note">{filtering ? "No branch matches." : log ? "No branches yet." : (unavailable ?? "Loading branches…")}</div>
           )}
           {model.branches.map(branchItem)}
-          {model.remoteBranches.length > 0 && (
-            <>
-              <button type="button" className="gg-sb-group" aria-expanded={remoteOpen} onClick={() => setRemoteState(remoteOpen ? "closed" : "open")}>
-                <ChevronDown size={11} className="gg-sb-chev" aria-hidden="true" />
-                Only on origin · {model.remoteBranches.length}
-              </button>
-              {remoteOpen && model.remoteBranches.map(branchItem)}
-            </>
-          )}
+          {remotes.map((group) => (
+            <RemoteBranchGroup key={group.remote} remote={group.remote} count={group.refs.length} forceOpen={filtering}>
+              {group.refs.map(branchItem)}
+            </RemoteBranchGroup>
+          ))}
         </Section>
 
         <Section id="worktrees" title="Worktrees" count={counts.worktrees} defaultOpen forceOpen={filtering} focus={focus}>
-          {model.worktrees.length === 0 && <div className="gg-sb-note">{filtering ? "No worktree matches." : "Loading worktrees…"}</div>}
+          {model.worktrees.length === 0 && <div className="gg-sb-note">{filtering ? "No worktree matches." : log ? "No worktrees." : (unavailable ?? "Loading worktrees…")}</div>}
           {model.worktrees.map(({ worktree, owner, isHome }) => {
             const viewing = worktree.path === activePath;
             return (
@@ -610,7 +712,7 @@ export function GitGlassSidebar({
                   </>
                 }
                 sub={joinParts([worktree.branch ?? "detached", worktree.isMain ? "main checkout" : null, owner?.session.title])}
-                end={viewing ? <Eye size={12} aria-label="Viewing its history" /> : null}
+                end={viewing ? <Eye size={12} role="img" aria-label="Viewing its history" /> : null}
                 title={worktree.path}
                 onClick={() => onSelect({ kind: "worktree", path: worktree.path })}
               />
@@ -619,7 +721,7 @@ export function GitGlassSidebar({
         </Section>
 
         <Section id="tags" title="Tags" count={counts.tags} defaultOpen={false} forceOpen={filtering} focus={focus}>
-          {model.tags.length === 0 && <div className="gg-sb-note">{filtering ? "No tag matches." : "No tags."}</div>}
+          {model.tags.length === 0 && <div className="gg-sb-note">{filtering ? "No tag matches." : log ? "No tags." : (unavailable ?? "Loading tags…")}</div>}
           {model.tags.map((tag) => (
             <Item
               key={tag.fullName}
@@ -634,7 +736,7 @@ export function GitGlassSidebar({
         </Section>
 
         <Section id="stashes" title="Stashes" count={counts.stashes} defaultOpen={false} forceOpen={filtering} focus={focus}>
-          {model.stashes.length === 0 && <div className="gg-sb-note">{filtering ? "No stash matches." : "No stashes."}</div>}
+          {model.stashes.length === 0 && <div className="gg-sb-note">{filtering ? "No stash matches." : log ? "No stashes." : (unavailable ?? "Loading stashes…")}</div>}
           {model.stashes.map(({ ref, subject }) => (
             <Item
               key={ref.fullName}

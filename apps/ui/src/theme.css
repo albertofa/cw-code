@@ -15306,7 +15306,26 @@ button.gitbar-checkout:hover {
 
 .gg-sb-error {
   margin: 6px 8px 0;
-  cursor: pointer;
+  font-size: var(--t-3xs);
+}
+
+.gg-sb-more {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px 6px 24px;
+  color: var(--faint);
+  font-size: var(--t-3xs);
+}
+
+.gg-sb-more > span {
+  margin-right: auto;
+}
+
+.gg-sb-sec-h[aria-disabled="true"],
+.gg-sb-group[aria-disabled="true"] {
+  cursor: default;
 }
 
 .gg-sb-scroll {

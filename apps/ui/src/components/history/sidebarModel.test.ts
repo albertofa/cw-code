@@ -1,7 +1,18 @@
 import { describe, expect, test } from "bun:test";
-import type { HistoryLog, HistoryRef, PrRef, PrSummary, SessionMeta, SessionRow } from "@cw-code/contracts";
+import type { HistoryLog, HistoryRef, HistoryWorktree, PrRef, PrSummary, SessionMeta, SessionRow } from "@cw-code/contracts";
 import { prKey } from "@cw-code/shared/prRef";
-import { buildSidebarModel, filterSidebarModel, groupBranches, prForBranch, projectSessions, sectionCounts, unionPrs } from "./sidebarModel.js";
+import {
+  buildSidebarModel,
+  filterSidebarModel,
+  groupBranches,
+  hiddenOpenPrs,
+  prForBranch,
+  projectSessions,
+  remoteGroups,
+  sectionCounts,
+  sessionCheckout,
+  unionPrs
+} from "./sidebarModel.js";
 
 function ref(kind: HistoryRef["kind"], name: string, extra: Partial<HistoryRef> = {}): HistoryRef {
   return {
@@ -98,6 +109,42 @@ describe("groupBranches", () => {
     ]);
     expect(remoteOnly.map((entry) => entry.name)).toEqual(["origin/docs/only-remote", "upstream/another"]);
   });
+
+  test("groups remote-only branches per remote with origin first", () => {
+    const groups = remoteGroups([ref("remote", "fork/x"), ref("remote", "origin/b"), ref("remote", "origin/a"), ref("remote", "alpha/y")]);
+    expect(groups.map((group) => [group.remote, group.refs.map((entry) => entry.name)])).toEqual([
+      ["origin", ["origin/b", "origin/a"]],
+      ["alpha", ["alpha/y"]],
+      ["fork", ["fork/x"]]
+    ]);
+  });
+});
+
+describe("sessionCheckout", () => {
+  const worktree = (path: string, isMain: boolean, sessionId: string | null): HistoryWorktree => ({
+    key: path,
+    path,
+    name: path.split("/").pop() ?? path,
+    branch: null,
+    head: null,
+    isCurrent: false,
+    isMain,
+    sessionId
+  });
+  const worktrees = [worktree("/repo", true, "newest-folder-session"), worktree("/wt/sess_1", false, "s1")];
+
+  test("matches the session's own worktree path, ignoring trailing separators and backslashes", () => {
+    expect(sessionCheckout(worktrees, { worktreePath: "/wt/sess_1/" })?.path).toBe("/wt/sess_1");
+    expect(sessionCheckout([worktree("C:/wt/sess_2", false, null)], { worktreePath: "c:\\wt\\Sess_2" })?.path).toBe("C:/wt/sess_2");
+  });
+
+  test("resolves a folder session to the main checkout even when another session owns it", () => {
+    expect(sessionCheckout(worktrees, {})?.path).toBe("/repo");
+  });
+
+  test("finds nothing for a worktree outside this repository", () => {
+    expect(sessionCheckout(worktrees, { worktreePath: "/elsewhere" })).toBeNull();
+  });
 });
 
 describe("projectSessions", () => {
@@ -141,6 +188,13 @@ describe("unionPrs", () => {
     expect(prs[0]?.headRefName).toBe("branch-7");
   });
 
+  test("keeps only linked PRs of this repository when it is known", () => {
+    const foreign = { ref: { host: "github.com", owner: "other", repo: "tools", number: 9 }, origin: "linked" as const, lastSeenSha: "", lastSeenAt: 0 };
+    const sessions = [row("me", { prs: [foreign, link(3, "NURIA")] })];
+    expect(unionPrs(sessions, "me", [], new Map(), { owner: "nuria", repo: "INFRA" }).map((pr) => pr.ref.number)).toEqual([3]);
+    expect(unionPrs(sessions, "me", [], new Map()).map((pr) => pr.ref.number)).toEqual([9, 3]);
+  });
+
   test("tags nothing as linked here in project scope", () => {
     const prs = unionPrs([row("a", { prs: [link(1)] })], null, [], new Map());
     expect(prs[0]?.linkedHere).toBe(false);
@@ -153,6 +207,11 @@ describe("prForBranch", () => {
 
   test("prefers the open PR whose head is the branch", () => {
     expect(prForBranch(prs, ref("local", "feature"))?.ref.number).toBe(2);
+  });
+
+  test("never marks a branch with a PR whose head and base share its name, like a fork's main", () => {
+    const fork = unionPrs([], null, [summary(4, { headRefName: "main", baseRefName: "main" })], new Map());
+    expect(prForBranch(fork, ref("local", "main"))).toBeNull();
   });
 
   test("matches the tracked branch and remote branches by their short name", () => {
@@ -187,15 +246,17 @@ describe("buildSidebarModel and filterSidebarModel", () => {
     wipCount: null,
     github: { owner: "nuria", repo: "infra" }
   };
-  const model = buildSidebarModel({
+  const input = {
     log,
     rows: [row("me", { title: "OpenSearch SAML", prs: [link(151)] }), row("other", { title: "Elastic log config" })],
     projectId: "p1",
     sessionId: "me",
     homePath: "/wt/sess_1",
     openPrs: [summary(150, { title: "docs: ACS route notes" })],
-    summaries: new Map()
-  });
+    openCount: null,
+    summaries: new Map<string, PrSummary>()
+  };
+  const model = buildSidebarModel(input);
 
   test("builds every section from the log, the sidebar rows and the open PRs", () => {
     expect(model.tags.map((entry) => entry.name)).toEqual(["v0.10.0", "v0.9.0"]);
@@ -214,6 +275,16 @@ describe("buildSidebarModel and filterSidebarModel", () => {
     expect(sectionCounts(filterSidebarModel(model, "SAML"))).toEqual({ sessions: 1, prs: 1, branches: 1, worktrees: 1, tags: 0, stashes: 1 });
     expect(sectionCounts(filterSidebarModel(model, "acs"))).toEqual({ sessions: 0, prs: 1, branches: 1, worktrees: 0, tags: 0, stashes: 0 });
     expect(sectionCounts(filterSidebarModel(model, "#151"))).toEqual({ sessions: 0, prs: 1, branches: 0, worktrees: 0, tags: 0, stashes: 0 });
+  });
+
+  test("counts open PRs GitHub has beyond the loaded page, without the linked ones already listed", () => {
+    const prs = unionPrs([row("me", { prs: [link(151)] })], "me", [summary(150)], new Map([[prKey(prRef(151)), summary(151)]]));
+    expect(hiddenOpenPrs(prs, [summary(150)], 20)).toBe(18);
+    expect(hiddenOpenPrs(prs, [summary(150)], null)).toBe(0);
+    const paged = buildSidebarModel({ ...input, openCount: 20 });
+    expect(paged.hiddenOpenPrs).toBe(19);
+    expect(sectionCounts(paged).prs).toBe(21);
+    expect(filterSidebarModel(paged, "acs").hiddenOpenPrs).toBe(0);
   });
 
   test("returns the same model for a blank filter", () => {

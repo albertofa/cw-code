@@ -36,7 +36,7 @@ import { GitGlassSidebar, GitGlassSidebarStrip, useGitGlassSidebarData, type Sec
 import { PrDetails } from "./PrDetails.js";
 import { SessionDetails } from "./SessionDetails.js";
 import { WorktreeDetails } from "./WorktreeDetails.js";
-import { sidebarPrOf, type SidebarSectionId } from "./sidebarModel.js";
+import { sessionCheckout, sidebarPrOf, type SidebarSectionId } from "./sidebarModel.js";
 import { NARROW_WIDTH } from "./gitGlassLayout.js";
 import { isEmptyQuery, matchesQuery, parseHistoryQuery, type HistorySearchScope, type HistorySearchTarget } from "./historySearch.js";
 import { usePersistedChoice, usePersistedWidth } from "./usePersistedState.js";
@@ -626,6 +626,7 @@ export function GitGlassPanel({ scope: scopeProp }: { scope: HistoryScope }) {
               data={sidebarData}
               sessionId={sessionId}
               log={log}
+              logFailure={failure}
               status={status}
               sessionBranch={sessionBranch}
               activePath={activePath}
@@ -730,10 +731,11 @@ export function GitGlassPanel({ scope: scopeProp }: { scope: HistoryScope }) {
               <PrDetails pr={sidebarData.model.prs.find((pr) => pr.key === prKey(ref)) ?? sidebarPrOf(ref)} sessionId={sessionId} onOpenSession={openSession} />
             )}
             renderSession={(id) => {
-              const owned = worktrees.find((worktree) => worktree.sessionId === id) ?? null;
+              const row = sidebarData.rows.find((candidate) => candidate.session.id === id);
+              const owned = row ? sessionCheckout(worktrees, row.session) : null;
               return (
                 <SessionDetails
-                  row={sidebarData.rows.find((row) => row.session.id === id)}
+                  row={row}
                   isThis={id === sessionId}
                   worktree={owned}
                   viewing={owned !== null && owned.path === activePath}
