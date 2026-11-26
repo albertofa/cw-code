@@ -199,7 +199,7 @@ export function App() {
     [nativeSubagentStats, cwSubagents]
   );
 
-  const { driver, hasPr, hasPreview, isToolAvailable, rightTop: topTool } = useToolAvailability(activeSessionId ?? undefined);
+  const { driver, hasPreview, isToolAvailable, rightTop: topTool } = useToolAvailability(activeSessionId ?? undefined);
 
   useEffect(() => {
     if (!activeSessionId) return;
@@ -291,7 +291,6 @@ export function App() {
             hidden={settingsActive}
             sessionId={activeSessionId ?? undefined}
             driver={driver}
-            hasPr={hasPr}
             hasPreview={hasPreview}
             subagents={subagentStats}
             rightActive={topTool}

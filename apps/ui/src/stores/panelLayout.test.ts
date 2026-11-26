@@ -52,9 +52,9 @@ describe("isBottomOpen", () => {
 
   it("stays closed when only unavailable tools are docked to the bottom", () => {
     const dock = { ...defaultLayout().dockByTab, preview: "bottom" as const };
-    expect(isBottomOpen(dock, toolAvailability("claude", false, false))).toBe(false);
-    expect(isBottomOpen(dock, toolAvailability("claude", false, true))).toBe(true);
-    expect(isBottomOpen({ ...dock, shell: "bottom" }, toolAvailability("claude", false, false))).toBe(true);
+    expect(isBottomOpen(dock, toolAvailability("claude", false))).toBe(false);
+    expect(isBottomOpen(dock, toolAvailability("claude", true))).toBe(true);
+    expect(isBottomOpen({ ...dock, shell: "bottom" }, toolAvailability("claude", false))).toBe(true);
   });
 });
 
@@ -121,20 +121,80 @@ describe("sanitizeLayout", () => {
     expect(clean.autoLocation.files).toBe("main");
   });
 
-  it("keeps a persisted PR tab placement and defaults it to closed", () => {
-    expect(defaultLayout().dockByTab.pr).toBe("closed");
-    expect(defaultLayout().autoLocation.pr).toBe("right");
+  it("defaults Git glass to closed and keeps a persisted placement", () => {
+    expect(defaultLayout().dockByTab.gitglass).toBe("closed");
+    expect(defaultLayout().autoLocation.gitglass).toBe("main");
     const clean = sanitizeLayout({
-      dockByTab: { pr: "main" },
-      autoLocation: { pr: "bottom" },
-      mainOrder: ["chat", "pr"],
-      activeMain: "pr"
+      dockByTab: { gitglass: "main" },
+      autoLocation: { gitglass: "bottom" },
+      mainOrder: ["chat", "gitglass"],
+      activeMain: "gitglass"
     });
-    expect(clean.dockByTab.pr).toBe("main");
-    expect(clean.autoLocation.pr).toBe("bottom");
-    expect(clean.mainOrder).toEqual(["chat", "pr"]);
-    expect(clean.activeMain).toBe("pr");
-    expect(sanitizeLayout({ dockByTab: { files: "right" } }).dockByTab.pr).toBe("closed");
+    expect(clean.dockByTab.gitglass).toBe("main");
+    expect(clean.autoLocation.gitglass).toBe("bottom");
+    expect(clean.mainOrder).toEqual(["chat", "gitglass"]);
+    expect(clean.activeMain).toBe("gitglass");
+  });
+
+  describe("migration of the History and PR tabs", () => {
+    it("moves a History-only placement to gitglass", () => {
+      const clean = sanitizeLayout({ dockByTab: { history: "right", files: "main" } });
+      expect(clean.dockByTab.gitglass).toBe("right");
+      expect(clean.dockByTab.files).toBe("main");
+      expect(clean.dockByTab).not.toHaveProperty("history");
+      expect(clean.dockByTab).not.toHaveProperty("pr");
+    });
+
+    it("moves a PR-only placement to gitglass", () => {
+      expect(sanitizeLayout({ dockByTab: { history: "closed", pr: "bottom" } }).dockByTab.gitglass).toBe("bottom");
+      expect(sanitizeLayout({ dockByTab: { pr: "main" } }).dockByTab.gitglass).toBe("main");
+    });
+
+    it("prefers History when both were open", () => {
+      expect(sanitizeLayout({ dockByTab: { history: "main", pr: "right" } }).dockByTab.gitglass).toBe("main");
+    });
+
+    it("closes gitglass when neither was open", () => {
+      expect(sanitizeLayout({ dockByTab: { history: "closed", pr: "closed" } }).dockByTab.gitglass).toBe("closed");
+      expect(sanitizeLayout({ dockByTab: { files: "right" } }).dockByTab.gitglass).toBe("closed");
+    });
+
+    it("keeps an explicit gitglass entry", () => {
+      expect(sanitizeLayout({ dockByTab: { gitglass: "closed", history: "main" } }).dockByTab.gitglass).toBe("closed");
+    });
+
+    it("rewrites actives and main order without duplicates", () => {
+      const clean = sanitizeLayout({
+        dockByTab: { history: "main", pr: "main", files: "main" },
+        mainOrder: ["chat", "pr", "files", "history"],
+        activeMain: "history"
+      });
+      expect(clean.mainOrder).toEqual(["chat", "gitglass", "files"]);
+      expect(clean.activeMain).toBe("gitglass");
+      const right = sanitizeLayout({ dockByTab: { pr: "right" }, activeRight: "pr" });
+      expect(right.activeRight).toBe("gitglass");
+      const bottom = sanitizeLayout({ dockByTab: { history: "bottom" }, activeBottom: "history" });
+      expect(bottom.activeBottom).toBe("gitglass");
+    });
+
+    it("takes the auto location from History, else main", () => {
+      expect(sanitizeLayout({ autoLocation: { history: "bottom", pr: "main" } }).autoLocation.gitglass).toBe("bottom");
+      expect(sanitizeLayout({ autoLocation: { pr: "bottom" } }).autoLocation.gitglass).toBe("main");
+      expect(sanitizeLayout({ autoLocation: { history: "closed" } }).autoLocation.gitglass).toBe("main");
+    });
+
+    it("migrates persisted per-session state and its auto locations", () => {
+      const state = parsePanelState(
+        JSON.stringify({
+          autoLocation: { history: "right" },
+          sessions: { s1: { dockByTab: { pr: "right" }, activeRight: "pr" } }
+        }),
+        null
+      );
+      expect(state.autoLocation.gitglass).toBe("right");
+      expect(state.sessions.s1.dockByTab.gitglass).toBe("right");
+      expect(state.sessions.s1.activeRight).toBe("gitglass");
+    });
   });
 
   it("repairs actives that point outside their panel", () => {
@@ -424,24 +484,16 @@ describe("resolveMainTab", () => {
     const layout = defaultLayout();
     layout.dockByTab.files = "main";
     layout.mainOrder = ["chat", "files"];
-    expect(resolveMainTab(layout.mainOrder, layout.dockByTab, "claude", "files", false)).toBe("files");
-    expect(resolveMainTab(layout.mainOrder, layout.dockByTab, "claude", "agents", false)).toBe("chat");
+    expect(resolveMainTab(layout.mainOrder, layout.dockByTab, "claude", "files")).toBe("files");
+    expect(resolveMainTab(layout.mainOrder, layout.dockByTab, "claude", "agents")).toBe("chat");
   });
 
   it("hides harness tabs whose driver is not active", () => {
     const layout = defaultLayout();
     layout.dockByTab.claude = "main";
     layout.mainOrder = ["chat", "files", "claude"];
-    expect(resolveMainTab(layout.mainOrder, layout.dockByTab, "opencode", "claude", false)).toBe("chat");
-    expect(resolveMainTab(layout.mainOrder, layout.dockByTab, "claude", "claude", false)).toBe("claude");
-  });
-
-  it("hides the PR tab for sessions without a linked PR", () => {
-    const layout = defaultLayout();
-    layout.dockByTab.pr = "main";
-    layout.mainOrder = ["chat", "pr"];
-    expect(resolveMainTab(layout.mainOrder, layout.dockByTab, "claude", "pr", false)).toBe("chat");
-    expect(resolveMainTab(layout.mainOrder, layout.dockByTab, "claude", "pr", true)).toBe("pr");
+    expect(resolveMainTab(layout.mainOrder, layout.dockByTab, "opencode", "claude")).toBe("chat");
+    expect(resolveMainTab(layout.mainOrder, layout.dockByTab, "claude", "claude")).toBe("claude");
   });
 
   it("falls back to chat when the active main tool is unavailable, like a preview that did not survive a restart", () => {
@@ -449,10 +501,10 @@ describe("resolveMainTab", () => {
     layout.dockByTab.preview = "main";
     layout.dockByTab.files = "main";
     layout.mainOrder = ["chat", "files", "preview"];
-    const noPreview = toolAvailability("claude", false, false);
-    expect(resolveMainTab(layout.mainOrder, layout.dockByTab, "claude", "preview", false, noPreview)).toBe("chat");
-    expect(resolveMainTab(layout.mainOrder, layout.dockByTab, "claude", "files", false, noPreview)).toBe("files");
-    expect(resolveMainTab(layout.mainOrder, layout.dockByTab, "claude", "preview", false, toolAvailability("claude", false, true))).toBe("preview");
+    const noPreview = toolAvailability("claude", false);
+    expect(resolveMainTab(layout.mainOrder, layout.dockByTab, "claude", "preview", noPreview)).toBe("chat");
+    expect(resolveMainTab(layout.mainOrder, layout.dockByTab, "claude", "files", noPreview)).toBe("files");
+    expect(resolveMainTab(layout.mainOrder, layout.dockByTab, "claude", "preview", toolAvailability("claude", true))).toBe("preview");
   });
 });
 
@@ -510,7 +562,7 @@ describe("resolveBottomActive", () => {
 describe("rightOpenTabs", () => {
   const dock = {
     ...defaultSessionPanel().dockByTab,
-    pr: "right" as const,
+    gitglass: "right" as const,
     shell: "right" as const,
     files: "right" as const,
     preview: "right" as const,
@@ -520,12 +572,12 @@ describe("rightOpenTabs", () => {
   };
 
   it("lists right-docked tools in dock order", () => {
-    expect(rightOpenTabs(dock, () => true)).toEqual(["files", "claude", "codex", "shell", "preview", "pr"]);
+    expect(rightOpenTabs(dock, () => true)).toEqual(["files", "gitglass", "claude", "codex", "shell", "preview"]);
   });
 
-  it("drops a PR tool without a link, a harness of another driver and a missing preview", () => {
-    expect(rightOpenTabs(dock, toolAvailability("codex", false, false))).toEqual(["files", "codex", "shell"]);
-    expect(rightOpenTabs(dock, toolAvailability("claude", true, true))).toEqual(["files", "claude", "shell", "preview", "pr"]);
-    expect(rightOpenTabs(dock, toolAvailability(undefined, false, false))).toEqual(["files", "shell"]);
+  it("drops a harness of another driver and a missing preview", () => {
+    expect(rightOpenTabs(dock, toolAvailability("codex", false))).toEqual(["files", "gitglass", "codex", "shell"]);
+    expect(rightOpenTabs(dock, toolAvailability("claude", true))).toEqual(["files", "gitglass", "claude", "shell", "preview"]);
+    expect(rightOpenTabs(dock, toolAvailability(undefined, false))).toEqual(["files", "gitglass", "shell"]);
   });
 });

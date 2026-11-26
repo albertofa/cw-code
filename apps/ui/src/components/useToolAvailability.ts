@@ -3,13 +3,11 @@ import type { DriverName } from "../cw.js";
 import { useAppStore } from "../stores/appStore.js";
 import { resolveRightTop } from "../stores/panelLayout.js";
 import { selectSessionPanel, usePanelStore } from "../stores/panelStore.js";
-import { sessionLinks } from "./sessionPrLinks.js";
 import { useSessionRow } from "./useSessions.js";
 import { toolAvailability } from "./toolTabs.js";
 
 export interface ToolAvailability {
   driver: DriverName | undefined;
-  hasPr: boolean;
   hasPreview: boolean;
   isToolAvailable: (tab: DockableTabId) => boolean;
   rightTop: DockableTabId | null;
@@ -22,9 +20,8 @@ export function useToolAvailability(sessionId: string | undefined): ToolAvailabi
 
   const session = useSessionRow(sessionId)?.session;
   const driver = pendingDriver ?? session?.driver;
-  const hasPr = pendingDriver === null && sessionLinks(session).length > 0;
 
-  const isToolAvailable = toolAvailability(driver, hasPr, hasPreview);
+  const isToolAvailable = toolAvailability(driver, hasPreview);
   const rightTop = resolveRightTop(dockByTab, activeRight, isToolAvailable, driver);
-  return { driver, hasPr, hasPreview, isToolAvailable, rightTop };
+  return { driver, hasPreview, isToolAvailable, rightTop };
 }

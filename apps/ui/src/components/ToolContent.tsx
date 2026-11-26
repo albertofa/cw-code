@@ -4,7 +4,6 @@ import { AgentsPanel } from "./AgentsPanel.js";
 import { GitInspectPanel } from "./GitInspectPanel.js";
 import { HistoryPanel } from "./history/HistoryPanel.js";
 import { PreviewPanel } from "./PreviewPanel.js";
-import { PrSessionPanel } from "./PrSessionPanel.js";
 import { PtyTab } from "./PtyTab.js";
 import { SessionOverview } from "./SessionOverview.js";
 import { InlineLoading } from "./Loading.js";
@@ -31,8 +30,7 @@ export function ToolContent({ tab, sessionId, panel }: { tab: DockableTabId; ses
   }
   if (tab === "agents") return <AgentsPanel sessionId={sessionId} />;
   if (tab === "diff") return <GitInspectPanel sessionId={sessionId} />;
-  if (tab === "history") return <HistoryPanel key={sessionId} sessionId={sessionId} />;
-  if (tab === "pr") return <PrSessionPanel key={sessionId} sessionId={sessionId} />;
+  if (tab === "gitglass") return <HistoryPanel key={sessionId} sessionId={sessionId} />;
   if (tab === "preview") {
     if (!preview) return null;
     return (

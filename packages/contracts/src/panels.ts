@@ -4,7 +4,7 @@ export type PanelId = "main" | "right" | "bottom";
 
 export type DockLocation = PanelId | "closed";
 
-export type DockableTabId = "overview" | "files" | "agents" | "diff" | "history" | DriverKind | "shell" | "preview" | "pr";
+export type DockableTabId = "overview" | "files" | "agents" | "diff" | "gitglass" | DriverKind | "shell" | "preview";
 
 export type MainTabId = "chat" | DockableTabId;
 

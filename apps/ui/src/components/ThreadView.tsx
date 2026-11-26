@@ -30,7 +30,6 @@ import { PrUpdateDock } from "./PrUpdateDock.js";
 import { WorkingDock } from "./WorkingDock.js";
 import { PrSessionChip } from "./PrSessionPanel.js";
 import { useMarkTurnSeen } from "./useTurnSeen.js";
-import { sessionLinks } from "./sessionPrLinks.js";
 import { TurnBlock } from "./TurnBlock.js";
 import { TurnChangesCard } from "./TurnChangesCard.js";
 import { snapshotTurnMatches } from "./turnChanges.js";
@@ -254,7 +253,6 @@ export function ThreadView({ hidden = false }: { hidden?: boolean }) {
     return null;
   }, [messages, busyTurn]);
   const showNew = pendingDriver !== null || !session;
-  const hasPr = !showNew && sessionLinks(session).length > 0;
   useMarkTurnSeen(showNew ? undefined : session?.id, session?.status, !hidden);
   const scrollRef = useRef<HTMLDivElement>(null);
   const innerRef = useRef<HTMLDivElement>(null);
@@ -275,11 +273,11 @@ export function ThreadView({ hidden = false }: { hidden?: boolean }) {
   const sessionId = session?.id;
   const turnSnapshot = session?.lastTurnSnapshot;
   const changesTurnIndex = snapshotTurnMatches(turns[turns.length - 1], turnSnapshot) ? turns.length - 1 : -1;
-  const isToolAvailable = toolAvailability(session?.driver, hasPr, hasPreview);
+  const isToolAvailable = toolAvailability(session?.driver, hasPreview);
   const resolvedMainTab =
     session === undefined
       ? "chat"
-      : resolveMainTab(panelMainOrder, panelDockByTab, session.driver, panelActiveMain, hasPr, isToolAvailable);
+      : resolveMainTab(panelMainOrder, panelDockByTab, session.driver, panelActiveMain, isToolAvailable);
   const showMainTool: DockableTabId | null = resolvedMainTab === "chat" ? null : resolvedMainTab;
   const threadMounted = !showNew;
   const threadHidden = hidden || showMainTool !== null;
@@ -478,7 +476,7 @@ export function ThreadView({ hidden = false }: { hidden?: boolean }) {
     return frame(
       <>
         {head}
-        <MainTabStrip sessionId={undefined} driver={heroDriver} hasPr={false} />
+        <MainTabStrip sessionId={undefined} driver={heroDriver} />
         <NewThread
           key={activeProjectId}
           projectId={activeProjectId}
@@ -595,7 +593,7 @@ export function ThreadView({ hidden = false }: { hidden?: boolean }) {
   return frame(
     <>
       {head}
-      <MainTabStrip sessionId={session.id} driver={session.driver} hasPr={hasPr} />
+      <MainTabStrip sessionId={session.id} driver={session.driver} />
       {showMainTool !== null && (
         <div
           className={`main-tool-body${dropMain.over ? " drop-target-active" : ""}`}

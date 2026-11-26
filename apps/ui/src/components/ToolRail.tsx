@@ -47,7 +47,6 @@ function subagentTitle(stats: SubagentStats): string {
 export function ToolRail({
   sessionId,
   driver,
-  hasPr,
   hasPreview,
   subagents,
   rightActive,
@@ -57,7 +56,6 @@ export function ToolRail({
 }: {
   sessionId: string | undefined;
   driver: DriverName | undefined;
-  hasPr: boolean;
   hasPreview: boolean;
   subagents: SubagentStats;
   rightActive: DockableTabId | null;
@@ -80,7 +78,7 @@ export function ToolRail({
       setRightVisible(sessionId, true);
     }
   });
-  const groups = railGroups(driver, hasPr, hasPreview);
+  const groups = railGroups(driver, hasPreview);
   const rightShown = rightVisible && rightOpenTabs(dockByTab, isToolAvailable).length > 0;
   const dropHint = !dragFromRail && (dropRail.over || (draggingTab !== null && !rightShown));
   const bottomShown = bottomCollapsed ? null : resolveBottomActive(dockByTab, activeBottom, isToolAvailable);
@@ -133,7 +131,7 @@ export function ToolRail({
               >
                 {isHarnessTabId(id) ? <DriverIcon driver={id} size={16} /> : <def.Icon size={16} aria-hidden="true" />}
                 {id === "diff" && sessionId && <DiffBadge sessionId={sessionId} />}
-                {id === "pr" && sessionId && <PrDot sessionId={sessionId} />}
+                {id === "gitglass" && sessionId && <PrDot sessionId={sessionId} />}
                 {showAgents && (
                   <span className={`rail-badge${subagents.running > 0 ? " run" : ""}`} aria-hidden="true">
                     {subagents.total > 99 ? "99+" : subagents.total}
