@@ -32,6 +32,10 @@ beforeEach(() => {
       checkoutOwner: (path: string) => owners[path] ?? null,
       switchBranch: async (id: string, branch: string) => calls.push(["switchBranch", id, branch]),
       pullBranch: async (id: string) => calls.push(["pullBranch", id]),
+      runCheckoutAction: async (id: string, run: (root: string) => Promise<void>) => {
+        calls.push(["runCheckoutAction", id]);
+        return run(id === "s1" ? SESSION_ROOT : OWNED);
+      },
       withUnownedCheckout: async <T>(root: string, run: () => Promise<T>) => {
         calls.push(["lock", root]);
         return run();
@@ -43,7 +47,13 @@ beforeEach(() => {
         return dirty;
       },
       checkoutBranch: async (root: string, branch: string) => calls.push(["checkoutBranch", root, branch]),
-      pullFastForward: async (root: string) => calls.push(["pullFastForward", root])
+      pullFastForward: async (root: string) => calls.push(["pullFastForward", root]),
+      githubRemote: async () => ({ host: "github.com", owner: "acme", repository: "app" }),
+      fetchAll: async (root: string) => calls.push(["fetchAll", root]),
+      push: async (root: string) => calls.push(["push", root]),
+      stashPush: async (root: string, message?: string) => calls.push(["stashPush", root, message]),
+      stashPop: async (root: string) => calls.push(["stashPop", root]),
+      createBranch: async (root: string, name: string, sha: string, checkout: boolean) => calls.push(["createBranch", root, name, sha, checkout])
     },
     commitPulls: {
       resolve: async (root: string, sha: string) => {
@@ -217,5 +227,60 @@ describe("history.commitPulls", () => {
       ["commitPulls", SESSION_ROOT, sha],
       ["commitPulls", FREE, sha]
     ]);
+  });
+});
+
+describe("history git actions", () => {
+  const sha = "c".repeat(40);
+
+  test("go through the session's own checkout", async () => {
+    await dispatch("history.fetch", { sessionId: "s1" });
+    await dispatch("history.stash", { sessionId: "s1", message: "wip" });
+    expect(calls).toEqual([
+      ["runCheckoutAction", "s1"],
+      ["fetchAll", SESSION_ROOT],
+      ["runCheckoutAction", "s1"],
+      ["stashPush", SESSION_ROOT, "wip"]
+    ]);
+  });
+
+  test("go through the owning session for an owned worktree", async () => {
+    await dispatch("history.push", { sessionId: "s1", worktree: OWNED });
+    expect(calls).toEqual([
+      ["runCheckoutAction", "s2"],
+      ["push", OWNED]
+    ]);
+  });
+
+  test("take the folder lock when no session owns the checkout", async () => {
+    await dispatch("history.push", { sessionId: "s1", worktree: FREE });
+    expect(calls).toEqual([
+      ["lock", FREE],
+      ["push", FREE]
+    ]);
+  });
+
+  test("refuse a dirty main checkout only for pop and a branch with checkout", async () => {
+    dirty = true;
+    await dispatch("history.fetch", { sessionId: "s1", worktree: MAIN });
+    await dispatch("history.stash", { sessionId: "s1", worktree: MAIN });
+    await dispatch("history.branch", { sessionId: "s1", worktree: MAIN, name: "feat", sha, checkout: false });
+    expect(calls.filter((call) => call[0] === "dirtyCheck")).toEqual([]);
+    await expect(dispatch("history.stashPop", { sessionId: "s1", worktree: MAIN })).rejects.toThrow("uncommitted changes");
+    await expect(dispatch("history.branch", { sessionId: "s1", worktree: MAIN, name: "feat", sha, checkout: true })).rejects.toThrow("uncommitted changes");
+    expect(calls.filter((call) => call[0] === "dirtyCheck")).toEqual([
+      ["dirtyCheck", MAIN],
+      ["dirtyCheck", MAIN]
+    ]);
+  });
+
+  test("validate branch arguments", async () => {
+    await expect(dispatch("history.branch", { sessionId: "s1", name: "", sha, checkout: false })).rejects.toThrow("name must be");
+    await expect(dispatch("history.branch", { sessionId: "s1", name: "x", sha: "abc", checkout: false })).rejects.toThrow("full 40-character");
+    await expect(dispatch("history.branch", { sessionId: "s1", name: "x", sha, checkout: "yes" })).rejects.toThrow("checkout must be");
+  });
+
+  test("history.log carries the github.com repo", async () => {
+    expect(await dispatch("history.log", { sessionId: "s1" })).toMatchObject({ github: { owner: "acme", repo: "app" } });
   });
 });

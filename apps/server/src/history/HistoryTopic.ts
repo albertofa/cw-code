@@ -33,7 +33,7 @@ function describeError(error: unknown): string {
 }
 
 function emptyData(rev: number, avatarsRev: number, error: string | null): HistoryTopicData {
-  return { head: null, refs: [], rev, avatarsRev, error };
+  return { head: null, refs: [], rev, avatarsRev, fetchedAt: null, error };
 }
 
 export class HistoryTopic implements TopicProvider {
@@ -116,7 +116,7 @@ export class HistoryTopic implements TopicProvider {
       entry.fingerprint = fingerprint;
       entry.rev += 1;
     }
-    entry.store.sync({ head: snapshot.head, refs: snapshot.refs, rev: entry.rev, avatarsRev: this.avatarsRev, error: null });
+    entry.store.sync({ head: snapshot.head, refs: snapshot.refs, rev: entry.rev, avatarsRev: this.avatarsRev, fetchedAt: snapshot.fetchedAt, error: null });
   }
 
   avatarsChanged(): void {

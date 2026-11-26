@@ -1,4 +1,6 @@
 import { spawn } from "node:child_process";
+import { stat } from "node:fs/promises";
+import { resolve } from "node:path";
 import type { HistoryCommitDetail, HistoryHead, HistoryLog, HistoryRef, HistoryWorktree } from "@cw-code/contracts";
 import { execWithStatus } from "../fs/GitService.js";
 import { sanitizedChildEnv } from "../shellEnvironment.js";
@@ -30,6 +32,7 @@ export interface HistorySnapshot {
   refs: HistoryRef[];
   stashes: string[];
   wipCount?: number;
+  fetchedAt: number | null;
 }
 
 function readEnv(): NodeJS.ProcessEnv {
@@ -60,7 +63,7 @@ export class HistoryService {
     return promise;
   }
 
-  async log(root: string, limit: number): Promise<HistoryLog> {
+  async log(root: string, limit: number): Promise<Omit<HistoryLog, "github">> {
     const [snapshot, stashResult, worktreeResult, toplevelResult] = await Promise.allSettled([
       this.computeSnapshot(root),
       this.read(root, ["stash", "list", STASH_FORMAT]),
@@ -114,11 +117,12 @@ export class HistoryService {
   }
 
   private async computeSnapshot(root: string): Promise<HistorySnapshot> {
-    const [sha, branch, refs, stashes] = await Promise.all([
+    const [sha, branch, refs, stashes, fetchedAt] = await Promise.all([
       this.run(root, ["rev-parse", "--verify", "-q", "HEAD"]),
       this.run(root, ["symbolic-ref", "--short", "-q", "HEAD"]),
       this.run(root, ["for-each-ref", REFS_FORMAT, "refs/heads", "refs/remotes", "refs/tags"]),
-      this.run(root, ["stash", "list", "--format=%H"])
+      this.run(root, ["stash", "list", "--format=%H"]),
+      this.fetchedAt(root)
     ]);
     if (sha.code !== 0 && sha.code !== 1) throw failure(["rev-parse"], sha.stderr, sha.code);
     if (refs.code !== 0) throw failure(["for-each-ref"], refs.stderr, refs.code);
@@ -128,8 +132,19 @@ export class HistoryService {
     return {
       head: { sha: shaValue || null, branch: branchValue || null, detached: branch.code !== 0 },
       refs: parseRefs(refs.stdout),
-      stashes: stashes.stdout.split("\n").map((line) => line.trim()).filter((line) => line.length > 0)
+      stashes: stashes.stdout.split("\n").map((line) => line.trim()).filter((line) => line.length > 0),
+      fetchedAt
     };
+  }
+
+  private async fetchedAt(root: string): Promise<number | null> {
+    try {
+      const dir = await this.run(root, ["rev-parse", "--git-common-dir"]);
+      if (dir.code !== 0) return null;
+      return (await stat(resolve(root, dir.stdout.trim(), "FETCH_HEAD"))).mtimeMs;
+    } catch {
+      return null;
+    }
   }
 
   private run(root: string, args: string[], timeout = READ_TIMEOUT_MS) {

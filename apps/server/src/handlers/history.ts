@@ -51,18 +51,31 @@ export function registerHistoryHandlers(router: Router, app: ServerApp): void {
     return { sessionId, root: match.path, worktree: match.path, owner: ownerOf(match.path), isMain: match.isMain };
   };
 
-  const onUnowned = async <T>(target: HistoryTarget, run: () => Promise<T>): Promise<T> => {
+  const onUnowned = async <T>(target: HistoryTarget, run: () => Promise<T>, refuseDirtyMain = true): Promise<T> => {
     const { sessions, git } = services();
     return sessions.withUnownedCheckout(target.root, async () => {
-      if (target.isMain && (await git.isWorkingTreeDirty(target.root))) {
+      if (refuseDirtyMain && target.isMain && (await git.isWorkingTreeDirty(target.root))) {
         throw new Error("The main checkout has uncommitted changes — commit or stash them before switching branches or pulling");
       }
       return run();
     });
   };
 
-  const withOwners = (log: HistoryLog): HistoryLog => ({
+  const routeAction = async (
+    args: Record<string, unknown>,
+    run: (root: string) => Promise<void>,
+    refuseDirtyMain: boolean
+  ): Promise<void> => {
+    const target = await targetOf(args, true);
+    const { sessions } = services();
+    if (target.sessionId !== null && target.worktree === null) await sessions.runCheckoutAction(target.sessionId, run);
+    else if (target.owner) await sessions.runCheckoutAction(target.owner, run);
+    else await onUnowned(target, () => run(target.root), refuseDirtyMain);
+  };
+
+  const withOwners = (log: Omit<HistoryLog, "github">, github: HistoryLog["github"]): HistoryLog => ({
     ...log,
+    github,
     worktrees: log.worktrees.map((entry) => ({ ...entry, sessionId: ownerOf(entry.path) }))
   });
 
@@ -71,11 +84,13 @@ export function registerHistoryHandlers(router: Router, app: ServerApp): void {
     const limit = parseHistoryLimit(args.limit);
     const target = await targetOf(args, true);
     const { history } = services();
-    const [log, wipCount] = await Promise.all([
+    const [log, wipCount, remote] = await Promise.all([
       history.log(target.root, limit),
-      target.worktree === null ? Promise.resolve(null) : history.wipCount(target.root)
+      target.worktree === null ? Promise.resolve(null) : history.wipCount(target.root),
+      services().git.githubRemote(target.root)
     ]);
-    return { ...withOwners(log), wipCount };
+    const github = remote && remote.host === "github.com" ? { owner: remote.owner, repo: remote.repository } : null;
+    return { ...withOwners(log, github), wipCount };
   });
   handle(router, "history.commit", async (raw) => {
     const args = parseArgs(raw, "history.commit");
@@ -112,5 +127,36 @@ export function registerHistoryHandlers(router: Router, app: ServerApp): void {
     if (target.sessionId !== null && target.worktree === null) await sessions.switchBranch(target.sessionId, branch);
     else if (target.owner) await sessions.switchBranch(target.owner, branch);
     else await onUnowned(target, () => git.checkoutBranch(target.root, branch));
+  });
+  handle(router, "history.fetch", async (raw) => {
+    const args = parseArgs(raw, "history.fetch");
+    const { git } = services();
+    await routeAction(args, (root) => git.fetchAll(root), false);
+  });
+  handle(router, "history.push", async (raw) => {
+    const args = parseArgs(raw, "history.push");
+    const { git } = services();
+    await routeAction(args, (root) => git.push(root), false);
+  });
+  handle(router, "history.stash", async (raw) => {
+    const args = parseArgs(raw, "history.stash");
+    const message = args.message;
+    if (message !== undefined && message !== null && typeof message !== "string") throw new Error("message must be text");
+    const { git } = services();
+    await routeAction(args, (root) => git.stashPush(root, message ?? undefined), false);
+  });
+  handle(router, "history.stashPop", async (raw) => {
+    const args = parseArgs(raw, "history.stashPop");
+    const { git } = services();
+    await routeAction(args, (root) => git.stashPop(root), true);
+  });
+  handle(router, "history.branch", async (raw) => {
+    const args = parseArgs(raw, "history.branch");
+    const { name, sha, checkout } = args;
+    if (typeof name !== "string" || name.length === 0) throw new Error("name must be a branch name");
+    if (!isFullSha(sha)) throw new Error("sha must be a full 40-character commit id");
+    if (typeof checkout !== "boolean") throw new Error("checkout must be true or false");
+    const { git } = services();
+    await routeAction(args, (root) => git.createBranch(root, name, sha, checkout), checkout);
   });
 }

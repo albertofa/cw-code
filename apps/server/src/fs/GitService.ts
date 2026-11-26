@@ -7,6 +7,7 @@ import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "nod
 import { setTimeout as delay } from "node:timers/promises";
 import { simpleGit } from "simple-git";
 import { sanitizedChildEnv } from "../shellEnvironment.js";
+import { isFullSha } from "../history/historyParsers.js";
 import { parsePullRequestList, pickBranchPullRequest, pickComparisonBase } from "./branchPullRequest.js";
 import { sameWorktreePath } from "../sessions/worktreeCleanup.js";
 import { defaultGitHubAccounts, type GitHubAccounts } from "../github/GitHubAccounts.js";
@@ -1698,6 +1699,84 @@ export class GitService {
       throw new Error(`${branch} and ${upstream.stdout.trim()} have diverged — pull only fast-forwards; merge or rebase in a terminal`);
     }
     throw new Error(`Pull failed: ${pullFailureReason(result.stderr, result.code)}`);
+  }
+
+  private async runGitAction(root: string, label: string, args: string[], timeout: number, env: NodeJS.ProcessEnv): Promise<ExecStatusResult> {
+    try {
+      return await execWithStatus(this.settings().gitBinaryPath, args, root, timeout, env);
+    } catch (error) {
+      const timedOut = /^timed out after/.test((error as Error).message);
+      throw new Error(`${label} failed: ${timedOut ? `timed out after ${timeout / 1000}s` : fetchFailureReason(error)}`);
+    }
+  }
+
+  private async runNetworkAction(root: string, label: string, args: string[]): Promise<void> {
+    try {
+      const result = await this.runGitAction(root, label, args, PULL_TIMEOUT_MS, cleanAuthEnvironment());
+      if (result.code !== 0) throw new Error(`${label} failed: ${pullFailureReason(result.stderr, result.code)}`);
+    } finally {
+      this.dropStatus(root);
+      this.invalidateBranches(root);
+    }
+  }
+
+  async fetchAll(root: string): Promise<void> {
+    await this.runNetworkAction(root, "Fetch", ["fetch", "--prune", "origin"]);
+  }
+
+  async push(root: string): Promise<void> {
+    const branch = await this.currentBranch(root);
+    if (!branch) throw new Error("HEAD is detached — check out a branch before pushing");
+    const upstream = await execWithStatus(this.settings().gitBinaryPath, ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"], root, BASE_FETCH_TIMEOUT_MS, cleanAuthEnvironment());
+    const args = upstream.code === 0 ? ["push"] : ["push", "-u", "origin", `HEAD:${branch}`];
+    await this.runNetworkAction(root, "Push", args);
+  }
+
+  async stashPush(root: string, message?: string): Promise<void> {
+    const binary = this.settings().gitBinaryPath;
+    const status = await execWithStatus(binary, ["status", "--porcelain"], root, BASE_FETCH_TIMEOUT_MS, cleanAuthEnvironment());
+    if (status.code === 0 && status.stdout.trim().length === 0) throw new Error("Nothing to stash — the working tree is clean");
+    const text = message?.trim();
+    const args = ["stash", "push", "--include-untracked", ...(text ? ["-m", text] : [])];
+    try {
+      const result = await this.runGitAction(root, "Stash", args, PULL_TIMEOUT_MS, cleanAuthEnvironment());
+      if (result.code !== 0) throw new Error(`Stash failed: ${pullFailureReason(result.stderr, result.code)}`);
+      if (/No local changes to save/i.test(result.stdout)) throw new Error("Nothing to stash — the working tree is clean");
+    } finally {
+      this.dropStatus(root);
+      this.invalidateBranches(root);
+    }
+  }
+
+  async stashPop(root: string): Promise<void> {
+    const binary = this.settings().gitBinaryPath;
+    try {
+      const result = await this.runGitAction(root, "Pop", ["stash", "pop"], PULL_TIMEOUT_MS, cleanAuthEnvironment());
+      if (result.code === 0) return;
+      const conflicts = await execWithStatus(binary, ["diff", "--name-only", "--diff-filter=U"], root, BASE_FETCH_TIMEOUT_MS, cleanAuthEnvironment());
+      const files = conflicts.code === 0 ? conflicts.stdout.split("\n").map((line) => line.trim()).filter(Boolean) : [];
+      if (files.length > 0) throw new Error(`Pop stopped on conflicts in ${files.join(", ")} — resolve them in a terminal; the stash was kept`);
+      throw new Error(`Pop failed: ${pullFailureReason(result.stderr || result.stdout, result.code)}`);
+    } finally {
+      this.dropStatus(root);
+      this.invalidateBranches(root);
+    }
+  }
+
+  async createBranch(root: string, name: string, sha: string, checkout: boolean): Promise<void> {
+    if (!name || name.startsWith("-")) throw new Error("invalid branch name");
+    if (!isFullSha(sha)) throw new Error("sha must be a full 40-character commit id");
+    const binary = this.settings().gitBinaryPath;
+    const valid = await execWithStatus(binary, ["check-ref-format", "--branch", name], root, BASE_FETCH_TIMEOUT_MS, cleanAuthEnvironment());
+    if (valid.code !== 0) throw new Error(`'${name}' is not a valid branch name`);
+    try {
+      const result = await this.runGitAction(root, "Branch", ["branch", name, sha], BASE_FETCH_TIMEOUT_MS, cleanAuthEnvironment());
+      if (result.code !== 0) throw new Error(`Branch failed: ${pullFailureReason(result.stderr, result.code)}`);
+    } finally {
+      this.dropStatus(root);
+      this.invalidateBranches(root);
+    }
+    if (checkout) await this.checkoutBranch(root, name);
   }
 
   async switchBranch(root: string, name: string, project?: Project): Promise<GitStatus> {

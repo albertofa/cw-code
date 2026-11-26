@@ -7,7 +7,8 @@ function snapshotFor(sha: string): HistorySnapshot {
   return {
     head: { sha, branch: "main", detached: false },
     refs: [{ fullName: "refs/heads/main", name: "main", kind: "local", target: sha, isCurrent: true, upstream: null, ahead: 0, behind: 0, upstreamGone: false }],
-    stashes: []
+    stashes: [],
+    fetchedAt: null
   };
 }
 
@@ -65,6 +66,17 @@ describe("HistoryTopic", () => {
     topic.rootsChanged(["/repo"]);
     await topic.recompute("history/s1");
     expect(store.snapshot().data).toMatchObject({ rev: 2, head: { sha: "b".repeat(40) } });
+  });
+
+  it("publishes fetchedAt and bumps rev when it changes", async () => {
+    const { topic, set } = setup();
+    const store = topic.acquire("history/s1");
+    await topic.recompute("history/s1");
+    expect(store.snapshot().data).toMatchObject({ rev: 1, fetchedAt: null });
+
+    set({ ...snapshotFor("a".repeat(40)), fetchedAt: 1_700_000_000_000 });
+    await topic.recompute("history/s1");
+    expect(store.snapshot().data).toMatchObject({ rev: 2, fetchedAt: 1_700_000_000_000 });
   });
 
   it("bumps rev when only the stash list changes", async () => {

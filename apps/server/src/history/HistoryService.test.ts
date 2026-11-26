@@ -96,6 +96,19 @@ describe("HistoryService.log", () => {
     expect(head).toEqual({ sha: first, branch: null, detached: true });
   });
 
+  it("reports the FETCH_HEAD mtime as fetchedAt, null before any fetch", async () => {
+    const repo = initRepo();
+    commitFile(repo, "a.txt", "one\n", "first");
+    expect((await service.snapshot(repo)).fetchedAt).toBeNull();
+    const remote = join(sandbox(), "remote.git");
+    execFileSync("git", ["init", "-q", "--bare", "-b", "main", remote]);
+    git(repo, "remote", "add", "origin", remote);
+    git(repo, "push", "-q", "origin", "main");
+    git(repo, "fetch", "-q", "origin");
+    const fetchedAt = (await service.snapshot(repo)).fetchedAt;
+    expect(fetchedAt).toBe(statSync(join(repo, ".git", "FETCH_HEAD")).mtimeMs);
+  });
+
   it("changes the snapshot when a stash is pushed or an older stash is dropped", async () => {
     const repo = initRepo();
     commitFile(repo, "a.txt", "1\n", "one");

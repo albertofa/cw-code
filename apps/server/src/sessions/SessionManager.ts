@@ -2430,17 +2430,20 @@ export class SessionManager {
     return this.withFolderLock(root, run);
   }
 
-  async pullBranch(sessionId: string): Promise<GitStatus> {
+  async runCheckoutAction<T = void>(sessionId: string, run: (root: string) => Promise<T>): Promise<T> {
     try {
-      return await this.withBranchSwitch(sessionId, async () => {
-        const project = this.projectForSession(sessionId);
-        const root = await this.ensureWorktree(sessionId);
-        await this.git.pullFastForward(root);
-        return this.git.status(root, project);
-      });
+      return await this.withBranchSwitch(sessionId, async () => run(await this.ensureWorktree(sessionId)));
     } finally {
       this.notifySessionCheckoutChanged(sessionId, [sessionId]);
     }
+  }
+
+  async pullBranch(sessionId: string): Promise<GitStatus> {
+    const project = this.projectForSession(sessionId);
+    return this.runCheckoutAction(sessionId, async (root) => {
+      await this.git.pullFastForward(root);
+      return this.git.status(root, project);
+    });
   }
 
   private switchSessionBranch(sessionId: string, branch: string): Promise<GitStatus> {

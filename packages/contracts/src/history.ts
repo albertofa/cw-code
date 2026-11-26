@@ -38,6 +38,7 @@ export interface HistoryLog {
   truncated: boolean;
   worktrees: HistoryWorktree[];
   wipCount: number | null;
+  github: { owner: string; repo: string } | null;
 }
 
 export interface HistoryCommitDetail extends HistoryCommit {
@@ -53,6 +54,7 @@ export type HistoryTopicData = {
   refs: HistoryRef[];
   rev: number;
   avatarsRev: number;
+  fetchedAt: number | null;
   error: string | null;
 };
 
