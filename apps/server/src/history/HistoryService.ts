@@ -49,6 +49,7 @@ function failure(args: string[], stderr: string, code: number): Error {
 
 export class HistoryService {
   private readonly snapshotsInFlight = new Map<string, Promise<HistorySnapshot>>();
+  private readonly fetchHeads = new Map<string, string>();
 
   constructor(private readonly gitBinary: () => string) {}
 
@@ -139,12 +140,22 @@ export class HistoryService {
 
   private async fetchedAt(root: string): Promise<number | null> {
     try {
-      const dir = await this.run(root, ["rev-parse", "--git-common-dir"]);
-      if (dir.code !== 0) return null;
-      return (await stat(resolve(root, dir.stdout.trim(), "FETCH_HEAD"))).mtimeMs;
+      const path = await this.fetchHeadPath(root);
+      return path === null ? null : (await stat(path)).mtimeMs;
     } catch {
       return null;
     }
+  }
+
+  private async fetchHeadPath(root: string): Promise<string | null> {
+    const key = comparableRoot(root);
+    const cached = this.fetchHeads.get(key);
+    if (cached !== undefined) return cached;
+    const dir = await this.run(root, ["rev-parse", "--git-common-dir"]);
+    if (dir.code !== 0) return null;
+    const path = resolve(root, dir.stdout.trim(), "FETCH_HEAD");
+    this.fetchHeads.set(key, path);
+    return path;
   }
 
   private run(root: string, args: string[], timeout = READ_TIMEOUT_MS) {

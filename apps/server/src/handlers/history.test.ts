@@ -11,6 +11,9 @@ const OWNED = "/repo/.worktrees/s2";
 const FREE = "/repo/.worktrees/free";
 
 let calls: unknown[][];
+let refreshed: string[];
+let purposes: Array<string | undefined>;
+let switchFailure: Error | null;
 let dirty: boolean;
 let owners: Record<string, string | null>;
 let router: Router;
@@ -18,6 +21,9 @@ let projectRoot: string;
 
 beforeEach(() => {
   calls = [];
+  refreshed = [];
+  purposes = [];
+  switchFailure = null;
   dirty = false;
   projectRoot = FREE;
   owners = { [MAIN]: null, [SESSION_ROOT]: "s1", [OWNED]: "s2", [FREE]: null };
@@ -30,10 +36,14 @@ beforeEach(() => {
       },
       sessionStatusContext: async () => ({ root: SESSION_ROOT }),
       checkoutOwner: (path: string) => owners[path] ?? null,
-      switchBranch: async (id: string, branch: string) => calls.push(["switchBranch", id, branch]),
+      switchBranch: async (id: string, branch: string) => {
+        calls.push(["switchBranch", id, branch]);
+        if (switchFailure) throw switchFailure;
+      },
       pullBranch: async (id: string) => calls.push(["pullBranch", id]),
-      runCheckoutAction: async (id: string, run: (root: string) => Promise<void>) => {
+      runCheckoutAction: async (id: string, run: (root: string) => Promise<void>, purpose?: string) => {
         calls.push(["runCheckoutAction", id]);
+        purposes.push(purpose);
         return run(id === "s1" ? SESSION_ROOT : OWNED);
       },
       withUnownedCheckout: async <T>(root: string, run: () => Promise<T>) => {
@@ -52,8 +62,15 @@ beforeEach(() => {
       fetchAll: async (root: string) => calls.push(["fetchAll", root]),
       push: async (root: string) => calls.push(["push", root]),
       stashPush: async (root: string, message?: string) => calls.push(["stashPush", root, message]),
-      stashPop: async (root: string) => calls.push(["stashPop", root]),
-      createBranch: async (root: string, name: string, sha: string, checkout: boolean) => calls.push(["createBranch", root, name, sha, checkout])
+      stashPop: async (root: string, sha: string) => calls.push(["stashPop", root, sha]),
+      createBranch: async (root: string, name: string, sha: string, checkout: boolean) => calls.push(["createBranch", root, name, sha, checkout]),
+      deleteBranchAt: async (root: string, name: string, sha: string) => {
+        calls.push(["deleteBranchAt", root, name, sha]);
+        return true;
+      }
+    },
+    historyTopic: {
+      rootsChanged: (roots: string[]) => refreshed.push(...roots)
     },
     commitPulls: {
       resolve: async (root: string, sha: string) => {
@@ -266,12 +283,52 @@ describe("history git actions", () => {
     await dispatch("history.stash", { sessionId: "s1", worktree: MAIN });
     await dispatch("history.branch", { sessionId: "s1", worktree: MAIN, name: "feat", sha, checkout: false });
     expect(calls.filter((call) => call[0] === "dirtyCheck")).toEqual([]);
-    await expect(dispatch("history.stashPop", { sessionId: "s1", worktree: MAIN })).rejects.toThrow("uncommitted changes");
-    await expect(dispatch("history.branch", { sessionId: "s1", worktree: MAIN, name: "feat", sha, checkout: true })).rejects.toThrow("uncommitted changes");
+    await expect(dispatch("history.stashPop", { sessionId: "s1", worktree: MAIN, sha })).rejects.toThrow(
+      "The main checkout has uncommitted changes — commit or stash them before popping a stash"
+    );
+    await expect(dispatch("history.branch", { sessionId: "s1", worktree: MAIN, name: "feat", sha, checkout: true })).rejects.toThrow(
+      "The main checkout has uncommitted changes — commit or stash them before switching branches or pulling"
+    );
     expect(calls.filter((call) => call[0] === "dirtyCheck")).toEqual([
       ["dirtyCheck", MAIN],
       ["dirtyCheck", MAIN]
     ]);
+  });
+
+  test("pop the stash the client confirmed and require its full sha", async () => {
+    await dispatch("history.stashPop", { sessionId: "s1", sha });
+    expect(calls.at(-1)).toEqual(["stashPop", SESSION_ROOT, sha]);
+    await expect(dispatch("history.stashPop", { sessionId: "s1" })).rejects.toThrow("full 40-character");
+    await expect(dispatch("history.stashPop", { sessionId: "s1", sha: "abc" })).rejects.toThrow("full 40-character");
+  });
+
+  test("tell a running session apart from a branch switch", async () => {
+    await dispatch("history.fetch", { sessionId: "s1" });
+    await dispatch("history.push", { sessionId: "s1", worktree: OWNED });
+    await dispatch("history.stashPop", { sessionId: "s1", sha });
+    expect(purposes).toEqual(["changing this checkout", "changing this checkout", "changing this checkout"]);
+  });
+
+  test("refresh the History topics of the checkout each action ran in", async () => {
+    await dispatch("history.fetch", { sessionId: "s1" });
+    await dispatch("history.push", { sessionId: "s1", worktree: OWNED });
+    await dispatch("history.stash", { sessionId: "s1", worktree: FREE });
+    await dispatch("history.checkout", { sessionId: "s1", worktree: FREE, branch: "feat" });
+    await dispatch("history.pull", { sessionId: "s1" });
+    expect(refreshed).toEqual([SESSION_ROOT, OWNED, FREE, FREE, SESSION_ROOT]);
+  });
+
+  test("do not refresh after a failed action", async () => {
+    dirty = true;
+    await expect(dispatch("history.stashPop", { sessionId: "s1", worktree: MAIN, sha })).rejects.toThrow("uncommitted changes");
+    expect(refreshed).toEqual([]);
+  });
+
+  test("delete the new branch again when its checkout is refused", async () => {
+    switchFailure = new Error("busy");
+    await expect(dispatch("history.branch", { sessionId: "s1", name: "feat", sha, checkout: true })).rejects.toThrow("busy");
+    expect(calls.map((call) => call[0])).toEqual(["runCheckoutAction", "createBranch", "switchBranch", "deleteBranchAt"]);
+    expect(calls.at(-1)).toEqual(["deleteBranchAt", SESSION_ROOT, "feat", sha]);
   });
 
   test("check out a new branch through the session, so its stored branch follows", async () => {

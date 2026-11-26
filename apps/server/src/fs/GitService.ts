@@ -761,12 +761,12 @@ export function redactUrlCredentials(text: string): string {
   return text.replace(/\b([a-z][a-z0-9+.-]*:\/\/)[^\s/@]+@/gi, "$1");
 }
 
-export function pullFailureReason(stderr: string, code: number | null): string {
+export function gitFailureReason(stderr: string, code: number | null, command = "git pull"): string {
   const lines = redactUrlCredentials(stderr).replace(/\r/g, "").split("\n");
   const index = lines.findIndex((line) => /^(error|fatal):/i.test(line.trim()));
   if (index === -1) {
     const useful = lines.map((line) => line.trim()).find((line) => line && !/^(warning|from)\b/i.test(line));
-    return (useful ?? `git pull exited with code ${code}`).slice(0, 160);
+    return (useful ?? `${command} exited with code ${code}`).slice(0, 160);
   }
   const headline = lines[index]!.trim().replace(/^(error|fatal):\s*/i, "");
   const details = lines
@@ -775,6 +775,42 @@ export function pullFailureReason(stderr: string, code: number | null): string {
     .slice(0, 3)
     .map((line) => line.trim());
   return [headline.replace(/:$/, ""), details.length > 0 ? `(${details.join(", ")})` : ""].filter(Boolean).join(" ").slice(0, 240);
+}
+
+const PUSH_REASON_MAX_CHARS = 300;
+
+export function pushFailureReason(stderr: string, code: number | null): string {
+  const lines = redactUrlCredentials(stderr).replace(/\r/g, "").split("\n").map((line) => line.trim());
+  const remoteErrors = lines.flatMap((line) => {
+    const match = /^remote:\s*error:\s*(.+)$/i.exec(line);
+    return match ? [match[1]!.trim()] : [];
+  });
+  const rejected = lines.filter((line) => /^!\s*\[(remote )?rejected\]/i.test(line)).map((line) => line.replace(/\s+/g, " "));
+  const kept = [...remoteErrors, ...rejected];
+  if (kept.length === 0) return gitFailureReason(stderr, code, "git push");
+  return kept.join(" ").slice(0, PUSH_REASON_MAX_CHARS);
+}
+
+export function untrackedCollisions(stderr: string): string[] {
+  return stderr
+    .replace(/\r/g, "")
+    .split("\n")
+    .flatMap((line) => {
+      const match = /^(.+?) already exists, no checkout$/.exec(line.trim());
+      return match ? [match[1]!] : [];
+    });
+}
+
+export function stashRefForSha(listOutput: string, sha: string): string | null {
+  const wanted = sha.toLowerCase();
+  const lines = listOutput.split("\n").filter((line) => line.length > 0);
+  for (const [index, line] of lines.entries()) {
+    const [hash, selector] = line.split("\0");
+    if (hash?.trim().toLowerCase() !== wanted) continue;
+    const ref = selector?.trim() ?? "";
+    return /^stash@\{\d+\}$/.test(ref) ? ref : `stash@{${index}}`;
+  }
+  return null;
 }
 
 function fetchFailureReason(error: unknown): string {
@@ -1698,7 +1734,7 @@ export class GitService {
     if (/not possible to fast-forward|diverg/i.test(result.stderr)) {
       throw new Error(`${branch} and ${upstream.stdout.trim()} have diverged — pull only fast-forwards; merge or rebase in a terminal`);
     }
-    throw new Error(`Pull failed: ${pullFailureReason(result.stderr, result.code)}`);
+    throw new Error(`Pull failed: ${gitFailureReason(result.stderr, result.code)}`);
   }
 
   private async runGitAction(root: string, label: string, args: string[], timeout: number, env: NodeJS.ProcessEnv): Promise<ExecStatusResult> {
@@ -1710,10 +1746,10 @@ export class GitService {
     }
   }
 
-  private async runNetworkAction(root: string, label: string, args: string[]): Promise<void> {
+  private async runNetworkAction(root: string, label: string, args: string[], reason: (stderr: string, code: number | null) => string): Promise<void> {
     try {
       const result = await this.runGitAction(root, label, args, PULL_TIMEOUT_MS, cleanAuthEnvironment());
-      if (result.code !== 0) throw new Error(`${label} failed: ${pullFailureReason(result.stderr, result.code)}`);
+      if (result.code !== 0) throw new Error(`${label} failed: ${reason(result.stderr, result.code)}`);
     } finally {
       this.dropStatus(root);
       this.invalidateBranches(root);
@@ -1721,7 +1757,7 @@ export class GitService {
   }
 
   async fetchAll(root: string): Promise<void> {
-    await this.runNetworkAction(root, "Fetch", ["fetch", "--prune", "origin"]);
+    await this.runNetworkAction(root, "Fetch", ["fetch", "--prune", "origin"], (stderr, code) => gitFailureReason(stderr, code, "git fetch"));
   }
 
   async push(root: string): Promise<void> {
@@ -1729,7 +1765,7 @@ export class GitService {
     if (!branch) throw new Error("HEAD is detached — check out a branch before pushing");
     const upstream = await execWithStatus(this.settings().gitBinaryPath, ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"], root, BASE_FETCH_TIMEOUT_MS, cleanAuthEnvironment());
     const args = upstream.code === 0 ? ["push"] : ["push", "-u", "origin", `HEAD:${branch}`];
-    await this.runNetworkAction(root, "Push", args);
+    await this.runNetworkAction(root, "Push", args, pushFailureReason);
   }
 
   async stashPush(root: string, message?: string): Promise<void> {
@@ -1740,7 +1776,7 @@ export class GitService {
     const args = ["stash", "push", "--include-untracked", ...(text ? ["-m", text] : [])];
     try {
       const result = await this.runGitAction(root, "Stash", args, PULL_TIMEOUT_MS, cleanAuthEnvironment());
-      if (result.code !== 0) throw new Error(`Stash failed: ${pullFailureReason(result.stderr, result.code)}`);
+      if (result.code !== 0) throw new Error(`Stash failed: ${gitFailureReason(result.stderr, result.code, "git stash")}`);
       if (/No local changes to save/i.test(result.stdout)) throw new Error("Nothing to stash — the working tree is clean");
     } finally {
       this.dropStatus(root);
@@ -1748,15 +1784,24 @@ export class GitService {
     }
   }
 
-  async stashPop(root: string): Promise<void> {
+  async stashPop(root: string, sha: string): Promise<void> {
+    if (!isFullSha(sha)) throw new Error("sha must be a full 40-character commit id");
     const binary = this.settings().gitBinaryPath;
     try {
-      const result = await this.runGitAction(root, "Pop", ["stash", "pop"], PULL_TIMEOUT_MS, cleanAuthEnvironment());
+      const list = await this.runGitAction(root, "Pop", ["stash", "list", "--format=%H%x00%gd"], BASE_FETCH_TIMEOUT_MS, cleanAuthEnvironment());
+      if (list.code !== 0) throw new Error(`Pop failed: ${gitFailureReason(list.stderr, list.code, "git stash list")}`);
+      const ref = stashRefForSha(list.stdout, sha);
+      if (!ref) throw new Error("That stash is no longer in the list — refresh and try again");
+      const result = await this.runGitAction(root, "Pop", ["stash", "pop", ref], PULL_TIMEOUT_MS, cleanAuthEnvironment());
       if (result.code === 0) return;
+      const existing = untrackedCollisions(result.stderr);
+      if (existing.length > 0) {
+        throw new Error(`Pop failed: ${existing.join(", ")} already ${existing.length === 1 ? "exists" : "exist"} in the checkout — move or delete ${existing.length === 1 ? "it" : "them"} and try again; the stash was kept`);
+      }
       const conflicts = await execWithStatus(binary, ["diff", "--name-only", "--diff-filter=U"], root, BASE_FETCH_TIMEOUT_MS, cleanAuthEnvironment());
       const files = conflicts.code === 0 ? conflicts.stdout.split("\n").map((line) => line.trim()).filter(Boolean) : [];
       if (files.length > 0) throw new Error(`Pop stopped on conflicts in ${files.join(", ")} — resolve them in a terminal; the stash was kept`);
-      throw new Error(`Pop failed: ${pullFailureReason(result.stderr || result.stdout, result.code)}`);
+      throw new Error(`Pop failed: ${gitFailureReason(result.stderr || result.stdout, result.code, "git stash pop")}`);
     } finally {
       this.dropStatus(root);
       this.invalidateBranches(root);
@@ -1771,12 +1816,28 @@ export class GitService {
     if (valid.code !== 0) throw new Error(`'${name}' is not a valid branch name`);
     try {
       const result = await this.runGitAction(root, "Branch", ["branch", name, sha], BASE_FETCH_TIMEOUT_MS, cleanAuthEnvironment());
-      if (result.code !== 0) throw new Error(`Branch failed: ${pullFailureReason(result.stderr, result.code)}`);
+      if (result.code !== 0) throw new Error(`Branch failed: ${gitFailureReason(result.stderr, result.code, "git branch")}`);
     } finally {
       this.dropStatus(root);
       this.invalidateBranches(root);
     }
     if (checkout) await this.checkoutBranch(root, name);
+  }
+
+  async deleteBranchAt(root: string, name: string, sha: string): Promise<boolean> {
+    if (!name || name.startsWith("-")) throw new Error("invalid branch name");
+    if (!isFullSha(sha)) throw new Error("sha must be a full 40-character commit id");
+    const binary = this.settings().gitBinaryPath;
+    const target = await execWithStatus(binary, ["rev-parse", "--verify", "-q", `refs/heads/${name}^{commit}`], root, BASE_FETCH_TIMEOUT_MS, cleanAuthEnvironment());
+    if (target.code !== 0 || target.stdout.trim().toLowerCase() !== sha.toLowerCase()) return false;
+    try {
+      const result = await this.runGitAction(root, "Branch", ["branch", "-D", name], BASE_FETCH_TIMEOUT_MS, cleanAuthEnvironment());
+      if (result.code !== 0) throw new Error(`Branch delete failed: ${gitFailureReason(result.stderr, result.code, "git branch -D")}`);
+      return true;
+    } finally {
+      this.dropStatus(root);
+      this.invalidateBranches(root);
+    }
   }
 
   async switchBranch(root: string, name: string, project?: Project): Promise<GitStatus> {

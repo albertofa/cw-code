@@ -68,15 +68,16 @@ describe("HistoryTopic", () => {
     expect(store.snapshot().data).toMatchObject({ rev: 2, head: { sha: "b".repeat(40) } });
   });
 
-  it("publishes fetchedAt and bumps rev when it changes", async () => {
+  it("publishes a new fetchedAt without bumping rev", async () => {
     const { topic, set } = setup();
     const store = topic.acquire("history/s1");
     await topic.recompute("history/s1");
     expect(store.snapshot().data).toMatchObject({ rev: 1, fetchedAt: null });
 
     set({ ...snapshotFor("a".repeat(40)), fetchedAt: 1_700_000_000_000 });
-    await topic.recompute("history/s1");
-    expect(store.snapshot().data).toMatchObject({ rev: 2, fetchedAt: 1_700_000_000_000 });
+    topic.rootsChanged(["/repo"]);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(store.snapshot().data).toMatchObject({ rev: 1, fetchedAt: 1_700_000_000_000 });
   });
 
   it("bumps rev when only the stash list changes", async () => {

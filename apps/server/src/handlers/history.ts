@@ -15,6 +15,10 @@ interface HistoryTarget {
 
 type ScopeArgs = { sessionId: string } | { projectId: string };
 
+const CHANGING_CHECKOUT = "changing this checkout";
+const DIRTY_MAIN_SWITCH = "The main checkout has uncommitted changes — commit or stash them before switching branches or pulling";
+const DIRTY_MAIN_POP = "The main checkout has uncommitted changes — commit or stash them before popping a stash";
+
 function parseScope(args: Record<string, unknown>): ScopeArgs {
   const has = (value: unknown): boolean => typeof value === "string" && value.length > 0;
   if (has(args.sessionId) === has(args.projectId)) throw new Error("pass either sessionId or projectId");
@@ -51,26 +55,33 @@ export function registerHistoryHandlers(router: Router, app: ServerApp): void {
     return { sessionId, root: match.path, worktree: match.path, owner: ownerOf(match.path), isMain: match.isMain };
   };
 
-  const onUnowned = async <T>(target: HistoryTarget, run: () => Promise<T>, refuseDirtyMain = true): Promise<T> => {
+  const onUnowned = async <T>(target: HistoryTarget, run: () => Promise<T>, dirtyMainRefusal: string | null = DIRTY_MAIN_SWITCH): Promise<T> => {
     const { sessions, git } = services();
     return sessions.withUnownedCheckout(target.root, async () => {
-      if (refuseDirtyMain && target.isMain && (await git.isWorkingTreeDirty(target.root))) {
-        throw new Error("The main checkout has uncommitted changes — commit or stash them before switching branches or pulling");
-      }
+      if (dirtyMainRefusal !== null && target.isMain && (await git.isWorkingTreeDirty(target.root))) throw new Error(dirtyMainRefusal);
       return run();
     });
   };
 
+  const refreshHistory = (root: string): void => services().historyTopic.rootsChanged([root]);
+
   const routeAction = async (
     args: Record<string, unknown>,
     run: (root: string) => Promise<void>,
-    refuseDirtyMain: boolean
-  ): Promise<void> => {
+    dirtyMainRefusal: string | null
+  ): Promise<string> => {
     const target = await targetOf(args, true);
     const { sessions } = services();
-    if (target.sessionId !== null && target.worktree === null) await sessions.runCheckoutAction(target.sessionId, run);
-    else if (target.owner) await sessions.runCheckoutAction(target.owner, run);
-    else await onUnowned(target, () => run(target.root), refuseDirtyMain);
+    let acted = target.root;
+    const tracked = async (root: string): Promise<void> => {
+      acted = root;
+      await run(root);
+    };
+    if (target.sessionId !== null && target.worktree === null) await sessions.runCheckoutAction(target.sessionId, tracked, CHANGING_CHECKOUT);
+    else if (target.owner) await sessions.runCheckoutAction(target.owner, tracked, CHANGING_CHECKOUT);
+    else await onUnowned(target, () => tracked(target.root), dirtyMainRefusal);
+    refreshHistory(acted);
+    return acted;
   };
 
   const withOwners = (log: Omit<HistoryLog, "github">, github: HistoryLog["github"]): HistoryLog => ({
@@ -117,6 +128,7 @@ export function registerHistoryHandlers(router: Router, app: ServerApp): void {
     if (target.sessionId !== null && target.worktree === null) await sessions.pullBranch(target.sessionId);
     else if (target.owner) await sessions.pullBranch(target.owner);
     else await onUnowned(target, () => git.pullFastForward(target.root));
+    refreshHistory(target.root);
   });
   // A session's checkout switches through the session, so its stored branch follows (a folder
   // session checks it before every turn).
@@ -126,6 +138,7 @@ export function registerHistoryHandlers(router: Router, app: ServerApp): void {
     if (target.sessionId !== null && target.worktree === null) await sessions.switchBranch(target.sessionId, branch);
     else if (target.owner) await sessions.switchBranch(target.owner, branch);
     else await onUnowned(target, () => git.checkoutBranch(target.root, branch));
+    refreshHistory(target.root);
   };
 
   handle(router, "history.checkout", async (raw) => {
@@ -137,24 +150,26 @@ export function registerHistoryHandlers(router: Router, app: ServerApp): void {
   handle(router, "history.fetch", async (raw) => {
     const args = parseArgs(raw, "history.fetch");
     const { git } = services();
-    await routeAction(args, (root) => git.fetchAll(root), false);
+    await routeAction(args, (root) => git.fetchAll(root), null);
   });
   handle(router, "history.push", async (raw) => {
     const args = parseArgs(raw, "history.push");
     const { git } = services();
-    await routeAction(args, (root) => git.push(root), false);
+    await routeAction(args, (root) => git.push(root), null);
   });
   handle(router, "history.stash", async (raw) => {
     const args = parseArgs(raw, "history.stash");
     const message = args.message;
     if (message !== undefined && message !== null && typeof message !== "string") throw new Error("message must be text");
     const { git } = services();
-    await routeAction(args, (root) => git.stashPush(root, message ?? undefined), false);
+    await routeAction(args, (root) => git.stashPush(root, message ?? undefined), null);
   });
   handle(router, "history.stashPop", async (raw) => {
     const args = parseArgs(raw, "history.stashPop");
+    const sha = args.sha;
+    if (!isFullSha(sha)) throw new Error("sha must be a full 40-character commit id");
     const { git } = services();
-    await routeAction(args, (root) => git.stashPop(root), true);
+    await routeAction(args, (root) => git.stashPop(root, sha), DIRTY_MAIN_POP);
   });
   handle(router, "history.branch", async (raw) => {
     const args = parseArgs(raw, "history.branch");
@@ -163,7 +178,16 @@ export function registerHistoryHandlers(router: Router, app: ServerApp): void {
     if (!isFullSha(sha)) throw new Error("sha must be a full 40-character commit id");
     if (typeof checkout !== "boolean") throw new Error("checkout must be true or false");
     const { git } = services();
-    await routeAction(args, (root) => git.createBranch(root, name, sha, false), checkout);
-    if (checkout) await checkoutTo(args, name);
+    const root = await routeAction(args, (at) => git.createBranch(at, name, sha, false), checkout ? DIRTY_MAIN_SWITCH : null);
+    if (!checkout) return;
+    try {
+      await checkoutTo(args, name);
+    } catch (error) {
+      await git.deleteBranchAt(root, name, sha).catch((cleanup: unknown) => {
+        console.warn(`[history] could not delete branch '${name}' after its checkout failed in ${root}: ${(cleanup as Error).message}`);
+      });
+      refreshHistory(root);
+      throw error;
+    }
   });
 }

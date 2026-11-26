@@ -111,7 +111,8 @@ export class HistoryTopic implements TopicProvider {
       return;
     }
     if (!current()) return;
-    const fingerprint = JSON.stringify(snapshot);
+    const { fetchedAt: _fetchedAt, ...tracked } = snapshot;
+    const fingerprint = JSON.stringify(tracked);
     if (fingerprint !== entry.fingerprint) {
       entry.fingerprint = fingerprint;
       entry.rev += 1;

@@ -3,7 +3,7 @@ import { execFileSync } from "node:child_process";
 import { mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { GitService, pullFailureReason } from "./GitService.js";
+import { GitService, gitFailureReason } from "./GitService.js";
 
 const sandboxes: string[] = [];
 
@@ -77,7 +77,7 @@ describe("GitService.pullFastForward", () => {
   });
 });
 
-describe("pullFailureReason", () => {
+describe("gitFailureReason", () => {
   it("skips the fetch summary and CRLF warnings and keeps the error with its files", () => {
     const stderr = [
       "warning: in the working copy of 'a.txt', LF will be replaced by CRLF the next time Git touches it",
@@ -88,18 +88,18 @@ describe("pullFailureReason", () => {
       "\tb.txt",
       "Please commit your changes or stash them before you merge."
     ].join("\n");
-    const reason = pullFailureReason(stderr, 1);
+    const reason = gitFailureReason(stderr, 1);
     expect(reason).toBe("Your local changes to the following files would be overwritten by merge (a.txt, b.txt)");
     expect(reason).not.toContain("secret");
   });
 
   it("falls back to the first useful line, then to the exit code", () => {
-    expect(pullFailureReason("From https://x/y\nsomething odd happened\n", 1)).toBe("something odd happened");
-    expect(pullFailureReason("", 128)).toBe("git pull exited with code 128");
+    expect(gitFailureReason("From https://x/y\nsomething odd happened\n", 1)).toBe("something odd happened");
+    expect(gitFailureReason("", 128)).toBe("git pull exited with code 128");
   });
 
   it("redacts credentials in a fatal line", () => {
-    expect(pullFailureReason("fatal: unable to access 'https://user:secret@example.com/r.git/': Could not resolve host", 128)).not.toContain("secret");
+    expect(gitFailureReason("fatal: unable to access 'https://user:secret@example.com/r.git/': Could not resolve host", 128)).not.toContain("secret");
   });
 });
 

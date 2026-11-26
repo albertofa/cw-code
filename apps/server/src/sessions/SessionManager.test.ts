@@ -918,6 +918,9 @@ describe("SessionManager", () => {
 
     await expect(manager.withBranchSwitch(running.id, async () => "switched")).rejects.toThrow(message);
     await expect(manager.withBranchSwitch(idle.id, async () => "switched")).rejects.toThrow(message);
+    await expect(manager.runCheckoutAction(idle.id, async () => {}, "changing this checkout")).rejects.toThrow(
+      `${running.title} is running in ${project.name} — wait for it to finish before changing this checkout`
+    );
 
     fake.completeAll();
     await waitFor(async () => expect(await manager.withBranchSwitch(idle.id, async () => "switched")).toBe("switched"));
