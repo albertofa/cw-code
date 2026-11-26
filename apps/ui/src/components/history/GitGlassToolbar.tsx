@@ -1,7 +1,16 @@
-import { Fragment, useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
+import { Fragment, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import { Check, ChevronDown, ChevronUp, PanelLeft, Search, SlidersHorizontal, UserRound, X } from "lucide-react";
 import { MenuSelect } from "../MenuSelect.js";
 import { HISTORY_SEARCH_SCOPES, type HistorySearchScope } from "./historySearch.js";
+
+export interface ToolbarMenuItem {
+  id: string;
+  label: string;
+  title: string;
+  disabled?: boolean;
+  onSelect: () => void;
+}
 
 export interface ToolbarAction {
   id: string;
@@ -12,7 +21,11 @@ export interface ToolbarAction {
   badge?: number | null;
   badgeHint?: string;
   onClick?: () => void;
+  menu?: ToolbarMenuItem[];
 }
+
+const MENU_GAP = 6;
+const MENU_EDGE = 8;
 
 export interface ToolbarSearch {
   text: string;
@@ -45,6 +58,128 @@ function ActionButton({ action }: { action: ToolbarAction }) {
       {action.icon}
       <span className="gg-act-label">{action.label}</span>
     </button>
+  );
+}
+
+function ActionMenu({ action, items }: { action: ToolbarAction; items: ToolbarMenuItem[] }) {
+  const [anchor, setAnchor] = useState<{ top: number; left: number } | null>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
+  const open = anchor !== null;
+
+  useLayoutEffect(() => {
+    const panel = panelRef.current;
+    if (!open || !panel) return;
+    const maxLeft = window.innerWidth - panel.offsetWidth - MENU_EDGE;
+    if (anchor.left > maxLeft) setAnchor({ top: anchor.top, left: Math.max(MENU_EDGE, maxLeft) });
+    panel.querySelector<HTMLElement>("[role='menuitem']:not([aria-disabled='true'])")?.focus();
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+    const close = (): void => setAnchor(null);
+    window.addEventListener("resize", close);
+    return () => window.removeEventListener("resize", close);
+  }, [open]);
+
+  const toggle = (): void => {
+    if (open) {
+      setAnchor(null);
+      return;
+    }
+    const rect = triggerRef.current?.getBoundingClientRect();
+    if (rect) setAnchor({ top: rect.bottom + MENU_GAP, left: rect.left });
+  };
+
+  const close = (): void => {
+    setAnchor(null);
+    triggerRef.current?.focus();
+  };
+
+  const pick = (item: ToolbarMenuItem): void => {
+    if (item.disabled) return;
+    close();
+    item.onSelect();
+  };
+
+  const moveFocus = (step: 1 | -1): void => {
+    const rows = Array.from(panelRef.current?.querySelectorAll<HTMLElement>("[role='menuitem']") ?? []);
+    if (rows.length === 0) return;
+    const index = rows.indexOf(document.activeElement as HTMLElement);
+    rows[(index + step + rows.length) % rows.length]?.focus();
+  };
+
+  return (
+    <>
+      <button
+        ref={triggerRef}
+        type="button"
+        className={`gg-act gg-act-caret${open ? " on" : ""}`}
+        title={`${action.label} options`}
+        aria-label={`${action.label} options`}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        onClick={toggle}
+      >
+        <ChevronDown size={12} aria-hidden="true" />
+      </button>
+      {open &&
+        createPortal(
+          <>
+            <div className="menu-backdrop" onClick={() => setAnchor(null)} />
+            <div
+              ref={panelRef}
+              className="menu-panel menu-panel-down gg-act-menu"
+              role="menu"
+              aria-label={`${action.label} options`}
+              style={{ top: anchor.top, left: anchor.left }}
+              onKeyDown={(event) => {
+                if (event.key === "Escape" || event.key === "Tab") {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  close();
+                } else if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+                  event.preventDefault();
+                  moveFocus(event.key === "ArrowDown" ? 1 : -1);
+                }
+              }}
+            >
+              {items.map((item) => (
+                <div
+                  key={item.id}
+                  className="menu-row"
+                  role="menuitem"
+                  aria-disabled={item.disabled || undefined}
+                  title={item.title}
+                  tabIndex={-1}
+                  onClick={() => pick(item)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" || event.key === " ") {
+                      event.preventDefault();
+                      pick(item);
+                    }
+                  }}
+                >
+                  <span className="menu-text">
+                    <span className="name">{item.label}</span>
+                  </span>
+                </div>
+              ))}
+            </div>
+          </>,
+          document.body
+        )}
+    </>
+  );
+}
+
+function ToolbarButton({ action }: { action: ToolbarAction }) {
+  if (!action.menu) return <ActionButton action={action} />;
+  return (
+    <span className="gg-act-split">
+      <ActionButton action={action} />
+      <ActionMenu action={action} items={action.menu} />
+    </span>
   );
 }
 
@@ -249,7 +384,7 @@ export function GitGlassToolbar({
           <Fragment key={group[0]?.id ?? index}>
             {index > 0 && <span className="gg-act-sep" aria-hidden="true" />}
             {group.map((action) => (
-              <ActionButton key={action.id} action={action} />
+              <ToolbarButton key={action.id} action={action} />
             ))}
           </Fragment>
         ))}

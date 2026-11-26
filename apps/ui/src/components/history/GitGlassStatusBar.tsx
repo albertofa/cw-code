@@ -1,4 +1,6 @@
-import { ArrowDown, ArrowUp, Cloud, Folder, GitBranch, GitCommitHorizontal } from "lucide-react";
+import { ArrowDown, ArrowUp, Cloud, CloudDownload, Folder, GitBranch, GitCommitHorizontal, MessagesSquare } from "lucide-react";
+import { relativeTime } from "../prDetailModel.js";
+import { useNow } from "../usageFormat.js";
 
 export interface StatusUpstream {
   name: string;
@@ -7,11 +9,40 @@ export interface StatusUpstream {
   gone: boolean;
 }
 
+export interface StatusSessions {
+  total: number;
+  running: number;
+  onOpen: () => void;
+}
+
 const countFormat = new Intl.NumberFormat("en-US");
+const timeFormat = new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" });
+
+function FetchedLabel({ fetchedAt, busy, onFetch }: { fetchedAt: number | null; busy: boolean; onFetch: () => void }) {
+  const now = useNow();
+  const label = fetchedAt === null ? "Never fetched" : `Fetched ${relativeTime(fetchedAt, now)}`;
+  const when = fetchedAt === null ? "This checkout has never been fetched" : `Last fetched ${timeFormat.format(fetchedAt)}`;
+  return (
+    <button
+      type="button"
+      className="gg-st-item gg-st-link"
+      aria-disabled={busy || undefined}
+      onClick={busy ? undefined : onFetch}
+      title={busy ? `${when} — wait for the running action to finish` : `${when} — click to fetch now`}
+    >
+      <CloudDownload size={12} aria-hidden="true" />
+      {label}
+    </button>
+  );
+}
 
 export function GitGlassStatusBar({
   branch,
   upstream,
+  fetchedAt,
+  busy,
+  onFetch,
+  sessions,
   commits,
   truncated,
   path,
@@ -19,6 +50,10 @@ export function GitGlassStatusBar({
 }: {
   branch: string | null;
   upstream: StatusUpstream | null;
+  fetchedAt: number | null;
+  busy: boolean;
+  onFetch: () => void;
+  sessions: StatusSessions | null;
   commits: number | null;
   truncated: boolean;
   path: string | null;
@@ -51,6 +86,13 @@ export function GitGlassStatusBar({
             </>
           )}
         </span>
+      )}
+      <FetchedLabel fetchedAt={fetchedAt} busy={busy} onFetch={onFetch} />
+      {sessions && sessions.total > 0 && (
+        <button type="button" className="gg-st-item gg-st-link gg-wide-only" onClick={sessions.onOpen} title="Show this project's sessions">
+          <MessagesSquare size={12} aria-hidden="true" />
+          {sessions.total} {sessions.total === 1 ? "session" : "sessions"} · {sessions.running} running
+        </button>
       )}
       <span className="gg-st-spacer" />
       {commits !== null && (

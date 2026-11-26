@@ -26,6 +26,8 @@ import { loadShowAvatars, saveShowAvatars, useHistoryAvatars } from "./historyAv
 import { MenuSelect, type MenuOption } from "../MenuSelect.js";
 import { useConfirm } from "../ConfirmDialog.js";
 import { GitGlassToolbar, type ToolbarAction } from "./GitGlassToolbar.js";
+import { GitGlassInputDialog, type InputDialogRequest } from "./GitGlassInputDialog.js";
+import { actionStates } from "./toolbarActions.js";
 import { GitGlassStatusBar } from "./GitGlassStatusBar.js";
 import { DETAILS_DEFAULT_WIDTH, DETAILS_MAX_WIDTH, DETAILS_MIN_WIDTH, GitGlassDetails, type GitGlassSelection } from "./GitGlassDetails.js";
 import { CommitDetails } from "./CommitDetails.js";
@@ -46,7 +48,6 @@ const NO_COMMITS: HistoryCommit[] = [];
 const SIDEBAR_MIN_WIDTH = 180;
 const SIDEBAR_MAX_WIDTH = 420;
 const SIDEBAR_DEFAULT_WIDTH = 250;
-const COMING_SOON = "Coming in this change";
 const TOGGLES = ["on", "off"] as const;
 const ACTION_ICON = 17;
 const isWip = (commit: HistoryCommit): boolean => commit.sha === WIP_SHA;
@@ -86,10 +87,6 @@ function openSession(sessionId: string): void {
   useAppStore.getState().selectSession(sessionId);
 }
 
-function soon(id: string, label: string, icon: ToolbarAction["icon"]): ToolbarAction {
-  return { id, label, icon, title: COMING_SOON, disabled: true };
-}
-
 export function GitGlassPanel({ scope: scopeProp }: { scope: HistoryScope }) {
   const scopeKey = historyTopic(scopeProp);
   const scope = useMemo(() => scopeProp, [scopeKey]);
@@ -118,6 +115,7 @@ export function GitGlassPanel({ scope: scopeProp }: { scope: HistoryScope }) {
   const narrow = useNarrow(panelRef);
   const [action, setAction] = useState<string | null>(null);
   const [actionError, setActionError] = useState("");
+  const [inputDialog, setInputDialog] = useState<InputDialogRequest | null>(null);
   const [homePath, setHomePath] = useState<string | null>(null);
   const busy = useRef<string | null>(null);
   const [sidebarSetting, setSidebarSetting] = usePersistedChoice("cw-code:git-glass-sidebar", TOGGLES, "on");
@@ -257,21 +255,31 @@ export function GitGlassPanel({ scope: scopeProp }: { scope: HistoryScope }) {
     }
   }, [openPath, closeDiff]);
 
-  const runAction = useCallback((label: string, task: () => Promise<unknown>): void => {
+  const runAction = useCallback((label: string, task: () => Promise<unknown>, report = true): Promise<string | null> => {
     if (busy.current) {
-      setActionError(`Wait for “${busy.current}” to finish before starting another action`);
-      return;
+      const message = `Wait for “${busy.current}” to finish before starting another action`;
+      if (report) setActionError(message);
+      return Promise.resolve(message);
     }
     busy.current = label.replace(/…$/, "");
     setAction(label);
     setActionError("");
-    task()
-      .catch((reason: Error) => setActionError(reason.message))
+    return task()
+      .then(
+        () => null,
+        (reason: Error) => {
+          if (report) setActionError(reason.message);
+          return reason.message;
+        }
+      )
       .finally(() => {
         busy.current = null;
         setAction(null);
       });
   }, []);
+
+  const checkedPath = viewWorktree ?? ("projectId" in scope ? homePath : null);
+  const ownedCheckout = checkedPath === null ? undefined : log?.worktrees.find((worktree) => worktree.path === checkedPath && worktree.sessionId);
 
   const checkout = useCallback(
     (branch: string): void => {
@@ -280,9 +288,8 @@ export function GitGlassPanel({ scope: scopeProp }: { scope: HistoryScope }) {
         openWorktree(elsewhere.path);
         return;
       }
-      const checkedPath = viewWorktree ?? ("projectId" in scope ? homePath : null);
-      const owned = checkedPath === null ? undefined : log?.worktrees.find((worktree) => worktree.path === checkedPath && worktree.sessionId);
-      const run = (): void => runAction(`Checking out ${branch}…`, () => window.cw.checkoutHistory(scope, viewWorktree, branch));
+      const owned = ownedCheckout;
+      const run = (): void => void runAction(`Checking out ${branch}…`, () => window.cw.checkoutHistory(scope, viewWorktree, branch));
       if (!owned) {
         run();
         return;
@@ -295,7 +302,7 @@ export function GitGlassPanel({ scope: scopeProp }: { scope: HistoryScope }) {
         if (ok) run();
       });
     },
-    [runAction, scope, viewWorktree, homePath, worktreeBranches, openWorktree, log, confirm]
+    [runAction, scope, viewWorktree, worktreeBranches, openWorktree, ownedCheckout, confirm]
   );
 
   const query = useMemo(() => parseHistoryQuery(searchText, searchScope), [searchText, searchScope]);
@@ -334,9 +341,6 @@ export function GitGlassPanel({ scope: scopeProp }: { scope: HistoryScope }) {
 
   const head = log?.head ?? null;
   const currentRef = head?.branch ? log?.refs.find((ref) => ref.kind === "local" && ref.isCurrent) : undefined;
-  const pullBlocked = !head?.branch ? "HEAD is detached — check out a branch to pull" : !currentRef?.upstream ? `${head.branch} has no upstream branch` : null;
-  const pullTitle = pullBlocked ?? `Fast-forward ${head?.branch} from ${currentRef?.upstream} (git pull --ff-only)`;
-  const pull = (): void => runAction("Pulling…", () => window.cw.pullHistory(scope, viewWorktree));
 
   const toggleAvatars = (): void => {
     const next = !showAvatars;
@@ -395,39 +399,6 @@ export function GitGlassPanel({ scope: scopeProp }: { scope: HistoryScope }) {
         : null;
   const failure = topicError ?? (error || null);
 
-  const groups: ToolbarAction[][] = [
-    [
-      soon("fetch", "Fetch", <CloudDownload size={ACTION_ICON} aria-hidden="true" />),
-      {
-        id: "pull",
-        label: "Pull",
-        icon: <ArrowDownToLine size={ACTION_ICON} aria-hidden="true" />,
-        title: action !== null ? `Wait for “${action.replace(/…$/, "")}” to finish` : pullTitle,
-        disabled: pullBlocked !== null || action !== null,
-        badge: currentRef && currentRef.behind > 0 ? currentRef.behind : null,
-        badgeHint: "behind",
-        onClick: pull
-      },
-      soon("push", "Push", <ArrowUpFromLine size={ACTION_ICON} aria-hidden="true" />)
-    ],
-    [
-      soon("branch", "Branch", <GitBranchPlus size={ACTION_ICON} aria-hidden="true" />),
-      soon("stash", "Stash", <PackagePlus size={ACTION_ICON} aria-hidden="true" />),
-      soon("pop", "Pop", <ArchiveRestore size={ACTION_ICON} aria-hidden="true" />)
-    ],
-    sessionId
-      ? [
-          {
-            id: "terminal",
-            label: "Terminal",
-            icon: <SquareTerminal size={ACTION_ICON} aria-hidden="true" />,
-            title: "Open this session's terminal",
-            onClick: () => usePanelStore.getState().revealTab(sessionId, "shell")
-          }
-        ]
-      : []
-  ];
-
   const sidebarOpen = narrow ? sidebarOverlay : sidebarSetting === "on";
   const toggleSidebar = (): void => {
     if (narrow) setSidebarOverlay((value) => !value);
@@ -447,6 +418,115 @@ export function GitGlassPanel({ scope: scopeProp }: { scope: HistoryScope }) {
     [sidebarData.thisRow]
   );
   const currentSidebarWidth = sidebarWidth.width ?? SIDEBAR_DEFAULT_WIDTH;
+
+  const dirtyCount = viewWorktree === null && sessionId ? (status?.available ? status.dirtyCount : null) : (log?.wipCount ?? null);
+  const latestStash = sidebarData.model.stashes[0] ?? null;
+  const branchTarget = selectedSha ? { sha: selectedSha, selected: true } : head?.sha ? { sha: head.sha, selected: false } : null;
+  const states = actionStates({
+    head,
+    currentRef: currentRef ?? null,
+    dirtyCount,
+    stash: latestStash ? { name: latestStash.ref.name, subject: latestStash.subject } : null,
+    branchTarget,
+    busy: action === null ? null : action.replace(/…$/, "")
+  });
+  const checkoutName = viewed ? `the worktree ${viewed.name}` : sessionId ? "this session's checkout" : "the project's checkout";
+
+  const fetchRemote = (): void => void runAction("Fetching…", () => window.cw.fetchHistory(scope, viewWorktree));
+  const pull = (): void => void runAction("Pulling…", () => window.cw.pullHistory(scope, viewWorktree));
+  const push = (): void => {
+    const publishing = !currentRef?.upstream || currentRef.upstreamGone;
+    void runAction(publishing ? "Publishing…" : "Pushing…", () => window.cw.pushHistory(scope, viewWorktree));
+  };
+
+  const openBranchDialog = (): void => {
+    if (!branchTarget) return;
+    const { sha, selected } = branchTarget;
+    const subject = log?.commits.find((candidate) => candidate.sha === sha)?.subject;
+    setInputDialog({
+      title: "Create a branch",
+      label: "Branch name",
+      placeholder: "feature/my-change",
+      required: "Enter a branch name",
+      note: (
+        <>
+          At {selected ? "the selected commit" : "HEAD"} <code>{sha.slice(0, 7)}</code>
+          {subject ? ` · ${subject}` : ""}, in {checkoutName}.
+          {ownedCheckout ? " A cw-code session works in this checkout — checking out changes its branch too." : ""}
+        </>
+      ),
+      checkbox: { label: "Check out after creating", initial: true },
+      confirmLabel: "Create branch",
+      busyLabel: "Creating…",
+      submit: (name, checkoutAfter) =>
+        runAction(`Creating ${name}…`, () => window.cw.createHistoryBranch(scope, viewWorktree, { name, sha, checkout: checkoutAfter }), false)
+    });
+  };
+
+  const openStashDialog = (): void => {
+    setInputDialog({
+      title: "Stash changes",
+      label: "Message (optional)",
+      placeholder: head?.branch ? `WIP on ${head.branch}` : "WIP",
+      note: `Saves the uncommitted changes in ${checkoutName}, including untracked files, and cleans its working tree.`,
+      confirmLabel: "Stash",
+      busyLabel: "Stashing…",
+      submit: (message) => runAction("Stashing…", () => window.cw.stashHistory(scope, viewWorktree, message || undefined), false)
+    });
+  };
+
+  const popStash = (): void => {
+    if (!latestStash) return;
+    const { name } = latestStash.ref;
+    void confirm({
+      title: latestStash.subject ? `Pop ${name}: ${latestStash.subject}?` : `Pop ${name}?`,
+      message: `Applies the stash to ${checkoutName} and drops it. If it conflicts, the stash is kept.`,
+      confirmLabel: "Pop"
+    }).then((ok) => {
+      if (ok) void runAction(`Popping ${name}…`, () => window.cw.popStashHistory(scope, viewWorktree));
+    });
+  };
+
+  const fromState = (id: keyof typeof states, label: string, icon: ToolbarAction["icon"], onClick: () => void, badgeHint?: string): ToolbarAction => ({
+    id,
+    label,
+    icon,
+    title: states[id].title,
+    disabled: states[id].disabled,
+    badge: states[id].badge,
+    badgeHint,
+    onClick
+  });
+
+  const groups: ToolbarAction[][] = [
+    [
+      fromState("fetch", "Fetch", <CloudDownload size={ACTION_ICON} aria-hidden="true" />, fetchRemote),
+      {
+        ...fromState("pull", "Pull", <ArrowDownToLine size={ACTION_ICON} aria-hidden="true" />, pull, "behind"),
+        menu: [
+          { id: "pull", label: "Pull (fast-forward only)", title: states.pull.title, disabled: states.pull.disabled, onSelect: pull },
+          { id: "fetch", label: "Fetch", title: states.fetch.title, disabled: states.fetch.disabled, onSelect: fetchRemote }
+        ]
+      },
+      fromState("push", "Push", <ArrowUpFromLine size={ACTION_ICON} aria-hidden="true" />, push, "ahead")
+    ],
+    [
+      fromState("branch", "Branch", <GitBranchPlus size={ACTION_ICON} aria-hidden="true" />, openBranchDialog),
+      fromState("stash", "Stash", <PackagePlus size={ACTION_ICON} aria-hidden="true" />, openStashDialog),
+      fromState("pop", "Pop", <ArchiveRestore size={ACTION_ICON} aria-hidden="true" />, popStash)
+    ],
+    sessionId
+      ? [
+          {
+            id: "terminal",
+            label: "Terminal",
+            icon: <SquareTerminal size={ACTION_ICON} aria-hidden="true" />,
+            title: "Open this session's terminal",
+            onClick: () => usePanelStore.getState().revealTab(sessionId, "shell")
+          }
+        ]
+      : []
+  ];
 
   const resizeColumn = (column: ColumnId, width: number | null, commit: boolean): void => {
     const target = column === "ref" ? refWidth : graphWidth;
@@ -476,6 +556,7 @@ export function GitGlassPanel({ scope: scopeProp }: { scope: HistoryScope }) {
   return (
     <div ref={panelRef} className={`git-glass${narrow ? " narrow" : ""}`} onKeyDown={onPanelKeyDown}>
       {dialog}
+      {inputDialog && <GitGlassInputDialog request={inputDialog} onClose={() => setInputDialog(null)} />}
       <GitGlassToolbar
         narrow={narrow}
         sidebarOpen={sidebarOpen}
@@ -684,6 +765,14 @@ export function GitGlassPanel({ scope: scopeProp }: { scope: HistoryScope }) {
       <GitGlassStatusBar
         branch={branch}
         upstream={currentRef?.upstream ? { name: currentRef.upstream, ahead: currentRef.ahead, behind: currentRef.behind, gone: currentRef.upstreamGone } : null}
+        fetchedAt={topic?.data.fetchedAt ?? null}
+        busy={action !== null}
+        onFetch={fetchRemote}
+        sessions={{
+          total: sidebarData.model.sessions.length,
+          running: sidebarData.model.sessions.filter((row) => row.busy).length,
+          onOpen: () => openSection("sessions")
+        }}
         commits={log ? log.commits.length : null}
         truncated={log?.truncated ?? false}
         path={activePath}
