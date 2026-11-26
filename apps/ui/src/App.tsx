@@ -19,6 +19,7 @@ import { WorkflowRunModal } from "./components/WorkflowRunModal.js";
 import { ShutdownDialog } from "./components/ShutdownDialog.js";
 import { FolderBrowserHost } from "./components/FolderBrowserDialog.js";
 import { handleQuitRequest, handleShutdownExpired } from "./stores/shutdownFlow.js";
+import { ProjectGitGlassPane } from "./components/ProjectGitGlassPane.js";
 import { RightPanelBody } from "./components/RightPanelBody.js";
 import { ToolRail } from "./components/ToolRail.js";
 import { useToolAvailability } from "./components/useToolAvailability.js";
@@ -63,6 +64,8 @@ export function App() {
   useNotificationSounds();
   useBrowserAttentionTitle(!window.cw.capabilities.desktop);
   const activeSessionId = useAppStore((s) => s.activeSessionId);
+  const activeProjectId = useAppStore((s) => s.activeProjectId);
+  const pendingGlassOpen = usePanelStore((s) => s.pendingGlassOpen);
   const mainView = usePrStore((s) => s.mainView);
   const runModal = usePrStore((s) => s.runModal);
   const appearance = useAppStore((s) => s.appearance);
@@ -207,11 +210,16 @@ export function App() {
   }, [activeSessionId, initializeSession]);
   const rightTabs = rightOpenTabs(dockByTab, isToolAvailable);
   const rightShown = rightVisible && topTool !== null;
-  const rightPresence = usePresence(rightShown, panelAnimationMs);
+  const projectGlassShown = activeSessionId === null && activeProjectId !== null && pendingGlassOpen && mainView.kind === "session";
+  const rightPresence = usePresence(rightShown || projectGlassShown, panelAnimationMs);
+
+  useEffect(() => {
+    if (activeSessionId !== null) usePanelStore.getState().setPendingGlassOpen(false);
+  }, [activeSessionId]);
 
   return (
     <div
-      className={`app-shell${rightShown && !settingsActive ? "" : " right-hidden"}${settingsActive ? " rail-hidden" : ""}`}
+      className={`app-shell${(rightShown || projectGlassShown) && !settingsActive ? "" : " right-hidden"}${settingsActive ? " rail-hidden" : ""}`}
       data-driver={driver ?? "none"}
       style={shellStyle}
     >
@@ -263,7 +271,7 @@ export function App() {
             <ThreadView hidden={mainView.kind !== "session"} />
             <Notifications />
           </div>
-          {rightPresence.mounted && topTool !== null && activeSessionId !== null && (
+          {rightPresence.mounted && ((topTool !== null && activeSessionId !== null) || (activeProjectId !== null && activeSessionId === null)) && (
             <aside
               className={`right${rightPresence.entered ? "" : " collapsed"}${dropRight.over || draggingTab !== null ? " drop-target-active" : ""}`}
               hidden={settingsActive}
@@ -277,13 +285,17 @@ export function App() {
                   onDoubleClick={() => rightResize.setWidth(null)}
                   title="Drag to resize · double-click to reset"
                 />
-                <RightPanelBody
-                  sessionId={activeSessionId}
-                  tabs={rightTabs}
-                  top={topTool}
-                  onToolMenu={tabMenu.onTabMenuButton}
-                  onToolContextMenu={tabMenu.onTabContextMenu}
-                />
+                {activeSessionId !== null && topTool !== null ? (
+                  <RightPanelBody
+                    sessionId={activeSessionId}
+                    tabs={rightTabs}
+                    top={topTool}
+                    onToolMenu={tabMenu.onTabMenuButton}
+                    onToolContextMenu={tabMenu.onTabContextMenu}
+                  />
+                ) : (
+                  activeProjectId !== null && <ProjectGitGlassPane projectId={activeProjectId} />
+                )}
               </div>
             </aside>
           )}

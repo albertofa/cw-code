@@ -2,6 +2,7 @@ import { Fragment, type MouseEvent as ReactMouseEvent } from "react";
 import type { DockableTabId, SessionPrItem } from "@cw-code/contracts";
 import type { DriverName } from "../cw.js";
 import { resolveBottomActive, rightOpenTabs } from "../stores/panelLayout.js";
+import { useAppStore } from "../stores/appStore.js";
 import { selectSessionPanel, usePanelStore } from "../stores/panelStore.js";
 import { DriverIcon } from "./DriverIcon.js";
 import { PanelToggles } from "./PanelToggles.js";
@@ -69,6 +70,10 @@ export function ToolRail({
   const moveTab = usePanelStore((s) => s.moveTab);
   const setRightVisible = usePanelStore((s) => s.setRightVisible);
   const setBottomCollapsed = usePanelStore((s) => s.setBottomCollapsed);
+  const pendingGlassOpen = usePanelStore((s) => s.pendingGlassOpen);
+  const setPendingGlassOpen = usePanelStore((s) => s.setPendingGlassOpen);
+  const projectName = useAppStore((s) => s.projects.find((project) => project.id === s.activeProjectId)?.name);
+  const hasProject = useAppStore((s) => s.activeProjectId !== null);
   const draggingTab = usePanelStore((s) => s.draggingTab);
   const dragFromRail = usePanelStore((s) => s.dragFromRail);
   const dropRail = useDockDrop("right", sessionId, {
@@ -113,13 +118,17 @@ export function ToolRail({
             const place =
               docked === "closed" ? `opens in ${autoLocation[id] ?? "right"}` : `open in ${docked}${parked ? ", not shown" : ""}`;
             const detail = showAgents ? ` · ${subagentTitle(subagents)}` : "";
-            const label = `${def.title}${detail} · ${place}`;
+            const projectGlass = !sessionId && hasProject && id === "gitglass";
+            const label = projectGlass
+              ? `${def.title} · history of ${projectName ?? "project"}`
+              : `${def.title}${detail} · ${place}`;
+            const pressed = projectGlass ? pendingGlassOpen : active;
             return (
               <button
                 key={id}
-                className={`rail-b${active ? " on" : ""}${away ? " away" : ""}${parked ? " parked" : ""}`}
-                disabled={!sessionId}
-                onClick={() => onToolClick(id, active)}
+                className={`rail-b${pressed ? " on" : ""}${away ? " away" : ""}${parked ? " parked" : ""}`}
+                disabled={!sessionId && !projectGlass}
+                onClick={() => (projectGlass ? setPendingGlassOpen(!pendingGlassOpen) : onToolClick(id, active))}
                 onContextMenu={onToolContextMenu(id)}
                 draggable={sessionId !== undefined}
                 onDragStart={(e) => startTabDrag(e, id, sessionId, { fromRail: true })}
@@ -127,7 +136,7 @@ export function ToolRail({
                 data-tool={id}
                 title={label}
                 aria-label={label}
-                aria-pressed={active}
+                aria-pressed={pressed}
               >
                 {isHarnessTabId(id) ? <DriverIcon driver={id} size={16} /> : <def.Icon size={16} aria-hidden="true" />}
                 {id === "diff" && sessionId && <DiffBadge sessionId={sessionId} />}
