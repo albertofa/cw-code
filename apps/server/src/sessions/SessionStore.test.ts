@@ -527,6 +527,18 @@ describe("SessionStore auto follow-up", () => {
     expect(store.updateAutoFollowUp("sess_missing", () => ({ turns: 1 }))).toBe(false);
   });
 
+  it("keeps a well-formed pending limit resume and drops malformed ones on load", () => {
+    const { store } = seedStore([
+      { limitResume: { resetsAt: 1_793_724_600_000, window: "five_hour", attempts: 1 } },
+      { limitResume: { resetsAt: "soon", attempts: 0 } } as unknown as Partial<SessionMeta>,
+      { limitResume: { resetsAt: 1_793_724_600_000, attempts: -1 } },
+      { limitResume: { resetsAt: 1_793_724_600_000, attempts: 0, window: 7 } } as unknown as Partial<SessionMeta>,
+      { limitResume: "later" } as unknown as Partial<SessionMeta>
+    ]);
+    expect(store.getSession("sess_0")?.limitResume).toEqual({ resetsAt: 1_793_724_600_000, window: "five_hour", attempts: 1 });
+    for (const id of ["sess_1", "sess_2", "sess_3", "sess_4"]) expect(store.getSession(id)).not.toHaveProperty("limitResume");
+  });
+
   it("drops malformed auto follow-up state on load", () => {
     const { store } = seedStore([
       { autoFollowUp: { turns: 3, paused: "user" } },

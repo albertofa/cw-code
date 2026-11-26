@@ -98,6 +98,19 @@ export interface SubagentSummary {
   updatedAt: number;
 }
 
+/** A continuation turn cw-code starts once the plan limit that ended the last turn resets. */
+export interface LimitResume {
+  /** Epoch milliseconds; absent when a model's own limit names no reset, so nothing is scheduled. */
+  resetsAt?: number;
+  window?: string;
+  /** `model` when only the session's model is limited; absent for the whole account. */
+  scope?: "model";
+  /** The session's model when the limit hit (a model limit only); absent when the session ran the harness default. */
+  model?: string;
+  /** Automatic continuations already spent on this limit streak. */
+  attempts: number;
+}
+
 export interface SessionMeta {
   id: string;
   projectId: string;
@@ -135,6 +148,7 @@ export interface SessionMeta {
   lastTurnSnapshot?: TurnSnapshot;
   createNotice?: string;
   autoFollowUp?: { paused?: AutoFollowUpPause; turns: number };
+  limitResume?: LimitResume;
   /** Set on hidden child sessions dispatched by another session's agent. */
   subagent?: SubagentLink;
   queuedMessages?: QueuedMessage[];

@@ -241,6 +241,18 @@ function GeneralSettings() {
             <span>hours</span>
           </span>
         </SettingsRow>
+        <SettingsRow
+          label="Continue after a usage limit resets"
+          hint="When a plan limit ends a turn, cw-code continues that session on its own once the limit resets. When only the session's model is limited (like Fable's weekly limit), the thread also offers to continue on another model right away. Claude only for now."
+          htmlFor="sp-limit-resume"
+        >
+          <SettingsSwitch
+            id="sp-limit-resume"
+            checked={draft.limitAutoResume}
+            onChange={(next) => set({ limitAutoResume: next })}
+            label="Continue after a usage limit resets"
+          />
+        </SettingsRow>
         <SettingsRow label="When a linked pull request is merged or closed" hint="A session in Holding or Done moves to this status." htmlFor="sp-pr-finished-status">
           <select
             id="sp-pr-finished-status"

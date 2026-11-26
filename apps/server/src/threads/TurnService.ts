@@ -5,7 +5,7 @@ import type { GitTopic } from "../sourceControl/GitTopic.js";
 import { combineMessages, type MessageQueue } from "./MessageQueue.js";
 import { notifyAll, type SettledTurnEvent, type ThreadService } from "./ThreadService.js";
 
-export type TurnOrigin = "subagent-wake";
+export type TurnOrigin = "subagent-wake" | "limit-resume";
 
 export type TurnStartedListener = (sessionId: string, auto: boolean, turn: { turnId: string; origin?: TurnOrigin }) => void;
 

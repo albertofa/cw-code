@@ -4,6 +4,7 @@ import { prKey } from "@cw-code/shared/prRef";
 import { ptyTopic } from "@cw-code/shared/topics";
 import { SessionWatch } from "../agent/SessionWatch.js";
 import { SubagentDelivery } from "../agent/SubagentDelivery.js";
+import { LimitResume } from "../sessions/LimitResume.js";
 import { FileService } from "../fs/FileService.js";
 import { FilesTopic } from "../fs/FilesTopic.js";
 import { FileWatcher } from "../fs/FileWatcher.js";
@@ -89,6 +90,7 @@ export interface Services {
   sessionWatch: SessionWatch;
   subagentDelivery: SubagentDelivery;
   subagents: SubagentsModel;
+  limitResume: LimitResume;
 }
 
 export interface ServiceHooks {
@@ -139,6 +141,13 @@ function wireSubagentDelivery({ subagentDelivery, sessions, threads, turns }: Se
   threads.onTurnSettled((sessionId) => subagentDelivery.reevaluate(parentOf(sessionId)));
   turns.onTurnStarted((sessionId, _auto, turn) => subagentDelivery.turnStarted(sessionId, turn.origin));
   turns.onTurnStopped((sessionId) => subagentDelivery.turnStopped(sessionId));
+}
+
+function wireLimitResume({ limitResume, threads, turns }: Services): void {
+  threads.registerExtras((sessionId) => limitResume.extras(sessionId));
+  threads.onTurnSettled((sessionId, turnId, event) => limitResume.turnSettled(sessionId, turnId, event));
+  turns.onTurnStarted((sessionId, _auto, turn) => limitResume.turnStarted(sessionId, turn));
+  turns.onTurnStopped((sessionId) => limitResume.turnStopped(sessionId));
 }
 
 function wireSubagents({ subagents, threads, sessions }: Services): void {
@@ -220,7 +229,8 @@ function wireServiceEvents(
     sidebar,
     sessionWatch,
     subagentDelivery,
-    subagents
+    subagents,
+    limitResume
   }: Services,
   { emit, dropTopic, assessmentChanged, revokeAgentToken }: ServiceHooks
 ): void {
@@ -246,6 +256,7 @@ function wireServiceEvents(
     sessionWatch.sessionChanged(session);
     subagentDelivery.reevaluate(session.subagent?.parentSessionId ?? session.id);
     subagents.changed(session.id);
+    limitResume.sessionChanged(session);
     assessmentChanged();
     prTracker.setTracked(sessions.trackedPrRefs());
     prStore.onSessionsChanged();
@@ -415,6 +426,21 @@ export function createServices(stores: { sessionStore: SessionStore; settingsSto
     endWait: (parentId) => {
       sessions.endSubagentWait(parentId, "settled");
     }
+  });
+  const limitResume = new LimitResume({
+    sessions: () => sessions.listAllSessions(),
+    settings: () => sessions.getSettings(),
+    runtime: (sessionId) => threads.runtime(sessionId),
+    waitingOnSubagents: (sessionId) => sessions.subagentWaitSince(sessionId) !== null,
+    startTurn: (sessionId, prompt, model) =>
+      turns.start(sessionId, prompt, { auto: true, origin: "limit-resume", ...(model ? { prefs: { model } } : {}) }),
+    stopTurn: (sessionId) => {
+      turns.stop(sessionId);
+    },
+    setLimitResume: (sessionId, next) => sessions.setLimitResume(sessionId, next),
+    refresh: (sessionId) => threads.refreshExtras(sessionId),
+    postNotice: (sessionId, notice) => sessions.emitNotice(sessionId, notice.noticeId, notice.text, notice.severity),
+    shutdownReserved: () => sessions.isShutdownReserved()
   });
   const autoFollowUp = new AutoFollowUpEngine({
     sessions: () => sessions.listAllSessions(),
@@ -595,6 +621,7 @@ export function createServices(stores: { sessionStore: SessionStore; settingsSto
     workflowRunner,
     sessionWatch: new SessionWatch({ getSession: (sessionId) => sessions.findSession(sessionId) }),
     subagentDelivery,
+    limitResume,
     subagents: new SubagentsModel({
       children: (parentId) => sessions.listSubagents(parentId),
       parentOf: (sessionId) => sessions.findSession(sessionId)?.subagent?.parentSessionId ?? null,
@@ -613,6 +640,7 @@ export function createServices(stores: { sessionStore: SessionStore; settingsSto
   wireSessionWatch(services);
   wireSubagentDelivery(services);
   wireSubagents(services);
+  wireLimitResume(services);
   wireUsage(services);
   wireSessionPrs(services);
   wireTurnChanges(services);

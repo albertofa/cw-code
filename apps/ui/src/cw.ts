@@ -496,6 +496,7 @@ export interface AppSettings {
   holdingAutoExpireEnabled: boolean;
   /** Hours a session stays in the holding state before returning to idle. */
   holdingHours: number;
+  limitAutoResume: boolean;
   autoTitleEnabled: boolean;
   autoTitleDriver: DriverName;
   autoTitleModel: string;
@@ -603,6 +604,10 @@ export interface CwApi {
   unqueueMessage(sessionId: string, messageId: string): Promise<void>;
   flushQueue(sessionId: string): Promise<string>;
   stopTurn(sessionId: string): Promise<StopTurnResult>;
+  /** Drops the continuation cw-code scheduled for when the plan limit resets; false when there was none. */
+  cancelLimitResume(sessionId: string): Promise<boolean>;
+  /** Switches a session limited on its own model to `model` and continues it now; resolves to the new turn id. */
+  continueWithModel(sessionId: string, model: string): Promise<string>;
   stopSubagent(subagentId: string): Promise<StopTurnResult>;
   reloadHistory(sessionId: string): Promise<void>;
   respondApproval(requestId: string, decision: ApprovalDecision): Promise<void>;
