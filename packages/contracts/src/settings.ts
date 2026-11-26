@@ -79,6 +79,8 @@ export interface AppSettings {
   holdingAutoExpireEnabled: boolean;
   /** Hours a session stays in the holding state before returning to idle. */
   holdingHours: number;
+  /** Continue a session on its own once the plan limit that ended its turn resets. */
+  limitAutoResume: boolean;
   autoTitleEnabled: boolean;
   autoTitleDriver: DriverKind;
   autoTitleModel: string;

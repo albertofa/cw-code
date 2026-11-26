@@ -231,6 +231,8 @@ export function createCwApi(
         acceptFolderHead: opts?.acceptFolderHead
       }),
     stopTurn: (sessionId) => call<StopTurnResult>("turns.stop", { sessionId }),
+    cancelLimitResume: (sessionId) => call<boolean>("turns.cancelLimitResume", { sessionId }),
+    continueWithModel: (sessionId, model) => call<string>("turns.continueWithModel", { sessionId, model }),
     stopSubagent: (subagentId) => call<StopTurnResult>("subagents.stop", { subagentId }),
     reloadHistory: (sessionId) => callVoid("threads.reloadHistory", { sessionId }),
     respondApproval: (requestId, decision) => callVoid("approvals.respond", { requestId, decision }),

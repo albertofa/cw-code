@@ -28,6 +28,7 @@ import { TodoDock } from "./TodoDock.js";
 import { BranchMismatchDock } from "./BranchMismatchNotice.js";
 import { PrUpdateDock } from "./PrUpdateDock.js";
 import { WorkingDock } from "./WorkingDock.js";
+import { LimitResumeDock } from "./LimitResumeDock.js";
 import { PrSessionChip } from "./PrSessionPanel.js";
 import { useMarkTurnSeen } from "./useTurnSeen.js";
 import { TurnBlock } from "./TurnBlock.js";
@@ -689,6 +690,7 @@ export function ThreadView({ hidden = false }: { hidden?: boolean }) {
               <TodoDock sessionId={session.id} />
               <BranchMismatchDock key={`branch-dock:${session.id}`} sessionId={session.id} />
               <PrUpdateDock key={`pr-dock:${session.id}`} sessionId={session.id} />
+              <LimitResumeDock key={`limit-dock:${session.id}`} sessionId={session.id} />
               <ApprovalDock sessionId={session.id} />
               <QuestionDock sessionId={session.id} />
               {!threadHidden && <SubagentRequestDocks sessionId={session.id} />}

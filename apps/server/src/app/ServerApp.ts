@@ -539,6 +539,7 @@ export class ServerApp {
     this.services?.harnessUpdates.resume();
     this.services?.autoFollowUp.reactivate();
     this.services?.subagentDelivery.reactivate();
+    this.services?.limitResume.reactivate();
     this.services?.sourceControl.start();
   }
 
@@ -571,6 +572,7 @@ export class ServerApp {
     }
     services.autoFollowUp.dispose();
     services.subagentDelivery.dispose();
+    services.limitResume.dispose();
     services.sessionWatch.dispose();
     services.prStore.dispose();
     services.threads.dispose();

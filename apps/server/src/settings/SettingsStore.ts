@@ -260,6 +260,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   idleResolveAfterDays: 30,
   holdingAutoExpireEnabled: false,
   holdingHours: 6,
+  limitAutoResume: true,
   autoTitleEnabled: true,
   autoTitleDriver: "claude",
   autoTitleModel: "claude-sonnet-5-5",
@@ -429,6 +430,7 @@ function sanitize(patch: SettingsPatch): SettingsPatch {
     const value = Math.round(Number(patch.holdingHours));
     out.holdingHours = Number.isFinite(value) ? (value === 0 ? 6 : Math.min(168, Math.max(1, value))) : 6;
   }
+  if (patch.limitAutoResume !== undefined) out.limitAutoResume = patch.limitAutoResume !== false;
   if (patch.autoTitleEnabled !== undefined) out.autoTitleEnabled = patch.autoTitleEnabled === true;
   if (patch.opencodeGoUsage !== undefined) out.opencodeGoUsage = patch.opencodeGoUsage === true;
   if (patch.autoTitleDriver !== undefined) {
