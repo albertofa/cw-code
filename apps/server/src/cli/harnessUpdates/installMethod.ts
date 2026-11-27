@@ -86,7 +86,7 @@ export function resolveInstallPlan(input: InstallPlanInput): InstallPlan {
   if (input.pacman) {
     const { packageName: systemPackage, inRepo, pkexec } = input.pacman;
     if (!inRepo) return manual("pacman", null);
-    if (!pkexec) return manual("pacman", `sudo pacman -Sy --needed ${systemPackage}`);
+    if (!pkexec) return manual("pacman", `sudo pacman -Syu --needed ${systemPackage}`);
     const plan = runnable("pacman", pkexec, ["pacman", "-Sy", "--needed", "--noconfirm", systemPackage], "pacman");
     return { ...plan, command: { file: pkexec, args: plan.command?.args ?? [], timeoutMs: PACMAN_UPDATE_TIMEOUT_MS } };
   }

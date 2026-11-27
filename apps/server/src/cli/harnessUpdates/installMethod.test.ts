@@ -291,7 +291,7 @@ describe("resolveInstallPlan pacman", () => {
 
   it("is manual without pkexec", () => {
     const plan = resolveInstallPlan(posix("opencode", "/usr/bin/opencode", { pacman: { packageName: "opencode", inRepo: true, pkexec: null } }));
-    expect(plan).toEqual({ method: "pacman", command: null, display: "sudo pacman -Sy --needed opencode", lockKey: null });
+    expect(plan).toEqual({ method: "pacman", command: null, display: "sudo pacman -Syu --needed opencode", lockKey: null });
   });
 
   it("is manual for a package no sync repository provides", () => {
