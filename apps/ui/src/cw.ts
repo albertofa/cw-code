@@ -704,6 +704,8 @@ export interface CwApi {
   detachPty(ptyId: string): void;
   /** Ends a session's terminal process for every client. */
   closePty(sessionId: string, kind: DriverName | "shell"): Promise<void>;
+  /** Whether a session's terminal is running or spawning on the server, whichever client opened it. */
+  isPtyOpen(sessionId: string, kind: DriverName | "shell"): Promise<boolean>;
   onPtyData(cb: (msg: { ptyId: string; data: string }) => void): () => void;
   onPtyExit(cb: (msg: { ptyId: string; token: string; exitCode: number }) => void): () => void;
   openExternal(url: string): Promise<void>;

@@ -284,6 +284,20 @@ describe("PtyPool close", () => {
     expect(pool.list()).toEqual([]);
   });
 
+  it("reports a terminal open while it spawns or runs, for every caller", async () => {
+    const { pool, holdLoads, release } = makePool();
+    expect(pool.isOpen("sess_a", "claude")).toBe(false);
+    holdLoads();
+    const pending = pool.open("sess_a", ".", "claude", "", undefined, noData);
+    expect(pool.isOpen("sess_a", "claude")).toBe(true);
+    release();
+    await pending;
+    expect(pool.isOpen("sess_a", "claude")).toBe(true);
+    expect(pool.isOpen("sess_a", "shell")).toBe(false);
+    pool.close("sess_a", "claude");
+    expect(pool.isOpen("sess_a", "claude")).toBe(false);
+  });
+
   it("opens again normally after a close", async () => {
     const { pool, spawned } = makePool();
     pool.close("sess_a", "shell");

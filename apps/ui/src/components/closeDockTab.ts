@@ -2,7 +2,6 @@ import type { DockableTabId } from "@cw-code/contracts";
 import { selectSessionPanel, usePanelStore } from "../stores/panelStore.js";
 import { useNotifs } from "./Notifications.js";
 import { confirmGlobally } from "./GlobalConfirm.js";
-import { isPtyLive, markPtyLive } from "./ptyLiveness.js";
 import { harnessLabel } from "./toolTabs.js";
 
 type PtyTabKind = "claude" | "opencode" | "codex" | "shell";
@@ -12,9 +11,16 @@ const PTY_TABS: readonly PtyTabKind[] = ["claude", "opencode", "codex", "shell"]
 export function isTerminalTab(tab: DockableTabId): tab is PtyTabKind {
   return (PTY_TABS as readonly DockableTabId[]).includes(tab);
 }
-/** Interactive CLIs running in these tabs: closing them ends their whole session, so ask first. */
-function liveHarnessTabs(sessionId: string, tabs: readonly PtyTabKind[]): HarnessTabKind[] {
-  return tabs.filter((tab): tab is HarnessTabKind => tab !== "shell" && isPtyLive(sessionId, tab));
+
+/**
+ * Interactive CLIs running in these tabs: closing them ends their whole session, so ask first.
+ * The server is asked, so a terminal opened by another client or one that exited while its tab
+ * was hidden is reported as it really is. If it cannot answer, assume running and ask.
+ */
+async function runningHarnessTabs(sessionId: string, tabs: readonly PtyTabKind[]): Promise<HarnessTabKind[]> {
+  const harnesses = tabs.filter((tab): tab is HarnessTabKind => tab !== "shell");
+  const open = await Promise.all(harnesses.map((tab) => window.cw.isPtyOpen(sessionId, tab).catch(() => true)));
+  return harnesses.filter((_, index) => open[index]);
 }
 
 function confirmEndingHarnesses(harnesses: readonly HarnessTabKind[]): Promise<boolean> {
@@ -31,7 +37,6 @@ function confirmEndingHarnesses(harnesses: readonly HarnessTabKind[]): Promise<b
 }
 
 function endTerminal(sessionId: string, tab: PtyTabKind): void {
-  markPtyLive(sessionId, tab, false);
   window.cw.closePty(sessionId, tab).catch((err: unknown) => {
     useNotifs.getState().push({
       kind: "error",
@@ -48,7 +53,7 @@ function endTerminal(sessionId: string, tab: PtyTabKind): void {
  */
 export async function closeDockTab(sessionId: string | undefined, tab: DockableTabId): Promise<void> {
   if (!sessionId) return;
-  if (isTerminalTab(tab) && !(await confirmEndingHarnesses(liveHarnessTabs(sessionId, [tab])))) return;
+  if (isTerminalTab(tab) && !(await confirmEndingHarnesses(await runningHarnessTabs(sessionId, [tab])))) return;
   usePanelStore.getState().moveTab(sessionId, tab, "closed");
   if (isTerminalTab(tab)) endTerminal(sessionId, tab);
 }
@@ -61,7 +66,7 @@ export async function resetDockLayout(sessionId: string | undefined): Promise<vo
   if (!sessionId) return;
   const { dockByTab } = selectSessionPanel(usePanelStore.getState(), sessionId);
   const openTerminals = PTY_TABS.filter((tab) => dockByTab[tab] !== "closed");
-  if (!(await confirmEndingHarnesses(liveHarnessTabs(sessionId, openTerminals)))) return;
+  if (!(await confirmEndingHarnesses(await runningHarnessTabs(sessionId, openTerminals)))) return;
   usePanelStore.getState().resetLayout(sessionId);
   for (const tab of openTerminals) endTerminal(sessionId, tab);
 }

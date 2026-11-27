@@ -371,6 +371,12 @@ export class PtyPool {
     return this.ptys.has(ptyId);
   }
 
+  /** Whether a session's terminal is running or spawning, whichever client opened it. */
+  isOpen(sessionId: string, kind: PtyKind): boolean {
+    const ptyId = `${sessionId}:${kind}`;
+    return this.ptys.has(ptyId) || this.openings.has(ptyId);
+  }
+
   write(ptyId: string, clientId: string, data: string): void {
     const entry = this.ptys.get(ptyId);
     if (!entry) return;
