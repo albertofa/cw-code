@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
-import { Activity, Archive, ArchiveRestore, Bell, ChartColumn, Check, ChevronDown, ChevronRight, ChevronUp, CircleCheck, CircleHelp, Clock, Copy, GitBranch, GitPullRequest, Hash, LoaderCircle, Pause, Pencil, Play, Plus, Search, Settings, ShieldAlert, Sparkles, X, type LucideIcon } from "lucide-react";
+import { Activity, Archive, ArchiveRestore, Bell, ChartColumn, Check, ChevronDown, ChevronRight, ChevronUp, CircleCheck, CircleHelp, Clock, Copy, GitBranch, GitPullRequest, Hash, LoaderCircle, Pause, Pencil, Play, Plus, Search, Settings, ShieldAlert, Sparkles, Unlink, X, type LucideIcon } from "lucide-react";
 import type { Attention, AttentionKind, BabysitState, NeedsYouSlot, SessionRow, SidebarLayout, SidebarReorderRequest, SidebarSection, SidebarTopicData } from "@cw-code/contracts";
 import { SIDEBAR_TOPIC } from "@cw-code/shared/topics";
 import type { DriverName, Session, SessionStatus } from "../cw.js";
@@ -29,7 +29,7 @@ const IDLE_LIMIT = 4;
 const FLIP_MS_FALLBACK = 150;
 const FLIP_EASING_FALLBACK = "cubic-bezier(0.22, 1, 0.36, 1)";
 const PENDING_MOVE_MS = 1500;
-const EMPTY_LAYOUT: SidebarLayout = { needsYou: [], workingSet: [], main: [], resolved: [], quickCounts: { pr: 0, prAttention: 0 } };
+const EMPTY_LAYOUT: SidebarLayout = { needsYou: [], workingSet: [], main: [], resolved: [], quickCounts: { pr: 0, noPr: 0, prAttention: 0 } };
 
 const ATTENTION_ACTION: Record<AttentionKind, { verb: string; Icon: LucideIcon }> = {
   approval: { verb: "Approve", Icon: ShieldAlert },
@@ -89,7 +89,8 @@ const DRIVER_LABEL: Record<DriverName, string> = {
 };
 
 const QUICK_FILTER_UI: Array<{ id: Exclude<QuickFilter, "all">; label: string; hint: string; Icon: LucideIcon }> = [
-  { id: "pr", label: "Linked to a PR", hint: "Linked to a PR", Icon: GitPullRequest }
+  { id: "pr", label: "Linked to a PR", hint: "Linked to a PR", Icon: GitPullRequest },
+  { id: "noPr", label: "Not linked to a PR", hint: "Not linked to a PR", Icon: Unlink }
 ];
 
 function quickFacts(s: Session): QuickFilterFacts {
@@ -1052,20 +1053,23 @@ export function Sidebar({ onOpenSkills, skillsOpen = false, hidden = false }: { 
                   >
                     All
                   </button>
-                  {QUICK_FILTER_UI.map(({ id, label, hint, Icon }) => (
+                  {QUICK_FILTER_UI.map(({ id, label, hint, Icon }) => {
+                    const count = quickCounts[id] ?? 0;
+                    return (
                     <button
                       key={id}
                       type="button"
-                      className={`side-qf${quickFilter === id ? " on" : ""}${quickCounts[id] === 0 ? " is-zero" : ""}`}
+                      className={`side-qf${quickFilter === id ? " on" : ""}${count === 0 ? " is-zero" : ""}`}
                       onClick={() => setQuickFilter((current) => toggleQuickFilter(current, id))}
                       aria-pressed={quickFilter === id}
-                      title={`${hint} (${quickCounts[id]})`}
-                      aria-label={`${label}, ${quickCounts[id]}`}
+                      title={`${hint} (${count})`}
+                      aria-label={`${label}, ${count}`}
                     >
                       <Icon size={12} aria-hidden="true" />
-                      <span>{quickCounts[id]}</span>
+                      <span>{count}</span>
                     </button>
-                  ))}
+                    );
+                  })}
                 </span>
               </div>
               {workingSetShown.map((s) => renderWorkingRow(s))}

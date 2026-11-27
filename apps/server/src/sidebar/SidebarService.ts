@@ -65,7 +65,7 @@ interface Computed {
 
 const LOG_PREFIX = "[sidebar]";
 
-const EMPTY_LAYOUT: SidebarLayout = { needsYou: [], workingSet: [], main: [], resolved: [], quickCounts: { pr: 0, prAttention: 0 } };
+const EMPTY_LAYOUT: SidebarLayout = { needsYou: [], workingSet: [], main: [], resolved: [], quickCounts: { pr: 0, noPr: 0, prAttention: 0 } };
 const EMPTY_DEFAULTS: SidebarDefaults = { restoreSessionId: null, restoreProjectId: null, projectsByRecency: [] };
 
 function describeError(error: unknown): string {
@@ -256,6 +256,7 @@ export class SidebarService implements TopicProvider {
       resolved: sections.resolved.map((session) => session.id),
       quickCounts: {
         pr: workingSet.filter((session) => !isClosed(session) && sessionLinks(session).length > 0).length,
+        noPr: workingSet.filter((session) => !isClosed(session) && sessionLinks(session).length === 0).length,
         prAttention: needsAttentionCount(this.deps.inboxItems().map((item) => lookup.get(prKey(item.ref)) ?? item))
       }
     };
