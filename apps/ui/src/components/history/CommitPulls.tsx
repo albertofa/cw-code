@@ -98,7 +98,8 @@ export function usePrRefDetail(ref: PrRef) {
 
   useEffect(() => acquirePrDetailWatch(ref), [key]);
 
-  return { detail: entry?.detail ?? null, error: entry?.error ?? loadError, retry: () => setAttempt((value) => value + 1) };
+  // A failed one-off load no longer matters once the watch has delivered the detail.
+  return { detail: entry?.detail ?? null, error: entry?.error ?? (entry?.detail ? null : loadError), retry: () => setAttempt((value) => value + 1) };
 }
 
 export function CommitPrCard({ pull, linked }: { pull: HistoryCommitPull; linked: boolean }) {

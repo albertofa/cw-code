@@ -18,6 +18,8 @@ function git(cwd: string, ...args: string[]): string {
 function configure(repository: string): void {
   git(repository, "config", "user.name", "t");
   git(repository, "config", "user.email", "t@local");
+  // GitService runs plain git, so the repo itself must opt out of the Windows runners' autocrlf.
+  git(repository, "config", "core.autocrlf", "false");
 }
 
 function commitFile(repository: string, file: string, content: string, message: string): void {
