@@ -6,7 +6,7 @@ import { ThreadService } from "../threads/ThreadService.js";
 import { createThreadTopicProvider } from "../threads/threadTopic.js";
 import { TopicHub } from "../topics/TopicHub.js";
 import type { CallContext } from "../transport/Router.js";
-import { ACCOUNT_REFRESH_MS, UsageTopic } from "./UsageTopic.js";
+import { ACCOUNT_REFRESH_MS, TURN_REFRESH_DELAY_MS, TURN_REFRESH_MIN_GAP_MS, UsageTopic } from "./UsageTopic.js";
 import { wireSessionUsageTotals, type SessionFamily } from "./wireSessionUsageTotals.js";
 import type { UsageLedgerQuery, UsageLedgerRow } from "./ledgerTypes.js";
 
@@ -57,6 +57,7 @@ function setup(rows: UsageLedgerRow[] = []) {
       recorded.push(cb);
       return () => undefined;
     },
+    driverOfSession: (sessionId) => (sessionId.startsWith("codex") ? "codex" : sessionId === "gone" ? null : "claude"),
     now: () => Date.now()
   });
   hub.register(topic);
@@ -107,6 +108,34 @@ describe("UsageTopic", () => {
     hub.unsubscribe(ctx, [USAGE_TOPIC]);
     await advanceTimersByTimeAsync(ACCOUNT_REFRESH_MS * 3);
     expect(fetched).toHaveLength(6);
+  });
+
+  it("force-refreshes the harness of a finished turn, batched and rate limited, only while subscribed", async () => {
+    const { hub, fetched, recordTurn } = setup();
+    recordTurn("s1");
+    await advanceTimersByTimeAsync(TURN_REFRESH_MIN_GAP_MS);
+    expect(fetched).toHaveLength(0);
+
+    hub.subscribe(ctx, [USAGE_TOPIC]);
+    await advanceTimersByTimeAsync(0);
+    fetched.length = 0;
+    recordTurn("s1");
+    recordTurn("s2");
+    recordTurn("codex-1");
+    recordTurn("gone");
+    expect(data(hub).account.claude.loading).toBe(false);
+    await advanceTimersByTimeAsync(TURN_REFRESH_DELAY_MS);
+    expect(fetched).toEqual([
+      { driver: "claude", force: true },
+      { driver: "codex", force: true }
+    ]);
+
+    fetched.length = 0;
+    recordTurn("s1");
+    await advanceTimersByTimeAsync(TURN_REFRESH_DELAY_MS);
+    expect(fetched).toHaveLength(0);
+    await advanceTimersByTimeAsync(TURN_REFRESH_MIN_GAP_MS);
+    expect(fetched).toEqual([{ driver: "claude", force: true }]);
   });
 
   it("a second subscriber does not restart the refresh loop", async () => {
