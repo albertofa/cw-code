@@ -122,6 +122,14 @@ describe("PreferencesStore", () => {
       expect(store.drafts()).toEqual({});
     });
 
+    test("a draft with only pastes is kept, and dropping the pastes deletes it", () => {
+      const store = open();
+      store.setDraft("k", "", [], [], ["pasted"]);
+      expect(store.drafts()).toEqual({ k: { text: "", attachments: [], pastes: ["pasted"], updatedAt: 1_000 } });
+      store.setDraft("k", "", [], [], []);
+      expect(store.drafts()).toEqual({});
+    });
+
     test("a draft with only attachments is kept", () => {
       const store = open();
       store.setDraft("k", "", ["a"]);

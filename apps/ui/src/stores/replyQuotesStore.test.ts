@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { MAX_DRAFT_QUOTES, MAX_QUOTE_LENGTH } from "@cw-code/shared/draftQuotes";
+import { MAX_DRAFT_QUOTES, MAX_QUOTE_LENGTH } from "@cw-code/shared/composerDraftLimits";
 import { fitQuote, selectReplyQuotes, useReplyQuotesStore } from "./replyQuotesStore.js";
 
 const texts = (sessionId: string) => selectReplyQuotes(useReplyQuotesStore.getState(), sessionId).map((quote) => quote.text);
