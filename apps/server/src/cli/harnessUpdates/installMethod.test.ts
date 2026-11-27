@@ -262,3 +262,35 @@ describe("resolveInstallPlan fallbacks", () => {
     expect(plan.method).toBe("winget");
   });
 });
+
+describe("resolveInstallPlan pacman", () => {
+  it("updates a pacman-owned binary through pkexec", () => {
+    const plan = resolveInstallPlan(
+      posix("codex", "/usr/bin/codex", {
+        realPath: "/usr/lib/openai-codex/bin/codex",
+        pacman: { packageName: "openai-codex", pkexec: "/usr/bin/pkexec" }
+      })
+    );
+    expect(plan).toEqual({
+      method: "pacman",
+      command: { file: "/usr/bin/pkexec", args: ["pacman", "-Sy", "--needed", "--noconfirm", "openai-codex"] },
+      display: "/usr/bin/pkexec pacman -Sy --needed --noconfirm openai-codex",
+      lockKey: "pacman"
+    });
+  });
+
+  it("wins over the npm prefix of a pacman-owned npm layout", () => {
+    const plan = resolveInstallPlan(
+      posix("codex", "/usr/bin/codex", {
+        realPath: "/usr/lib/node_modules/@openai/codex/bin/codex.js",
+        pacman: { packageName: "openai-codex", pkexec: "/usr/bin/pkexec" }
+      })
+    );
+    expect(plan.method).toBe("pacman");
+  });
+
+  it("is manual without pkexec", () => {
+    const plan = resolveInstallPlan(posix("opencode", "/usr/bin/opencode", { pacman: { packageName: "opencode", pkexec: null } }));
+    expect(plan).toEqual({ method: "pacman", command: null, display: "sudo pacman -Sy --needed opencode", lockKey: null });
+  });
+});

@@ -1,6 +1,6 @@
 import type { DriverKind } from "./session.js";
 
-export type HarnessInstallMethod = "native" | "npm" | "pnpm" | "bun" | "homebrew" | "winget" | "mise" | "unknown";
+export type HarnessInstallMethod = "native" | "npm" | "pnpm" | "bun" | "homebrew" | "pacman" | "winget" | "mise" | "unknown";
 
 export type HarnessUpdatePhase = "idle" | "queued" | "running" | "succeeded" | "failed" | "unchanged";
 

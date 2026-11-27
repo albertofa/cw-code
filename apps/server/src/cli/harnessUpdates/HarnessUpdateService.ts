@@ -57,6 +57,13 @@ function phaseFields(info: HarnessUpdateInfo): PhaseFields {
   return { phase: info.phase, phaseMessage: info.phaseMessage, startedAt: info.startedAt, finishedAt: info.finishedAt, output: info.output };
 }
 
+function elevationFailure(command: UpdateCommand, code: number | null): string | null {
+  if (!/(^|[\\/])pkexec$/.test(command.file)) return null;
+  if (code === 126) return "The update needs administrator rights and the authorization was dismissed.";
+  if (code === 127) return "The update needs administrator rights and the authorization failed. A polkit authentication agent must be running on the machine that runs cw-code.";
+  return null;
+}
+
 export class HarnessUpdateService {
   private state: HarnessUpdates;
   private readonly plans = new Map<DriverKind, KnownPlan>();
@@ -253,7 +260,8 @@ export class HarnessUpdateService {
       const output = result.output || null;
       if (result.error !== null || result.code !== 0) {
         const message = result.error ?? `Update command exited with code ${result.code}: ${lastOutputLine(result.output) ?? ""}`.trimEnd();
-        this.fail(binary, command, startedAt, this.withLockedHint(binary, message, result.output), output, result.code);
+        const hinted = elevationFailure(command, result.code) ?? this.withLockedHint(binary, message, result.output);
+        this.fail(binary, command, startedAt, hinted, output, result.code);
         return;
       }
       await this.deps.recheck();
@@ -353,7 +361,9 @@ export class HarnessUpdateService {
     const phaseMessage =
       version === null
         ? "Update finished, but the version could not be verified."
-        : `Update finished, but ${harnessLabel(binary)} still reports ${version}.`;
+        : this.state[binary].installMethod === "pacman"
+          ? `pacman's repositories do not have ${latest} yet. ${harnessLabel(binary)} is still ${version}.`
+          : `Update finished, but ${harnessLabel(binary)} still reports ${version}.`;
     this.patch(binary, { phase: "unchanged", phaseMessage, finishedAt, output });
     console.warn(`[harness-updates] ${binary}: ${phaseMessage}`);
     this.trace(binary, command, startedAt, false, phaseMessage, 0);

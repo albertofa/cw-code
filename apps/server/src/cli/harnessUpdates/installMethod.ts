@@ -1,3 +1,4 @@
+import { execFile } from "node:child_process";
 import { constants, existsSync } from "node:fs";
 import { access, realpath } from "node:fs/promises";
 import { homedir } from "node:os";
@@ -14,6 +15,8 @@ export interface InstallPlanInput {
   env: Record<string, string | undefined>;
   packageName: string;
   exists(path: string): boolean;
+  /** Set when pacman owns the binary: the owning package and the resolved `pkexec`, or null when there is none to elevate with. */
+  pacman?: { packageName: string; pkexec: string | null } | null;
 }
 
 export interface InstallPlan {
@@ -72,6 +75,12 @@ export function resolveInstallPlan(input: InstallPlanInput): InstallPlan {
 
   if (contains("/mise/installs/") || contains("/mise/shims/")) {
     return manual("mise", "mise upgrade");
+  }
+
+  if (input.pacman) {
+    const { packageName: systemPackage, pkexec } = input.pacman;
+    if (!pkexec) return manual("pacman", `sudo pacman -Sy --needed ${systemPackage}`);
+    return runnable("pacman", pkexec, ["pacman", "-Sy", "--needed", "--noconfirm", systemPackage], "pacman");
   }
 
   const npmPrefix = findNpmPrefix(input);
@@ -161,12 +170,32 @@ export async function planFor(binary: DriverKind, binaryPath: string, packageNam
     homeDir: homedir(),
     env: process.env,
     packageName,
-    exists: existsSync
+    exists: existsSync,
+    pacman: await pacmanOwner(realPath)
   };
   const plan = resolveInstallPlan(input);
   const target = installDir(plan, input);
   if (target === null || (await writable(target))) return plan;
   return manual(plan.method, plan.display);
+}
+
+const PACMAN_QUERY_TIMEOUT_MS = 3000;
+const PACMAN_NAME_RE = /^[a-z0-9@._+-]+$/i;
+
+async function pacmanOwner(realPath: string): Promise<InstallPlanInput["pacman"]> {
+  if (process.platform !== "linux") return null;
+  const home = homedir().replace(/\/+$/, "");
+  if (realPath.startsWith(`${home}/`)) return null;
+  const env = currentEnv();
+  const pacman = resolveBinary("pacman", env);
+  if (!pacman) return null;
+  const packageName = await new Promise<string | null>((resolve) => {
+    execFile(pacman, ["-Qqo", realPath], { timeout: PACMAN_QUERY_TIMEOUT_MS }, (error, stdout) => {
+      const name = stdout.trim().split(/\s+/)[0] ?? "";
+      resolve(!error && PACMAN_NAME_RE.test(name) ? name : null);
+    });
+  });
+  return packageName === null ? null : { packageName, pkexec: resolveBinary("pkexec", env) };
 }
 
 function installDir(plan: InstallPlan, input: InstallPlanInput): string | null {
