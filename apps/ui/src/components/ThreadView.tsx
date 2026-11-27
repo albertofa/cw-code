@@ -11,6 +11,7 @@ import { GitPanelBar } from "./GitPanelBar.js";
 import { ToolContent } from "./ToolContent.js";
 import { useDockDrop } from "./useDockDrop.js";
 import { Composer } from "./Composer.js";
+import { isContentDrift } from "./threadFollow.js";
 import { isBottomOpen, resolveMainTab } from "../stores/panelLayout.js";
 import { ToolCard } from "./ToolCard.js";
 import { ToolGroupCard } from "./ToolGroupCard.js";
@@ -265,6 +266,7 @@ export function ThreadView({ hidden = false }: { hidden?: boolean }) {
   const hiddenRef = useRef(hidden);
   const savedScrollTopRef = useRef(0);
   const lastDistanceRef = useRef(0);
+  const lastScrollHeightRef = useRef(0);
   const [atBottom, setAtBottom] = useState(true);
 
   const promptMarks = useMemo<PromptMark[]>(
@@ -320,11 +322,14 @@ export function ThreadView({ hidden = false }: { hidden?: boolean }) {
   );
   const onOpenExternal = local ? openExternalLocally : undefined;
 
-  useEffect(() => {
+  // Layout effect: the reset must land before a scroll event left over from the previous session
+  // (or from the list emptying while history loads) can read stale state.
+  useLayoutEffect(() => {
     stickRef.current = true;
     lastSeenIdRef.current = null;
     savedScrollTopRef.current = 0;
     lastDistanceRef.current = 0;
+    lastScrollHeightRef.current = 0;
     setAtBottom(true);
   }, [activeSessionId]);
 
@@ -419,9 +424,20 @@ export function ThreadView({ hidden = false }: { hidden?: boolean }) {
   const onScroll = () => {
     const el = scrollRef.current;
     if (!el || hiddenRef.current) return;
-    savedScrollTopRef.current = el.scrollTop;
     const distance = distanceFromBottom(el);
     const previous = lastDistanceRef.current;
+    const drift = isContentDrift(el.scrollTop - savedScrollTopRef.current, el.scrollHeight - lastScrollHeightRef.current);
+    lastScrollHeightRef.current = el.scrollHeight;
+    if (distance >= FOLLOW_BAND && stickRef.current && drift) {
+      // The content grew or shrank under a thread that follows the end (history loading on open,
+      // a large card appearing) without the view moving up: keep following. An upward move, even
+      // while a turn streams, still releases below.
+      pinToBottom(el);
+      savedScrollTopRef.current = el.scrollTop;
+      lastDistanceRef.current = distanceFromBottom(el);
+      return;
+    }
+    savedScrollTopRef.current = el.scrollTop;
     lastDistanceRef.current = distance;
     if (distance >= FOLLOW_BAND) {
       stickRef.current = false;
