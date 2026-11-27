@@ -13,12 +13,10 @@ import { selectSessionPanel, usePanelStore } from "../stores/panelStore.js";
 
 export function MainTabStrip({
   sessionId,
-  driver,
-  hasPr
+  driver
 }: {
   sessionId: string | undefined;
   driver: DriverName | undefined;
-  hasPr: boolean;
 }) {
   const { mainOrder, activeMain, dockByTab } = usePanelStore((s) => selectSessionPanel(s, sessionId));
   const setActive = usePanelStore((s) => s.setActive);
@@ -27,10 +25,10 @@ export function MainTabStrip({
   const tabMenu = useTabMenu(sessionId);
   const draggingTab = usePanelStore((s) => s.draggingTab);
   const hasPreview = useAppStore((s) => (sessionId ? (s.previewBySession[sessionId] ?? null) !== null : false));
-  const isToolAvailable = toolAvailability(driver, hasPr, hasPreview);
+  const isToolAvailable = toolAvailability(driver, hasPreview);
 
   const effectiveActive: MainTabId =
-    sessionId === undefined ? "chat" : resolveMainTab(mainOrder, dockByTab, driver, activeMain, hasPr, isToolAvailable);
+    sessionId === undefined ? "chat" : resolveMainTab(mainOrder, dockByTab, driver, activeMain, isToolAvailable);
   const chatLabel = driver === undefined ? "Chat" : harnessLabel(driver);
 
   return (

@@ -280,6 +280,12 @@ export function parseClaudeTranscriptLine(line: TranscriptLine): HistoryMessage[
     ];
   }
   if (line.isCompactSummary || line.isVisibleInTranscriptOnly) return [];
+  if (line.type === "attachment") {
+    const text = queuedUserPrompt(plainObject(line.attachment));
+    if (text === undefined) return [];
+    const id = line.uuid ?? "queued-user";
+    return [{ id, role: "user", text, turnId: id, ...stamp }];
+  }
   const content = line.message?.content;
   if (content === undefined) return [];
   const out: HistoryMessage[] = [];
@@ -407,11 +413,26 @@ function isBareNotification(content: string): boolean {
   return content.trimStart().startsWith("<task-notification>");
 }
 
+function isQueuedNotification(attachment: Record<string, unknown>): boolean {
+  return stringField(attachment, "commandMode") === TASK_NOTIFICATION_KIND || isNotificationOrigin(plainObject(attachment["origin"]));
+}
+
 function queuedNotificationPrompt(attachment: Record<string, unknown> | undefined): string | undefined {
   if (attachment?.["type"] !== "queued_command") return undefined;
-  const marked =
-    stringField(attachment, "commandMode") === TASK_NOTIFICATION_KIND || isNotificationOrigin(plainObject(attachment["origin"]));
-  return marked ? stringField(attachment, "prompt") : undefined;
+  return isQueuedNotification(attachment) ? stringField(attachment, "prompt") : undefined;
+}
+
+function queuedUserPrompt(attachment: Record<string, unknown> | undefined): string | undefined {
+  if (attachment?.["type"] !== "queued_command" || isQueuedNotification(attachment)) return undefined;
+  const prompt = attachment["prompt"];
+  const text =
+    typeof prompt === "string"
+      ? prompt
+      : Array.isArray(prompt)
+        ? prompt.flatMap((block) => (plainObject(block)?.["type"] === "text" ? [stringField(plainObject(block), "text") ?? ""] : [])).join("\n\n")
+        : "";
+  if (!text.trim() || text.trimStart().startsWith("<task-notification>")) return undefined;
+  return text;
 }
 
 class ClaudeHistoryTasks {

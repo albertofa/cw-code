@@ -11,6 +11,7 @@ import type {
   CommandOption,
   DriverActivity,
   HistoryMessage,
+  InjectedMessage,
   ModelOption,
   NativeSession,
   PermissionMode,
@@ -42,6 +43,7 @@ import {
   codexCollabTool,
   codexReasoningText,
   codexReviewTarget,
+  codexUserMessageText,
   codexUserInputResult,
   mapCodexEffort,
   mapCodexHistory,
@@ -91,6 +93,10 @@ interface ActiveTurn {
   permissionMode?: PermissionMode;
   command?: string;
   hasAssistantText?: boolean;
+  userMessagesSeen: number;
+  userMessageItems: Set<string>;
+  startedToolCalls: Set<string>;
+  injected: Array<{ id: string; prompt: string }>;
 }
 
 interface PendingApproval {
@@ -463,6 +469,10 @@ export class CodexCliDriver implements CliDriver {
           lastTotal: this.threadLastTotal.get(threadId)
         },
         numTurns: 0,
+        userMessagesSeen: request.command ? 1 : 0,
+        userMessageItems: new Set(),
+        startedToolCalls: new Set(),
+        injected: [],
         ...(request.permissionMode ? { permissionMode: request.permissionMode } : {}),
         ...(request.command ? { command: request.command.name } : {})
       };
@@ -495,20 +505,7 @@ export class CodexCliDriver implements CliDriver {
         return;
       }
 
-      const attachments = (request.attachments ?? []).filter((rel) => {
-        if (isAbsolute(rel)) {
-          if (existsSync(rel)) return true;
-          console.warn(`attachment escapes project root, skipped: ${rel}`);
-          return false;
-        }
-        try {
-          assertInside(request.cwd, rel);
-          return true;
-        } catch {
-          console.warn(`attachment escapes project root, skipped: ${rel}`);
-          return false;
-        }
-      });
+      const attachments = this.insideAttachments(request.cwd, request.attachments ?? []);
       const skills = await this.mentionedSkills(request.cwd, request.skills ?? []);
       // turn/start only acks with the turn id; completion arrives via the
       // turn/completed notification, so approval waits never hit the request timeout.
@@ -671,6 +668,94 @@ export class CodexCliDriver implements CliDriver {
       });
   }
 
+  private insideAttachments(cwd: string, attachments: readonly string[]): string[] {
+    return attachments.filter((rel) => {
+      if (isAbsolute(rel)) {
+        if (existsSync(rel)) return true;
+        console.warn(`attachment escapes project root, skipped: ${rel}`);
+        return false;
+      }
+      try {
+        assertInside(cwd, rel);
+        return true;
+      } catch {
+        console.warn(`attachment escapes project root, skipped: ${rel}`);
+        return false;
+      }
+    });
+  }
+
+  async injectMessage(turnId: string, message: InjectedMessage): Promise<void> {
+    const turn = this.turns.get(turnId);
+    const expectedTurnId = turn ? this.codexTurnId(turn) : undefined;
+    if (!turn || !expectedTurnId) {
+      traceHarnessCall({ harness: "codex", operation: "codex.injectMessage", turnId, ok: false, error: "no active turn to steer" });
+      throw new Error("no active turn to steer");
+    }
+    const start = Date.now();
+    const pending = { id: message.id, prompt: message.prompt };
+    try {
+      const attachments = this.insideAttachments(message.cwd, message.attachments);
+      const skills = await this.mentionedSkills(message.cwd, message.skills ?? []);
+      turn.injected.push(pending);
+      await this.client.request<unknown>("turn/steer", {
+        threadId: turn.threadId,
+        expectedTurnId,
+        input: buildCodexUserInput(message.prompt, message.cwd, attachments, skills),
+        clientUserMessageId: message.id
+      });
+      traceHarnessCall({
+        harness: "codex",
+        operation: "codex.injectMessage",
+        sessionId: turn.localSessionId,
+        turnId,
+        durationMs: Date.now() - start,
+        ok: true
+      });
+    } catch (err) {
+      const index = turn.injected.indexOf(pending);
+      if (index >= 0) turn.injected.splice(index, 1);
+      traceHarnessCall({
+        harness: "codex",
+        operation: "codex.injectMessage",
+        sessionId: turn.localSessionId,
+        turnId,
+        durationMs: Date.now() - start,
+        ok: false,
+        error: truncateError((err as Error).message)
+      });
+      throw err;
+    }
+  }
+
+  private injectedUserMessage(item: CodexThreadItem, active: ActiveTurn, completed: boolean): ThreadEvent | null {
+    if (item.id) {
+      if (active.userMessageItems.has(item.id)) return null;
+      active.userMessageItems.add(item.id);
+    } else if (completed) {
+      const index = item.clientId ? active.injected.findIndex((m) => m.id === item.clientId) : -1;
+      if (index < 0) return null;
+      const [pending] = active.injected.splice(index, 1);
+      return { type: "user.message", turnId: active.turnId, messageId: pending.id, text: codexUserMessageText(item) || pending.prompt, timestamp: Date.now() };
+    }
+    const isFirst = active.userMessagesSeen === 0;
+    active.userMessagesSeen += 1;
+    const byClientId = item.clientId ? active.injected.findIndex((m) => m.id === item.clientId) : -1;
+    const index = byClientId >= 0 ? byClientId : isFirst || item.clientId || active.command ? -1 : 0;
+    const pending = index >= 0 ? active.injected[index] : undefined;
+    if (!pending) return null;
+    active.injected.splice(index, 1);
+    const text = codexUserMessageText(item) || pending.prompt;
+    return { type: "user.message", turnId: active.turnId, messageId: pending.id, text, timestamp: Date.now() };
+  }
+
+  private warnUndeliveredInjections(turn: ActiveTurn): void {
+    if (turn.injected.length === 0) return;
+    console.warn(
+      `codex turn ${turn.turnId} of session ${turn.localSessionId} ended with ${turn.injected.length} injected message(s) not confirmed as delivered`
+    );
+  }
+
   private codexTurnId(turn: ActiveTurn): string | undefined {
     for (const [codexId, driverTurnId] of this.turnByCodexId) {
       if (driverTurnId === turn.turnId) return codexId;
@@ -711,6 +796,7 @@ export class CodexCliDriver implements CliDriver {
   private clearTurnsForSession(sessionId: string): void {
     for (const turn of [...this.turns.values()]) {
       if (turn.localSessionId !== sessionId) continue;
+      this.warnUndeliveredInjections(turn);
       this.turns.delete(turn.turnId);
       this.reasoningKinds.delete(turn.turnId);
       for (const [codexId, driverTurnId] of [...this.turnByCodexId]) {
@@ -825,7 +911,13 @@ export class CodexCliDriver implements CliDriver {
         const item = p["item"] as CodexThreadItem | undefined;
         const active = this.turnForCodexId(String(p["turnId"] ?? ""), typeof p["threadId"] === "string" ? p["threadId"] : undefined);
         if (!item || !active) break;
+        if (item.type === "userMessage") {
+          const delivered = this.injectedUserMessage(item, active, false);
+          if (delivered) this.emit(delivered);
+          break;
+        }
         const call = this.toolCallFor(item, active.turnId);
+        if (call?.type === "tool.call") active.startedToolCalls.add(call.toolCallId);
         if (call) this.emit(call);
         break;
       }
@@ -833,6 +925,11 @@ export class CodexCliDriver implements CliDriver {
         const item = p["item"] as CodexThreadItem | undefined;
         const active = this.turnForCodexId(String(p["turnId"] ?? ""), typeof p["threadId"] === "string" ? p["threadId"] : undefined);
         if (!item || !active) break;
+        if (item.type === "userMessage") {
+          const delivered = this.injectedUserMessage(item, active, true);
+          if (delivered) this.emit(delivered);
+          break;
+        }
         if (item.type === "reasoning") {
           const kinds = this.reasoningKinds.get(active.turnId);
           const streamed = typeof item.id === "string" && kinds?.has(item.id) === true;
@@ -855,7 +952,7 @@ export class CodexCliDriver implements CliDriver {
           }
           break;
         }
-        const result = this.toolResultFor(item, active.turnId);
+        const result = this.toolResultFor(item, active.turnId) ?? this.emptyToolResultFor(item, active);
         if (result) this.emit(result);
         break;
       }
@@ -908,6 +1005,7 @@ export class CodexCliDriver implements CliDriver {
     const active = this.turnForCodexId(turn.id, threadId);
     if (!active) return;
     const driverTurnId = active.turnId;
+    this.warnUndeliveredInjections(active);
     this.turns.delete(driverTurnId);
     this.reasoningKinds.delete(driverTurnId);
     this.activityNotifier.notify();
@@ -1011,6 +1109,12 @@ export class CodexCliDriver implements CliDriver {
         };
       }
     }
+  }
+
+  private emptyToolResultFor(item: CodexThreadItem, active: ActiveTurn): ThreadEvent | null {
+    const call = this.toolCallFor(item, active.turnId);
+    if (call?.type !== "tool.call" || !active.startedToolCalls.delete(call.toolCallId)) return null;
+    return { type: "tool.result", turnId: active.turnId, toolCallId: call.toolCallId, output: "", isError: false, outputEmpty: true };
   }
 
   private toolResultFor(item: CodexThreadItem, turnId: string): ThreadEvent | null {

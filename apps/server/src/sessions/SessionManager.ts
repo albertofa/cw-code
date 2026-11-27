@@ -18,6 +18,7 @@ import type {
   ImportSessionRequest,
   ImportSessionResult,
   IssueRef,
+  MessageCapabilities,
   ModelOption,
   NativeSession,
   PermissionMode,
@@ -170,6 +171,7 @@ export interface BackgroundWork {
 
 const DRIVER_KINDS: DriverKind[] = ["claude", "opencode", "codex"];
 const DRIVER_SHUTDOWN_GRACE_MS = 1000;
+const BRANCH_SWITCH_PURPOSE = "switching branches";
 export const SUBAGENT_RESULT_TEXT_MAX = 32_000;
 
 function truncatedResultText(text: string): string {
@@ -2435,17 +2437,20 @@ export class SessionManager {
     return this.withFolderLock(root, run);
   }
 
-  async pullBranch(sessionId: string): Promise<GitStatus> {
+  async runCheckoutAction<T = void>(sessionId: string, run: (root: string) => Promise<T>, purpose = BRANCH_SWITCH_PURPOSE): Promise<T> {
     try {
-      return await this.withBranchSwitch(sessionId, async () => {
-        const project = this.projectForSession(sessionId);
-        const root = await this.ensureWorktree(sessionId);
-        await this.git.pullFastForward(root);
-        return this.git.status(root, project);
-      });
+      return await this.withBranchSwitch(sessionId, async () => run(await this.ensureWorktree(sessionId)), purpose);
     } finally {
       this.notifySessionCheckoutChanged(sessionId, [sessionId]);
     }
+  }
+
+  async pullBranch(sessionId: string): Promise<GitStatus> {
+    const project = this.projectForSession(sessionId);
+    return this.runCheckoutAction(sessionId, async (root) => {
+      await this.git.pullFastForward(root);
+      return this.git.status(root, project);
+    });
   }
 
   private switchSessionBranch(sessionId: string, branch: string): Promise<GitStatus> {
@@ -2464,20 +2469,20 @@ export class SessionManager {
     });
   }
 
-  async withBranchSwitch<T>(sessionId: string, run: () => Promise<T>): Promise<T> {
+  async withBranchSwitch<T>(sessionId: string, run: () => Promise<T>, purpose = BRANCH_SWITCH_PURPOSE): Promise<T> {
     const session = this.requireSession(sessionId);
-    if (session.worktreePath) return this.runBranchSwitch(sessionId, run);
-    return this.withFolderLock(this.rootForProject(session.projectId), () => this.runBranchSwitch(sessionId, run));
+    if (session.worktreePath) return this.runBranchSwitch(sessionId, run, purpose);
+    return this.withFolderLock(this.rootForProject(session.projectId), () => this.runBranchSwitch(sessionId, run, purpose));
   }
 
-  private async runBranchSwitch<T>(sessionId: string, run: () => Promise<T>): Promise<T> {
+  private async runBranchSwitch<T>(sessionId: string, run: () => Promise<T>, purpose: string): Promise<T> {
     const session = this.requireSession(sessionId);
     if (this.undoPendingOnRoot(session)) throw new Error("session busy (undo pending)");
     if (this.branchSwitchPendingOnRoot(session)) throw new Error("session busy (branch switch pending)");
     const running = this.sameRootSessions(session).find((other) => this.hasTurnInFlight(other.id));
     if (running) {
       const projectName = this.store.getProject(running.projectId)?.name ?? "this folder";
-      throw new Error(`${running.title} is running in ${projectName} — wait for it to finish before switching branches`);
+      throw new Error(`${running.title} is running in ${projectName} — wait for it to finish before ${purpose}`);
     }
     this.pendingBranchSwitches.add(sessionId);
     try {
@@ -2887,6 +2892,48 @@ export class SessionManager {
     if (!session) return;
     if (this.shutdownReserved) this.interruptedForShutdown.add(sessionId);
     this.emitSession(sessionId);
+  }
+
+  async injectMessage(sessionId: string, message: { id: string; prompt: string; attachments: string[]; skills?: string[] }): Promise<void> {
+    const { session, project, turnId } = this.activeTurnOf(sessionId);
+    const driver = this.drivers[session.driver];
+    if (!driver.injectMessage) throw new Error(`${session.driver} cannot receive messages during a turn`);
+    const cwd = await this.ensureWorktree(sessionId);
+    await driver.injectMessage(turnId, {
+      id: message.id,
+      prompt: message.prompt,
+      cwd,
+      attachments: resolveAttachments(project.rootPath, cwd, message.attachments),
+      ...(message.skills?.length ? { skills: message.skills } : {})
+    });
+  }
+
+  async retractMessage(sessionId: string, messageId: string): Promise<boolean> {
+    const { session, turnId } = this.activeTurnOf(sessionId);
+    const driver = this.drivers[session.driver];
+    if (!driver.retractMessage) return false;
+    return driver.retractMessage(turnId, messageId);
+  }
+
+  messageCapabilities(sessionId: string): MessageCapabilities {
+    const session = this.store.getSession(sessionId);
+    const driver = session ? this.drivers[session.driver] : undefined;
+    if (!driver) return { inject: false, retract: false };
+    const turnId = [...this.activeTurns].find(([, entry]) => entry.sessionId === sessionId)?.[0];
+    if (turnId === undefined) return { inject: false, retract: false };
+    if (driver.messageCapabilities) return driver.messageCapabilities(turnId);
+    return { inject: typeof driver.injectMessage === "function", retract: typeof driver.retractMessage === "function" };
+  }
+
+  private activeTurnOf(sessionId: string): { session: SessionMeta; project: Project; turnId: string } {
+    const session = this.store.getSession(sessionId);
+    if (!session) throw new Error(`unknown session ${sessionId}`);
+    const project = this.store.getProject(session.projectId);
+    if (!project) throw new Error(`unknown project ${session.projectId}`);
+    for (const [turnId, entry] of this.activeTurns) {
+      if (entry.sessionId === sessionId) return { session, project, turnId };
+    }
+    throw new Error(`session ${sessionId} has no active turn`);
   }
 
   async retryConnection(sessionId: string): Promise<RetryConnectionResult> {

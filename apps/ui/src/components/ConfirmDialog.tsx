@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, type RefObject } from "react";
 
 export interface ConfirmRequest {
   title: string;
@@ -14,9 +14,27 @@ interface PendingConfirm extends ConfirmRequest {
 const FOCUSABLE =
   'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
-export function ConfirmDialog({ request, onResolve }: { request: ConfirmRequest; onResolve: (ok: boolean) => void }) {
-  const cardRef = useRef<HTMLDivElement>(null);
-  const cancelRef = useRef<HTMLButtonElement>(null);
+export function trapDialogTab(e: ReactKeyboardEvent<HTMLElement>, card: HTMLElement | null): void {
+  if (e.key !== "Tab" || !card) return;
+  const items = Array.from(card.querySelectorAll<HTMLElement>(FOCUSABLE));
+  const first = items[0];
+  const last = items[items.length - 1];
+  if (!first || !last) {
+    e.preventDefault();
+    return;
+  }
+  const active = document.activeElement;
+  const inside = active instanceof Node && card.contains(active);
+  if (e.shiftKey && (active === first || !inside)) {
+    e.preventDefault();
+    last.focus();
+  } else if (!e.shiftKey && (active === last || !inside)) {
+    e.preventDefault();
+    first.focus();
+  }
+}
+
+export function useModalFocus(cardRef: RefObject<HTMLElement | null>, initialRef: RefObject<HTMLElement | null>, onEscape: () => void): void {
   const [opener] = useState(() => (document.activeElement instanceof HTMLElement ? document.activeElement : null));
 
   useEffect(() => {
@@ -24,45 +42,33 @@ export function ConfirmDialog({ request, onResolve }: { request: ConfirmRequest;
       if (e.key !== "Escape") return;
       e.preventDefault();
       e.stopImmediatePropagation();
-      onResolve(false);
+      onEscape();
     };
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
-  }, [onResolve]);
+  }, [onEscape]);
 
   useEffect(() => {
-    cancelRef.current?.focus();
+    initialRef.current?.focus();
     const onFocusIn = (e: FocusEvent) => {
       const card = cardRef.current;
-      if (card && e.target instanceof Node && !card.contains(e.target)) cancelRef.current?.focus();
+      if (card && e.target instanceof Node && !card.contains(e.target)) initialRef.current?.focus();
     };
     document.addEventListener("focusin", onFocusIn);
     return () => {
       document.removeEventListener("focusin", onFocusIn);
       if (opener?.isConnected) opener.focus();
     };
-  }, [opener]);
+  }, [opener, cardRef, initialRef]);
+}
 
-  const trapTab = (e: ReactKeyboardEvent<HTMLDivElement>) => {
-    const card = cardRef.current;
-    if (e.key !== "Tab" || !card) return;
-    const items = Array.from(card.querySelectorAll<HTMLElement>(FOCUSABLE));
-    const first = items[0];
-    const last = items[items.length - 1];
-    if (!first || !last) {
-      e.preventDefault();
-      return;
-    }
-    const active = document.activeElement;
-    const inside = active instanceof Node && card.contains(active);
-    if (e.shiftKey && (active === first || !inside)) {
-      e.preventDefault();
-      last.focus();
-    } else if (!e.shiftKey && (active === last || !inside)) {
-      e.preventDefault();
-      first.focus();
-    }
-  };
+export function ConfirmDialog({ request, onResolve }: { request: ConfirmRequest; onResolve: (ok: boolean) => void }) {
+  const cardRef = useRef<HTMLDivElement>(null);
+  const cancelRef = useRef<HTMLButtonElement>(null);
+  const cancel = useCallback(() => onResolve(false), [onResolve]);
+  useModalFocus(cardRef, cancelRef, cancel);
+
+  const trapTab = (e: ReactKeyboardEvent<HTMLDivElement>) => trapDialogTab(e, cardRef.current);
 
   return (
     <div className="confirm-backdrop" onClick={() => onResolve(false)}>

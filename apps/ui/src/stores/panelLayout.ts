@@ -11,14 +11,12 @@ export const DOCKABLE_TABS: readonly DockableTabId[] = [
   "overview",
   "files",
   "agents",
-  "diff",
-  "history",
+  "gitglass",
   "claude",
   "opencode",
   "codex",
   "shell",
-  "preview",
-  "pr"
+  "preview"
 ];
 
 export const PANELS: readonly PanelId[] = ["main", "right", "bottom"];
@@ -55,28 +53,24 @@ export const DEFAULT_DOCK: TabDockState = {
   overview: "closed",
   files: "closed",
   agents: "closed",
-  diff: "closed",
-  history: "closed",
+  gitglass: "closed",
   claude: "closed",
   opencode: "closed",
   codex: "closed",
   shell: "closed",
-  preview: "closed",
-  pr: "closed"
+  preview: "closed"
 };
 
 export const DEFAULT_AUTO: TabAutoLocation = {
   overview: "right",
   files: "main",
   agents: "right",
-  diff: "right",
-  history: "main",
+  gitglass: "main",
   claude: "right",
   opencode: "right",
   codex: "right",
   shell: "bottom",
-  preview: "right",
-  pr: "right"
+  preview: "right"
 };
 
 export function defaultLayout(): PanelLayoutSnapshot {
@@ -167,10 +161,57 @@ function sanitizeDock<T extends TabDockState>(raw: unknown, fallback: T, allowCl
   return out;
 }
 
+const LEGACY_GLASS_TABS = ["history", "pr"] as const;
+
+function migrateDockMap(raw: unknown, allowClosed: boolean): unknown {
+  if (typeof raw !== "object" || raw === null || "gitglass" in raw) return raw;
+  const source = raw as Record<string, unknown>;
+  let gitglass: unknown = allowClosed ? "closed" : "main";
+  if (allowClosed) {
+    for (const legacy of LEGACY_GLASS_TABS) {
+      const value = source[legacy];
+      if (isPanelId(value)) {
+        gitglass = value;
+        break;
+      }
+    }
+  } else if (isPanelId(source.history)) {
+    gitglass = source.history;
+  }
+  const { history: _history, pr: _pr, ...rest } = source;
+  return { ...rest, gitglass };
+}
+
+function migrateDiffDock(raw: unknown, allowClosed: boolean): unknown {
+  if (typeof raw !== "object" || raw === null || !("diff" in raw)) return raw;
+  const { diff, ...rest } = raw as Record<string, unknown>;
+  if (allowClosed && isPanelId(diff) && !isPanelId(rest.gitglass)) return { ...rest, gitglass: diff };
+  return rest;
+}
+
+function migrateTabId(value: unknown): unknown {
+  return value === "history" || value === "pr" || value === "diff" ? "gitglass" : value;
+}
+
+function migrateLayout(raw: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {
+    ...raw,
+    dockByTab: migrateDiffDock(migrateDockMap(raw.dockByTab, true), true),
+    autoLocation: migrateDiffDock(migrateDockMap(raw.autoLocation, false), false),
+    activeMain: migrateTabId(raw.activeMain),
+    activeRight: migrateTabId(raw.activeRight),
+    activeBottom: migrateTabId(raw.activeBottom)
+  };
+  if (Array.isArray(raw.mainOrder)) {
+    out.mainOrder = [...new Set(raw.mainOrder.map(migrateTabId))];
+  }
+  return out;
+}
+
 export function sanitizeLayout(raw: unknown): PanelLayoutSnapshot {
   const defaults = defaultLayout();
   if (typeof raw !== "object" || raw === null) return defaults;
-  const source = raw as Record<string, unknown>;
+  const source = migrateLayout(raw as Record<string, unknown>);
   const dockByTab = sanitizeDock(source.dockByTab, defaults.dockByTab, true);
   const autoLocation = sanitizeDock(source.autoLocation, defaults.autoLocation, false);
   const seen = new Set<MainTabId>();
@@ -329,7 +370,6 @@ export function resolveMainTab(
   dockByTab: TabDockState,
   driver: DockableTabId | undefined,
   activeMain: MainTabId,
-  hasPr: boolean,
   isAvailable: (tab: DockableTabId) => boolean = ALL_TOOLS
 ): MainTabId {
   const visible = mainOrder.filter(
@@ -337,7 +377,6 @@ export function resolveMainTab(
       id === "chat" ||
       (dockByTab[id] === "main" &&
         (!HARNESS_TABS.includes(id) || id === driver) &&
-        (id !== "pr" || hasPr) &&
         isAvailable(id))
   );
   return visible.includes(activeMain) ? activeMain : "chat";

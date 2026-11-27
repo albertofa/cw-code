@@ -1,6 +1,7 @@
 import { useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { ChevronRight, FileDiff, RotateCcw, TriangleAlert } from "lucide-react";
+import type { ThreadTurnChanges } from "@cw-code/contracts";
 import type { TurnChanges, TurnFileChange, TurnSnapshot } from "../cw.js";
 import { useConfirm } from "./ConfirmDialog.js";
 import { useNotifs } from "./Notifications.js";
@@ -22,7 +23,7 @@ const TURN_RUNNING = "A turn is running";
 const TURN_UNAVAILABLE = "This turn’s changes are no longer available";
 const MISSING_END_SNAPSHOT = "The end-of-turn snapshot is missing";
 
-type UndoPhase = "idle" | "checking" | "undoing";
+export type UndoPhase = "idle" | "checking" | "undoing";
 
 function dirtyPaths(buffers: Record<string, EditorBuffer>, sessionIds: readonly string[], files: readonly TurnFileChange[]): string[] {
   const matched = buffersForPaths(buffers, sessionIds, files.map((file) => file.path));
@@ -101,20 +102,32 @@ function UndoMessage({ files }: { files: TurnFileChange[] }) {
   );
 }
 
-export function TurnChangesCard({ sessionId, snapshot }: { sessionId: string; snapshot: TurnSnapshot }) {
+export interface TurnUndo {
+  changes: TurnChanges | null;
+  entry: ThreadTurnChanges | null;
+  undone: boolean;
+  blockers: string[];
+  phase: UndoPhase;
+  undo: () => Promise<void>;
+  refresh: () => Promise<void>;
+  refreshing: boolean;
+  dialog: ReactNode;
+}
+
+export function useTurnUndo(sessionId: string, snapshot: TurnSnapshot | undefined): TurnUndo {
   const [phase, setPhase] = useState<UndoPhase>("idle");
-  const [undoneLocally, setUndoneLocally] = useState(false);
-  const [expanded, setExpanded] = useState(false);
+  const [undoneTurn, setUndoneTurn] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const turnRunning = useThreadEntry(sessionId, "turn") != null;
   const entry = useThreadEntry(sessionId, "turnChanges") ?? null;
   const rootIds = entry?.rootSessionIds ?? [sessionId];
   const { confirm, dialog } = useConfirm();
 
-  const changes = entry?.changes?.turnId === snapshot.turnId ? entry.changes : null;
-  const undone = snapshot.undoneAt !== undefined || undoneLocally;
+  const changes = snapshot && entry?.changes?.turnId === snapshot.turnId ? entry.changes : null;
+  const undone = snapshot !== undefined && (snapshot.undoneAt !== undefined || undoneTurn === snapshot.turnId);
   const dirtyKey = useEditorBuffers((s) => (changes ? dirtyPaths(s.buffers, rootIds, changes.files).join("\n") : ""));
   const dirty = dirtyKey ? dirtyKey.split("\n") : [];
+  const blockers = changes && !undone ? undoBlockers(changes, turnRunning, dirty) : [];
 
   const currentBlockers = (reviewed: TurnChanges) =>
     undoBlockers(
@@ -136,7 +149,7 @@ export function TurnChangesCard({ sessionId, snapshot }: { sessionId: string; sn
   };
 
   const undo = async () => {
-    if (phase !== "idle") return;
+    if (phase !== "idle" || !snapshot) return;
     setPhase("checking");
     let fresh: TurnChanges | null;
     try {
@@ -174,7 +187,7 @@ export function TurnChangesCard({ sessionId, snapshot }: { sessionId: string; sn
     setPhase("undoing");
     try {
       const result = await window.cw.undoTurn(sessionId, reviewed.turnId, endSha);
-      setUndoneLocally(true);
+      setUndoneTurn(reviewed.turnId);
       useNotifs.getState().push({
         kind: "success",
         title: "Turn changes undone",
@@ -188,6 +201,13 @@ export function TurnChangesCard({ sessionId, snapshot }: { sessionId: string; sn
       setPhase("idle");
     }
   };
+
+  return { changes, entry, undone, blockers, phase, undo, refresh, refreshing, dialog };
+}
+
+export function TurnChangesCard({ sessionId, snapshot }: { sessionId: string; snapshot: TurnSnapshot }) {
+  const [expanded, setExpanded] = useState(false);
+  const { changes, entry, undone, blockers, phase, undo, refresh, refreshing, dialog } = useTurnUndo(sessionId, snapshot);
 
   const review = () => usePanelStore.getState().requestDiffMode(sessionId, "turn");
 
@@ -204,7 +224,6 @@ export function TurnChangesCard({ sessionId, snapshot }: { sessionId: string; sn
     body = <Warning>End-of-turn snapshot failed: {snapshot.endError}</Warning>;
   } else if (changes && changes.files.length > 0) {
     const totals = turnTotals(changes.files);
-    const blockers = undone ? [] : undoBlockers(changes, turnRunning, dirty);
     const busy = phase !== "idle";
     body = (
       <div className="turn-changes">
@@ -241,7 +260,7 @@ export function TurnChangesCard({ sessionId, snapshot }: { sessionId: string; sn
                 </button>
               </span>
             )}
-            <button type="button" className="btn turn-changes-btn" onClick={review} title="Review this turn in Git diff">
+            <button type="button" className="btn turn-changes-btn" onClick={review} title="Review this turn in Git glass">
               Review
               <ChevronRight size={12} aria-hidden="true" />
             </button>

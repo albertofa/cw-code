@@ -8,6 +8,7 @@ import type {
   LimitResume,
   Project,
   ProjectSettings,
+  QueuedMessage,
   ResolvedCheckout,
   SessionMeta,
   SessionPrLink,
@@ -168,6 +169,14 @@ function resetRuntimeStatuses(sessions: SessionMeta[]): boolean {
       delete session.autoFollowUp;
       changed = true;
     }
+    if (session.queuedMessages !== undefined) {
+      const held = heldQueuedMessages(session);
+      if (JSON.stringify(held) !== JSON.stringify(session.queuedMessages)) {
+        if (held.length === 0) delete session.queuedMessages;
+        else session.queuedMessages = held;
+        changed = true;
+      }
+    }
     if (session.limitResume !== undefined && !isLimitResume(session.limitResume)) {
       delete session.limitResume;
       changed = true;
@@ -178,6 +187,24 @@ function resetRuntimeStatuses(sessions: SessionMeta[]): boolean {
     }
   }
   return changed;
+}
+
+function isQueuedMessage(value: unknown): value is QueuedMessage {
+  if (!value || typeof value !== "object") return false;
+  const message = value as Partial<Record<keyof QueuedMessage, unknown>>;
+  return (
+    typeof message.id === "string" &&
+    typeof message.text === "string" &&
+    Array.isArray(message.attachments) &&
+    message.attachments.every((path) => typeof path === "string") &&
+    (message.skills === undefined || (Array.isArray(message.skills) && message.skills.every((skill) => typeof skill === "string"))) &&
+    typeof message.createdAt === "number"
+  );
+}
+
+function heldQueuedMessages(session: SessionMeta): QueuedMessage[] {
+  if (!Array.isArray(session.queuedMessages)) return [];
+  return session.queuedMessages.filter(isQueuedMessage).map((message) => ({ ...message, state: "held", removable: true }));
 }
 
 function isResolvedCheckout(value: unknown): value is ResolvedCheckout {
@@ -467,6 +494,16 @@ export class SessionStore {
         reason: reason ?? "unknown"
       });
     }
+    this.persist();
+  }
+
+  setQueuedMessages(id: string, messages: QueuedMessage[]): void {
+    const current = this.getSession(id);
+    if (!current) return;
+    if (messages.length === 0) {
+      if (current.queuedMessages === undefined) return;
+      delete current.queuedMessages;
+    } else current.queuedMessages = messages;
     this.persist();
   }
 

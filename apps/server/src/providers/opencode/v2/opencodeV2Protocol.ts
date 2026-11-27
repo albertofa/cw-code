@@ -13,6 +13,7 @@ import {
   opencodeJson,
   type OpencodeClient,
   type OpencodeEvent,
+  type OpencodeInjectInput,
   type OpencodeMessage,
   type OpencodeProtocol,
   type OpencodeSendInput,
@@ -170,8 +171,25 @@ async function rejectedSkills(response: Response): Promise<boolean> {
   return /skill/i.test(await response.clone().text().catch(() => ""));
 }
 
-function fileAttachments(input: OpencodeSendInput): Array<{ uri: string; name: string }> {
+function fileAttachments(input: Pick<OpencodeSendInput, "files">): Array<{ uri: string; name: string }> {
   return input.files.map((file) => ({ uri: pathToFileURL(file.path).href, name: basename(file.path) }));
+}
+
+async function postPrompt(client: OpencodeClient, sessionId: string, input: OpencodeInjectInput): Promise<Response> {
+  const files = fileAttachments(input);
+  const post = (body: Record<string, unknown>): Promise<Response> =>
+    client.request(sessionPath(sessionId, "/prompt"), {
+      method: "POST",
+      body: { ...body, ...(files.length > 0 ? { files } : {}) },
+      signal: input.signal,
+      timeoutMs: OPENCODE_REQUEST_TIMEOUT_MS
+    });
+  const skills = input.skills?.length ? await mentionedSkillIds(client, input.skills) : [];
+  if (skills.length === 0) return post({ text: input.prompt });
+  const withSkills = await post({ text: input.prompt, skills });
+  if (!(await rejectedSkills(withSkills))) return withSkills;
+  console.warn(`opencode rejected skills ${skills.map((s) => s.id).join(", ")}; resending as text only`);
+  return post({ text: input.prompt });
 }
 
 async function requestMessages(client: OpencodeClient, sessionId: string, query: string, timeoutMs: number): Promise<Response> {
@@ -205,6 +223,13 @@ async function loadMessages(
     if (items.length < PAGE_LIMIT || !cursor) break;
   }
   return mapV2Messages(raw);
+}
+
+async function inboxPending(client: OpencodeClient, sessionId: string, inboxId: string): Promise<boolean> {
+  const res = await client.request(sessionPath(sessionId, "/inbox"), { timeoutMs: OPENCODE_LIST_TIMEOUT_MS });
+  if (!res.ok) return false;
+  const data = dataOf(await readJson(res, "opencode inbox lookup failed"));
+  return Array.isArray(data) && data.some((item) => asRecord(item)?.["id"] === inboxId);
 }
 
 async function revert(client: OpencodeClient, sessionId: string, name: "undo" | "redo", signal: AbortSignal): Promise<string> {
@@ -355,17 +380,38 @@ export const opencodeV2Protocol: OpencodeProtocol = {
         signal: input.signal,
         timeoutMs: OPENCODE_REQUEST_TIMEOUT_MS
       });
-    if (!input.command) {
-      const skills = input.skills?.length ? await mentionedSkillIds(client, input.skills) : [];
-      if (skills.length === 0) return admitted(await post("/prompt", { text: input.prompt }), notice);
-      const withSkills = await post("/prompt", { text: input.prompt, skills });
-      if (!(await rejectedSkills(withSkills))) return admitted(withSkills, notice);
-      console.warn(`opencode rejected skills ${skills.map((s) => s.id).join(", ")}; resending as text only`);
-      return admitted(await post("/prompt", { text: input.prompt }), notice);
-    }
+    if (!input.command) return admitted(await postPrompt(client, sessionId, input), notice);
     const skill = await skillIdFor(client, input.command.name);
     if (skill) return admitted(await post("/prompt", { text: input.command.args, skills: [{ id: skill }] }), notice);
     return admitted(await post("/command", { name: input.command.name, text: input.command.args }), notice);
+  },
+
+  async inject(client, sessionId, input: OpencodeInjectInput): Promise<{ inboxId?: string }> {
+    let response = await postPrompt(client, sessionId, input);
+    if (response.status === 400 && input.files.length > 0) {
+      console.warn("opencode rejected the attachments of a mid-turn message; resending as text only");
+      traceHarnessCall({
+        harness: "opencode",
+        operation: "opencode.injectMessage.attachments",
+        ok: false,
+        error: `file parts rejected: ${response.status}, retried text-only`
+      });
+      response = await postPrompt(client, sessionId, { ...input, files: [] });
+    }
+    if (!response.ok) throw new Error(await opencodeFailureText("opencode message send failed", response));
+    const inboxId = await admittedIdOf(response);
+    return inboxId ? { inboxId } : {};
+  },
+
+  async retractInput(client, sessionId, inboxId): Promise<boolean> {
+    if (!(await inboxPending(client, sessionId, inboxId))) return false;
+    const res = await client.request(sessionPath(sessionId, `/inbox/${encodeURIComponent(inboxId)}`), {
+      method: "DELETE",
+      timeoutMs: OPENCODE_LIST_TIMEOUT_MS
+    });
+    if (!res.ok) return false;
+    const recent = await loadMessages(client, sessionId, { label: "opencode message check failed", recent: true });
+    return !recent.some((message) => message.info?.id === inboxId);
   },
 
   interrupt(client, sessionId): Promise<Response> {

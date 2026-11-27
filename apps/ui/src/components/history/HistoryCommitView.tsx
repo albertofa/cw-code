@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
-import { ArrowLeft, Check, ChevronDown, ChevronUp, Copy } from "lucide-react";
-import type { HistoryCommitDetail } from "@cw-code/contracts";
+import { ArrowLeft, ChevronDown, ChevronUp, ExternalLink } from "lucide-react";
+import type { HistoryCommitDetail, HistoryScope } from "@cw-code/contracts";
 import { parseUnifiedDiff, type DiffFile } from "../diffParser.js";
 import { DiffLines, STATUS_BADGE } from "../GitInspectPanel.js";
 import { FileIcon } from "../fileIcons.js";
@@ -10,7 +10,7 @@ import { useConnectionEpoch } from "../../server/topics.js";
 const LOAD_DELAY_MS = 120;
 const dateFormat = new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" });
 
-function formatDate(seconds: number): string {
+export function formatCommitDate(seconds: number): string {
   return dateFormat.format(new Date(seconds * 1000));
 }
 
@@ -20,7 +20,7 @@ export interface HistoryCommitState {
   error: string;
 }
 
-export function useHistoryCommit(sessionId: string, sha: string | null): HistoryCommitState {
+export function useHistoryCommit(scope: HistoryScope, sha: string | null): HistoryCommitState {
   const [detail, setDetail] = useState<HistoryCommitDetail | null>(null);
   const [error, setError] = useState("");
   const [retry, setRetry] = useState(0);
@@ -38,7 +38,7 @@ export function useHistoryCommit(sessionId: string, sha: string | null): History
     if (!sha) return;
     let active = true;
     const timer = setTimeout(() => {
-      window.cw.getHistoryCommit(sessionId, sha).then(
+      window.cw.getHistoryCommit(scope, sha).then(
         (next) => {
           if (active) setDetail(next);
         },
@@ -53,13 +53,13 @@ export function useHistoryCommit(sessionId: string, sha: string | null): History
       active = false;
       clearTimeout(timer);
     };
-  }, [sessionId, sha, retry]);
+  }, [scope, sha, retry]);
 
   const files = useMemo(() => parseUnifiedDiff(detail?.patch ?? ""), [detail]);
   return { detail, files, error };
 }
 
-function FileStats({ file }: { file: DiffFile }) {
+export function FileStats({ file }: { file: DiffFile }) {
   return (
     <>
       <span className={`diff-badge ${file.status}`}>{STATUS_BADGE[file.status]}</span>
@@ -75,119 +75,35 @@ function FileStats({ file }: { file: DiffFile }) {
   );
 }
 
-export function HistoryCommitSidebar({
-  commit,
-  openPath,
-  onOpenFile,
-  onSelect
-}: {
-  commit: HistoryCommitState;
-  openPath: string | null;
-  onOpenFile: (path: string) => void;
-  onSelect: (sha: string) => void;
-}) {
-  const { detail, files, error } = commit;
-  const [copied, setCopied] = useState(false);
-  const [copyError, setCopyError] = useState("");
-
-  useEffect(() => {
-    setCopied(false);
-    setCopyError("");
-  }, [detail?.sha]);
-
-  if (error) return <div className="inspect-error">Commit unavailable: {error}</div>;
-  if (!detail) return <div className="diff-empty">Loading commit…</div>;
-
-  const copySha = (): void => {
-    void navigator.clipboard.writeText(detail.sha).then(
-      () => setCopied(true),
-      () => setCopyError("Could not copy the commit id")
-    );
-  };
-
-  const sameCommitter = detail.committerEmail === detail.authorEmail && detail.committerName === detail.authorName;
-  const added = files.reduce((sum, file) => sum + file.added, 0);
-  const removed = files.reduce((sum, file) => sum + file.removed, 0);
-
+export function RevealButton({ path, deleted, onReveal, className }: { path: string; deleted: boolean; onReveal: (path: string) => void; className: string }) {
   return (
-    <>
-      <div className="history-side-info">
-      <div className="history-detail-head">
-        <div className="history-detail-subject">{detail.subject}</div>
-        {detail.body && <pre className="history-detail-body">{detail.body}</pre>}
-        <div className="history-detail-meta">
-          <span>
-            {detail.authorName} &lt;{detail.authorEmail}&gt; · {formatDate(detail.authorDate)}
-          </span>
-          {!sameCommitter && (
-            <span>
-              Committed by {detail.committerName} &lt;{detail.committerEmail}&gt; · {formatDate(detail.committerDate)}
-            </span>
-          )}
-          <span className="history-detail-ids">
-            <button type="button" className="history-sha" onClick={copySha} title="Copy commit id">
-              {copied ? <Check size={12} aria-hidden="true" /> : <Copy size={12} aria-hidden="true" />}
-              {detail.sha.slice(0, 10)}
-            </button>
-            {detail.parents.length > 0 && <span className="history-parents-label">{detail.parents.length > 1 ? "parents" : "parent"}</span>}
-            {detail.parents.map((parent) => (
-              <button key={parent} type="button" className="history-parent" onClick={() => onSelect(parent)} title={parent}>
-                {parent.slice(0, 7)}
-              </button>
-            ))}
-          </span>
-          {copyError && <span className="inspect-error">{copyError}</span>}
-        </div>
-      </div>
-      <div className="inspect-summary">
-        <span>
-          {files.length} file{files.length === 1 ? "" : "s"}
-        </span>
-        <span className="add">+{added}</span>
-        <span className="del">−{removed}</span>
-        {detail.parents.length > 1 && <span className="inspect-range">vs first parent</span>}
-      </div>
-      {detail.patchTruncated && <div className="inspect-note">This commit is too large to show in full; later files are cut off.</div>}
-      </div>
-      <div className="history-files" role="list" aria-label="Changed files">
-        {files.length === 0 && <div className="inspect-dfile-note">No file changes</div>}
-        {files.map((file) => {
-          const { dir, name } = splitRepoPath(file.path);
-          return (
-            <button
-              key={file.path}
-              type="button"
-              role="listitem"
-              className={`history-file${file.path === openPath ? " active" : ""}`}
-              onClick={() => onOpenFile(file.path)}
-              title={file.path}
-            >
-              <FileIcon name={name} size={13} />
-              <span className="history-file-path">
-                <span className="history-file-name">{name}</span>
-                {dir && <span className="history-file-dir">{dir}</span>}
-              </span>
-              <span className="history-file-end">
-                <FileStats file={file} />
-              </span>
-            </button>
-          );
-        })}
-      </div>
-    </>
+    <button
+      type="button"
+      className={className}
+      disabled={deleted}
+      onClick={() => onReveal(path)}
+      title={deleted ? "File was deleted" : "Open in Files"}
+      aria-label={`Open ${path} in Files`}
+    >
+      <ExternalLink size={13} aria-hidden="true" />
+    </button>
   );
 }
 
 export function HistoryFileDiff({
   files,
   path,
+  missingNote,
   onOpenFile,
-  onClose
+  onClose,
+  onReveal
 }: {
   files: DiffFile[];
   path: string;
+  missingNote: string;
   onOpenFile: (path: string) => void;
   onClose: () => void;
+  onReveal?: (path: string) => void;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const index = files.findIndex((file) => file.path === path);
@@ -228,6 +144,7 @@ export function HistoryFileDiff({
         </span>
         {file && <FileStats file={file} />}
         <span className="history-detail-actions">
+          {onReveal && <RevealButton path={path} deleted={file?.status === "deleted"} onReveal={onReveal} className="inspect-mode" />}
           <button type="button" className="inspect-mode" disabled={!prev} onClick={() => prev && onOpenFile(prev.path)} title="Previous file (Alt+↑)" aria-label="Previous file">
             <ChevronUp size={14} aria-hidden="true" />
           </button>
@@ -236,7 +153,7 @@ export function HistoryFileDiff({
           </button>
         </span>
       </div>
-      {!file && <div className="inspect-dfile-note">This file is not part of the commit</div>}
+      {!file && <div className="inspect-dfile-note">{missingNote}</div>}
       {file && <DiffLines file={file} />}
     </div>
   );

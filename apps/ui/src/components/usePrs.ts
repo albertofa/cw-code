@@ -12,8 +12,9 @@ import type {
 import { useRef } from "react";
 import { prKey } from "@cw-code/shared/prRef";
 import { PRS_TOPIC, sessionTopic } from "@cw-code/shared/topics";
-import { peekTopic, useTopicEntry, useTopicSelect } from "../server/topics.js";
+import { onConnectionEpoch, peekTopic, useTopicEntry, useTopicSelect } from "../server/topics.js";
 import { errorMessage } from "./errorMessage.js";
+import { createRefCounter } from "./refCounter.js";
 import { useNotifs } from "./Notifications.js";
 import { prRefLabel } from "./sessionPrLinks.js";
 
@@ -187,11 +188,32 @@ export function useSessionBabysit(sessionId: string | null | undefined): Babysit
   return useTopicEntry<BabysitState | null>(sessionId ? sessionTopic(sessionId) : null, "babysit") ?? null;
 }
 
-export function watchPrDetail(ref: PrRef): () => void {
-  const warn = (action: string) => (err: unknown) => console.warn(`[pr] could not ${action} ${prRefLabel(ref)}: ${errorMessage(err)}`);
-  window.cw.watchPrDetail(ref).catch(warn("watch"));
+const prWatches = createRefCounter<PrRef>();
+let stopRewatch: (() => void) | null = null;
+
+function sendPrWatch(ref: PrRef, watch: boolean): void {
+  const action = watch ? "watch" : "unwatch";
+  const call = watch ? window.cw.watchPrDetail(ref) : window.cw.unwatchPrDetail(ref);
+  call.catch((err: unknown) => console.warn(`[pr] could not ${action} ${prRefLabel(ref)}: ${errorMessage(err)}`));
+}
+
+export function acquirePrDetailWatch(ref: PrRef): () => void {
+  const key = prKey(ref);
+  if (prWatches.acquire(key, ref)) {
+    sendPrWatch(ref, true);
+    stopRewatch ??= onConnectionEpoch(() => {
+      for (const watched of prWatches.values()) sendPrWatch(watched, true);
+    });
+  }
+  let released = false;
   return () => {
-    window.cw.unwatchPrDetail(ref).catch(warn("unwatch"));
+    if (released) return;
+    released = true;
+    if (!prWatches.release(key)) return;
+    sendPrWatch(ref, false);
+    if (prWatches.size > 0) return;
+    stopRewatch?.();
+    stopRewatch = null;
   };
 }
 

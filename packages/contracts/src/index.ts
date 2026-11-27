@@ -3,11 +3,14 @@ export type {
   HistoryAvatarAuthor,
   HistoryAvatars,
   HistoryCommit,
+  HistoryCommitPull,
+  HistoryCommitPulls,
   HistoryCommitDetail,
   HistoryHead,
   HistoryLog,
   HistoryRef,
   HistoryRefKind,
+  HistoryScope,
   HistoryTopicData,
   HistoryWorktree
 } from "./history.js";
@@ -51,7 +54,7 @@ export type {
   WorktreePruneSummary
 } from "./session.js";
 export type { ThreadEvent, UsageLimitHit, SessionEvent, HistoryMessage, TodoItem, SubagentToolActivity, SubagentToolSummary, ToolUsage, ApprovalDecision, ApprovalKind, ApprovalRequest, QuestionInfo, QuestionOption, QuestionRequest } from "./events.js";
-export type { CliDriver, DriverActivity, TurnHandle, RetryConnectionRequest, RetryConnectionResult, SubagentToolsResult, TerminalLaunch } from "./provider.js";
+export type { CliDriver, DriverActivity, InjectedMessage, MessageCapabilities, TurnHandle, RetryConnectionRequest, RetryConnectionResult, SubagentToolsResult, TerminalLaunch } from "./provider.js";
 export type { TaskEndReason, TaskKind, TaskSnapshot, TaskState } from "./tasks.js";
 export type {
   AppSettings,
@@ -226,6 +229,7 @@ export type {
   ThreadUsage,
   ThreadTurnChanges,
   ThreadSubagentWait,
+  QueuedMessage,
   ThreadLimitResume,
   ThreadTopicData
 } from "./threads.js";

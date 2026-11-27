@@ -35,7 +35,9 @@ import type {
   HistoryAvatarAuthor,
   HistoryAvatars,
   HistoryCommitDetail,
+  HistoryCommitPulls,
   HistoryLog,
+  HistoryScope,
   GitHubAccountInfo,
   GitHubAccountSelectionSource,
   GitPullRequest,
@@ -391,6 +393,8 @@ export interface StopTurnResult {
   stopped: boolean;
 }
 
+export type SendMessageResult = { disposition: "started"; turnId: string } | { disposition: "queued"; messageId: string };
+
 export interface RetryConnectionResult {
   status: "running" | "done";
 }
@@ -612,6 +616,9 @@ export interface CwApi {
   getSubagentTools(sessionId: string, agentId: string): Promise<SubagentToolsResult>;
   retryConnection(sessionId: string): Promise<RetryConnectionResult>;
   startTurn(sessionId: string, prompt: string, opts?: { prefs?: ComposerPrefs; attachments?: string[]; command?: CommandInvocation; skills?: string[]; prRefs?: PrRef[]; acceptFolderHead?: string }): Promise<string>;
+  sendMessage(sessionId: string, prompt: string, opts?: { attachments?: string[]; skills?: string[] }): Promise<SendMessageResult>;
+  unqueueMessage(sessionId: string, messageId: string): Promise<void>;
+  flushQueue(sessionId: string): Promise<string>;
   stopTurn(sessionId: string): Promise<StopTurnResult>;
   /** Drops the continuation cw-code scheduled for when the plan limit resets; false when there was none. */
   cancelLimitResume(sessionId: string): Promise<boolean>;
@@ -649,11 +656,17 @@ export interface CwApi {
   switchGitBranch(sessionId: string, branch: string): Promise<GitStatus>;
   getGitDiff(sessionId: string, mode: GitDiffMode, baseRef?: string): Promise<GitDiffResult>;
   getTurnChanges(sessionId: string): Promise<TurnChanges | null>;
-  getHistoryLog(sessionId: string, limit: number, worktree?: string | null): Promise<HistoryLog>;
-  getHistoryCommit(sessionId: string, sha: string): Promise<HistoryCommitDetail>;
-  getHistoryAvatars(sessionId: string, authors: HistoryAvatarAuthor[]): Promise<HistoryAvatars>;
-  pullHistory(sessionId: string, worktree?: string | null): Promise<void>;
-  checkoutHistory(sessionId: string, worktree: string | null, branch: string): Promise<void>;
+  getHistoryLog(scope: HistoryScope, limit: number, worktree?: string | null): Promise<HistoryLog>;
+  getHistoryCommit(scope: HistoryScope, sha: string): Promise<HistoryCommitDetail>;
+  getHistoryCommitPulls(scope: HistoryScope, sha: string): Promise<HistoryCommitPulls>;
+  getHistoryAvatars(scope: HistoryScope, authors: HistoryAvatarAuthor[]): Promise<HistoryAvatars>;
+  pullHistory(scope: HistoryScope, worktree?: string | null): Promise<void>;
+  checkoutHistory(scope: HistoryScope, worktree: string | null, branch: string): Promise<void>;
+  fetchHistory(scope: HistoryScope, worktree?: string | null): Promise<void>;
+  pushHistory(scope: HistoryScope, worktree?: string | null): Promise<void>;
+  stashHistory(scope: HistoryScope, worktree?: string | null, message?: string): Promise<void>;
+  popStashHistory(scope: HistoryScope, worktree: string | null, sha: string): Promise<void>;
+  createHistoryBranch(scope: HistoryScope, worktree: string | null, args: { name: string; sha: string; checkout: boolean }): Promise<void>;
   undoTurn(sessionId: string, turnId: string, expectedEndSha: string): Promise<TurnChanges>;
   getSourceControlHealth(projectId?: string): Promise<SourceControlHealth>;
   setProjectGitHubAccount(projectId: string, account: { host: string; login: string } | null): Promise<Project>;

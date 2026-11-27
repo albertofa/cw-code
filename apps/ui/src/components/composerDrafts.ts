@@ -145,3 +145,45 @@ export function clearComposerDraft(key: string): void {
   saveComposerDraft(key, "", []);
   flushComposerDraft(key);
 }
+
+/** What an append adds to a draft: text and attachments, never quotes or pasted blocks. */
+export type DraftAppend = Pick<ComposerDraft, "text" | "attachments">;
+
+type DraftAppendListener = (draft: DraftAppend) => void;
+
+const appendListeners = new Map<string, DraftAppendListener>();
+
+export function untagAttachments(text: string, attachments: readonly string[]): string {
+  if (attachments.length === 0) return text;
+  const tags = attachments.map((attachment) => `@${attachment}`).join("\n");
+  if (text === tags) return "";
+  return text.endsWith(`\n${tags}`) ? text.slice(0, -(tags.length + 1)) : text;
+}
+
+export function mergeDrafts(current: DraftAppend | null, added: DraftAppend): DraftAppend {
+  const base = current?.text.trimEnd() ?? "";
+  return {
+    text: base && added.text ? `${base}\n\n${added.text}` : base || added.text,
+    attachments: [...new Set([...(current?.attachments ?? []), ...added.attachments])]
+  };
+}
+
+export function onComposerDraftAppend(key: string, listener: DraftAppendListener): () => void {
+  appendListeners.set(key, listener);
+  return () => {
+    if (appendListeners.get(key) === listener) appendListeners.delete(key);
+  };
+}
+
+export function appendToComposerDraft(key: string, draft: DraftAppend): void {
+  const listener = appendListeners.get(key);
+  if (listener) {
+    listener({ text: draft.text, attachments: [...draft.attachments] });
+    return;
+  }
+  const current = loadComposerDraft(key);
+  const merged = mergeDrafts(current, draft);
+  // Keep the quotes and pasted blocks already saved with the draft; an append only adds text and files.
+  saveComposerDraft(key, merged.text, merged.attachments, current?.quotes ?? [], current?.pastes ?? []);
+  flushComposerDraft(key);
+}

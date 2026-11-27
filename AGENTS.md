@@ -8,12 +8,68 @@ SDK or AI-API calls for inference.
 
 Layout is a single window: left sidebar with projects grouping their sessions,
 center chat thread with tool-call cards and a usage/cost footer, right pane with
-file editor, git diff view, and live terminal tabs embedding the real interactive
-CLIs as a fallback for anything the headless chat cannot render.
+file editor, Git glass (the single git tool: commit graph, a session-centric sidebar of the
+session's branch and PRs, the project's sessions, PRs, branches, worktrees, tags and stashes, a
+details panel for commits, PRs, sessions, worktrees and the session's Changes / Staged / Branch /
+Last turn diffs, and fetch / pull / push / branch / stash / pop actions; it also opens for a
+project from the new-session screen, without a session), and live terminal tabs embedding the
+real interactive CLIs as a fallback for anything the headless chat cannot render.
 
 Core behaviors:
 
 - One window multiplexes unlimited parallel sessions; one active turn per session.
+- Mid-turn messages: `turns.send` on a busy session queues the message (`SessionMeta.queuedMessages`,
+  published as `queuedMessages` on `session/<id>`) and injects it into the running turn through the
+  optional `CliDriver.injectMessage`; the driver emits `user.message` when the agent receives it,
+  which removes it from the queue and places it in the thread. What a turn supports comes from
+  the optional `CliDriver.messageCapabilities(turnId)` (`{ inject, retract }`; absent means
+  `injectMessage`/`retractMessage` exist), resolved by `SessionManager.messageCapabilities` for the
+  session's active turn, so an opencode v1 turn reports neither. Without `inject` the message is
+  never injected: it stays `sending` and removable and goes out as the leftover turn. Without
+  `retract` (Claude, Codex) `TurnService` holds the message until a tool is open in the turn
+  (tracked from `tool.call`/`tool.result`, reset at turn start and end): it injects on send when a
+  tool is already open, otherwise on the next `tool.call`, and a turn that ends with no new tool
+  sends it as the leftover turn. Until injected the message is `removable`, so the UI offers Edit
+  (unqueue, then append text and attachments to the composer draft) and Remove; once injected it
+  shows as Sending with no actions. opencode injects at once and stays removable through retract. Claude writes a stream-json user line
+  (delivery seen through `--replay-user-messages` echoes, matched exactly by prefix; an echo that
+  matches no pending message still consumes the oldest pending one as a fallback; a message the
+  CLI runs as its own run stays in the same cw turn), Codex uses `turn/steer` (`clientId` on the
+  `userMessage` item, recognised on `item/started` or `item/completed`, once), opencode v2 posts to
+  the session inbox (`session.inbox.delivered`; it alone
+  supports `retractMessage`, which succeeds only when the item is listed in the inbox before the
+  DELETE and no message with its id exists after it, because the server answers 204 even for an
+  item already delivered). opencode refuses injection once the server reports the execution ended
+  (`turn.ended`), since a post to an idle session would start a run cw does not track. Each
+  opencode post has its own abort controller; at turn end the driver waits for posts still in
+  flight (up to the request timeout; one that lands later retracts itself), and Stop retracts them
+  before interrupting; Remove during the post fails
+  with "still being sent". A 2xx post without an inbox id counts as delivered (it cannot be
+  retracted or matched). At turn end the driver awaits the retract of leftover inbox items (posts
+  that were in flight included) before
+  `turn.done`; an item it cannot retract that is in the session history is reported as delivered
+  (`user.message`), so it is not sent again. Messages still `sending` at a successful `turn.done` become one new
+  turn before auto follow-up and subagent wakes; while a parent waits on subagents
+  (`subagentWait`) messages stay queued and go out as their own turn before the wake turn. Stop, a
+  turn error (including `turn.done` with `isError`), restart, resolve and archive turn them `held`
+  (kept across reloads for resolved and archived sessions too, shown as Not sent on reopen), and they go out
+  only through `turns.flushQueue`. A `turns.send` on an idle session that has `sending` messages
+  starts them together with the new one; if that start fails the older ones turn `held` and the new
+  one is dropped from the queue (the composer still holds it), so a retry does not duplicate it.
+  Claude holds a message sent before the prompt echo and writes it
+  right after; if a held Claude result sees neither the echo of its pending messages nor any other
+  output for 120 s (`CLAUDE_HELD_RESULT_TIMEOUT_MS`, above Claude Code's 60 s default hook timeout,
+  since a slow `UserPromptSubmit` hook keeps the CLI silent before the next run's `init`; re-armed
+  on every stdout line and dropped once the last pending echo or that `init` arrives) the driver
+  ends the turn and the server re-sends the undelivered message as a new turn, which can duplicate
+  it when the CLI was only slow. A Claude result that ends in an API error (a plan limit, for
+  example) is never held: it ends the turn as an error, keeping its `usageLimit`, and restarts the
+  process so the CLI cannot run the pending message on its own (background tasks included, as on
+  Stop, so the `turn.done` reports `backgroundTasks: 0`); the server holds it as Not sent.
+  A Stop with an undelivered Claude injection, or while a Claude result is held, restarts the
+  Claude process (background tasks included) so the CLI cannot run it on its own. A restart can show a message Claude or Codex already received
+  as `held`; sending it again duplicates it. Agents cannot call `turns.send`/`unqueue`/`flushQueue`,
+  and subagent sessions refuse them.
 - The CLI is always the source of truth. The app stores only its own metadata
   (projects, titles, resume cursors). The app manages only sessions it created or the user
   explicitly imported through the session importer; it never adopts CLI-native sessions on
@@ -69,7 +125,8 @@ Core behaviors:
   (subscribing again returns a fresh one); after that the server pushes
   `{ t: "patch", topic, rev, ops }` with `upsert`/`remove`/`append`/`replace` ops, and a rev
   gap makes the client resubscribe. Topics: `app`, `sidebar`, `prs`, `usage`, `session/<id>`,
-  `git/<id>`, `history/<id>`, `files/<id>`, `pty/<id>`, `github/meta`, `github/view:<kind>:<query>` (helpers
+  `git/<id>`, `history/<sessionId>` or `history/project.<projectId>` (plus `:<worktreeKey>`
+  for another worktree), `files/<id>`, `pty/<id>`, `github/meta`, `github/view:<kind>:<query>` (helpers
   in `packages/shared/src/topics.ts`, providers in `apps/server/src/topics/`). `TopicCache` is
   the only owner of `topics.subscribe`/`topics.unsubscribe` in a client: it ref-counts
   holders, applies patches, resubscribes after a reconnect and then bumps `epoch`.
@@ -189,6 +246,14 @@ Core behaviors:
     An entry without models always has an `error`: no model matched, or the harness cannot run
     (message from the cached harness check, `harnessUnavailableReason`). `subagents.create` and
     `subagents.send` refuse such a harness with the same message before creating anything.
+- Git glass: `history.*` methods take exactly one of `sessionId` / `projectId`, plus an optional
+  `worktree` of the same repository. Reads: `log`, `commit`, `avatars`, `commitPulls` (GitHub
+  `commits/{sha}/pulls` through the user's `gh`, github.com only, cached). Actions: `checkout`,
+  `pull`, `fetch`, `push`, `stash`, `stashPop` (by stash sha), `branch`. An action on the session's
+  own checkout or on a checkout a session owns goes through that session (running-turn and
+  pending-switch guards, folder lock, stored branch kept in sync); a checkout nobody owns takes the
+  folder lock, and the main checkout refuses uncommitted changes for pull, pop and a branch
+  checkout. None of them is in `AGENT_METHODS`.
 - Limit resume: a `turn.done` may carry `usageLimit` (`resetsAt` in epoch ms), set by the driver when
   the account's plan limit ended the turn. Only the Claude driver reports it, from the API error
   message's quota or the last rejected `rate_limit_event`. With the `limitAutoResume` setting,

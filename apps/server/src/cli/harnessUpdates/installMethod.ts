@@ -1,3 +1,4 @@
+import { execFile } from "node:child_process";
 import { constants, existsSync } from "node:fs";
 import { access, realpath } from "node:fs/promises";
 import { homedir } from "node:os";
@@ -14,11 +15,16 @@ export interface InstallPlanInput {
   env: Record<string, string | undefined>;
   packageName: string;
   exists(path: string): boolean;
+  /**
+   * Set when pacman owns the binary: the owning package, whether a sync repository provides it (an AUR or
+   * locally built package is not) and the resolved `pkexec`, or null when there is none to elevate with.
+   */
+  pacman?: { packageName: string; inRepo: boolean; pkexec: string | null } | null;
 }
 
 export interface InstallPlan {
   method: HarnessInstallMethod;
-  command: { file: string; args: string[] } | null;
+  command: { file: string; args: string[]; timeoutMs?: number } | null;
   display: string | null;
   lockKey: string | null;
 }
@@ -28,6 +34,9 @@ const WINGET_IDS: Record<DriverKind, string> = {
   codex: "OpenAI.Codex",
   opencode: "SST.opencode"
 };
+
+/** Long enough for the password prompt plus the transaction: the default timeout would stop pacman while it installs. */
+const PACMAN_UPDATE_TIMEOUT_MS = 30 * 60 * 1000;
 
 const BREW_RE = /\/(cellar|caskroom)\/([^/]+)\//i;
 
@@ -72,6 +81,14 @@ export function resolveInstallPlan(input: InstallPlanInput): InstallPlan {
 
   if (contains("/mise/installs/") || contains("/mise/shims/")) {
     return manual("mise", "mise upgrade");
+  }
+
+  if (input.pacman) {
+    const { packageName: systemPackage, inRepo, pkexec } = input.pacman;
+    if (!inRepo) return manual("pacman", null);
+    if (!pkexec) return manual("pacman", `sudo pacman -Syu --needed ${systemPackage}`);
+    const plan = runnable("pacman", pkexec, ["pacman", "-Sy", "--needed", "--noconfirm", systemPackage], "pacman");
+    return { ...plan, command: { file: pkexec, args: plan.command?.args ?? [], timeoutMs: PACMAN_UPDATE_TIMEOUT_MS } };
   }
 
   const npmPrefix = findNpmPrefix(input);
@@ -161,12 +178,33 @@ export async function planFor(binary: DriverKind, binaryPath: string, packageNam
     homeDir: homedir(),
     env: process.env,
     packageName,
-    exists: existsSync
+    exists: existsSync,
+    pacman: await pacmanOwner(realPath)
   };
   const plan = resolveInstallPlan(input);
   const target = installDir(plan, input);
   if (target === null || (await writable(target))) return plan;
   return manual(plan.method, plan.display);
+}
+
+const PACMAN_QUERY_TIMEOUT_MS = 3000;
+const PACMAN_NAME_RE = /^[a-z0-9@._+-]+$/i;
+
+async function pacmanOwner(realPath: string): Promise<InstallPlanInput["pacman"]> {
+  if (process.platform !== "linux") return null;
+  const home = homedir().replace(/\/+$/, "");
+  if (realPath.startsWith(`${home}/`)) return null;
+  const env = currentEnv();
+  const pacman = resolveBinary("pacman", env);
+  if (!pacman) return null;
+  const query = (args: string[]): Promise<string | null> =>
+    new Promise((resolve) => {
+      execFile(pacman, args, { timeout: PACMAN_QUERY_TIMEOUT_MS }, (error, stdout) => resolve(error ? null : stdout));
+    });
+  const packageName = (await query(["-Qqo", realPath]))?.trim().split(/\s+/)[0] ?? "";
+  if (!PACMAN_NAME_RE.test(packageName)) return null;
+  const inRepo = (await query(["-Si", packageName])) !== null;
+  return { packageName, inRepo, pkexec: resolveBinary("pkexec", env) };
 }
 
 function installDir(plan: InstallPlan, input: InstallPlanInput): string | null {

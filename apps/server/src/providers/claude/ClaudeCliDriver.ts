@@ -12,6 +12,7 @@ import type {
   DriverActivity,
   EffortLevel,
   HistoryMessage,
+  InjectedMessage,
   NativeSession,
   PermissionMode,
   PermissionOption,
@@ -31,7 +32,7 @@ import { claudeChildEnv } from "./claudeEnv.js";
 import { spawnCli } from "../../cli/spawnCli.js";
 import { TaskTable, type TaskObservation } from "../../tasks/TaskTable.js";
 import { SYNTHETIC_FULL_ACCESS_DESCRIPTION } from "../permissions.js";
-import { attributeClaudeSubagentEvent, buildClaudeAllowRule, claudeAllowResponse, claudeApprovalRequest, claudeQuestionRequest, claudeDenyResponse, claudeControlResponse, isClaudeApiErrorMessage, parseClaudeCompactBoundary, parseClaudeControlRequest, parseClaudeModelFallback, parseClaudeRateLimitEvent, parseClaudeSubagentHandback, parseClaudeSystemInit, parseClaudeTaskNotificationLine, parseClaudeTaskSystemLine, parseClaudeToolUseResult, parseClaudeUsageLimit, parseStreamLine, type ClaudeControlRequest, type ClaudeTaskNotificationLine, type ClaudeTaskSystemInfo, type TurnDoneInfo } from "./claudeStreamParser.js";
+import { attributeClaudeSubagentEvent, buildClaudeAllowRule, claudeAllowResponse, claudeApprovalRequest, claudeQuestionRequest, claudeDenyResponse, claudeControlResponse, isClaudeApiErrorMessage, parseClaudeCompactBoundary, parseClaudeControlRequest, parseClaudeModelFallback, parseClaudeRateLimitEvent, parseClaudeReplayUserText, parseClaudeSubagentHandback, parseClaudeSystemInit, parseClaudeTaskNotificationLine, parseClaudeTaskSystemLine, parseClaudeToolUseResult, parseClaudeUsageLimit, parseStreamLine, type ClaudeControlRequest, type ClaudeTaskNotificationLine, type ClaudeTaskSystemInfo, type TurnDoneInfo } from "./claudeStreamParser.js";
 import { claudeCallObservation, claudeHandbackObservation, claudeNotificationObservation, claudeSystemTaskObservation, claudeToolResultObservation, findClaudeTaskNotification } from "./claudeTasks.js";
 import {
   CLAUDE_COMMANDS_PROBE_ARGS,
@@ -82,7 +83,8 @@ export function buildClaudeArgs(request: Pick<TurnRequest, "resumeCursor" | "mod
     "--output-format", "stream-json",
     "--verbose",
     "--input-format", "stream-json",
-    "--permission-prompt-tool", "stdio"
+    "--permission-prompt-tool", "stdio",
+    "--replay-user-messages"
   ];
   if (request.resumeCursor) args.push("--resume", request.resumeCursor);
   if (request.model) args.push("--model", request.model);
@@ -192,6 +194,46 @@ interface ClaudeProcessState {
   usageLimitUnnamed?: boolean;
   lastWindowTokens?: number;
   stale?: boolean;
+  promptEchoPending: boolean;
+  injected: PendingInjection[];
+  /** Messages accepted before the prompt echo; written right after it so each echo stays attributable. */
+  deferredInjections: InjectedMessage[];
+  heldResult?: TurnDoneInfo;
+  heldTimer?: NodeJS.Timeout;
+  terminateAfterInterrupt: boolean;
+  staleFromInterrupt: boolean;
+}
+
+interface PendingInjection {
+  id: string;
+  text: string;
+  echo: string;
+}
+
+// Above Claude Code's 60 s default hook timeout: a slow UserPromptSubmit hook keeps the CLI silent
+// between the held result and the next run's `init` (verified with a 12 s hook).
+export const CLAUDE_HELD_RESULT_TIMEOUT_MS = 120_000;
+
+function matchingEchoPrefix(pending: PendingInjection[], text: string): number {
+  const target = text.trimEnd();
+  let joined = "";
+  let matched = 0;
+  for (let k = 0; k < pending.length; k++) {
+    const echo = pending[k].echo.trimEnd();
+    if (!echo) break;
+    joined = k === 0 ? echo : `${joined}\n${echo}`;
+    if (joined === target) matched = k + 1;
+  }
+  return matched;
+}
+
+export function combineClaudeTurnDone(held: TurnDoneInfo, next: TurnDoneInfo): TurnDoneInfo {
+  return {
+    ...next,
+    resultText: next.resultText || held.resultText,
+    usage: [...held.usage, ...next.usage],
+    numTurns: held.numTurns + next.numTurns
+  };
 }
 
 export class ClaudeCliDriver implements CliDriver {
@@ -247,10 +289,94 @@ export class ClaudeCliDriver implements CliDriver {
     stdin.write(`${line}\n`);
   }
 
-  private writeUserMessage(state: ClaudeProcessState, request: TurnRequest): void {
+  private writeUserMessage(state: ClaudeProcessState, request: Pick<TurnRequest, "cwd" | "prompt" | "command" | "skills" | "attachments">): string {
+    const text = claudePromptText(request);
     state.child.stdin.write(
-      `${JSON.stringify({ type: "user", message: { role: "user", content: buildClaudeUserContent(request.cwd, claudePromptText(request), request.attachments) } })}\n`
+      `${JSON.stringify({ type: "user", message: { role: "user", content: buildClaudeUserContent(request.cwd, text, request.attachments) } })}\n`
     );
+    return text;
+  }
+
+  async injectMessage(turnId: string, message: InjectedMessage): Promise<void> {
+    const sessionId = this.turnToSession.get(turnId);
+    const state = sessionId ? this.processes.get(sessionId) : undefined;
+    if (!state || state.activeTurnId !== turnId || state.completedTurn || this.interruptedTurns.has(turnId) || !this.isProcessAlive(state)) {
+      throw new Error("Claude has no active turn to receive this message");
+    }
+    // Before the prompt echo the CLI may batch the prompt and this line into one replay we cannot attribute,
+    // so hold the message until the echo arrives.
+    if (state.promptEchoPending) {
+      state.deferredInjections.push(message);
+      return;
+    }
+    this.writeInjection(state, message);
+  }
+
+  private writeInjection(state: ClaudeProcessState, message: InjectedMessage): void {
+    const turnId = state.activeTurnId;
+    const echo = this.writeUserMessage(state, message);
+    state.injected.push({ id: message.id, text: message.prompt, echo });
+    traceHarnessCall({
+      harness: "claude",
+      operation: "claude.injectMessage",
+      sessionId: state.sessionId,
+      turnId,
+      ok: true,
+      extra: { messageId: message.id, pending: state.injected.length }
+    });
+  }
+
+  private handleReplay(state: ClaudeProcessState, text: string): void {
+    const firstReplay = state.promptEchoPending;
+    state.promptEchoPending = false;
+    const matched = matchingEchoPrefix(state.injected, text);
+    if ((!firstReplay || matched > 0) && state.injected.length > 0) {
+      const consumed = state.injected.splice(0, Math.max(matched, 1));
+      const timestamp = Date.now();
+      for (const injection of consumed) {
+        this.emit({ type: "user.message", turnId: state.activeTurnId, messageId: injection.id, text: injection.text, timestamp });
+      }
+      if (state.heldResult && state.injected.length === 0) this.clearHeldTimer(state);
+    }
+    if (firstReplay && state.deferredInjections.length > 0) {
+      const deferred = state.deferredInjections.splice(0);
+      if (state.completedTurn || this.interruptedTurns.has(state.activeTurnId) || !this.isProcessAlive(state)) return;
+      for (const message of deferred) this.writeInjection(state, message);
+    }
+  }
+
+  private clearHeldTimer(state: ClaudeProcessState): void {
+    if (!state.heldTimer) return;
+    clearTimeout(state.heldTimer);
+    state.heldTimer = undefined;
+  }
+
+  private armHeldTimer(state: ClaudeProcessState): void {
+    this.clearHeldTimer(state);
+    const timer = setTimeout(() => {
+      if (state.heldTimer !== timer) return;
+      state.heldTimer = undefined;
+      const held = state.heldResult;
+      if (!held) return;
+      if (this.interruptedTurns.has(state.activeTurnId)) {
+        this.terminate(state);
+        return;
+      }
+      state.stale = true;
+      traceHarnessCall({
+        harness: "claude",
+        operation: "claude.heldResultTimeout",
+        sessionId: state.sessionId,
+        turnId: state.activeTurnId,
+        ok: false,
+        extra: { droppedMessages: state.injected.map((pending) => pending.id) }
+      });
+      state.injected = [];
+      state.heldResult = undefined;
+      this.handleTurnDone(state, held);
+    }, CLAUDE_HELD_RESULT_TIMEOUT_MS);
+    timer.unref?.();
+    state.heldTimer = timer;
   }
 
   private isProcessAlive(state: ClaudeProcessState): boolean {
@@ -264,6 +390,7 @@ export class ClaudeCliDriver implements CliDriver {
 
   private terminate(state: ClaudeProcessState): void {
     this.clearIdleTimer(state);
+    this.clearHeldTimer(state);
     this.closeTasks(state, "interrupted", "process-exit");
     this.killChild(state);
     if (this.processes.get(state.sessionId) === state) this.processes.delete(state.sessionId);
@@ -498,6 +625,7 @@ export class ClaudeCliDriver implements CliDriver {
 
   private handleProcessLine(state: ClaudeProcessState, line: string): void {
     this.noteProcessActivity(state, line);
+    if (state.heldTimer && state.heldResult && state.injected.length > 0) this.armHeldTimer(state);
     try {
       const message = JSON.parse(line);
       const rateLimit = parseClaudeRateLimitEvent(message);
@@ -583,6 +711,7 @@ export class ClaudeCliDriver implements CliDriver {
     }
     const systemInit = parseClaudeSystemInit(line);
     if (systemInit) {
+      this.clearHeldTimer(state);
       recordClaudeTerminalCommands(state.binary, state.cwd, systemInit.terminalSlashCommands);
       if (systemInit.skills) recordClaudeSkills(state.binary, systemInit.skills);
       if (systemInit.model) state.mainModel = systemInit.model;
@@ -601,6 +730,11 @@ export class ClaudeCliDriver implements CliDriver {
     const notificationLine = parseClaudeTaskNotificationLine(line);
     if (notificationLine) {
       this.handleTaskNotificationLine(state, notificationLine);
+      return;
+    }
+    const replay = parseClaudeReplayUserText(line);
+    if (replay !== null) {
+      this.handleReplay(state, replay);
       return;
     }
     const events = parseStreamLine(
@@ -683,6 +817,20 @@ export class ClaudeCliDriver implements CliDriver {
     const usageLimit = state.apiErrorMessage && named && (named.scope === "model" || named.resetsAt !== undefined) ? named : undefined;
     const turnId = state.activeTurnId;
     const interrupted = this.interruptedTurns.delete(turnId);
+    if (!interrupted && !state.completedTurn && state.injected.length > 0 && !state.apiErrorMessage) {
+      state.heldResult = state.heldResult ? combineClaudeTurnDone(state.heldResult, info) : info;
+      state.modelUsage = info.modelUsage;
+      state.resumeCursor = info.resumeCursor;
+      if (info.windowTokens !== undefined) state.lastWindowTokens = info.windowTokens;
+      state.apiErrorMessage = undefined;
+      this.armHeldTimer(state);
+      return;
+    }
+    this.clearHeldTimer(state);
+    if (state.heldResult) {
+      info = combineClaudeTurnDone(state.heldResult, info);
+      state.heldResult = undefined;
+    }
     const isTurnForeground = (task: TaskSnapshot) => !task.background && state.topLevelAgentCalls.has(task.id);
     if (interrupted) this.closeTasks(state, "interrupted", "interrupt", isTurnForeground);
     else this.closeTasks(state, "unknown", "no-record", isTurnForeground);
@@ -691,6 +839,14 @@ export class ClaudeCliDriver implements CliDriver {
       state.modelUsage = info.modelUsage;
       if (interrupted) {
         state.postCompletionOutputPending = false;
+        const terminateNow = state.terminateAfterInterrupt && state.injected.length > 0;
+        if (!terminateNow && state.staleFromInterrupt) state.stale = false;
+        state.terminateAfterInterrupt = false;
+        state.staleFromInterrupt = false;
+        if (terminateNow) {
+          this.terminate(state);
+          return;
+        }
         this.armIdleTimer(state);
         return;
       }
@@ -715,7 +871,11 @@ export class ClaudeCliDriver implements CliDriver {
       this.armIdleTimer(state);
       return;
     }
-    const backgroundTasks = state.tasks.liveCount();
+    // An API error (a plan limit, for example) can end the run while injected messages still sit in
+    // the CLI's stdin; the process is restarted below, which also ends its background tasks, so the
+    // turn must report none or the server would keep waiting for them.
+    const restartForPending = !interrupted && (state.injected.length > 0 || state.deferredInjections.length > 0);
+    const backgroundTasks = restartForPending ? 0 : state.tasks.liveCount();
     state.modelUsage = info.modelUsage;
     if (info.windowTokens !== undefined) state.lastWindowTokens = info.windowTokens;
     const compactedPostTokens = state.compactedPostTokens;
@@ -740,6 +900,18 @@ export class ClaudeCliDriver implements CliDriver {
         ...(usageLimit ? { usageLimit } : {})
       });
     }
+    if (restartForPending) {
+      // The CLI would run the pending messages on its own after this turn ended, so restart the
+      // process; the server holds them as Not sent, like any message left by a turn error.
+      state.injected = [];
+      state.deferredInjections = [];
+      state.resumeCursor = info.resumeCursor;
+      state.postCompletionOutputPending = false;
+      state.completedTurn = true;
+      this.turnToSession.delete(turnId);
+      this.terminate(state);
+      return;
+    }
     state.resumeCursor = info.resumeCursor;
     state.postCompletionOutputPending = false;
     if (backgroundTasks > 0) {
@@ -757,6 +929,7 @@ export class ClaudeCliDriver implements CliDriver {
   private handleProcessClose(state: ClaudeProcessState, code: number | null): void {
     if (this.processes.get(state.sessionId) === state) this.processes.delete(state.sessionId);
     this.clearIdleTimer(state);
+    this.clearHeldTimer(state);
     this.resolvePendingForSession(state.sessionId, null);
     this.closeTasks(state, "interrupted", "process-exit");
     const turnId = state.activeTurnId;
@@ -884,11 +1057,18 @@ export class ClaudeCliDriver implements CliDriver {
       existing.permissionMode = request.permissionMode ?? "auto";
       existing.compactedPostTokens = undefined;
       existing.apiErrorMessage = undefined;
+      existing.injected = [];
+      existing.deferredInjections = [];
+      existing.heldResult = undefined;
+      this.clearHeldTimer(existing);
+      existing.terminateAfterInterrupt = false;
+      existing.staleFromInterrupt = false;
       existing.usageLimit = undefined;
       existing.usageLimitUnnamed = false;
       existing.rejectedLimit = undefined;
       this.clearIdleTimer(existing);
       this.turnToSession.set(turnId, request.sessionId);
+      existing.promptEchoPending = true;
       this.writeUserMessage(existing, request);
       traceHarnessCall({
         harness: "claude",
@@ -943,7 +1123,12 @@ export class ClaudeCliDriver implements CliDriver {
       skillCalls: new Set(),
       skillBodiesPending: [],
       permissionMode: request.permissionMode ?? "auto",
-      modelUsage: {}
+      modelUsage: {},
+      injected: [],
+      deferredInjections: [],
+      promptEchoPending: true,
+      terminateAfterInterrupt: false,
+      staleFromInterrupt: false
     };
     this.processes.set(request.sessionId, state);
     this.turnToSession.set(turnId, request.sessionId);
@@ -1001,6 +1186,21 @@ export class ClaudeCliDriver implements CliDriver {
       return;
     }
     this.interruptedTurns.add(turnId);
+    state.deferredInjections = [];
+    if (state.heldResult) {
+      this.resolvePendingForTurn(turnId);
+      state.completedTurn = true;
+      state.postCompletionOutputPending = false;
+      state.heldResult = undefined;
+      this.turnToSession.delete(turnId);
+      this.terminate(state);
+      return;
+    }
+    if (state.injected.length > 0) {
+      state.terminateAfterInterrupt = true;
+      if (!state.stale) state.staleFromInterrupt = true;
+      state.stale = true;
+    }
     const line = JSON.stringify({
       type: "control_request",
       request_id: randomUUID(),
@@ -1024,6 +1224,7 @@ export class ClaudeCliDriver implements CliDriver {
     if (!state) return;
     traceHarnessCall({ harness: "claude", operation: "claude.stopSession", sessionId, ok: true });
     this.clearIdleTimer(state);
+    this.clearHeldTimer(state);
     this.processes.delete(sessionId);
     this.closeTasks(state, "interrupted", "process-exit");
     this.killChild(state);
@@ -1089,6 +1290,7 @@ export class ClaudeCliDriver implements CliDriver {
     this.shuttingDown = true;
     for (const state of states) {
       this.clearIdleTimer(state);
+      this.clearHeldTimer(state);
       try {
         state.child.stdin.end();
       } catch {

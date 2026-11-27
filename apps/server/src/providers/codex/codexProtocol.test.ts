@@ -205,6 +205,31 @@ describe("mapCodexHistory", () => {
     expect(messages[5]).toMatchObject({ text: "done" });
   });
 
+  it("keeps userMessage items injected after the first in the same turn", () => {
+    const thread: CodexThread = {
+      id: "thr_1",
+      turns: [
+        {
+          id: "turn_1",
+          items: [
+            { type: "userMessage", id: "i1", content: [{ type: "text", text: "start" }] },
+            { type: "commandExecution", id: "i2", command: "sleep 5", aggregatedOutput: "", exitCode: 0, status: "completed" },
+            { type: "userMessage", id: "i3", content: [{ type: "text", text: "also this" }] },
+            { type: "agentMessage", id: "i4", text: "done" }
+          ]
+        }
+      ]
+    };
+    const messages = mapCodexHistory(thread);
+    expect(messages.map((m) => [m.role, m.text])).toEqual([
+      ["user", "start"],
+      ["tool", "sleep 5"],
+      ["user", "also this"],
+      ["assistant", "done"]
+    ]);
+    expect(messages[2]).toMatchObject({ turnId: "turn_1" });
+  });
+
   it("stamps the last turn item with completedAt so history keeps the duration", () => {
     const thread: CodexThread = {
       id: "thr_1",

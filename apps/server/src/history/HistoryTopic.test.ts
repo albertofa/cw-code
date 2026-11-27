@@ -7,13 +7,14 @@ function snapshotFor(sha: string): HistorySnapshot {
   return {
     head: { sha, branch: "main", detached: false },
     refs: [{ fullName: "refs/heads/main", name: "main", kind: "local", target: sha, isCurrent: true, upstream: null, ahead: 0, behind: 0, upstreamGone: false }],
-    stashes: []
+    stashes: [],
+    fetchedAt: null
   };
 }
 
 const KEY = "0123456789abcdef";
 
-function setup(roots: Record<string, string> = { s1: "/repo", s2: "/other", [`s1:${KEY}`]: "/wt/feature" }) {
+function setup(roots: Record<string, string> = { s1: "/repo", s2: "/other", [`s1:${KEY}`]: "/wt/feature", "project.p1": "/proj", [`project.p1:${KEY}`]: "/proj-wt" }) {
   const hub = new TopicHub(() => {});
   let current: HistorySnapshot | Error = snapshotFor("a".repeat(40));
   let wip = 0;
@@ -21,9 +22,10 @@ function setup(roots: Record<string, string> = { s1: "/repo", s2: "/other", [`s1
   const watchedRoots: string[][] = [];
   const snapshots: Array<[string, boolean]> = [];
   const topic = new HistoryTopic(hub, {
-    root: async (sessionId, key) => {
-      const root = roots[key === null ? sessionId : `${sessionId}:${key}`];
-      if (!root) throw new Error(`unknown session ${sessionId}`);
+    root: async (scope, key) => {
+      const id = "projectId" in scope ? `project.${scope.projectId}` : scope.sessionId;
+      const root = roots[key === null ? id : `${id}:${key}`];
+      if (!root) throw new Error(`unknown session ${id}`);
       return root;
     },
     snapshot: async (root, withWip) => {
@@ -64,6 +66,18 @@ describe("HistoryTopic", () => {
     topic.rootsChanged(["/repo"]);
     await topic.recompute("history/s1");
     expect(store.snapshot().data).toMatchObject({ rev: 2, head: { sha: "b".repeat(40) } });
+  });
+
+  it("publishes a new fetchedAt without bumping rev", async () => {
+    const { topic, set } = setup();
+    const store = topic.acquire("history/s1");
+    await topic.recompute("history/s1");
+    expect(store.snapshot().data).toMatchObject({ rev: 1, fetchedAt: null });
+
+    set({ ...snapshotFor("a".repeat(40)), fetchedAt: 1_700_000_000_000 });
+    topic.rootsChanged(["/repo"]);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(store.snapshot().data).toMatchObject({ rev: 1, fetchedAt: 1_700_000_000_000 });
   });
 
   it("bumps rev when only the stash list changes", async () => {
@@ -152,6 +166,30 @@ describe("HistoryTopic", () => {
     await topic.recompute("history/s1");
     topic.avatarsChanged();
     expect(store.snapshot().data).toMatchObject({ rev: 1, avatarsRev: 1, head: { sha: "a".repeat(40) } });
+  });
+
+  it("watches a project topic as a root, without a session id, and refreshes it on poll", async () => {
+    const { topic, watched, watchedRoots, snapshots, setWip } = setup();
+    const store = topic.acquire("history/project.p1");
+    await topic.recompute("history/project.p1");
+    expect(snapshots.at(-1)).toEqual(["/proj", true]);
+    expect(watched.at(-1)).toEqual([]);
+    expect(watchedRoots.at(-1)).toEqual(["/proj"]);
+    expect(store.snapshot().data.rev).toBe(1);
+
+    setWip(4);
+    topic.pollWorktrees();
+    topic.sessionChanged("p1");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(store.snapshot().data.rev).toBe(2);
+  });
+
+  it("resolves a worktree under a project scope", async () => {
+    const { topic, watchedRoots, snapshots } = setup();
+    topic.acquire(`history/project.p1:${KEY}`);
+    await topic.recompute(`history/project.p1:${KEY}`);
+    expect(snapshots.at(-1)).toEqual(["/proj-wt", true]);
+    expect(watchedRoots.at(-1)).toEqual(["/proj-wt"]);
   });
 
   it("rejects a malformed worktree key", () => {

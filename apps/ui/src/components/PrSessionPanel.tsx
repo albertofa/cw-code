@@ -20,14 +20,14 @@ const NO_ITEMS: SessionPrItem[] = [];
 const NO_DOCK: PrDockEntry[] = [];
 const NO_UPDATES: PrUpdate[] = [];
 
-function stateLabel(pr: Pick<PrDetail, "state" | "isDraft">): { label: string; tone: string } {
+export function stateLabel(pr: Pick<PrDetail, "state" | "isDraft">): { label: string; tone: string } {
   if (pr.state === "MERGED") return { label: "Merged", tone: "merged" };
   if (pr.state === "CLOSED") return { label: "Closed", tone: "closed" };
   if (pr.isDraft) return { label: "Draft", tone: "draft" };
   return { label: "Open", tone: "open" };
 }
 
-function StatusRow({ row }: { row: MergeRow }) {
+export function StatusRow({ row }: { row: MergeRow }) {
   const Icon = row.ok ? CircleCheck : CircleX;
   return (
     <div className="pr-panel-status-row">
@@ -58,7 +58,7 @@ function ThreadRow({ thread, onSend }: { thread: PrReviewThread; onSend: () => v
   );
 }
 
-function useSessionPrItems(sessionId: string): SessionPrItem[] {
+function useSessionPrItems(sessionId: string | null): SessionPrItem[] {
   return useThreadEntry(sessionId, "prItems") ?? NO_ITEMS;
 }
 
@@ -66,9 +66,13 @@ function useSessionPrDock(sessionId: string): PrDockEntry[] {
   return useThreadEntry(sessionId, "prDock") ?? NO_DOCK;
 }
 
-function useSelectedLinkedPr(sessionId: string) {
+export function useSessionLinkedPrs(sessionId: string | null): SessionPrItem[] {
   const items = useSessionPrItems(sessionId);
-  const linked = useMemo(() => items.filter((item) => item.link !== undefined), [items]);
+  return useMemo(() => items.filter((item) => item.link !== undefined), [items]);
+}
+
+function useSelectedLinkedPr(sessionId: string) {
+  const linked = useSessionLinkedPrs(sessionId);
   const selectedKey = usePrStore((s) => s.selectedPrKeyBySession[sessionId] ?? null);
   const selected = linked.find((item) => item.key === selectedKey) ?? linked[0];
   return { linked, selected };

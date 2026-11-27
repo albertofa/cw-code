@@ -208,6 +208,19 @@ describe("SessionStore", () => {
     expect(store.getSession(session.id)).not.toHaveProperty("autoResolved");
   });
 
+  it("loads queued messages of every session as held, resolved and archived ones included", () => {
+    const message = { id: "m1", text: "later", attachments: [], createdAt: 1, state: "sending", removable: false };
+    const { store } = seedStore([
+      { status: "idle", queuedMessages: [message] },
+      { status: "resolved", queuedMessages: [message] },
+      { status: "archived", queuedMessages: [message] }
+    ] as Array<Partial<SessionMeta>>);
+
+    for (const id of ["sess_0", "sess_1", "sess_2"]) {
+      expect(store.getSession(id)?.queuedMessages).toEqual([{ ...message, state: "held", removable: true }]);
+    }
+  });
+
   it("drops malformed autoResolved flags on load and keeps valid ones", () => {
     const { file, dbPath } = writeRaw(
       `{"projects":[],"sessions":[` +

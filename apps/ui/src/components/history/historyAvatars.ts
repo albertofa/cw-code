@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import type { HistoryAvatarAuthor, HistoryCommit } from "@cw-code/contracts";
+import type { HistoryAvatarAuthor, HistoryCommit, HistoryScope } from "@cw-code/contracts";
 
 export interface NodeAvatar {
   email: string;
@@ -96,7 +96,7 @@ export function saveShowAvatars(value: boolean): void {
 }
 
 export function useHistoryAvatars(
-  sessionId: string,
+  scope: HistoryScope,
   commits: HistoryCommit[],
   skip: (commit: HistoryCommit) => boolean,
   enabled: boolean,
@@ -127,7 +127,7 @@ export function useHistoryAvatars(
     for (let i = 0; i < wanted.length; i += BATCH_SIZE) {
       const batch = wanted.slice(i, i + BATCH_SIZE);
       for (const author of batch) tracked.inflight.add(author.email);
-      window.cw.getHistoryAvatars(sessionId, batch).then(
+      window.cw.getHistoryAvatars(scope, batch).then(
         (result) => {
           for (const email of Object.keys(result.avatars)) {
             tracked.done.add(email);
@@ -144,7 +144,7 @@ export function useHistoryAvatars(
         }
       );
     }
-  }, [sessionId, commits, skip, enabled, avatarsRev]);
+  }, [scope, commits, skip, enabled, avatarsRev]);
 
   return avatars;
 }

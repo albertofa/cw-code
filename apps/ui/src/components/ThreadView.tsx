@@ -12,6 +12,7 @@ import { ToolContent } from "./ToolContent.js";
 import { useDockDrop } from "./useDockDrop.js";
 import { Composer } from "./Composer.js";
 import { SelectionReply } from "./SelectionReply.js";
+import { isContentDrift } from "./threadFollow.js";
 import { splitQuotedReply } from "./replyQuotes.js";
 import { QuoteDialog } from "./QuoteDialog.js";
 import { isBottomOpen, resolveMainTab } from "../stores/panelLayout.js";
@@ -30,15 +31,15 @@ import { QuestionDock } from "./QuestionDock.js";
 import { TodoDock } from "./TodoDock.js";
 import { BranchMismatchDock } from "./BranchMismatchNotice.js";
 import { PrUpdateDock } from "./PrUpdateDock.js";
+import { QueuedMessages } from "./QueuedMessages.js";
 import { WorkingDock } from "./WorkingDock.js";
 import { LimitResumeDock } from "./LimitResumeDock.js";
 import { PrSessionChip } from "./PrSessionPanel.js";
 import { useMarkTurnSeen } from "./useTurnSeen.js";
-import { sessionLinks } from "./sessionPrLinks.js";
 import { TurnBlock } from "./TurnBlock.js";
 import { TurnChangesCard } from "./TurnChangesCard.js";
 import { snapshotTurnMatches } from "./turnChanges.js";
-import { countActivityTools, groupTurns, splitTurn, type ThreadNode } from "./turnGroups.js";
+import { countActivityTools, groupTurns, isMidTurnNode, splitTurn, type ThreadNode } from "./turnGroups.js";
 import { pendingToolsForTurn } from "./toolSummaries.js";
 import { durationFromMessages } from "./turnFormat.js";
 import { selectSessionPanel, usePanelStore } from "../stores/panelStore.js";
@@ -267,7 +268,6 @@ export function ThreadView({ hidden = false }: { hidden?: boolean }) {
     return null;
   }, [messages, busyTurn]);
   const showNew = pendingDriver !== null || !session;
-  const hasPr = !showNew && sessionLinks(session).length > 0;
   useMarkTurnSeen(showNew ? undefined : session?.id, session?.status, !hidden);
   const scrollRef = useRef<HTMLDivElement>(null);
   const innerRef = useRef<HTMLDivElement>(null);
@@ -278,6 +278,7 @@ export function ThreadView({ hidden = false }: { hidden?: boolean }) {
   const hiddenRef = useRef(hidden);
   const savedScrollTopRef = useRef(0);
   const lastDistanceRef = useRef(0);
+  const lastScrollHeightRef = useRef(0);
   const [atBottom, setAtBottom] = useState(true);
 
   const promptMarks = useMemo<PromptMark[]>(
@@ -288,11 +289,11 @@ export function ThreadView({ hidden = false }: { hidden?: boolean }) {
   const sessionId = session?.id;
   const turnSnapshot = session?.lastTurnSnapshot;
   const changesTurnIndex = snapshotTurnMatches(turns[turns.length - 1], turnSnapshot) ? turns.length - 1 : -1;
-  const isToolAvailable = toolAvailability(session?.driver, hasPr, hasPreview);
+  const isToolAvailable = toolAvailability(session?.driver, hasPreview);
   const resolvedMainTab =
     session === undefined
       ? "chat"
-      : resolveMainTab(panelMainOrder, panelDockByTab, session.driver, panelActiveMain, hasPr, isToolAvailable);
+      : resolveMainTab(panelMainOrder, panelDockByTab, session.driver, panelActiveMain, isToolAvailable);
   const showMainTool: DockableTabId | null = resolvedMainTab === "chat" ? null : resolvedMainTab;
   const threadMounted = !showNew;
   const threadHidden = hidden || showMainTool !== null;
@@ -333,11 +334,14 @@ export function ThreadView({ hidden = false }: { hidden?: boolean }) {
   );
   const onOpenExternal = local ? openExternalLocally : undefined;
 
-  useEffect(() => {
+  // Layout effect: the reset must land before a scroll event left over from the previous session
+  // (or from the list emptying while history loads) can read stale state.
+  useLayoutEffect(() => {
     stickRef.current = true;
     lastSeenIdRef.current = null;
     savedScrollTopRef.current = 0;
     lastDistanceRef.current = 0;
+    lastScrollHeightRef.current = 0;
     setAtBottom(true);
   }, [activeSessionId]);
 
@@ -450,9 +454,20 @@ export function ThreadView({ hidden = false }: { hidden?: boolean }) {
   const onScroll = () => {
     const el = scrollRef.current;
     if (!el || hiddenRef.current) return;
-    savedScrollTopRef.current = el.scrollTop;
     const distance = distanceFromBottom(el);
     const previous = lastDistanceRef.current;
+    const drift = isContentDrift(el.scrollTop - savedScrollTopRef.current, el.scrollHeight - lastScrollHeightRef.current);
+    lastScrollHeightRef.current = el.scrollHeight;
+    if (distance >= FOLLOW_BAND && stickRef.current && drift) {
+      // The content grew or shrank under a thread that follows the end (history loading on open,
+      // a large card appearing) without the view moving up: keep following. An upward move, even
+      // while a turn streams, still releases below.
+      pinToBottom(el);
+      savedScrollTopRef.current = el.scrollTop;
+      lastDistanceRef.current = distanceFromBottom(el);
+      return;
+    }
+    savedScrollTopRef.current = el.scrollTop;
     lastDistanceRef.current = distance;
     if (distance >= FOLLOW_BAND) {
       stickRef.current = false;
@@ -509,7 +524,7 @@ export function ThreadView({ hidden = false }: { hidden?: boolean }) {
     return frame(
       <>
         {head}
-        <MainTabStrip sessionId={undefined} driver={heroDriver} hasPr={false} />
+        <MainTabStrip sessionId={undefined} driver={heroDriver} />
         <NewThread
           key={activeProjectId}
           projectId={activeProjectId}
@@ -626,7 +641,7 @@ export function ThreadView({ hidden = false }: { hidden?: boolean }) {
   return frame(
     <>
       {head}
-      <MainTabStrip sessionId={session.id} driver={session.driver} hasPr={hasPr} />
+      <MainTabStrip sessionId={session.id} driver={session.driver} />
       {showMainTool !== null && (
         <div
           className={`main-tool-body${dropMain.over ? " drop-target-active" : ""}`}
@@ -679,12 +694,13 @@ export function ThreadView({ hidden = false }: { hidden?: boolean }) {
               running={turn.running}
               startedAt={turn.startedAt}
               durationMs={turn.durationMs}
-              hasActivity={turn.pieces.activity.length > 0}
+              hasActivity={turn.pieces.activity.some((n) => !isMidTurnNode(n))}
               autoExpandIfFits={index === turns.length - 1}
               pending={turn.pending}
               toolCount={countActivityTools(turn.pieces.activity)}
               lead={turn.pieces.lead.map((m) => renderNode({ kind: "msg", msg: m }))}
               activity={turn.pieces.activity.map(renderNode)}
+              kept={turn.pieces.activity.filter(isMidTurnNode).map(renderNode)}
               system={turn.pieces.system.map((m) => renderNode({ kind: "msg", msg: m }))}
               pinned={renderPinnedAnswer(turn.pieces.pinned ?? [])}
               footer={
@@ -728,6 +744,7 @@ export function ThreadView({ hidden = false }: { hidden?: boolean }) {
               <QuestionDock sessionId={session.id} />
               {!threadHidden && <SubagentRequestDocks sessionId={session.id} />}
               <WorkingDock key={`working-dock:${session.id}`} sessionId={session.id} sessionDriver={session.driver} basePath={basePath} />
+              <QueuedMessages sessionId={session.id} />
             </>
           }
         />

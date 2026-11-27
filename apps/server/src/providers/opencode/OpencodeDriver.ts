@@ -1,7 +1,7 @@
 ﻿import { randomBytes, randomUUID } from "node:crypto";
 import { rm } from "node:fs/promises";
 import { homedir } from "node:os";
-import type { AccountUsageState, AppSettings, ApprovalDecision, CliDriver, CommandOption, ContextUsage, DriverActivity, HistoryMessage, ModelOption, NativeSession, PermissionMode, PermissionOption, QuestionInfo, QuestionRequest, RetryConnectionRequest, RetryConnectionResult, SessionMeta, TaskEndReason, TaskSnapshot, TerminalLaunch, ThreadEvent, TurnHandle, TurnModelUsage, TurnRequest } from "@cw-code/contracts";
+import type { AccountUsageState, AppSettings, ApprovalDecision, CliDriver, CommandOption, ContextUsage, DriverActivity, HistoryMessage, InjectedMessage, MessageCapabilities, ModelOption, NativeSession, PermissionMode, PermissionOption, QuestionInfo, QuestionRequest, RetryConnectionRequest, RetryConnectionResult, SessionMeta, TaskEndReason, TaskSnapshot, TerminalLaunch, ThreadEvent, TurnHandle, TurnModelUsage, TurnRequest } from "@cw-code/contracts";
 import { isAbsolute, join } from "node:path";
 import { harnessDir, opencodeConfigDir, opencodePluginDir } from "../../paths/appPaths.js";
 import { tokensEqual } from "../../transport/ownerToken.js";
@@ -83,6 +83,11 @@ interface TurnInput {
   admitted?: string | "any";
 }
 
+interface InjectedEntry {
+  messageId: string;
+  text: string;
+}
+
 function protocolOf(version: OpencodeProtocolVersion | undefined): OpencodeProtocol {
   return version === "v2" ? opencodeV2Protocol : opencodeV1Protocol;
 }
@@ -130,6 +135,12 @@ export class OpencodeDriver implements CliDriver {
       compactionTrigger?: "manual" | "auto";
       holding?: boolean;
       input: TurnInput;
+      injected: Map<string, InjectedEntry>;
+      injecting: number;
+      deliveredWhileInjecting: Set<string>;
+      inflight: Map<string, Promise<string | undefined>>;
+      interrupted?: boolean;
+      executionEnded?: boolean;
       agent: boolean;
     }
   >();
@@ -485,6 +496,10 @@ export class OpencodeDriver implements CliDriver {
       pollWarned: false,
       startedPort: params.port,
       input: { delivered: params.inputDelivered === true, seen: null },
+      injected: new Map(),
+      injecting: 0,
+      deliveredWhileInjecting: new Set(),
+      inflight: new Map(),
       agent: params.agent
     });
     this.watchInfo.set(params.turnId, {
@@ -872,6 +887,7 @@ export class OpencodeDriver implements CliDriver {
         return;
       case "input.delivered":
         if (!known || event.sessionID !== known) return;
+        if (this.noteInjectedDelivered(turnId, event.inboxID)) return;
         this.noteInputDelivered(turnId, event.inboxID);
         return;
       case "question.resolved": {
@@ -968,6 +984,8 @@ export class OpencodeDriver implements CliDriver {
           });
           return;
         }
+        const ended = this.turnMeta.get(owner);
+        if (ended) ended.executionEnded = true;
         if (event.reason === "failed") {
           const meta = this.turnMeta.get(owner);
           this.failTurn(owner, meta?.localSessionId ?? "", event.sessionID, new Error(event.error || "opencode turn failed"));
@@ -1013,6 +1031,156 @@ export class OpencodeDriver implements CliDriver {
     if (!input || input.delivered || !input.seen) return;
     input.seen.add(inboxID);
     if (input.admitted === "any" || input.admitted === inboxID) input.delivered = true;
+  }
+
+  private noteInjectedDelivered(turnId: string, inboxID: string): boolean {
+    const meta = this.turnMeta.get(turnId);
+    if (!meta) return false;
+    const entry = meta.injected.get(inboxID);
+    if (!entry) {
+      if (meta.injecting === 0 || meta.input.admitted === inboxID) return false;
+      meta.deliveredWhileInjecting.add(inboxID);
+      return true;
+    }
+    meta.injected.delete(inboxID);
+    this.emitInjectedDelivered(turnId, entry);
+    return true;
+  }
+
+  private releaseParkedDeliveries(turnId: string, meta: { deliveredWhileInjecting: Set<string> }): void {
+    const parked = [...meta.deliveredWhileInjecting];
+    meta.deliveredWhileInjecting.clear();
+    if (this.turnMeta.get(turnId) !== meta) return;
+    for (const inboxID of parked) this.noteInputDelivered(turnId, inboxID);
+  }
+
+  private emitInjectedDelivered(turnId: string, entry: InjectedEntry): void {
+    this.emit({ type: "user.message", turnId, messageId: entry.messageId, text: entry.text, timestamp: Date.now() });
+  }
+
+  async injectMessage(turnId: string, message: InjectedMessage): Promise<void> {
+    const meta = this.turnMeta.get(turnId);
+    const serverSessionId = this.sessionIds.get(turnId);
+    const info = this.watchInfo.get(turnId);
+    if (!meta || !serverSessionId || !info) throw new Error("No active opencode turn to send to");
+    const protocol = protocolOf(info.protocol);
+    if (!protocol.inject) throw new Error("This opencode server cannot take messages while a turn is running");
+    if (meta.executionEnded) throw new Error("The opencode turn already finished running");
+    if (!meta.input.delivered && meta.input.admitted === undefined) {
+      throw new Error("The opencode turn has not accepted its prompt yet");
+    }
+    const client = this.clientFor(info);
+    const files = attachmentFilesOf(message.cwd, message.attachments);
+    let claim: (inboxId: string | undefined) => void = () => {};
+    meta.inflight.set(message.id, new Promise((resolve) => (claim = resolve)));
+    meta.injecting++;
+    try {
+      const { inboxId } = await protocol.inject(client, serverSessionId, {
+        prompt: message.prompt,
+        ...(message.skills?.length ? { skills: message.skills } : {}),
+        files,
+        signal: new AbortController().signal
+      });
+      const entry: InjectedEntry = { messageId: message.id, text: message.prompt };
+      if (!inboxId) {
+        claim(undefined);
+        traceHarnessCall({
+          harness: "opencode",
+          operation: "opencode.injectMessage",
+          turnId,
+          ok: true,
+          extra: { serverSessionId, inboxId: null, assumedDelivered: true }
+        });
+        this.emitInjectedDelivered(turnId, entry);
+        return;
+      }
+      if (meta.interrupted) {
+        claim(inboxId);
+        throw new Error("The opencode turn was stopped before the message was delivered");
+      }
+      claim(undefined);
+      if (this.turnMeta.get(turnId) !== meta) {
+        await this.retractInbox(turnId, protocol, client, serverSessionId, inboxId, "turn-ended");
+        throw new Error("The opencode turn ended before the message was delivered");
+      }
+      if (meta.deliveredWhileInjecting.delete(inboxId)) this.emitInjectedDelivered(turnId, entry);
+      else meta.injected.set(inboxId, entry);
+      traceHarnessCall({
+        harness: "opencode",
+        operation: "opencode.injectMessage",
+        turnId,
+        ok: true,
+        extra: { serverSessionId, inboxId }
+      });
+    } catch (err) {
+      claim(undefined);
+      throw err;
+    } finally {
+      meta.inflight.delete(message.id);
+      meta.injecting--;
+      if (meta.injecting === 0) this.releaseParkedDeliveries(turnId, meta);
+    }
+  }
+
+  messageCapabilities(turnId: string): MessageCapabilities {
+    const info = this.watchInfo.get(turnId);
+    const meta = this.turnMeta.get(turnId);
+    if (!info || !meta) return { inject: false, retract: false };
+    const protocol = protocolOf(info.protocol);
+    return {
+      inject: typeof protocol.inject === "function" && meta.executionEnded !== true,
+      retract: typeof protocol.retractInput === "function"
+    };
+  }
+
+  async retractMessage(turnId: string, messageId: string): Promise<boolean> {
+    const meta = this.turnMeta.get(turnId);
+    const serverSessionId = this.sessionIds.get(turnId);
+    const info = this.watchInfo.get(turnId);
+    if (!meta || !serverSessionId || !info) return false;
+    const protocol = protocolOf(info.protocol);
+    if (!protocol.retractInput) return false;
+    if (meta.inflight.has(messageId)) throw new Error("message is still being sent to the agent; try again in a moment");
+    const inboxId = [...meta.injected].find(([, entry]) => entry.messageId === messageId)?.[0];
+    if (!inboxId) return false;
+    const retracted = await this.retractInbox(turnId, protocol, this.clientFor(info), serverSessionId, inboxId, "remove");
+    if (retracted) meta.injected.delete(inboxId);
+    return retracted;
+  }
+
+  private async retractInbox(
+    turnId: string,
+    protocol: OpencodeProtocol,
+    client: OpencodeClient,
+    serverSessionId: string,
+    inboxId: string,
+    reason: "remove" | "turn-ended" | "interrupt"
+  ): Promise<boolean> {
+    if (!protocol.retractInput) return false;
+    try {
+      const retracted = await protocol.retractInput(client, serverSessionId, inboxId);
+      if (!retracted) {
+        traceHarnessCall({
+          harness: "opencode",
+          operation: "opencode.retractMessage",
+          turnId,
+          ok: false,
+          error: "inbox item no longer pending",
+          extra: { serverSessionId, inboxId, reason }
+        });
+      }
+      return retracted;
+    } catch (err) {
+      traceHarnessCall({
+        harness: "opencode",
+        operation: "opencode.retractMessage",
+        turnId,
+        ok: false,
+        error: truncateError((err as Error).message),
+        extra: { serverSessionId, inboxId, reason }
+      });
+      return false;
+    }
   }
 
   private dismissUnsupportedForm(turnId: string, sessionID: string, formId: string, title: string): void {
@@ -1460,9 +1628,32 @@ export class OpencodeDriver implements CliDriver {
   }
 
   private discardTurn(turnId: string): void {
-    this.takeTurn(turnId);
+    const taken = this.takeTurn(turnId);
+    if (taken) void this.retractLeftovers(turnId, taken).then((unretracted) => this.warnUnretracted(taken.serverSessionId, unretracted));
     this.resolvePendingFor(turnId, null);
     this.resolveApprovalsFor(turnId);
+  }
+
+  private async retractLeftovers(
+    turnId: string,
+    taken: { serverSessionId: string; target: ServerTarget; leftovers: Map<string, InjectedEntry> }
+  ): Promise<Array<[string, InjectedEntry]>> {
+    const leftovers = [...taken.leftovers];
+    if (leftovers.length === 0) return [];
+    const protocol = protocolOf(taken.target.protocol);
+    const client = this.clientFor(taken.target);
+    const retracted = await Promise.all(
+      leftovers.map(([inboxId]) => this.retractInbox(turnId, protocol, client, taken.serverSessionId, inboxId, "turn-ended"))
+    );
+    return leftovers.filter((_, index) => !retracted[index]);
+  }
+
+  private warnUnretracted(serverSessionId: string, unretracted: Array<[string, InjectedEntry]>): void {
+    for (const [inboxId] of unretracted) {
+      console.warn(
+        `opencode inbox item ${inboxId} of session ${serverSessionId} could not be retracted at turn end and was not found in the session history`
+      );
+    }
   }
 
   private takeTurn(turnId: string): {
@@ -1475,6 +1666,7 @@ export class OpencodeDriver implements CliDriver {
     compactionEmitted: boolean;
     compactionTrigger?: "manual" | "auto";
     todosFromTools: boolean;
+    leftovers: Map<string, InjectedEntry>;
   } | null {
     for (const [requestId, ownerTurnId] of this.handledPermissions) {
       if (ownerTurnId === turnId) this.handledPermissions.delete(requestId);
@@ -1483,6 +1675,8 @@ export class OpencodeDriver implements CliDriver {
     const serverSessionId = this.sessionIds.get(turnId);
     const info = this.watchInfo.get(turnId);
     if (!meta || !serverSessionId || !info) return null;
+    const leftovers = new Map(meta.injected);
+    meta.injected.clear();
     const todosFromTools = this.protocolForTurn(turnId).todosFromTools;
     this.pool.endTurn(info.cwd);
     const timer = this.pollTimers.get(turnId);
@@ -1523,7 +1717,8 @@ export class OpencodeDriver implements CliDriver {
       childModels,
       compactionEmitted: meta.compactionEmitted === true,
       ...(meta.compactionTrigger ? { compactionTrigger: meta.compactionTrigger } : {}),
-      todosFromTools
+      todosFromTools,
+      leftovers
     };
   }
 
@@ -1566,9 +1761,26 @@ export class OpencodeDriver implements CliDriver {
     });
   }
 
+  private async settleInflightInjections(turnId: string): Promise<void> {
+    const meta = this.turnMeta.get(turnId);
+    if (!meta) return;
+    meta.executionEnded = true;
+    if (meta.inflight.size === 0) return;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    await Promise.race([
+      Promise.all(meta.inflight.values()),
+      new Promise<void>((resolve) => {
+        timer = setTimeout(resolve, OPENCODE_REQUEST_TIMEOUT_MS);
+      })
+    ]);
+    clearTimeout(timer);
+  }
+
   private async finishTurn(turnId: string): Promise<void> {
+    await this.settleInflightInjections(turnId);
     const taken = this.takeTurn(turnId);
     if (!taken) return;
+    let unretracted = await this.retractLeftovers(turnId, taken);
     let text = "";
     let usage: TurnModelUsage[] = [];
     let context: ContextUsage | undefined;
@@ -1598,6 +1810,11 @@ export class OpencodeDriver implements CliDriver {
         const fresh = await this.pool.ensure(taken.target.cwd);
         messages = await loadResult({ ...taken.target, port: fresh.port, authHeader: fresh.authHeader });
       }
+      unretracted = unretracted.filter(([inboxId, entry]) => {
+        if (!messages.some((message) => message.info?.id === inboxId)) return true;
+        this.emitInjectedDelivered(turnId, entry);
+        return false;
+      });
       const toolEvents = diffLiveTools(
         taken.seen,
         messages as LiveMessage[],
@@ -1640,6 +1857,7 @@ export class OpencodeDriver implements CliDriver {
         error: truncateError((err as Error).message)
       });
     }
+    this.warnUnretracted(taken.serverSessionId, unretracted);
     this.resolvePendingFor(turnId, null);
     this.resolveApprovalsFor(turnId);
     this.emit({
@@ -1672,7 +1890,19 @@ export class OpencodeDriver implements CliDriver {
       const protocol = protocolOf(info.protocol);
       const client = this.clientFor(info);
       const children = protocol.version === "v2" ? this.knownChildren(turnId, serverSessionId) : [];
-      const abort = Promise.all(children.map((child) => protocol.interrupt(client, child).catch(() => undefined)))
+      const meta = this.turnMeta.get(turnId);
+      const pendingInbox = [...(meta?.injected.keys() ?? [])];
+      meta?.injected.clear();
+      if (meta) meta.interrupted = true;
+      const retract = (inboxId: string) => this.retractInbox(turnId, protocol, client, serverSessionId, inboxId, "interrupt");
+      const retractions = [
+        ...pendingInbox.map(retract),
+        ...[...(meta?.inflight.values() ?? [])].map((claimed) => claimed.then((inboxId) => (inboxId ? retract(inboxId) : false)))
+      ];
+      const abort = Promise.all([
+        ...children.map((child) => protocol.interrupt(client, child).catch(() => undefined)),
+        ...retractions
+      ])
         .then(() => protocol.interrupt(client, serverSessionId))
         .then(
           (res) => {
@@ -2047,6 +2277,7 @@ export class OpencodeDriver implements CliDriver {
       }
       await this.pollChildTools(turnId, info, sessionID, payload);
       if (meta?.beforeIds && protocol.turnEnded(payload, meta.beforeIds)) {
+        meta.executionEnded = true;
         void (protocol.version === "v2" ? this.settleTurn(turnId) : this.finishTurn(turnId));
         return;
       }

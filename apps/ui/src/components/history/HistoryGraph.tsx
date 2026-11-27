@@ -1,26 +1,50 @@
-import { memo, useMemo, useRef, useState, type CSSProperties, type FocusEvent, type KeyboardEvent, type SyntheticEvent } from "react";
+import {
+  memo,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type FocusEvent,
+  type KeyboardEvent,
+  type SyntheticEvent
+} from "react";
 import { Check, Cloud, GitFork, Monitor, Tag } from "lucide-react";
 import type { HistoryCommit, HistoryLog, HistoryWorktree } from "@cw-code/contracts";
 import { computeGraphLayout } from "../../history/graphLayout.js";
 import { relativeTime } from "../prDetailModel.js";
-import { GraphCanvas, graphColumnWidth, REF_COLUMN_WIDTH, ROW_HEIGHT, type NodeKind } from "./GraphCanvas.js";
+import { GraphCanvas, graphColumnWidth, type NodeKind } from "./GraphCanvas.js";
 import { initialsOf, type NodeAvatar } from "./historyAvatars.js";
 import { PALETTE_SIZE, paletteVar, useGraphTheme } from "./graphTheme.js";
-import { buildRefLabel, type RefEntry, type RefLabel } from "./refLabel.js";
+import { buildRefLabel, type LocalBranches, type RefEntry, type RefLabel } from "./refLabel.js";
 import { useVirtualRows } from "./useVirtualRows.js";
+import { buildSlots, ROW_HEIGHT, SEPARATOR_HEIGHT, type Slot } from "./gitGlassLayout.js";
+import { dayLabels, msUntilNextDay } from "./daySeparators.js";
+import { ResizeHandle } from "./ResizeHandle.js";
 
 export const WIP_SHA = "WIP";
+export const REF_COLUMN_DEFAULT = 170;
+export const REF_COLUMN_MIN = 60;
+export const REF_COLUMN_MAX = 400;
+export const GRAPH_COLUMN_MIN = 30;
+export const GRAPH_COLUMN_MAX = 400;
 const OVERSCAN = 10;
-const HEADER_HEIGHT = 24;
+const HEADER_HEIGHT = 30;
+const DATE_WIDTH = 118;
+const NARROW_DATE_WIDTH = 76;
+
+export interface WipSummary {
+  files: number;
+  added: number | null;
+  deleted: number | null;
+}
+
+export type ColumnId = "ref" | "graph";
 
 function nodeKind(commit: HistoryCommit): NodeKind {
   if (commit.sha === WIP_SHA) return "wip";
   if (commit.isStash) return "stash";
   return commit.parents.length >= 2 ? "merge" : "commit";
-}
-
-function wipSubject(dirtyCount: number): string {
-  return `Uncommitted changes (${dirtyCount})`;
 }
 
 function withWip(log: HistoryLog, hasWip: boolean): HistoryCommit[] {
@@ -34,17 +58,26 @@ function withWip(log: HistoryLog, hasWip: boolean): HistoryCommit[] {
     authorEmail: "",
     authorDate: now,
     committerDate: now,
-    subject: wipSubject(0),
+    subject: "Uncommitted changes",
     isStash: false
   };
   return [wip, ...log.commits];
 }
 
-function labelsBySha(log: HistoryLog, present: Set<string>): Map<string, RefLabel> {
-  const localBranches = {
+export function localBranchesOf(log: HistoryLog): LocalBranches {
+  return {
     names: new Set(log.refs.filter((ref) => ref.kind === "local").map((ref) => ref.name)),
     current: log.head.detached ? null : log.head.branch
   };
+}
+
+export function refLabelAt(log: HistoryLog, sha: string): RefLabel | null {
+  const refs = log.refs.filter((ref) => ref.target === sha);
+  return buildRefLabel(refs, log.head.detached && log.head.sha === sha, localBranchesOf(log));
+}
+
+function labelsBySha(log: HistoryLog, present: Set<string>): Map<string, RefLabel> {
+  const localBranches = localBranchesOf(log);
   const grouped = new Map<string, HistoryLog["refs"]>();
   for (const ref of log.refs) {
     if (!present.has(ref.target)) continue;
@@ -62,7 +95,7 @@ function labelsBySha(log: HistoryLog, present: Set<string>): Map<string, RefLabe
   return result;
 }
 
-function RefIcons({ kind, isCurrent, hasLocal, hasRemote }: { kind: RefLabel["kind"]; isCurrent: boolean; hasLocal: boolean; hasRemote: boolean }) {
+export function RefIcons({ kind, isCurrent, hasLocal, hasRemote }: { kind: RefLabel["kind"]; isCurrent: boolean; hasLocal: boolean; hasRemote: boolean }) {
   return (
     <>
       {isCurrent && kind !== "head" && <Check size={11} className="history-ref-icon" />}
@@ -183,55 +216,106 @@ function RefLabelCell({ label, onCheckout, worktreeBranches }: { label: RefLabel
 }
 
 const absoluteFormat = new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" });
+const shortFormat = new Intl.DateTimeFormat(undefined, { dateStyle: "short", timeStyle: "short" });
+
+function WipChanges({ wip }: { wip: WipSummary }) {
+  return (
+    <span className="gg-wip-counts">
+      <span className="gg-chg mod" title={`${wip.files} changed ${wip.files === 1 ? "file" : "files"}`}>
+        ~{wip.files}
+      </span>
+      {wip.added !== null && wip.added > 0 && (
+        <span className="gg-chg add" title={`${wip.added} added ${wip.added === 1 ? "line" : "lines"}`}>
+          +{wip.added}
+        </span>
+      )}
+      {wip.deleted !== null && wip.deleted > 0 && (
+        <span className="gg-chg del" title={`${wip.deleted} removed ${wip.deleted === 1 ? "line" : "lines"}`}>
+          −{wip.deleted}
+        </span>
+      )}
+    </span>
+  );
+}
 
 const HistoryRow = memo(function HistoryRow({
   commit,
   label,
   colorIndex,
-  graphWidth,
   nowMs,
   selected,
+  dimmed,
+  wip,
+  showAuthor,
+  absoluteDates,
   onSelect,
   onCheckout,
-  worktreeBranches
+  worktreeBranches,
+  hint
 }: {
   commit: HistoryCommit;
   label: RefLabel | null;
   colorIndex: number;
-  graphWidth: number;
   nowMs: number;
   selected: boolean;
+  dimmed: boolean;
+  wip: WipSummary | null;
+  showAuthor: boolean;
+  absoluteDates: boolean;
   onSelect: (sha: string) => void;
   onCheckout: (branch: string) => void;
   worktreeBranches: ReadonlyMap<string, HistoryWorktree>;
+  hint: string | null;
 }) {
   const isWip = commit.sha === WIP_SHA;
+  const date = new Date(commit.authorDate * 1000);
   const title = isWip
-    ? commit.subject
-    : `${commit.subject}\n${commit.authorName} <${commit.authorEmail}>\n${absoluteFormat.format(new Date(commit.authorDate * 1000))}\n${commit.sha}`;
+    ? hint
+      ? `${commit.subject}\n${hint}`
+      : commit.subject
+    : `${commit.subject}\n${commit.authorName} <${commit.authorEmail}>\n${absoluteFormat.format(date)}\n${commit.sha}`;
   return (
     <div
-      className={`history-row${selected ? " selected" : ""}${isWip ? " wip" : ""}${commit.isStash ? " stash" : ""}`}
+      className={`history-row${selected ? " selected" : ""}${isWip ? " wip" : ""}${commit.isStash ? " stash" : ""}${dimmed ? " dim" : ""}`}
       style={{ height: ROW_HEIGHT, "--lane": paletteVar(colorIndex) } as CSSProperties}
       role="option"
       aria-selected={selected}
       title={title}
       onClick={() => onSelect(commit.sha)}
     >
-      <span className="history-ref-cell" style={{ width: REF_COLUMN_WIDTH }}>
-        {label && <RefLabelCell label={label} onCheckout={onCheckout} worktreeBranches={worktreeBranches} />}
+      <span className="history-ref-cell">{label && <RefLabelCell label={label} onCheckout={onCheckout} worktreeBranches={worktreeBranches} />}</span>
+      <span className="history-graph-cell" />
+      <span className="history-message">
+        <span className="history-subject">{commit.subject}</span>
+        {isWip && wip && <WipChanges wip={wip} />}
+        {!isWip && showAuthor && <span className="history-author">{commit.authorName}</span>}
       </span>
-      <span className="history-graph-cell" style={{ width: graphWidth }} />
-      <span className="history-subject">{commit.subject}</span>
-      {!isWip && <span className="history-author">{commit.authorName}</span>}
-      {!isWip && <span className="history-date">{relativeTime(commit.authorDate * 1000, nowMs)}</span>}
+      <span className="history-date">{isWip ? "" : absoluteDates ? shortFormat.format(date) : relativeTime(date.getTime(), nowMs)}</span>
     </div>
   );
 });
 
+function useDayTick(): number {
+  const [tick, setTick] = useState(0);
+  useEffect(() => {
+    const timer = setTimeout(() => setTick((value) => value + 1), msUntilNextDay(Date.now()) + 1000);
+    return () => clearTimeout(timer);
+  }, [tick]);
+  return tick;
+}
+
+function SeparatorRow({ slot }: { slot: Extract<Slot, { kind: "separator" }> }) {
+  return (
+    <div className="history-separator" style={{ height: slot.height }} role="presentation">
+      <span className="history-separator-label">{slot.label}</span>
+    </div>
+  );
+}
+
+
 export function HistoryGraph({
   log,
-  dirtyCount,
+  wip,
   selected,
   onSelect,
   onLoadMore,
@@ -240,10 +324,19 @@ export function HistoryGraph({
   showAvatars,
   onCheckout,
   onHighlight,
-  worktreeBranches
+  worktreeBranches,
+  wipHint,
+  onClearSelection,
+  matches,
+  refWidth,
+  graphWidth: graphWidthSetting,
+  onColumnResize,
+  narrow,
+  showAuthors,
+  absoluteDates
 }: {
   log: HistoryLog;
-  dirtyCount: number;
+  wip: WipSummary | null;
   selected: string | null;
   onSelect: (sha: string) => void;
   onLoadMore: (() => void) | null;
@@ -253,20 +346,40 @@ export function HistoryGraph({
   onCheckout: (branch: string) => void;
   onHighlight: (sha: string) => void;
   worktreeBranches: ReadonlyMap<string, HistoryWorktree>;
+  wipHint: string | null;
+  onClearSelection: () => void;
+  matches: ReadonlySet<string> | null;
+  refWidth: number;
+  graphWidth: number | null;
+  onColumnResize: (column: ColumnId, width: number | null, commit: boolean) => void;
+  narrow: boolean;
+  showAuthors: boolean;
+  absoluteDates: boolean;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const theme = useGraphTheme();
-  const hasWip = dirtyCount > 0;
+  const hasWip = wip !== null && wip.files > 0;
   const commits = useMemo(() => withWip(log, hasWip), [log, hasWip]);
-  const wipCommit = useMemo<HistoryCommit | null>(() => {
-    const first = commits[0];
-    return first && first.sha === WIP_SHA ? { ...first, subject: wipSubject(dirtyCount) } : null;
-  }, [commits, dirtyCount]);
-  const nowMs = useMemo(() => Date.now(), [commits]);
+  const indexBySha = useMemo(() => new Map(commits.map((commit, index) => [commit.sha, index])), [commits]);
+  const dayTick = useDayTick();
+  const nowMs = useMemo(() => Date.now(), [commits, dayTick]);
   const layout = useMemo(() => computeGraphLayout(commits, PALETTE_SIZE), [commits]);
+  const slotLayout = useMemo(
+    () =>
+      buildSlots(
+        dayLabels(
+          nowMs,
+          commits.map((commit) => (commit.sha === WIP_SHA ? null : commit.authorDate * 1000))
+        ),
+        ROW_HEIGHT,
+        SEPARATOR_HEIGHT
+      ),
+    [commits, nowMs]
+  );
   const kinds = useMemo(() => commits.map(nodeKind), [commits]);
   const labels = useMemo(() => labelsBySha(log, new Set(commits.map((commit) => commit.sha))), [log, commits]);
   const labeled = useMemo(() => commits.map((commit) => labels.has(commit.sha)), [commits, labels]);
+  const dimmed = useMemo(() => (matches ? commits.map((commit) => commit.sha !== WIP_SHA && !matches.has(commit.sha)) : null), [commits, matches]);
   const nodeAvatars = useMemo<(NodeAvatar | null)[] | null>(() => {
     if (!showAvatars) return null;
     return commits.map((commit, index) => {
@@ -275,11 +388,31 @@ export function HistoryGraph({
       return { email, initials: initialsOf(commit.authorName, email), url: avatars[email] ?? null };
     });
   }, [commits, kinds, avatars, showAvatars]);
-  const headIndex = useMemo(() => (log.head.sha ? commits.findIndex((commit) => commit.sha === log.head.sha) : -1), [commits, log.head.sha]);
-  const graphWidth = graphColumnWidth(layout.laneCount);
-  const { start, end, scrollToIndex } = useVirtualRows(containerRef, commits.length, ROW_HEIGHT, OVERSCAN, HEADER_HEIGHT);
+  const headIndex = useMemo(() => (log.head.sha ? (indexBySha.get(log.head.sha) ?? -1) : -1), [indexBySha, log.head.sha]);
+  const autoGraphWidth = graphColumnWidth(layout.laneCount);
+  const graphWidth = graphWidthSetting ?? autoGraphWidth;
+  const dateWidth = narrow ? NARROW_DATE_WIDTH : DATE_WIDTH;
+  const { start, end, scrollToSlot } = useVirtualRows(containerRef, slotLayout, OVERSCAN, HEADER_HEIGHT);
+  const columns = { "--gg-cols": `${refWidth}px ${graphWidth}px minmax(0, 1fr) ${dateWidth}px` } as CSSProperties;
+
+  const reveal = useRef<(sha: string) => void>(() => undefined);
+  reveal.current = (sha: string): void => {
+    const index = indexBySha.get(sha);
+    const slot = index === undefined ? undefined : slotLayout.slotOfIndex[index];
+    if (slot !== undefined) scrollToSlot(slot);
+  };
+
+  useEffect(() => {
+    if (selected) reveal.current(selected);
+  }, [selected]);
 
   const onKeyDown = (event: KeyboardEvent<HTMLDivElement>): void => {
+    if (event.key === "Escape" && selected) {
+      event.preventDefault();
+      event.stopPropagation();
+      onClearSelection();
+      return;
+    }
     if (event.key === "Enter" && selected) {
       event.preventDefault();
       onSelect(selected);
@@ -289,40 +422,84 @@ export function HistoryGraph({
     event.preventDefault();
     const first = commits[0]?.sha === WIP_SHA ? 1 : 0;
     if (commits.length <= first) return;
-    const current = selected ? commits.findIndex((commit) => commit.sha === selected) : -1;
+    const current = selected ? (indexBySha.get(selected) ?? -1) : -1;
     const next = current === -1 ? first : Math.min(commits.length - 1, Math.max(first, current + (event.key === "ArrowDown" ? 1 : -1)));
     const target = commits[next];
     if (!target) return;
     onHighlight(target.sha);
-    scrollToIndex(next);
   };
 
   return (
-    <div ref={containerRef} className="history-scroll" tabIndex={0} role="listbox" aria-label="Commits" onKeyDown={onKeyDown}>
+    <div ref={containerRef} className="history-scroll" style={columns} tabIndex={0} role="listbox" aria-label="Commits" onKeyDown={onKeyDown}>
       <div className="history-header" style={{ height: HEADER_HEIGHT }}>
-        <span className="history-header-ref" style={{ width: REF_COLUMN_WIDTH }}>
-          Branch / tag
+        <span className="history-header-cell">
+          Branch / Tag
+          <ResizeHandle
+            className="history-col-handle"
+            label="Resize the branch and tag column"
+            value={refWidth}
+            min={REF_COLUMN_MIN}
+            max={REF_COLUMN_MAX}
+            direction={1}
+            onChange={(width, commit) => onColumnResize("ref", width, commit)}
+            onReset={() => onColumnResize("ref", null, true)}
+          />
         </span>
-        <span style={{ width: graphWidth }}>Graph</span>
-        <span>Commit message</span>
+        <span className="history-header-cell">
+          Graph
+          <ResizeHandle
+            className="history-col-handle"
+            label="Resize the graph column"
+            value={graphWidth}
+            min={GRAPH_COLUMN_MIN}
+            max={GRAPH_COLUMN_MAX}
+            direction={1}
+            onChange={(width, commit) => onColumnResize("graph", width, commit)}
+            onReset={() => onColumnResize("graph", null, true)}
+          />
+        </span>
+        <span className="history-header-cell">Message</span>
+        <span className="history-header-cell end">Date</span>
       </div>
-      <div className="history-spacer" style={{ height: commits.length * ROW_HEIGHT }}>
-        <GraphCanvas rows={layout.rows} kinds={kinds} avatars={nodeAvatars} labeled={labeled} headIndex={headIndex} start={start} end={end} laneCount={layout.laneCount} theme={theme} />
-        <div className="history-window" style={{ top: start * ROW_HEIGHT }}>
-          {commits.slice(start, end).map((commit, offset) => (
-            <HistoryRow
-              key={commit.sha}
-              commit={commit.sha === WIP_SHA && wipCommit ? wipCommit : commit}
-              label={labels.get(commit.sha) ?? null}
-              colorIndex={layout.rows[start + offset]?.color ?? 0}
-              graphWidth={graphWidth}
-              nowMs={nowMs}
-              selected={commit.sha === selected}
-              onSelect={onSelect}
-              onCheckout={onCheckout}
-              worktreeBranches={worktreeBranches}
-            />
-          ))}
+      <div className="history-spacer" style={{ height: slotLayout.total }}>
+        <GraphCanvas
+          rows={layout.rows}
+          slots={slotLayout.slots}
+          start={start}
+          end={end}
+          kinds={kinds}
+          avatars={nodeAvatars}
+          labeled={labeled}
+          dimmed={dimmed}
+          headIndex={headIndex}
+          left={refWidth}
+          width={graphWidth}
+          theme={theme}
+        />
+        <div className="history-window" style={{ top: slotLayout.slots[start]?.top ?? 0 }}>
+          {slotLayout.slots.slice(start, end).map((slot) => {
+            if (slot.kind === "separator") return <SeparatorRow key={`sep:${slot.before}`} slot={slot} />;
+            const commit = commits[slot.index];
+            if (!commit) return null;
+            return (
+              <HistoryRow
+                key={commit.sha}
+                commit={commit}
+                label={labels.get(commit.sha) ?? null}
+                colorIndex={layout.rows[slot.index]?.color ?? 0}
+                nowMs={nowMs}
+                selected={commit.sha === selected}
+                dimmed={dimmed?.[slot.index] ?? false}
+                wip={commit.sha === WIP_SHA ? wip : null}
+                showAuthor={showAuthors && !narrow}
+                absoluteDates={absoluteDates}
+                onSelect={onSelect}
+                onCheckout={onCheckout}
+                worktreeBranches={worktreeBranches}
+                hint={commit.sha === WIP_SHA ? wipHint : null}
+              />
+            );
+          })}
         </div>
       </div>
       {log.truncated && onLoadMore && (

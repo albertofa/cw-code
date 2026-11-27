@@ -3,15 +3,15 @@ import { checkCountsTone, checksTone, gitDiffSummary, paneDiffSummary, railGroup
 
 describe("railGroups", () => {
   it("groups review tools, terminals and preview", () => {
-    expect(railGroups("claude", false, false)).toEqual([["overview", "diff", "history", "files", "agents"], ["shell", "claude"]]);
+    expect(railGroups("claude", false)).toEqual([["overview", "gitglass", "files", "agents"], ["shell", "claude"]]);
   });
 
-  it("adds the PR tool only when linked and preview only when present", () => {
-    expect(railGroups("codex", true, true)).toEqual([["overview", "diff", "history", "pr", "files", "agents"], ["shell", "codex"], ["preview"]]);
+  it("adds preview only when present", () => {
+    expect(railGroups("codex", true)).toEqual([["overview", "gitglass", "files", "agents"], ["shell", "codex"], ["preview"]]);
   });
 
   it("omits the harness CLI without a driver", () => {
-    expect(railGroups(undefined, false, false)[1]).toEqual(["shell"]);
+    expect(railGroups(undefined, false)[1]).toEqual(["shell"]);
   });
 });
 
@@ -53,7 +53,7 @@ describe("gitDiffSummary", () => {
 describe("paneDiffSummary", () => {
   const status = { dirtyCount: 6, addedLines: 312, deletedLines: 48 };
 
-  it("uses the working tree when the diff panel is not in last-turn mode", () => {
+  it("uses the working tree when Git glass is not showing the last turn", () => {
     expect(paneDiffSummary(status, undefined)).toBe("6 files · +312 −48");
   });
 
