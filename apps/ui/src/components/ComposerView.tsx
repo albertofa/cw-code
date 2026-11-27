@@ -647,6 +647,10 @@ export function ComposerView({
       warn(`Attachments can't be sent with /${command.name}`, "Remove them or send a regular message.");
       return;
     }
+    if (quoteTexts.length > 0 || pastes.length > 0) {
+      warn(`Quotes and pasted text can't be sent with /${command.name}`, "Remove them or send a regular message.");
+      return;
+    }
     if (command.confirm) {
       const ok = await confirm({ title: `Run /${command.name}?`, message: command.confirm, confirmLabel: "Run" });
       if (!ok || !isCurrent(key)) return;
@@ -749,9 +753,10 @@ export function ComposerView({
   // `typed` is what the user wrote: skill mentions are read from it, never from quoted assistant text.
   const sendMessage = async (body: string, typed: string = body): Promise<void> => {
     const key = commandsKey;
-    const slash = body.startsWith("/");
+    // Commands come from the typed text only: quotes and pasted blocks are wrapped around it in `body`.
+    const slash = typed.startsWith("/");
     if (slash) {
-      const immediate = parseSlashInput(body, commandList);
+      const immediate = parseSlashInput(typed, commandList);
       if (immediate) return runCommand(immediate.command, immediate.args, key);
     }
     const needsList = driverCommands === null && (slash || hasSkillCandidate(typed));
@@ -774,7 +779,7 @@ export function ComposerView({
       return;
     }
     const list = mergeCommands(driver, result.list, commandAvailability);
-    const parsed = slash ? parseSlashInput(body, list) : null;
+    const parsed = slash ? parseSlashInput(typed, list) : null;
     if (parsed) return runCommand(parsed.command, parsed.args, key);
     sendPlain(body, key, mentionedSkills(typed, list));
   };
