@@ -66,11 +66,12 @@ function sanitizeRecentModels(driver: DriverKind, value: unknown): string[] {
 function sanitizeDraft(value: unknown): ComposerDraft | null {
   if (!isRecord(value) || typeof value.text !== "string") return null;
   const updatedAt = typeof value.updatedAt === "number" && Number.isFinite(value.updatedAt) ? value.updatedAt : 0;
-  return { text: value.text, attachments: stringList(value.attachments), updatedAt };
+  const quotes = stringList(value.quotes);
+  return { text: value.text, attachments: stringList(value.attachments), ...(quotes.length > 0 ? { quotes } : {}), updatedAt };
 }
 
-function isEmptyDraft(text: string, attachments: readonly string[]): boolean {
-  return !text.trim() && attachments.length === 0;
+function isEmptyDraft(text: string, attachments: readonly string[], quotes: readonly string[]): boolean {
+  return !text.trim() && attachments.length === 0 && quotes.length === 0;
 }
 
 function sameList(a: readonly string[], b: readonly string[]): boolean {
@@ -82,7 +83,7 @@ function cloneSidebarOrder(order: SidebarOrderPrefs): SidebarOrderPrefs {
 }
 
 function cloneDraft(draft: ComposerDraft): ComposerDraft {
-  return { ...draft, attachments: [...draft.attachments] };
+  return { ...draft, attachments: [...draft.attachments], ...(draft.quotes ? { quotes: [...draft.quotes] } : {}) };
 }
 
 export class PreferencesStore {
@@ -144,8 +145,8 @@ export class PreferencesStore {
     this.emit({ kind: "recentModels", driver });
   }
 
-  setDraft(key: string, text: string, attachments: readonly string[]): void {
-    if (isEmptyDraft(text, attachments)) {
+  setDraft(key: string, text: string, attachments: readonly string[], quotes: readonly string[] = []): void {
+    if (isEmptyDraft(text, attachments, quotes)) {
       if (this.draftEntries.delete(key)) {
         this.scheduleFlush();
         this.emit({ kind: "draft", key, draft: null });
@@ -153,8 +154,8 @@ export class PreferencesStore {
       return;
     }
     const existing = this.draftEntries.get(key);
-    if (existing && existing.text === text && sameList(existing.attachments, attachments)) return;
-    const draft: ComposerDraft = { text, attachments: [...attachments], updatedAt: this.now() };
+    if (existing && existing.text === text && sameList(existing.attachments, attachments) && sameList(existing.quotes ?? [], quotes)) return;
+    const draft: ComposerDraft = { text, attachments: [...attachments], ...(quotes.length > 0 ? { quotes: [...quotes] } : {}), updatedAt: this.now() };
     this.draftEntries.delete(key);
     this.draftEntries.set(key, draft);
     const evicted = this.evictOldestDrafts(key);
@@ -317,7 +318,7 @@ export class PreferencesStore {
     const drafts = isRecord(parsed.drafts) ? parsed.drafts : {};
     for (const [key, value] of Object.entries(drafts)) {
       const draft = sanitizeDraft(value);
-      if (!draft || isEmptyDraft(draft.text, draft.attachments) || this.draftEntries.has(key)) continue;
+      if (!draft || isEmptyDraft(draft.text, draft.attachments, draft.quotes ?? []) || this.draftEntries.has(key)) continue;
       this.draftEntries.set(key, draft);
       this.emit({ kind: "draft", key, draft: cloneDraft(draft) });
     }

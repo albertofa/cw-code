@@ -17,7 +17,7 @@ beforeEach(() => {
       return ["recentModels"];
     },
     pushRecentModel: (driver: string, model: string) => calls.push(["pushRecentModel", driver, model]),
-    setDraft: (key: string, text: string, attachments: string[]) => calls.push(["setDraft", key, text, attachments])
+    setDraft: (key: string, text: string, attachments: string[], quotes: string[]) => calls.push(["setDraft", key, text, attachments, quotes])
   } as unknown as PreferencesStore;
   router = new Router();
   registerPrefsHandlers(router, { requireServices: () => ({ preferences }) } as unknown as ServerApp);
@@ -66,5 +66,20 @@ describe("prefs handlers", () => {
     ]);
     expect(results.map((result) => result.status)).toEqual(Array(6).fill("rejected"));
     expect(calls).toHaveLength(2);
+  });
+
+  test("setDraft accepts optional quotes within limits", async () => {
+    await dispatch("prefs.setDraft", { key: "k", text: "", attachments: [], quotes: ["a"] });
+    await dispatch("prefs.setDraft", { key: "k", text: "t", attachments: [] });
+    const results = await Promise.allSettled([
+      dispatch("prefs.setDraft", { key: "k", text: "t", attachments: [], quotes: Array(21).fill("q") }),
+      dispatch("prefs.setDraft", { key: "k", text: "t", attachments: [], quotes: ["x".repeat(20_001)] }),
+      dispatch("prefs.setDraft", { key: "k", text: "t", attachments: [], quotes: [3] })
+    ]);
+    expect(results.map((result) => result.status)).toEqual(Array(3).fill("rejected"));
+    expect(calls).toEqual([
+      ["setDraft", "k", "", [], ["a"]],
+      ["setDraft", "k", "t", [], []]
+    ]);
   });
 });
