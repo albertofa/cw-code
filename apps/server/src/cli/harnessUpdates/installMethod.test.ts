@@ -262,3 +262,42 @@ describe("resolveInstallPlan fallbacks", () => {
     expect(plan.method).toBe("winget");
   });
 });
+
+describe("resolveInstallPlan pacman", () => {
+  it("updates a pacman-owned binary through pkexec", () => {
+    const plan = resolveInstallPlan(
+      posix("codex", "/usr/bin/codex", {
+        realPath: "/usr/lib/openai-codex/bin/codex",
+        pacman: { packageName: "openai-codex", inRepo: true, pkexec: "/usr/bin/pkexec" }
+      })
+    );
+    expect(plan).toEqual({
+      method: "pacman",
+      command: { file: "/usr/bin/pkexec", args: ["pacman", "-Sy", "--needed", "--noconfirm", "openai-codex"], timeoutMs: 30 * 60 * 1000 },
+      display: "/usr/bin/pkexec pacman -Sy --needed --noconfirm openai-codex",
+      lockKey: "pacman"
+    });
+  });
+
+  it("wins over the npm prefix of a pacman-owned npm layout", () => {
+    const plan = resolveInstallPlan(
+      posix("codex", "/usr/bin/codex", {
+        realPath: "/usr/lib/node_modules/@openai/codex/bin/codex.js",
+        pacman: { packageName: "openai-codex", inRepo: true, pkexec: "/usr/bin/pkexec" }
+      })
+    );
+    expect(plan.method).toBe("pacman");
+  });
+
+  it("is manual without pkexec", () => {
+    const plan = resolveInstallPlan(posix("opencode", "/usr/bin/opencode", { pacman: { packageName: "opencode", inRepo: true, pkexec: null } }));
+    expect(plan).toEqual({ method: "pacman", command: null, display: "sudo pacman -Syu --needed opencode", lockKey: null });
+  });
+
+  it("is manual for a package no sync repository provides", () => {
+    const plan = resolveInstallPlan(
+      posix("opencode", "/usr/bin/opencode", { pacman: { packageName: "opencode-bin", inRepo: false, pkexec: "/usr/bin/pkexec" } })
+    );
+    expect(plan).toEqual({ method: "pacman", command: null, display: null, lockKey: null });
+  });
+});
