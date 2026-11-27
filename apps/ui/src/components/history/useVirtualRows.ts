@@ -1,18 +1,13 @@
 import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
+import { visibleSlots, type SlotLayout } from "./gitGlassLayout.js";
 
 export interface VirtualRows {
   start: number;
   end: number;
-  scrollToIndex: (index: number) => void;
+  scrollToSlot: (slot: number) => void;
 }
 
-export function useVirtualRows(
-  containerRef: RefObject<HTMLElement | null>,
-  count: number,
-  rowHeight: number,
-  overscan: number,
-  topInset = 0,
-): VirtualRows {
+export function useVirtualRows(containerRef: RefObject<HTMLElement | null>, layout: SlotLayout, overscan: number, topInset = 0): VirtualRows {
   const [metrics, setMetrics] = useState({ top: 0, height: 0 });
   const frame = useRef<number | null>(null);
 
@@ -43,23 +38,22 @@ export function useVirtualRows(
     };
   }, [containerRef, measure]);
 
-  const scrollToIndex = useCallback(
+  const scrollToSlot = useCallback(
     (index: number) => {
       const element = containerRef.current;
-      if (!element) return;
-      const rowTop = index * rowHeight;
-      const rowBottom = rowTop + rowHeight;
-      if (rowTop < element.scrollTop) element.scrollTop = rowTop;
-      else if (rowBottom + topInset > element.scrollTop + element.clientHeight) {
-        element.scrollTop = rowBottom + topInset - element.clientHeight;
+      const slot = layout.slots[index];
+      if (!element || !slot) return;
+      const slotBottom = slot.top + slot.height;
+      const previous = layout.slots[index - 1];
+      const top = previous?.kind === "separator" ? previous.top : slot.top;
+      if (top < element.scrollTop) element.scrollTop = top;
+      else if (slotBottom + topInset > element.scrollTop + element.clientHeight) {
+        element.scrollTop = slotBottom + topInset - element.clientHeight;
       }
     },
-    [containerRef, rowHeight, topInset],
+    [containerRef, layout, topInset]
   );
 
-  const first = Math.floor(metrics.top / rowHeight);
-  const last = Math.ceil((metrics.top + metrics.height - topInset) / rowHeight);
-  const start = Math.max(0, Math.min(count, first - overscan));
-  const end = Math.max(start, Math.min(count, last + overscan));
-  return { start, end, scrollToIndex };
+  const { start, end } = visibleSlots(layout, metrics.top, Math.max(0, metrics.height - topInset), overscan);
+  return { start, end, scrollToSlot };
 }

@@ -8,8 +8,12 @@ SDK or AI-API calls for inference.
 
 Layout is a single window: left sidebar with projects grouping their sessions,
 center chat thread with tool-call cards and a usage/cost footer, right pane with
-file editor, git diff view, and live terminal tabs embedding the real interactive
-CLIs as a fallback for anything the headless chat cannot render.
+file editor, Git glass (the single git tool: commit graph, a session-centric sidebar of the
+session's branch and PRs, the project's sessions, PRs, branches, worktrees, tags and stashes, a
+details panel for commits, PRs, sessions, worktrees and the session's Changes / Staged / Branch /
+Last turn diffs, and fetch / pull / push / branch / stash / pop actions; it also opens for a
+project from the new-session screen, without a session), and live terminal tabs embedding the
+real interactive CLIs as a fallback for anything the headless chat cannot render.
 
 Core behaviors:
 
@@ -69,7 +73,8 @@ Core behaviors:
   (subscribing again returns a fresh one); after that the server pushes
   `{ t: "patch", topic, rev, ops }` with `upsert`/`remove`/`append`/`replace` ops, and a rev
   gap makes the client resubscribe. Topics: `app`, `sidebar`, `prs`, `usage`, `session/<id>`,
-  `git/<id>`, `history/<id>`, `files/<id>`, `pty/<id>`, `github/meta`, `github/view:<kind>:<query>` (helpers
+  `git/<id>`, `history/<sessionId>` or `history/project.<projectId>` (plus `:<worktreeKey>`
+  for another worktree), `files/<id>`, `pty/<id>`, `github/meta`, `github/view:<kind>:<query>` (helpers
   in `packages/shared/src/topics.ts`, providers in `apps/server/src/topics/`). `TopicCache` is
   the only owner of `topics.subscribe`/`topics.unsubscribe` in a client: it ref-counts
   holders, applies patches, resubscribes after a reconnect and then bumps `epoch`.
@@ -189,6 +194,14 @@ Core behaviors:
     An entry without models always has an `error`: no model matched, or the harness cannot run
     (message from the cached harness check, `harnessUnavailableReason`). `subagents.create` and
     `subagents.send` refuse such a harness with the same message before creating anything.
+- Git glass: `history.*` methods take exactly one of `sessionId` / `projectId`, plus an optional
+  `worktree` of the same repository. Reads: `log`, `commit`, `avatars`, `commitPulls` (GitHub
+  `commits/{sha}/pulls` through the user's `gh`, github.com only, cached). Actions: `checkout`,
+  `pull`, `fetch`, `push`, `stash`, `stashPop` (by stash sha), `branch`. An action on the session's
+  own checkout or on a checkout a session owns goes through that session (running-turn and
+  pending-switch guards, folder lock, stored branch kept in sync); a checkout nobody owns takes the
+  folder lock, and the main checkout refuses uncommitted changes for pull, pop and a branch
+  checkout. None of them is in `AGENT_METHODS`.
 - Limit resume: a `turn.done` may carry `usageLimit` (`resetsAt` in epoch ms), set by the driver when
   the account's plan limit ended the turn. Only the Claude driver reports it, from the API error
   message's quota or the last rejected `rate_limit_event`. With the `limitAutoResume` setting,

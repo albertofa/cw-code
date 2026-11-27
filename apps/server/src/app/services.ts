@@ -41,6 +41,7 @@ import { SidebarService } from "../sidebar/SidebarService.js";
 import { SkillsStore } from "../skills/SkillsStore.js";
 import { GitTopic } from "../sourceControl/GitTopic.js";
 import { HistoryAvatarService, ghAvatarLookup } from "../history/HistoryAvatars.js";
+import { CommitPullsService, ghCommitPullsLookup } from "../history/commitPulls.js";
 import { HistoryService } from "../history/HistoryService.js";
 import { HistoryTopic } from "../history/HistoryTopic.js";
 import { SourceControlService } from "../sourceControl/SourceControlService.js";
@@ -71,6 +72,7 @@ export interface Services {
   gitTopic: GitTopic;
   history: HistoryService;
   historyAvatars: HistoryAvatarService;
+  commitPulls: CommitPullsService;
   historyTopic: HistoryTopic;
   githubSearch: GitHubSearchService;
   runs: RunsService;
@@ -348,8 +350,8 @@ export function createServices(stores: { sessionStore: SessionStore; settingsSto
   });
   const history = new HistoryService(() => configuredGitBinary(sessions.getSettings()));
   const historyTopic = new HistoryTopic(hooks.topics, {
-    root: async (sessionId, key) => {
-      const root = (await sessions.sessionStatusContext(sessionId)).root;
+    root: async (scope, key) => {
+      const root = "projectId" in scope ? sessions.getProject(scope.projectId).rootPath : (await sessions.sessionStatusContext(scope.sessionId)).root;
       if (key === null) return root;
       const match = (await history.worktrees(root)).find((worktree) => worktree.key === key);
       if (!match) throw new Error("This worktree no longer exists");
@@ -366,6 +368,10 @@ export function createServices(stores: { sessionStore: SessionStore; settingsSto
     cacheFile: join(userdataDir(), "history-avatars.json"),
     remote: (root) => git.githubRemote(root),
     lookup: ghAvatarLookup(() => sessions.getSettings())
+  });
+  const commitPulls = new CommitPullsService({
+    remote: (root) => git.githubRemote(root),
+    lookup: ghCommitPullsLookup(() => sessions.getSettings())
   });
   const ptys = new PtyPool(() => sessions.getSettings(), undefined, hooks.claudePluginDir);
   const shutdown = new ShutdownCoordinator({ sessions, ptys, onRecovered: hooks.onShutdownRecovered, onExpired: hooks.onShutdownExpired });
@@ -608,6 +614,7 @@ export function createServices(stores: { sessionStore: SessionStore; settingsSto
     gitTopic,
     history,
     historyAvatars,
+    commitPulls,
     historyTopic,
     githubSearch,
     runs,

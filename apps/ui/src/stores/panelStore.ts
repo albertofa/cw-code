@@ -89,6 +89,7 @@ export interface PanelActions {
   setBottomCollapsed(sessionId: string | undefined, collapsed: boolean): void;
   setRightVisible(sessionId: string | undefined, visible: boolean): void;
   resetLayout(sessionId: string | undefined): void;
+  setPendingGlassOpen(open: boolean): void;
 }
 
 export interface RevealRequest {
@@ -126,6 +127,7 @@ export type PanelStore = PersistedPanelState & PanelActions & {
   filesCommand: FilesCommandRequest | null;
   diffModeRequest: DiffModeRequest | null;
   turnDiffSummaryBySession: Record<string, TurnDiffSummary | null>;
+  pendingGlassOpen: boolean;
 };
 
 export const usePanelStore = create<PanelStore>((set, get) => ({
@@ -136,6 +138,9 @@ export const usePanelStore = create<PanelStore>((set, get) => ({
   filesCommand: null,
   diffModeRequest: null,
   turnDiffSummaryBySession: {},
+  pendingGlassOpen: false,
+
+  setPendingGlassOpen: (open) => set({ pendingGlassOpen: open }),
 
   setDraggingTab: (tab, fromRail = false) => {
     set({ draggingTab: tab, dragFromRail: tab !== null && fromRail });
@@ -222,7 +227,9 @@ export const usePanelStore = create<PanelStore>((set, get) => ({
   requestDiffMode: (sessionId, mode) => {
     diffModeNonce += 1;
     set({ diffModeRequest: { sessionId, mode, nonce: diffModeNonce } });
-    get().revealTab(sessionId, "diff");
+    const store = get();
+    if (panelFor(store, sessionId).dockByTab.gitglass === "closed") store.moveTab(sessionId, "gitglass", "right");
+    get().revealTab(sessionId, "gitglass");
   },
 
   clearDiffModeRequest: (nonce) => {

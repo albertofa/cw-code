@@ -2,14 +2,12 @@ import { useEffect, useRef, useState } from "react";
 import type { GraphRow } from "../../history/graphLayout.js";
 import { colorOfEmail, getAvatarImage, subscribeAvatarImages, type NodeAvatar } from "./historyAvatars.js";
 import type { GraphTheme } from "./graphTheme.js";
+import type { Slot } from "./gitGlassLayout.js";
 
 export type NodeKind = "commit" | "merge" | "stash" | "wip";
 
-export const ROW_HEIGHT = 30;
 export const LANE_WIDTH = 22;
 export const MAX_LANES = 10;
-export const REF_COLUMN_WIDTH = 190;
-export const GRAPH_GAP = 6;
 const LANE_PADDING = 8;
 const NODE_RADIUS = 5;
 const MERGE_RADIUS = 4;
@@ -17,6 +15,7 @@ const PLAIN_RADIUS = 6;
 const PHOTO_RADIUS = 10;
 const RING_WIDTH = 2;
 const HEAD_RING_GAP = 2;
+const DIMMED_ALPHA = 0.25;
 const INITIALS_FONT = "600 9px system-ui, sans-serif";
 
 export function graphColumnWidth(laneCount: number): number {
@@ -24,7 +23,7 @@ export function graphColumnWidth(laneCount: number): number {
 }
 
 function laneX(lane: number): number {
-  return GRAPH_GAP + LANE_PADDING / 2 + lane * LANE_WIDTH + LANE_WIDTH / 2;
+  return LANE_PADDING / 2 + lane * LANE_WIDTH + LANE_WIDTH / 2;
 }
 
 function nodeLane(lane: number): number {
@@ -133,30 +132,38 @@ function nodeEdgeRadius(kind: NodeKind, hasAvatar: boolean, isHead: boolean): nu
 
 export function GraphCanvas({
   rows,
+  slots,
+  start,
+  end,
   kinds,
   avatars,
   labeled,
+  dimmed,
   headIndex,
-  start,
-  end,
-  laneCount,
+  left,
+  width,
   theme
 }: {
   rows: GraphRow[];
+  slots: Slot[];
+  start: number;
+  end: number;
   kinds: NodeKind[];
   avatars: (NodeAvatar | null)[] | null;
   labeled: boolean[];
+  dimmed: boolean[] | null;
   headIndex: number;
-  start: number;
-  end: number;
-  laneCount: number;
+  left: number;
+  width: number;
   theme: GraphTheme;
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [imageVersion, setImageVersion] = useState(0);
   const ratio = useDevicePixelRatio();
-  const width = GRAPH_GAP + graphColumnWidth(laneCount);
-  const height = (end - start) * ROW_HEIGHT;
+  const firstSlot = slots[start];
+  const lastSlot = slots[end - 1];
+  const origin = firstSlot?.top ?? 0;
+  const height = lastSlot ? lastSlot.top + lastSlot.height - origin : 0;
 
   useEffect(() => subscribeAvatarImages(() => setImageVersion((version) => version + 1)), []);
 
@@ -166,7 +173,7 @@ export function GraphCanvas({
     const frame = requestAnimationFrame(() => {
       const ctx = canvas.getContext("2d");
       if (!ctx) return;
-      canvas.width = Math.round(width * ratio);
+      canvas.width = Math.max(1, Math.round(width * ratio));
       canvas.height = Math.max(1, Math.round(height * ratio));
       ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
       ctx.clearRect(0, 0, width, height);
@@ -177,14 +184,26 @@ export function GraphCanvas({
       ctx.lineWidth = 2;
       ctx.lineCap = "round";
       const colorOf = (index: number): string => theme.colors[index] ?? theme.foreground;
+      const alphaOf = (index: number): number => (dimmed?.[index] ? DIMMED_ALPHA : 1);
 
-      for (let i = start; i < end; i++) {
+      for (let s = start; s < end; s++) {
+        const slot = slots[s];
+        if (!slot) continue;
+        const top = slot.top - origin;
+        if (slot.kind === "separator") {
+          const below = rows[slot.before];
+          if (!below) continue;
+          ctx.globalAlpha = alphaOf(slot.before);
+          for (const segment of below.up) drawSegment(ctx, segment.from, segment.from, top, top + slot.height, colorOf(segment.color));
+          continue;
+        }
+        const i = slot.index;
         const row = rows[i];
         if (!row) continue;
-        const top = (i - start) * ROW_HEIGHT;
-        const mid = top + ROW_HEIGHT / 2;
+        const mid = top + slot.height / 2;
+        ctx.globalAlpha = alphaOf(i);
         for (const segment of row.up) drawSegment(ctx, segment.from, segment.to, top, mid, colorOf(segment.color));
-        for (const segment of row.down) drawSegment(ctx, segment.from, segment.to, mid, top + ROW_HEIGHT, colorOf(segment.color));
+        for (const segment of row.down) drawSegment(ctx, segment.from, segment.to, mid, top + slot.height, colorOf(segment.color));
         if (labeled[i]) {
           const hasAvatar = (avatars?.[i] ?? null) !== null;
           const edge = laneX(nodeLane(row.lane)) - nodeEdgeRadius(kinds[i] ?? "commit", hasAvatar, i === headIndex) + 1;
@@ -198,13 +217,17 @@ export function GraphCanvas({
         }
       }
 
-      for (let i = start; i < end; i++) {
+      for (let s = start; s < end; s++) {
+        const slot = slots[s];
+        if (!slot || slot.kind !== "commit") continue;
+        const i = slot.index;
         const row = rows[i];
         if (!row) continue;
         const x = laneX(nodeLane(row.lane));
-        const y = (i - start) * ROW_HEIGHT + ROW_HEIGHT / 2;
+        const y = slot.top - origin + slot.height / 2;
         const kind = kinds[i] ?? "commit";
         const avatar = avatars?.[i] ?? null;
+        ctx.globalAlpha = alphaOf(i);
         if (i === headIndex) {
           ctx.strokeStyle = theme.foreground;
           ctx.lineWidth = 2;
@@ -215,17 +238,11 @@ export function GraphCanvas({
         }
         drawNode(ctx, x, y, kind, colorOf(row.color), theme, avatar);
       }
+      ctx.globalAlpha = 1;
       ctx.restore();
     });
     return () => cancelAnimationFrame(frame);
-  }, [rows, kinds, avatars, labeled, headIndex, start, end, width, height, theme, imageVersion, ratio]);
+  }, [rows, slots, start, end, kinds, avatars, labeled, dimmed, headIndex, origin, width, height, theme, imageVersion, ratio]);
 
-  return (
-    <canvas
-      ref={canvasRef}
-      className="history-canvas"
-      style={{ top: start * ROW_HEIGHT, left: REF_COLUMN_WIDTH, width, height }}
-      aria-hidden="true"
-    />
-  );
+  return <canvas ref={canvasRef} className="history-canvas" style={{ top: origin, left, width, height }} aria-hidden="true" />;
 }

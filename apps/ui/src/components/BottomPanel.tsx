@@ -3,7 +3,6 @@ import { useRef, type MouseEvent as ReactMouseEvent } from "react";
 import { DockTab } from "./DockTab.js";
 import { ToolContent } from "./ToolContent.js";
 import { useTabMenu } from "./TabMenu.js";
-import { sessionLinks } from "./sessionPrLinks.js";
 import { focusSiblingTab } from "./tabStripKeys.js";
 import { toolAvailability } from "./toolTabs.js";
 import { useDockDrop } from "./useDockDrop.js";
@@ -16,9 +15,8 @@ import { selectSessionPanel, usePanelStore } from "../stores/panelStore.js";
 export function BottomPanel({ sessionId }: { sessionId: string }) {
   const { dockByTab, activeBottom, bottomHeight, bottomCollapsed } = usePanelStore((s) => selectSessionPanel(s, sessionId));
   const driver = useAppStore((s) => findSession(s.sessionsByProject, sessionId)?.driver);
-  const hasPr = useAppStore((s) => sessionLinks(findSession(s.sessionsByProject, sessionId)).length > 0);
   const hasPreview = useAppStore((s) => (s.previewBySession[sessionId] ?? null) !== null);
-  const isToolAvailable = toolAvailability(driver, hasPr, hasPreview);
+  const isToolAvailable = toolAvailability(driver, hasPreview);
   const setActive = usePanelStore((s) => s.setActive);
   const moveTab = usePanelStore((s) => s.moveTab);
   const setBottomHeight = usePanelStore((s) => s.setBottomHeight);

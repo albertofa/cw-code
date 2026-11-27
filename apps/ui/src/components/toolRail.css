@@ -130,6 +130,11 @@
   background: var(--warning);
 }
 
+.rail-dot.below {
+  top: auto;
+  bottom: 5px;
+}
+
 .rail-sep {
   width: 18px;
   height: 1px;

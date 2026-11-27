@@ -1,4 +1,4 @@
-import type { GitHubKind } from "@cw-code/contracts";
+import type { GitHubKind, HistoryScope } from "@cw-code/contracts";
 import { MAX_QUERY_LENGTH } from "./githubViews.js";
 
 export const APP_TOPIC = "app";
@@ -29,8 +29,24 @@ export function gitTopic(sessionId: string): string {
   return `git/${sessionId}`;
 }
 
-export function historyTopic(sessionId: string, worktreeKey: string | null = null): string {
-  return worktreeKey === null ? `history/${sessionId}` : `history/${sessionId}:${worktreeKey}`;
+const PROJECT_SCOPE_PREFIX = "project.";
+const WORKTREE_KEY_PATTERN = /^[0-9a-f]{16}$/;
+
+export function historyTopic(scope: HistoryScope, worktreeKey: string | null = null): string {
+  const id = "projectId" in scope ? `${PROJECT_SCOPE_PREFIX}${scope.projectId}` : scope.sessionId;
+  return worktreeKey === null ? `history/${id}` : `history/${id}:${worktreeKey}`;
+}
+
+export function parseHistoryTopicId(id: string): { scope: HistoryScope; worktreeKey: string | null } | null {
+  const separator = id.indexOf(":");
+  const base = separator === -1 ? id : id.slice(0, separator);
+  const worktreeKey = separator === -1 ? null : id.slice(separator + 1);
+  if (worktreeKey !== null && !WORKTREE_KEY_PATTERN.test(worktreeKey)) return null;
+  if (base.startsWith(PROJECT_SCOPE_PREFIX)) {
+    const projectId = base.slice(PROJECT_SCOPE_PREFIX.length);
+    return projectId ? { scope: { projectId }, worktreeKey } : null;
+  }
+  return base ? { scope: { sessionId: base }, worktreeKey } : null;
 }
 
 export function filesTopic(sessionId: string): string {

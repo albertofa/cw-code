@@ -1,3 +1,5 @@
+import type { PrRef } from "./pullRequests.js";
+
 export type HistoryRefKind = "local" | "remote" | "tag" | "stash";
 
 export interface HistoryRef {
@@ -36,6 +38,7 @@ export interface HistoryLog {
   truncated: boolean;
   worktrees: HistoryWorktree[];
   wipCount: number | null;
+  github: { owner: string; repo: string } | null;
 }
 
 export interface HistoryCommitDetail extends HistoryCommit {
@@ -51,6 +54,7 @@ export type HistoryTopicData = {
   refs: HistoryRef[];
   rev: number;
   avatarsRev: number;
+  fetchedAt: number | null;
   error: string | null;
 };
 
@@ -73,4 +77,22 @@ export interface HistoryWorktree {
   isCurrent: boolean;
   isMain: boolean;
   sessionId: string | null;
+}
+
+export type HistoryScope = { sessionId: string } | { projectId: string };
+
+export interface HistoryCommitPull {
+  ref: PrRef;
+  title: string;
+  url: string;
+  state: "OPEN" | "CLOSED" | "MERGED";
+  isDraft: boolean;
+  mergedAt: number | null;
+  headRefName: string;
+  baseRefName: string;
+}
+
+export interface HistoryCommitPulls {
+  pulls: HistoryCommitPull[];
+  unavailable: string | null;
 }

@@ -7,6 +7,8 @@ import {
   githubViewTopic,
   isValidTopic,
   parseGithubViewTopic,
+  historyTopic,
+  parseHistoryTopicId,
   ptyTopic,
   sessionTopic,
   topicId,
@@ -15,7 +17,7 @@ import {
 
 describe("isValidTopic", () => {
   it("accepts exact and prefixed topics", () => {
-    for (const topic of ["app", "sidebar", "prs", "usage", "session/sess_a", "git/sess_a", "history/sess_a", "files/sess_a", "pty/sess_a:shell", "github/runs", "github/meta", "github/view:pr:is%3Aopen", "github/view:run:"]) {
+    for (const topic of ["app", "sidebar", "prs", "usage", "session/sess_a", "git/sess_a", "history/sess_a", "history/project.proj_a", "history/project.proj_a:0123456789abcdef", "files/sess_a", "pty/sess_a:shell", "github/runs", "github/meta", "github/view:pr:is%3Aopen", "github/view:run:"]) {
       expect(isValidTopic(topic)).toBe(true);
     }
   });
@@ -114,5 +116,28 @@ describe("topicSessionId", () => {
     expect(topicSessionId("git/s1", "session/")).toBeNull();
     expect(topicSessionId("files/", "files/")).toBeNull();
     expect(topicSessionId("app", "session/")).toBeNull();
+  });
+});
+
+describe("history topics", () => {
+  const key = "0123456789abcdef";
+  const cases = [
+    { scope: { sessionId: "sess_a" }, worktreeKey: null, topic: "history/sess_a" },
+    { scope: { sessionId: "sess_a" }, worktreeKey: key, topic: `history/sess_a:${key}` },
+    { scope: { projectId: "proj_a" }, worktreeKey: null, topic: "history/project.proj_a" },
+    { scope: { projectId: "proj_a" }, worktreeKey: key, topic: `history/project.proj_a:${key}` }
+  ];
+
+  it("round-trips the four forms", () => {
+    for (const { scope, worktreeKey, topic } of cases) {
+      expect(historyTopic(scope, worktreeKey)).toBe(topic);
+      expect(parseHistoryTopicId(topic.slice("history/".length))).toEqual({ scope, worktreeKey });
+    }
+  });
+
+  it("rejects invalid keys and empty ids", () => {
+    for (const id of ["", "sess_a:xyz", "sess_a:", "sess_a:0123456789ABCDEF", ":0123456789abcdef", "project.", "project.:0123456789abcdef"]) {
+      expect(parseHistoryTopicId(id)).toBeNull();
+    }
   });
 });

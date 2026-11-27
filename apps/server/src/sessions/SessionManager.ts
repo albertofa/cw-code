@@ -170,6 +170,7 @@ export interface BackgroundWork {
 
 const DRIVER_KINDS: DriverKind[] = ["claude", "opencode", "codex"];
 const DRIVER_SHUTDOWN_GRACE_MS = 1000;
+const BRANCH_SWITCH_PURPOSE = "switching branches";
 export const SUBAGENT_RESULT_TEXT_MAX = 32_000;
 
 function truncatedResultText(text: string): string {
@@ -2435,17 +2436,20 @@ export class SessionManager {
     return this.withFolderLock(root, run);
   }
 
-  async pullBranch(sessionId: string): Promise<GitStatus> {
+  async runCheckoutAction<T = void>(sessionId: string, run: (root: string) => Promise<T>, purpose = BRANCH_SWITCH_PURPOSE): Promise<T> {
     try {
-      return await this.withBranchSwitch(sessionId, async () => {
-        const project = this.projectForSession(sessionId);
-        const root = await this.ensureWorktree(sessionId);
-        await this.git.pullFastForward(root);
-        return this.git.status(root, project);
-      });
+      return await this.withBranchSwitch(sessionId, async () => run(await this.ensureWorktree(sessionId)), purpose);
     } finally {
       this.notifySessionCheckoutChanged(sessionId, [sessionId]);
     }
+  }
+
+  async pullBranch(sessionId: string): Promise<GitStatus> {
+    const project = this.projectForSession(sessionId);
+    return this.runCheckoutAction(sessionId, async (root) => {
+      await this.git.pullFastForward(root);
+      return this.git.status(root, project);
+    });
   }
 
   private switchSessionBranch(sessionId: string, branch: string): Promise<GitStatus> {
@@ -2464,20 +2468,20 @@ export class SessionManager {
     });
   }
 
-  async withBranchSwitch<T>(sessionId: string, run: () => Promise<T>): Promise<T> {
+  async withBranchSwitch<T>(sessionId: string, run: () => Promise<T>, purpose = BRANCH_SWITCH_PURPOSE): Promise<T> {
     const session = this.requireSession(sessionId);
-    if (session.worktreePath) return this.runBranchSwitch(sessionId, run);
-    return this.withFolderLock(this.rootForProject(session.projectId), () => this.runBranchSwitch(sessionId, run));
+    if (session.worktreePath) return this.runBranchSwitch(sessionId, run, purpose);
+    return this.withFolderLock(this.rootForProject(session.projectId), () => this.runBranchSwitch(sessionId, run, purpose));
   }
 
-  private async runBranchSwitch<T>(sessionId: string, run: () => Promise<T>): Promise<T> {
+  private async runBranchSwitch<T>(sessionId: string, run: () => Promise<T>, purpose: string): Promise<T> {
     const session = this.requireSession(sessionId);
     if (this.undoPendingOnRoot(session)) throw new Error("session busy (undo pending)");
     if (this.branchSwitchPendingOnRoot(session)) throw new Error("session busy (branch switch pending)");
     const running = this.sameRootSessions(session).find((other) => this.hasTurnInFlight(other.id));
     if (running) {
       const projectName = this.store.getProject(running.projectId)?.name ?? "this folder";
-      throw new Error(`${running.title} is running in ${projectName} — wait for it to finish before switching branches`);
+      throw new Error(`${running.title} is running in ${projectName} — wait for it to finish before ${purpose}`);
     }
     this.pendingBranchSwitches.add(sessionId);
     try {

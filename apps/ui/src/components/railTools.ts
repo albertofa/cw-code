@@ -4,9 +4,9 @@ import type { TurnDiffSummary } from "../stores/panelStore.js";
 
 export type RailDotTone = "success" | "danger" | "warning";
 
-export function railGroups(driver: DriverName | undefined, hasPr: boolean, hasPreview: boolean): DockableTabId[][] {
+export function railGroups(driver: DriverName | undefined, hasPreview: boolean): DockableTabId[][] {
   const groups: DockableTabId[][] = [
-    ["overview", "diff", "history", ...(hasPr ? (["pr"] as const) : []), "files", "agents"],
+    ["overview", "gitglass", "files", "agents"],
     ["shell", ...(driver ? [driver] : [])]
   ];
   if (hasPreview) groups.push(["preview"]);

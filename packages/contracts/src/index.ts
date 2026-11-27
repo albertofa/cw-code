@@ -3,11 +3,14 @@ export type {
   HistoryAvatarAuthor,
   HistoryAvatars,
   HistoryCommit,
+  HistoryCommitPull,
+  HistoryCommitPulls,
   HistoryCommitDetail,
   HistoryHead,
   HistoryLog,
   HistoryRef,
   HistoryRefKind,
+  HistoryScope,
   HistoryTopicData,
   HistoryWorktree
 } from "./history.js";

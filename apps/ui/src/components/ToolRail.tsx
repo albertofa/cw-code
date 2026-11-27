@@ -2,7 +2,9 @@ import { Fragment, type MouseEvent as ReactMouseEvent } from "react";
 import type { DockableTabId, SessionPrItem } from "@cw-code/contracts";
 import type { DriverName } from "../cw.js";
 import { resolveBottomActive, rightOpenTabs } from "../stores/panelLayout.js";
+import { useAppStore } from "../stores/appStore.js";
 import { selectSessionPanel, usePanelStore } from "../stores/panelStore.js";
+import { usePrStore } from "../stores/prStore.js";
 import { DriverIcon } from "./DriverIcon.js";
 import { PanelToggles } from "./PanelToggles.js";
 import { endTabDrag, startTabDrag, useDockDrop } from "./useDockDrop.js";
@@ -20,7 +22,7 @@ export interface SubagentStats {
   running: number;
 }
 
-function PrDot({ sessionId }: { sessionId: string }) {
+function PrDot({ sessionId, below }: { sessionId: string; below: boolean }) {
   const items = useThreadEntry(sessionId, "prItems") ?? EMPTY_PR_ITEMS;
   const summaries = usePrSummaries();
   const details = usePrDetails();
@@ -30,13 +32,17 @@ function PrDot({ sessionId }: { sessionId: string }) {
   const linked = checksTone(items.flatMap((item) => (item.link ? ((summaries.get(item.key) ?? details[item.key])?.ci ?? []) : [])));
   const tone: RailDotTone | null = linked ?? checkCountsTone(fallback);
   if (tone === null) return null;
-  return <span className={`rail-dot ${tone}`} aria-hidden="true" />;
+  return <span className={`rail-dot ${tone}${below ? " below" : ""}`} aria-hidden="true" />;
 }
 
-function DiffBadge({ sessionId }: { sessionId: string }) {
+function GlassMarks({ sessionId }: { sessionId: string }) {
   const dirtyCount = useGitStatus(sessionId)?.dirtyCount ?? 0;
-  if (dirtyCount === 0) return null;
-  return <span className="rail-badge" aria-hidden="true">{dirtyCount > 99 ? "99+" : dirtyCount}</span>;
+  return (
+    <>
+      {dirtyCount > 0 && <span className="rail-badge" aria-hidden="true">{dirtyCount > 99 ? "99+" : dirtyCount}</span>}
+      <PrDot sessionId={sessionId} below={dirtyCount > 0} />
+    </>
+  );
 }
 
 function subagentTitle(stats: SubagentStats): string {
@@ -47,7 +53,6 @@ function subagentTitle(stats: SubagentStats): string {
 export function ToolRail({
   sessionId,
   driver,
-  hasPr,
   hasPreview,
   subagents,
   rightActive,
@@ -57,7 +62,6 @@ export function ToolRail({
 }: {
   sessionId: string | undefined;
   driver: DriverName | undefined;
-  hasPr: boolean;
   hasPreview: boolean;
   subagents: SubagentStats;
   rightActive: DockableTabId | null;
@@ -71,6 +75,11 @@ export function ToolRail({
   const moveTab = usePanelStore((s) => s.moveTab);
   const setRightVisible = usePanelStore((s) => s.setRightVisible);
   const setBottomCollapsed = usePanelStore((s) => s.setBottomCollapsed);
+  const pendingGlassOpen = usePanelStore((s) => s.pendingGlassOpen);
+  const setPendingGlassOpen = usePanelStore((s) => s.setPendingGlassOpen);
+  const projectName = useAppStore((s) => s.projects.find((project) => project.id === s.activeProjectId)?.name);
+  const hasProject = useAppStore((s) => s.activeProjectId !== null);
+  const onSessionView = usePrStore((s) => s.mainView.kind === "session");
   const draggingTab = usePanelStore((s) => s.draggingTab);
   const dragFromRail = usePanelStore((s) => s.dragFromRail);
   const dropRail = useDockDrop("right", sessionId, {
@@ -80,10 +89,21 @@ export function ToolRail({
       setRightVisible(sessionId, true);
     }
   });
-  const groups = railGroups(driver, hasPr, hasPreview);
+  const groups = railGroups(driver, hasPreview);
   const rightShown = rightVisible && rightOpenTabs(dockByTab, isToolAvailable).length > 0;
   const dropHint = !dragFromRail && (dropRail.over || (draggingTab !== null && !rightShown));
   const bottomShown = bottomCollapsed ? null : resolveBottomActive(dockByTab, activeBottom, isToolAvailable);
+
+  // The project's Git glass lives in the new-session screen's right pane, so opening it from
+  // another main view (GitHub, a PR, usage) returns to that screen first.
+  const toggleProjectGlass = (shown: boolean) => {
+    if (shown) {
+      setPendingGlassOpen(false);
+      return;
+    }
+    if (!onSessionView) usePrStore.getState().openSessionView();
+    setPendingGlassOpen(true);
+  };
 
   const onToolClick = (id: DockableTabId, active: boolean) => {
     if (!sessionId) return;
@@ -115,25 +135,28 @@ export function ToolRail({
             const place =
               docked === "closed" ? `opens in ${autoLocation[id] ?? "right"}` : `open in ${docked}${parked ? ", not shown" : ""}`;
             const detail = showAgents ? ` · ${subagentTitle(subagents)}` : "";
-            const label = `${def.title}${detail} · ${place}`;
+            const projectGlass = !sessionId && hasProject && id === "gitglass";
+            const label = projectGlass
+              ? `${def.title} · history of ${projectName ?? "project"}`
+              : `${def.title}${detail} · ${place}`;
+            const pressed = projectGlass ? pendingGlassOpen && onSessionView : active;
             return (
               <button
                 key={id}
-                className={`rail-b${active ? " on" : ""}${away ? " away" : ""}${parked ? " parked" : ""}`}
-                disabled={!sessionId}
-                onClick={() => onToolClick(id, active)}
-                onContextMenu={onToolContextMenu(id)}
+                className={`rail-b${pressed ? " on" : ""}${away ? " away" : ""}${parked ? " parked" : ""}`}
+                disabled={!sessionId && !projectGlass}
+                onClick={() => (projectGlass ? toggleProjectGlass(pressed) : onToolClick(id, active))}
+                onContextMenu={projectGlass ? undefined : onToolContextMenu(id)}
                 draggable={sessionId !== undefined}
                 onDragStart={(e) => startTabDrag(e, id, sessionId, { fromRail: true })}
                 onDragEnd={endTabDrag}
                 data-tool={id}
                 title={label}
                 aria-label={label}
-                aria-pressed={active}
+                aria-pressed={pressed}
               >
                 {isHarnessTabId(id) ? <DriverIcon driver={id} size={16} /> : <def.Icon size={16} aria-hidden="true" />}
-                {id === "diff" && sessionId && <DiffBadge sessionId={sessionId} />}
-                {id === "pr" && sessionId && <PrDot sessionId={sessionId} />}
+                {id === "gitglass" && sessionId && <GlassMarks sessionId={sessionId} />}
                 {showAgents && (
                   <span className={`rail-badge${subagents.running > 0 ? " run" : ""}`} aria-hidden="true">
                     {subagents.total > 99 ? "99+" : subagents.total}
