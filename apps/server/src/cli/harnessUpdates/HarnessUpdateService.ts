@@ -60,7 +60,9 @@ function phaseFields(info: HarnessUpdateInfo): PhaseFields {
 function elevationFailure(command: UpdateCommand, code: number | null): string | null {
   if (!/(^|[\\/])pkexec$/.test(command.file)) return null;
   if (code === 126) return "The update needs administrator rights and the authorization was dismissed.";
-  if (code === 127) return "The update needs administrator rights and the authorization failed. A polkit authentication agent must be running on the machine that runs cw-code.";
+  if (code === 127) {
+    return "The update needs administrator rights and the authorization was not granted. Make sure a polkit authentication agent is running on the machine that runs cw-code and that this user may authenticate.";
+  }
   return null;
 }
 

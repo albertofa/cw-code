@@ -12,6 +12,8 @@ const ANSI_RE = /\x1b(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])/g;
 export interface UpdateCommand {
   file: string;
   args: string[];
+  /** Overrides the default timeout for updates that wait on the user or run a system transaction. */
+  timeoutMs?: number;
 }
 
 export interface UpdateRunResult {
@@ -69,7 +71,7 @@ export function runUpdateCommand(command: UpdateCommand, onProgress: (line: stri
     const timeout = setTimeout(() => {
       killProcessTree(child);
       finish({ code: null, output, error: "Update timed out." });
-    }, TIMEOUT_MS);
+    }, command.timeoutMs ?? TIMEOUT_MS);
     timeout.unref?.();
 
     try {
