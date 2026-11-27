@@ -17,7 +17,8 @@ beforeEach(() => {
       return ["recentModels"];
     },
     pushRecentModel: (driver: string, model: string) => calls.push(["pushRecentModel", driver, model]),
-    setDraft: (key: string, text: string, attachments: string[], quotes: string[]) => calls.push(["setDraft", key, text, attachments, quotes])
+    setDraft: (key: string, text: string, attachments: string[], quotes: string[], pastes: string[]) =>
+      calls.push(["setDraft", key, text, attachments, quotes, pastes])
   } as unknown as PreferencesStore;
   router = new Router();
   registerPrefsHandlers(router, { requireServices: () => ({ preferences }) } as unknown as ServerApp);
@@ -78,8 +79,19 @@ describe("prefs handlers", () => {
     ]);
     expect(results.map((result) => result.status)).toEqual(Array(3).fill("rejected"));
     expect(calls).toEqual([
-      ["setDraft", "k", "", [], ["a"]],
-      ["setDraft", "k", "t", [], []]
+      ["setDraft", "k", "", [], ["a"], []],
+      ["setDraft", "k", "t", [], [], []]
     ]);
+  });
+
+  test("setDraft accepts optional pastes within limits", async () => {
+    await dispatch("prefs.setDraft", { key: "k", text: "", attachments: [], pastes: ["x".repeat(200_000)] });
+    const results = await Promise.allSettled([
+      dispatch("prefs.setDraft", { key: "k", text: "t", attachments: [], pastes: Array(11).fill("p") }),
+      dispatch("prefs.setDraft", { key: "k", text: "t", attachments: [], pastes: ["x".repeat(200_001)] }),
+      dispatch("prefs.setDraft", { key: "k", text: "t", attachments: [], pastes: [false] })
+    ]);
+    expect(results.map((result) => result.status)).toEqual(Array(3).fill("rejected"));
+    expect(calls).toEqual([["setDraft", "k", "", [], [], ["x".repeat(200_000)]]]);
   });
 });
