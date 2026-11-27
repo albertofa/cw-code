@@ -406,6 +406,8 @@ export function ThreadView({ hidden = false }: { hidden?: boolean }) {
       if (e.altKey || e.ctrlKey || e.metaKey || e.shiftKey || hiddenRef.current) return;
       const target = e.target;
       if (!(target instanceof HTMLTextAreaElement) || !composerWrapRef.current?.contains(target)) return;
+      // A draft long enough to scroll keeps its own paging.
+      if (target.scrollHeight > target.clientHeight) return;
       e.preventDefault();
       const step = Math.max(40, el.clientHeight * 0.85);
       if (e.key === "PageUp") {
