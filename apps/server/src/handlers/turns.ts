@@ -4,7 +4,7 @@ import { agentTurnPermissionMode, assertAgentMayDispatch, assertAgentModelId, as
 import type { ServerApp } from "../app/ServerApp.js";
 import { assertPrRef } from "../github/PullRequestService.js";
 import type { CallContext, Router } from "../transport/Router.js";
-import { handle, knownSessionId, setComposer } from "./shared.js";
+import { handle, knownSessionId, parseString, setComposer } from "./shared.js";
 
 const AGENT_FORBIDDEN_TURN_FIELDS = ["command", "attachments", "acceptFolderHead", "prRefs"] as const;
 
@@ -64,6 +64,22 @@ export function registerTurnHandlers(router: Router, app: ServerApp): void {
       ...(args.acceptFolderHead !== undefined ? { acceptFolderHead: args.acceptFolderHead } : {})
     });
   });
+  handle<{ sessionId: string; prompt: string; attachments?: string[]; skills?: string[] }>(router, "turns.send", (args) => {
+    const sessionId = knownSessionId(sessions(), args.sessionId);
+    const prompt = parseString(args.prompt, "prompt");
+    if (args.attachments !== undefined && !(Array.isArray(args.attachments) && args.attachments.every((path) => typeof path === "string"))) {
+      throw new Error("invalid attachments");
+    }
+    if (args.skills !== undefined && !isSkillMentionList(args.skills)) throw new Error("invalid skills");
+    return turns().send(sessionId, prompt, {
+      attachments: args.attachments,
+      ...(args.skills?.length ? { skills: args.skills } : {})
+    });
+  });
+  handle<{ sessionId: string; messageId: string }>(router, "turns.unqueue", (args) =>
+    turns().unqueue(knownSessionId(sessions(), args.sessionId), parseString(args.messageId, "messageId"))
+  );
+  handle<{ sessionId: string }>(router, "turns.flushQueue", (args) => turns().flushQueue(knownSessionId(sessions(), args.sessionId)));
   handle<{ sessionId: string }>(router, "turns.stop", (args, ctx) => {
     const sessionId = knownSessionId(sessions(), args.sessionId);
     assertAgentTarget(ctx, sessionId);

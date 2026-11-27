@@ -9,6 +9,7 @@ import { parseWakePrompt } from "@cw-code/shared/subagents";
 import { waitFor } from "../../tests/testing.js";
 import { SubagentDelivery } from "../agent/SubagentDelivery.js";
 import { needsYouEntry } from "../prEngine/needsYou.js";
+import { MessageQueue } from "../threads/MessageQueue.js";
 import { ThreadService } from "../threads/ThreadService.js";
 import { TurnService } from "../threads/TurnService.js";
 import { TopicHub } from "../topics/TopicHub.js";
@@ -393,7 +394,12 @@ function wireTurns(manager: SessionManager): TurnService {
     loadHistoryOnSubscribe: false
   });
   manager.setEmitter((sessionId, event) => threads.onDriverEvent(sessionId, event));
-  const turns = new TurnService({ sessions: manager, threads, git: { keptFolderHead: () => null } });
+  const turns = new TurnService({
+    sessions: manager,
+    threads,
+    git: { keptFolderHead: () => null },
+    queue: new MessageQueue({ store: (manager as unknown as { store: SessionStore }).store, refresh: () => {} })
+  });
   manager.setTurnStopper((sessionId) => turns.stop(sessionId));
   return turns;
 }
@@ -566,7 +572,12 @@ function wireSubagentWaits(manager: SessionManager) {
     loadHistoryOnSubscribe: false
   });
   manager.setEmitter((sessionId, event) => threads.onDriverEvent(sessionId, event));
-  const turns = new TurnService({ sessions: manager, threads, git: { keptFolderHead: () => null } });
+  const turns = new TurnService({
+    sessions: manager,
+    threads,
+    git: { keptFolderHead: () => null },
+    queue: new MessageQueue({ store: (manager as unknown as { store: SessionStore }).store, refresh: () => {} })
+  });
   manager.setTurnStopper((sessionId) => turns.stop(sessionId));
   const delivery = new SubagentDelivery({
     sessions: () => manager.listAllSessions(),

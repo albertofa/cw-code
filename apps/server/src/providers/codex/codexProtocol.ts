@@ -49,6 +49,7 @@ export interface CodexFileUpdateChange {
 export interface CodexThreadItem {
   type: string;
   id?: string;
+  clientId?: string | null;
   text?: string;
   phase?: string | null;
   command?: string;
@@ -405,6 +406,13 @@ function joinImagePath(cwd: string, rel: string): string {
   if (/^([a-zA-Z]:[\\/]|\\\\|\/)/.test(rel)) return rel;
   const sep = cwd.includes("\\") ? "\\" : "/";
   return `${cwd.replace(/[\\/]+$/, "")}${sep}${rel.replace(/^[\\/]+/, "")}`;
+}
+
+export function codexUserMessageText(item: CodexThreadItem): string {
+  return (item.content ?? [])
+    .filter((c) => c.type === "text" && c.text)
+    .map((c) => c.text as string)
+    .join("\n");
 }
 
 export function mapCodexHistory(thread: CodexThread, limit = 300): HistoryMessage[] {

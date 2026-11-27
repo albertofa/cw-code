@@ -17,7 +17,7 @@ import {
 } from "lucide-react";
 import type { CommandOption } from "@cw-code/contracts";
 import type { AppSettings, ComposerPrefs, DriverName, ModelOption, PermissionMode, PermissionOption } from "../cw.js";
-import { clearComposerDraft, flushComposerDraft, loadComposerDraft, saveComposerDraft } from "./composerDrafts.js";
+import { clearComposerDraft, flushComposerDraft, loadComposerDraft, mergeDrafts, onComposerDraftAppend, saveComposerDraft } from "./composerDrafts.js";
 import { getRecentModels, pushRecentModel, useRecentModels } from "./lastModel.js";
 import { EffortMenu } from "./EffortMenu.js";
 import { MenuSelect } from "./MenuSelect.js";
@@ -83,6 +83,7 @@ export interface ComposerBackend {
   loadCommands(): Promise<CommandOption[]>;
   savePrefs(prefs: ComposerPrefs): void;
   send(body: string, attachments: string[], opts?: ComposerSendOptions & { acceptFolderHead?: string }): Promise<void>;
+  sendWhileBusy?(body: string, attachments: string[], skills: string[]): Promise<void>;
   restore?: { confirm: ConfirmRequest | null; run(): Promise<void> };
   newSession?(): void;
   rename?(title: string): Promise<void>;
@@ -265,6 +266,18 @@ export function ComposerView({
   useEffect(() => {
     saveComposerDraft(resetKeyRef.current, draft, attachments);
   }, [draft, attachments]);
+
+  useEffect(
+    () =>
+      onComposerDraftAppend(resetKey, (added) => {
+        const merged = mergeDrafts({ text: draftRef.current, attachments: attachmentsRef.current }, added);
+        setDraft(merged.text);
+        setAttachments(merged.attachments);
+        setCaret(merged.text.length);
+        requestAnimationFrame(() => composerRef.current?.focus({ preventScroll: true }));
+      }),
+    [resetKey]
+  );
 
   useEffect(() => {
     setShowCustom(false);
@@ -596,6 +609,10 @@ export function ComposerView({
   };
 
   const runCommand = async (command: CommandOption, args: string, key: string = commandsKey): Promise<void> => {
+    if (backendRef.current.busy) {
+      warnTurnRunning("Commands can't be sent while the agent is working.");
+      return;
+    }
     if (attachments.length > 0) {
       warn(`Attachments can't be sent with /${command.name}`, "Remove them or send a regular message.");
       return;
@@ -640,7 +657,34 @@ export function ComposerView({
     }
   };
 
+  const warnTurnRunning = (detail: string) => {
+    warn("A turn is still running", `Your message was not sent. ${detail}`);
+  };
+
+  const dispatchWhileBusy = (body: string, key: string, skills: string[]) => {
+    const sendWhileBusy = backendRef.current.sendWhileBusy;
+    if (!sendWhileBusy || backendRef.current.branchGuard?.mismatch) {
+      warnTurnRunning("Send it again when the turn finishes.");
+      return;
+    }
+    setSending(true);
+    void sendWhileBusy(tagAttachments(body), attachments, skills)
+      .then(() => {
+        if (isCurrent(key)) clearComposer();
+        else clearComposerDraft(resetKey);
+      })
+      .catch((err: unknown) => handleSendFailure(err, key, (next) => dispatchPlain(body, key, skills, next)))
+      .finally(() => {
+        setSending(false);
+        if (isCurrent(key)) focusComposer();
+      });
+  };
+
   const sendPlain = (body: string, key: string, skills: string[] = []) => {
+    if (backendRef.current.busy) {
+      dispatchWhileBusy(body, key, skills);
+      return;
+    }
     if (holdForBranchChoice((accept) => dispatchPlain(body, key, skills, accept))) return;
     dispatchPlain(body, key, skills);
   };
@@ -700,7 +744,7 @@ export function ComposerView({
 
   const send = () => {
     const body = draft.trim();
-    if ((!body && attachments.length === 0) || busy || sending || blockedReason) return;
+    if ((!body && attachments.length === 0) || (busy && !backendRef.current.sendWhileBusy) || sending || blockedReason) return;
     const restore = backendRef.current.restore;
     if (!restore) {
       void sendMessage(body);
@@ -789,7 +833,7 @@ export function ComposerView({
     if (!action || choiceGenerationRef.current !== generation) return;
     hideBranchChoice();
     if (backendRef.current.busy) {
-      warn("A turn is still running", "Your message was not sent. Send it again when the turn finishes.");
+      warnTurnRunning("Send it again when the turn finishes.");
       return;
     }
     action(accept);
@@ -821,7 +865,6 @@ export function ComposerView({
   const skillsSettled = driverCommands !== null && !commandsLoading && !commandsError;
   const skillOpen =
     inputFocused &&
-    !busy &&
     !sending &&
     skillTrigger !== null &&
     skillDismissed !== skillTrigger.start &&
@@ -1073,7 +1116,7 @@ export function ComposerView({
               onPaste={(e) => {
                 void pasteFiles(e.clipboardData);
               }}
-              placeholder={blockedReason ?? (busy ? "Agent is working — keep writing, you can send when it finishes" : "Ask cw-code — @ files, / commands, $ skills")}
+              placeholder={blockedReason ?? (busy ? "Agent is working — send to add to this turn" : "Ask cw-code — @ files, / commands, $ skills")}
               className={`composer-input${highlightMentions ? " has-mentions" : ""}`}
               rows={3}
               disabled={sending || blockedReason !== undefined}
@@ -1178,14 +1221,14 @@ export function ComposerView({
             )}
           </div>
           {blockedReason === undefined && (
-            <span className="composer-hint">{busy ? "Send unlocks when the agent finishes" : "Shift+Enter for a new line"}</span>
+            <span className="composer-hint">Shift+Enter for a new line</span>
           )}
           <button
             type="button"
             className="composer-action composer-send"
             onClick={send}
-            disabled={busy || sending || blockedReason !== undefined || (!draft.trim() && attachments.length === 0)}
-            title={busy ? "Locked while the agent is working" : (blockedReason ?? "Send")}
+            disabled={(busy && !backend.sendWhileBusy) || sending || blockedReason !== undefined || (!draft.trim() && attachments.length === 0)}
+            title={blockedReason ?? (busy ? "Add to this turn" : "Send")}
             aria-label="Send"
           >
             <ArrowUp size={16} strokeWidth={2.25} />

@@ -18,6 +18,7 @@ import type {
   ImportSessionRequest,
   ImportSessionResult,
   IssueRef,
+  MessageCapabilities,
   ModelOption,
   NativeSession,
   PermissionMode,
@@ -2891,6 +2892,48 @@ export class SessionManager {
     if (!session) return;
     if (this.shutdownReserved) this.interruptedForShutdown.add(sessionId);
     this.emitSession(sessionId);
+  }
+
+  async injectMessage(sessionId: string, message: { id: string; prompt: string; attachments: string[]; skills?: string[] }): Promise<void> {
+    const { session, project, turnId } = this.activeTurnOf(sessionId);
+    const driver = this.drivers[session.driver];
+    if (!driver.injectMessage) throw new Error(`${session.driver} cannot receive messages during a turn`);
+    const cwd = await this.ensureWorktree(sessionId);
+    await driver.injectMessage(turnId, {
+      id: message.id,
+      prompt: message.prompt,
+      cwd,
+      attachments: resolveAttachments(project.rootPath, cwd, message.attachments),
+      ...(message.skills?.length ? { skills: message.skills } : {})
+    });
+  }
+
+  async retractMessage(sessionId: string, messageId: string): Promise<boolean> {
+    const { session, turnId } = this.activeTurnOf(sessionId);
+    const driver = this.drivers[session.driver];
+    if (!driver.retractMessage) return false;
+    return driver.retractMessage(turnId, messageId);
+  }
+
+  messageCapabilities(sessionId: string): MessageCapabilities {
+    const session = this.store.getSession(sessionId);
+    const driver = session ? this.drivers[session.driver] : undefined;
+    if (!driver) return { inject: false, retract: false };
+    const turnId = [...this.activeTurns].find(([, entry]) => entry.sessionId === sessionId)?.[0];
+    if (turnId === undefined) return { inject: false, retract: false };
+    if (driver.messageCapabilities) return driver.messageCapabilities(turnId);
+    return { inject: typeof driver.injectMessage === "function", retract: typeof driver.retractMessage === "function" };
+  }
+
+  private activeTurnOf(sessionId: string): { session: SessionMeta; project: Project; turnId: string } {
+    const session = this.store.getSession(sessionId);
+    if (!session) throw new Error(`unknown session ${sessionId}`);
+    const project = this.store.getProject(session.projectId);
+    if (!project) throw new Error(`unknown project ${session.projectId}`);
+    for (const [turnId, entry] of this.activeTurns) {
+      if (entry.sessionId === sessionId) return { session, project, turnId };
+    }
+    throw new Error(`session ${sessionId} has no active turn`);
   }
 
   async retryConnection(sessionId: string): Promise<RetryConnectionResult> {

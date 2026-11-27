@@ -51,6 +51,19 @@ export interface ThreadSubagentWait {
   since: number;
 }
 
+/** A message the user sent while the session was busy that the harness has not received yet. */
+export interface QueuedMessage {
+  id: string;
+  text: string;
+  attachments: string[];
+  skills?: string[];
+  createdAt: number;
+  /** sending: delivered without user action. held: waits for "Send now" or "Remove". */
+  state: "sending" | "held";
+  /** false once it sits inside a harness that cannot take it back. */
+  removable: boolean;
+}
+
 /** Set while cw-code waits for a plan limit to reset before continuing the session on its own. */
 export interface ThreadLimitResume {
   /** Absent when the limit names no reset; then nothing continues on its own. */
@@ -89,5 +102,6 @@ export type ThreadTopicData = {
   turnChanges: ThreadTurnChanges | null;
   subagents: SubagentSummary[];
   subagentWait: ThreadSubagentWait | null;
+  queuedMessages: QueuedMessage[];
   limitResume: ThreadLimitResume | null;
 } &{ [key: `item/${string}`]: ThreadItem };

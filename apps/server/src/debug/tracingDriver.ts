@@ -6,6 +6,8 @@ import type {
   DriverActivity,
   DriverKind,
   HistoryMessage,
+  InjectedMessage,
+  MessageCapabilities,
   ModelOption,
   NativeSession,
   PermissionOption,
@@ -152,6 +154,58 @@ export class TracingCliDriver implements CliDriver {
   interrupt(turnId: string): void {
     traceHarnessCall({ harness: this.kind, operation: `${this.kind}.interrupt`, turnId, ok: true });
     this.inner.interrupt(turnId);
+  }
+
+  get injectMessage(): ((turnId: string, message: InjectedMessage) => Promise<void>) | undefined {
+    const inner = this.inner;
+    if (typeof inner.injectMessage !== "function") return undefined;
+    return async (turnId, message) => {
+      const start = Date.now();
+      const operation = `${this.kind}.injectMessage`;
+      const preview = previewText(message.prompt);
+      try {
+        await inner.injectMessage!(turnId, message);
+        traceHarnessCall({
+          harness: this.kind,
+          operation,
+          turnId,
+          cwd: message.cwd,
+          promptPreview: preview.preview,
+          promptLength: preview.length,
+          durationMs: Date.now() - start,
+          ok: true,
+          extra: { messageId: message.id }
+        });
+      } catch (err) {
+        traceHarnessCall({
+          harness: this.kind,
+          operation,
+          turnId,
+          cwd: message.cwd,
+          durationMs: Date.now() - start,
+          ok: false,
+          error: truncateError((err as Error).message),
+          extra: { messageId: message.id }
+        });
+        throw err;
+      }
+    };
+  }
+
+  get retractMessage(): ((turnId: string, messageId: string) => Promise<boolean>) | undefined {
+    const inner = this.inner;
+    if (typeof inner.retractMessage !== "function") return undefined;
+    return async (turnId, messageId) => {
+      const retracted = await inner.retractMessage!(turnId, messageId);
+      traceHarnessCall({ harness: this.kind, operation: `${this.kind}.retractMessage`, turnId, ok: true, extra: { messageId, retracted } });
+      return retracted;
+    };
+  }
+
+  get messageCapabilities(): ((turnId: string) => MessageCapabilities) | undefined {
+    const inner = this.inner;
+    if (typeof inner.messageCapabilities !== "function") return undefined;
+    return (turnId) => inner.messageCapabilities!(turnId);
   }
 
   get retryConnection(): ((request: RetryConnectionRequest) => Promise<RetryConnectionResult>) | undefined {

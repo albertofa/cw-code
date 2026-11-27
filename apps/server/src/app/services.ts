@@ -48,7 +48,9 @@ import { SourceControlService } from "../sourceControl/SourceControlService.js";
 import { SubagentsModel } from "../threads/SubagentsModel.js";
 import { ThreadService } from "../threads/ThreadService.js";
 import { TurnChangesModel } from "../threads/TurnChangesModel.js";
+import { SessionBusyError } from "../sessions/SessionBusyError.js";
 import { TurnService } from "../threads/TurnService.js";
+import { MessageQueue } from "../threads/MessageQueue.js";
 import type { TopicHub } from "../topics/TopicHub.js";
 import { AccountUsageService } from "../usage/AccountUsageService.js";
 import { UsageTopic } from "../usage/UsageTopic.js";
@@ -117,6 +119,15 @@ export interface ServiceHooks {
 }
 
 const PR_STATE_REUSE_MS = 60_000;
+
+function wireMessageQueue({ turns, threads, sessions }: Services): void {
+  threads.registerExtras((sessionId) => turns.queueExtras(sessionId));
+  threads.onTurnSettled((sessionId, _turnId, event) => turns.turnSettled(sessionId, event));
+  sessions.onSubagentWaitChanged((sessionId) => {
+    if (sessions.subagentWaitSince(sessionId) !== null) return;
+    queueMicrotask(() => turns.sendPending(sessionId));
+  });
+}
 
 function wireAutoFollowUp({ autoFollowUp, prStore, threads, turns, sessions }: Services): void {
   threads.registerExtras((sessionId) => ({ babysit: autoFollowUp.babysit(sessionId) }));
@@ -229,6 +240,7 @@ function wireServiceEvents(
     runWatcher,
     githubViews,
     threads,
+    turns,
     autoFollowUp,
     sidebar,
     sessionWatch,
@@ -240,11 +252,15 @@ function wireServiceEvents(
 ): void {
   sessions.setEmitter((sessionId, event) => {
     if (event.type === "task.updated") assessmentChanged();
+    if (event.type === "turn.started") turns.noteTurnStarted(sessionId, event.turnId);
+    if (event.type === "user.message") turns.messageEvent(sessionId, event);
+    if (event.type === "tool.call" || event.type === "tool.result") turns.toolEvent(sessionId, event);
     try {
       threads.onDriverEvent(sessionId, event);
     } catch (error) {
       console.warn(`[threads] ${event.type} for session ${sessionId} failed: ${error instanceof Error ? error.message : String(error)}`);
     }
+    if (event.type === "turn.interrupted") turns.messageEvent(sessionId, event);
     if (event.type === "turn.interrupted") autoFollowUp.turnInterrupted(sessionId, event.reason, event.turnId);
     sourceControl.onThreadEvent(sessionId, event);
   });
@@ -262,6 +278,7 @@ function wireServiceEvents(
     prStore.onSessionsChanged();
     if (session.status === "archived" || session.status === "resolved") {
       revokeAgentToken(session.id);
+      turns.parkQueue(session.id);
       sessionWatch.forget(session.id);
       sessions.forgetTurnPermissionMode(session.id);
       gitTopic.forgetKeptHead(session.id);
@@ -426,12 +443,23 @@ export function createServices(stores: { sessionStore: SessionStore; settingsSto
     liveTasks: (sessionId) => sessions.liveTasks(sessionId),
     pendingRequests: (sessionId) => sessions.listPendingRequests(sessionId)
   });
-  const turns = new TurnService({ sessions, threads, git: gitTopic });
+  const messageQueue = new MessageQueue({ store: stores.sessionStore, refresh: (sessionId) => threads.refreshExtras(sessionId) });
+  const turns = new TurnService({ sessions, threads, git: gitTopic, queue: messageQueue });
   sessions.setTurnStopper((sessionId) => turns.stop(sessionId));
   const subagentDelivery = new SubagentDelivery({
     sessions: () => sessions.listAllSessions(),
     runtime: (sessionId) => threads.runtime(sessionId),
-    startTurn: (sessionId, prompt) => turns.start(sessionId, prompt, { auto: true, origin: "subagent-wake" }),
+    startTurn: async (sessionId, prompt) => {
+      const pending = turns.sendPending(sessionId, { ignoreWait: true });
+      if (pending) {
+        const sent = await pending.then(
+          () => true,
+          () => false
+        );
+        if (sent) throw new SessionBusyError("queued messages sent first");
+      }
+      return turns.start(sessionId, prompt, { auto: true, origin: "subagent-wake" });
+    },
     markDelivered: (childId, turnId) => sessions.markSubagentDelivered(childId, turnId),
     postNotice: (sessionId, notice) => sessions.emitNotice(sessionId, notice.noticeId, notice.text, notice.severity),
     shutdownReserved: () => sessions.isShutdownReserved(),
@@ -652,6 +680,7 @@ export function createServices(stores: { sessionStore: SessionStore; settingsSto
     })
   };
   wireServiceEvents(services, hooks);
+  wireMessageQueue(services);
   wireAutoFollowUp(services);
   wireSessionWatch(services);
   wireSubagentDelivery(services);
