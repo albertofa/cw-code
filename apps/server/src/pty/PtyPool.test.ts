@@ -274,6 +274,24 @@ describe("PtyPool close", () => {
     expect(spawned.map((pty) => pty.kills)).toEqual([1]);
     expect(pool.list()).toEqual([]);
   });
+
+  it("never spawns a terminal closed while its open was still preparing", async () => {
+    const { pool, spawned } = makePool();
+    const ticket = pool.openTicket("sess_a", "shell");
+    pool.close("sess_a", "shell");
+    await expect(pool.open("sess_a", ".", "shell", "", undefined, noData, undefined, ticket)).rejects.toThrow("closed while it was opening");
+    expect(spawned).toHaveLength(0);
+    expect(pool.list()).toEqual([]);
+  });
+
+  it("opens again normally after a close", async () => {
+    const { pool, spawned } = makePool();
+    pool.close("sess_a", "shell");
+    const ticket = pool.openTicket("sess_a", "shell");
+    await pool.open("sess_a", ".", "shell", "", undefined, noData, undefined, ticket);
+    expect(spawned).toHaveLength(1);
+    expect(pool.list()).toEqual([{ ptyId: "sess_a:shell", sessionId: "sess_a", kind: "shell" }]);
+  });
 });
 
 describe("PtyPool reattach", () => {

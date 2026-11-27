@@ -19,6 +19,7 @@ import { WorkflowRunModal } from "./components/WorkflowRunModal.js";
 import { ShutdownDialog } from "./components/ShutdownDialog.js";
 import { FolderBrowserHost } from "./components/FolderBrowserDialog.js";
 import { GlobalConfirmHost } from "./components/GlobalConfirm.js";
+import { startPtyLivenessTracking } from "./components/ptyLiveness.js";
 import { handleQuitRequest, handleShutdownExpired } from "./stores/shutdownFlow.js";
 import { RightPanelBody } from "./components/RightPanelBody.js";
 import { ToolRail } from "./components/ToolRail.js";
@@ -126,6 +127,7 @@ export function App() {
     const offUpdates = useAppStore.getState().subscribeUpdates();
     const offShutdown = window.cw.shutdown.onRequested((event) => void handleQuitRequest(event.scope));
     const offShutdownExpired = window.cw.shutdown.onExpired(() => handleShutdownExpired());
+    const offPtyLiveness = startPtyLivenessTracking();
     const onKey = (e: KeyboardEvent) => {
       if (!(e.ctrlKey || e.metaKey) || e.altKey) return;
       const target = e.target as HTMLElement | null;
@@ -163,6 +165,7 @@ export function App() {
       offUpdates();
       offShutdown();
       offShutdownExpired();
+      offPtyLiveness();
       window.removeEventListener("keydown", onKey);
     };
   }, []);

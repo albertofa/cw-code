@@ -1,15 +1,44 @@
 import type { DockableTabId } from "@cw-code/contracts";
-import { usePanelStore } from "../stores/panelStore.js";
+import { selectSessionPanel, usePanelStore } from "../stores/panelStore.js";
 import { useNotifs } from "./Notifications.js";
 import { confirmGlobally } from "./GlobalConfirm.js";
 import { isPtyLive, markPtyLive } from "./ptyLiveness.js";
 import { harnessLabel } from "./toolTabs.js";
 
 type PtyTabKind = "claude" | "opencode" | "codex" | "shell";
-const PTY_TABS: ReadonlySet<DockableTabId> = new Set<PtyTabKind>(["claude", "opencode", "codex", "shell"]);
+type HarnessTabKind = Exclude<PtyTabKind, "shell">;
+const PTY_TABS: readonly PtyTabKind[] = ["claude", "opencode", "codex", "shell"];
 
-function isPtyTab(tab: DockableTabId): tab is PtyTabKind {
-  return PTY_TABS.has(tab);
+export function isTerminalTab(tab: DockableTabId): tab is PtyTabKind {
+  return (PTY_TABS as readonly DockableTabId[]).includes(tab);
+}
+/** Interactive CLIs running in these tabs: closing them ends their whole session, so ask first. */
+function liveHarnessTabs(sessionId: string, tabs: readonly PtyTabKind[]): HarnessTabKind[] {
+  return tabs.filter((tab): tab is HarnessTabKind => tab !== "shell" && isPtyLive(sessionId, tab));
+}
+
+function confirmEndingHarnesses(harnesses: readonly HarnessTabKind[]): Promise<boolean> {
+  if (harnesses.length === 0) return Promise.resolve(true);
+  const labels = harnesses.map(harnessLabel);
+  const single = labels.length === 1;
+  const list = single ? labels[0] : `${labels.slice(0, -1).join(", ")} and ${labels[labels.length - 1]}`;
+  return confirmGlobally({
+    title: single ? `Close the ${list} terminal?` : `Close the ${list} terminals?`,
+    message: single ? `This ends the interactive ${list} session running in it.` : `This ends the interactive ${list} sessions running in them.`,
+    confirmLabel: single ? "Close terminal" : "Close terminals",
+    danger: true
+  });
+}
+
+function endTerminal(sessionId: string, tab: PtyTabKind): void {
+  markPtyLive(sessionId, tab, false);
+  window.cw.closePty(sessionId, tab).catch((err: unknown) => {
+    useNotifs.getState().push({
+      kind: "error",
+      title: "Could not close the terminal",
+      message: err instanceof Error ? err.message : String(err)
+    });
+  });
 }
 
 /**
@@ -19,24 +48,20 @@ function isPtyTab(tab: DockableTabId): tab is PtyTabKind {
  */
 export async function closeDockTab(sessionId: string | undefined, tab: DockableTabId): Promise<void> {
   if (!sessionId) return;
-  if (isPtyTab(tab) && tab !== "shell" && isPtyLive(sessionId, tab)) {
-    const label = harnessLabel(tab);
-    const ok = await confirmGlobally({
-      title: `Close the ${label} terminal?`,
-      message: `This ends the interactive ${label} session running in it.`,
-      confirmLabel: "Close terminal",
-      danger: true
-    });
-    if (!ok) return;
-  }
+  if (isTerminalTab(tab) && !(await confirmEndingHarnesses(liveHarnessTabs(sessionId, [tab])))) return;
   usePanelStore.getState().moveTab(sessionId, tab, "closed");
-  if (!isPtyTab(tab)) return;
-  markPtyLive(sessionId, tab, false);
-  window.cw.closePty(sessionId, tab).catch((err: unknown) => {
-    useNotifs.getState().push({
-      kind: "error",
-      title: "Could not close the terminal",
-      message: err instanceof Error ? err.message : String(err)
-    });
-  });
+  if (isTerminalTab(tab)) endTerminal(sessionId, tab);
+}
+
+/**
+ * Resets a session's dock layout, which closes every tab: terminal tabs end their processes the
+ * same way `closeDockTab` does, with one confirmation for all running interactive CLIs.
+ */
+export async function resetDockLayout(sessionId: string | undefined): Promise<void> {
+  if (!sessionId) return;
+  const { dockByTab } = selectSessionPanel(usePanelStore.getState(), sessionId);
+  const openTerminals = PTY_TABS.filter((tab) => dockByTab[tab] !== "closed");
+  if (!(await confirmEndingHarnesses(liveHarnessTabs(sessionId, openTerminals)))) return;
+  usePanelStore.getState().resetLayout(sessionId);
+  for (const tab of openTerminals) endTerminal(sessionId, tab);
 }

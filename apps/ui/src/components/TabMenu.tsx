@@ -3,7 +3,7 @@ import type { DockableTabId, PanelId } from "@cw-code/contracts";
 import { AppWindow, PanelBottom, PanelRight, Pin, RotateCcw, X, type LucideIcon } from "lucide-react";
 import { selectSessionPanel, usePanelStore } from "../stores/panelStore.js";
 import { useMenuPosition } from "./menuPosition.js";
-import { closeDockTab } from "./closeDockTab.js";
+import { closeDockTab, isTerminalTab, resetDockLayout } from "./closeDockTab.js";
 
 const MENU_WIDTH = 240;
 
@@ -30,7 +30,6 @@ export function TabMenu({
   const setRightVisible = usePanelStore((s) => s.setRightVisible);
   const dockByTab = usePanelStore((s) => selectSessionPanel(s, sessionId).dockByTab);
   const setAutoLocation = usePanelStore((s) => s.setAutoLocation);
-  const resetLayout = usePanelStore((s) => s.resetLayout);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -75,7 +74,11 @@ export function TabMenu({
       <button
         className="ctx-item"
         role="menuitem"
-        title="Close this tab — reopen it any time from the right rail"
+        title={
+          isTerminalTab(tab)
+            ? "Close this tab and end its terminal — reopening it from the right rail starts a new one"
+            : "Close this tab — reopen it any time from the right rail"
+        }
         onClick={() => {
           void closeDockTab(sessionId, tab);
           onClose();
@@ -99,9 +102,9 @@ export function TabMenu({
       <button
         className="ctx-item"
         role="menuitem"
-        title="Close every tab and restore defaults"
+        title="Close every tab, ending its terminals, and restore defaults"
         onClick={() => {
-          resetLayout(sessionId);
+          void resetDockLayout(sessionId);
           onClose();
         }}
       >

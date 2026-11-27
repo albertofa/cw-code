@@ -126,6 +126,8 @@ export class PtyPool {
   private ptys = new Map<string, PtyEntry>();
   private openings = new Map<string, Promise<PtyEntry>>();
   private pendingKills = new Set<string>();
+  /** Bumped by `close`, so an open that started preparing before the close never spawns. */
+  private closeCounts = new Map<string, number>();
   private disposed = false;
   private generation = 0;
   private shutdownReserved = false;
@@ -181,9 +183,11 @@ export class PtyPool {
     resumeCursor: string,
     env: Record<string, string> | undefined,
     onData: (ptyId: string, data: string) => void,
-    launch: () => Promise<TerminalLaunch | null> = async () => null
+    launch: () => Promise<TerminalLaunch | null> = async () => null,
+    ticket?: number
   ): Promise<PtyAttachResult> {
     const ptyId = `${sessionId}:${kind}`;
+    if (ticket !== undefined && ticket !== this.closeCount(ptyId)) throw new Error("Terminal was closed while it was opening");
     const existing = this.disposed ? undefined : this.ptys.get(ptyId);
     if (existing) return this.attach(existing, ptyId);
     this.assertCanOpen();
@@ -380,9 +384,22 @@ export class PtyPool {
     this.applySize(entry, entry.sizes.resize(clientId, { cols, rows }));
   }
 
-  /** Closes a session's terminal for every client, including one that is still spawning. */
+  /**
+   * Taken synchronously when a `pty.open` call starts, before it awaits anything; passing it to
+   * `open` makes a close that lands while the caller is still preparing win over the spawn.
+   */
+  openTicket(sessionId: string, kind: PtyKind): number {
+    return this.closeCount(`${sessionId}:${kind}`);
+  }
+
+  private closeCount(ptyId: string): number {
+    return this.closeCounts.get(ptyId) ?? 0;
+  }
+
+  /** Closes a session's terminal for every client, including one that is still preparing or spawning. */
   close(sessionId: string, kind: PtyKind): void {
     const ptyId = `${sessionId}:${kind}`;
+    this.closeCounts.set(ptyId, this.closeCount(ptyId) + 1);
     if (this.openings.has(ptyId)) this.pendingKills.add(ptyId);
     this.kill(ptyId);
   }

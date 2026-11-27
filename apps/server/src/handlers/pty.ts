@@ -16,6 +16,9 @@ export function registerPtyHandlers(router: Router, app: ServerApp): void {
   const attached = (ctx: CallContext, ptyId: string): boolean => app.topics.isSubscribed(ctx.clientId, ptyTopic(ptyId));
   handle<{ sessionId: string; kind: PtyKind }>(router, "pty.open", (args, ctx) => {
     const { sessions, ptys } = services();
+    // Taken before the first await, so a pty.close that arrives while the worktree and env are
+    // still being prepared stops this open instead of leaving a terminal nobody attaches to.
+    const ticket = ptys.openTicket(args.sessionId, args.kind);
     return sessions
       .ensureWorktree(args.sessionId)
       .then(async (root) =>
@@ -26,7 +29,8 @@ export function registerPtyHandlers(router: Router, app: ServerApp): void {
           sessions.resumeCursorFor(args.sessionId),
           await sessions.terminalEnv(args.sessionId, root, args.kind),
           (ptyId, data) => app.emit("pty.data", { ptyId, data }),
-          () => sessions.terminalLaunch(args.sessionId, args.kind, root)
+          () => sessions.terminalLaunch(args.sessionId, args.kind, root),
+          ticket
         )
       )
       .then((result) => {
