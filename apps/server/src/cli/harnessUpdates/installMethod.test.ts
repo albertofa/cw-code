@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import type { DriverKind } from "@cw-code/contracts";
-import { resolveInstallPlan } from "./installMethod.js";
+import { pacmanPinnedDependents, pacmanRequiredBy, resolveInstallPlan } from "./installMethod.js";
 import type { InstallPlanInput } from "./installMethod.js";
 
 const PACKAGES: Record<DriverKind, string> = {
@@ -289,6 +289,16 @@ describe("resolveInstallPlan pacman", () => {
     expect(plan.method).toBe("pacman");
   });
 
+  it("upgrades packages that pin its version in the same transaction", () => {
+    const plan = resolveInstallPlan(
+      posix("opencode", "/usr/bin/opencode", {
+        pacman: { packageName: "opencode", inRepo: true, pkexec: "/usr/bin/pkexec", companions: ["opencode-desktop"] }
+      })
+    );
+    expect(plan.command?.args).toEqual(["pacman", "-Sy", "--needed", "--noconfirm", "opencode", "opencode-desktop"]);
+    expect(plan.display).toBe("/usr/bin/pkexec pacman -Sy --needed --noconfirm opencode opencode-desktop");
+  });
+
   it("is manual without pkexec", () => {
     const plan = resolveInstallPlan(posix("opencode", "/usr/bin/opencode", { pacman: { packageName: "opencode", inRepo: true, pkexec: null } }));
     expect(plan).toEqual({ method: "pacman", command: null, display: "sudo pacman -Syu --needed opencode", lockKey: null });
@@ -299,5 +309,32 @@ describe("resolveInstallPlan pacman", () => {
       posix("opencode", "/usr/bin/opencode", { pacman: { packageName: "opencode-bin", inRepo: false, pkexec: "/usr/bin/pkexec" } })
     );
     expect(plan).toEqual({ method: "pacman", command: null, display: null, lockKey: null });
+  });
+});
+
+describe("pacman query parsing", () => {
+  const info = [
+    "Name            : opencode-desktop",
+    "Version         : 2.3.2-1.1",
+    "Depends On      : electron44  gcc-libs  glibc  opencode=2.3.2  sh",
+    "Required By     : None",
+    "",
+    "Name            : opencode-extras",
+    "Depends On      : opencode>=2.0.0  opencode-desktop=2.3.2",
+    "",
+    "Name            : old-plugin",
+    "Depends On      : opencode<3",
+    ""
+  ].join("\n");
+
+  it("reads the packages that require one", () => {
+    expect(pacmanRequiredBy("Name            : opencode\nRequired By     : opencode-desktop  old-plugin\n")).toEqual(["opencode-desktop", "old-plugin"]);
+    expect(pacmanRequiredBy("Name            : opencode\nRequired By     : None\n")).toEqual([]);
+    expect(pacmanRequiredBy("")).toEqual([]);
+  });
+
+  it("keeps only dependents with an upper bound on the package", () => {
+    expect(pacmanPinnedDependents(info, "opencode")).toEqual(["opencode-desktop", "old-plugin"]);
+    expect(pacmanPinnedDependents(info, "opencode-desktop")).toEqual(["opencode-extras"]);
   });
 });

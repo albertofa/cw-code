@@ -18,8 +18,10 @@ export interface InstallPlanInput {
   /**
    * Set when pacman owns the binary: the owning package, whether a sync repository provides it (an AUR or
    * locally built package is not) and the resolved `pkexec`, or null when there is none to elevate with.
+   * `companions` are installed repository packages that pin its version (`opencode-desktop` depends on
+   * `opencode=<version>`), so they must be upgraded in the same transaction.
    */
-  pacman?: { packageName: string; inRepo: boolean; pkexec: string | null } | null;
+  pacman?: { packageName: string; inRepo: boolean; pkexec: string | null; companions?: string[] } | null;
 }
 
 export interface InstallPlan {
@@ -84,10 +86,10 @@ export function resolveInstallPlan(input: InstallPlanInput): InstallPlan {
   }
 
   if (input.pacman) {
-    const { packageName: systemPackage, inRepo, pkexec } = input.pacman;
+    const { packageName: systemPackage, inRepo, pkexec, companions = [] } = input.pacman;
     if (!inRepo) return manual("pacman", null);
     if (!pkexec) return manual("pacman", `sudo pacman -Syu --needed ${systemPackage}`);
-    const plan = runnable("pacman", pkexec, ["pacman", "-Sy", "--needed", "--noconfirm", systemPackage], "pacman");
+    const plan = runnable("pacman", pkexec, ["pacman", "-Sy", "--needed", "--noconfirm", systemPackage, ...companions], "pacman");
     return { ...plan, command: { file: pkexec, args: plan.command?.args ?? [], timeoutMs: PACMAN_UPDATE_TIMEOUT_MS } };
   }
 
@@ -189,6 +191,40 @@ export async function planFor(binary: DriverKind, binaryPath: string, packageNam
 
 const PACMAN_QUERY_TIMEOUT_MS = 3000;
 const PACMAN_NAME_RE = /^[a-z0-9@._+-]+$/i;
+const PACMAN_COMPANION_LIMIT = 16;
+
+function pacmanField(block: string, field: string): string[] {
+  const line = block.split("\n").find((entry) => entry.startsWith(field) && /^\s*:/.test(entry.slice(field.length)));
+  if (!line) return [];
+  return line
+    .slice(line.indexOf(":") + 1)
+    .trim()
+    .split(/\s+/)
+    .filter((value) => value && value !== "None");
+}
+
+/** The packages `pacman -Qi` (C locale) lists as requiring the queried one. */
+export function pacmanRequiredBy(info: string): string[] {
+  return pacmanField(info, "Required By").filter((name) => PACMAN_NAME_RE.test(name));
+}
+
+/**
+ * From `pacman -Qi` output (C locale) of several packages, those whose dependency on `packageName` has an
+ * upper bound (`=`, `<`, `<=`): upgrading `packageName` alone would break them.
+ */
+export function pacmanPinnedDependents(info: string, packageName: string): string[] {
+  const pinned: string[] = [];
+  for (const block of info.split(/\n\s*\n/)) {
+    const name = pacmanField(block, "Name")[0];
+    if (!name || !PACMAN_NAME_RE.test(name)) continue;
+    const pins = pacmanField(block, "Depends On").some((dep) => {
+      const rest = dep.startsWith(packageName) ? dep.slice(packageName.length) : "";
+      return rest.startsWith("=") || rest.startsWith("<");
+    });
+    if (pins) pinned.push(name);
+  }
+  return pinned;
+}
 
 async function pacmanOwner(realPath: string): Promise<InstallPlanInput["pacman"]> {
   if (process.platform !== "linux") return null;
@@ -199,12 +235,30 @@ async function pacmanOwner(realPath: string): Promise<InstallPlanInput["pacman"]
   if (!pacman) return null;
   const query = (args: string[]): Promise<string | null> =>
     new Promise((resolve) => {
-      execFile(pacman, args, { timeout: PACMAN_QUERY_TIMEOUT_MS }, (error, stdout) => resolve(error ? null : stdout));
+      execFile(pacman, args, { timeout: PACMAN_QUERY_TIMEOUT_MS, env: { ...process.env, LC_ALL: "C" } }, (error, stdout) =>
+        resolve(error ? null : stdout)
+      );
     });
   const packageName = (await query(["-Qqo", realPath]))?.trim().split(/\s+/)[0] ?? "";
   if (!PACMAN_NAME_RE.test(packageName)) return null;
   const inRepo = (await query(["-Si", packageName])) !== null;
-  return { packageName, inRepo, pkexec: resolveBinary("pkexec", env) };
+  const companions: string[] = [];
+  if (inRepo) {
+    const seen = new Set([packageName]);
+    const pending = [packageName];
+    while (pending.length > 0 && companions.length < PACMAN_COMPANION_LIMIT) {
+      const current = pending.shift() ?? "";
+      const dependents = pacmanRequiredBy((await query(["-Qi", current])) ?? "").filter((name) => !seen.has(name));
+      if (dependents.length === 0) continue;
+      for (const name of pacmanPinnedDependents((await query(["-Qi", ...dependents])) ?? "", current)) {
+        seen.add(name);
+        if ((await query(["-Si", name])) === null) continue;
+        companions.push(name);
+        pending.push(name);
+      }
+    }
+  }
+  return { packageName, inRepo, pkexec: resolveBinary("pkexec", env), companions };
 }
 
 function installDir(plan: InstallPlan, input: InstallPlanInput): string | null {
