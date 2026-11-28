@@ -25,6 +25,10 @@ export interface HarnessAvailability {
 export interface ComposerDraft {
   text: string;
   attachments: string[];
+  /** Excerpts picked with "Reply" that go out as blockquotes with the next send; omitted when none. */
+  quotes?: string[];
+  /** Large pastes kept as cards above the composer; sent after the typed text. Omitted when none. */
+  pastes?: string[];
   updatedAt: number;
 }
 
