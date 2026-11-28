@@ -252,6 +252,62 @@ describe("PtyPool shutdown support", () => {
   });
 });
 
+describe("PtyPool close", () => {
+  it("kills only the closed session terminal and drops it from the list", async () => {
+    const { pool, spawned } = makePool();
+    await pool.open("sess_a", ".", "shell", "", undefined, noData);
+    await pool.open("sess_a", ".", "claude", "", undefined, noData);
+    pool.close("sess_a", "shell");
+    expect(spawned.map((pty) => pty.kills)).toEqual([1, 0]);
+    expect(pool.list()).toEqual([{ ptyId: "sess_a:claude", sessionId: "sess_a", kind: "claude" }]);
+    pool.close("sess_b", "shell");
+    expect(spawned.map((pty) => pty.kills)).toEqual([1, 0]);
+  });
+
+  it("kills a terminal closed while it was still spawning", async () => {
+    const { pool, spawned, holdLoads, release } = makePool();
+    holdLoads();
+    const pending = pool.open("sess_a", ".", "shell", "", undefined, noData);
+    pool.close("sess_a", "shell");
+    release();
+    await pending;
+    expect(spawned.map((pty) => pty.kills)).toEqual([1]);
+    expect(pool.list()).toEqual([]);
+  });
+
+  it("never spawns a terminal closed while its open was still preparing", async () => {
+    const { pool, spawned } = makePool();
+    const ticket = pool.openTicket("sess_a", "shell");
+    pool.close("sess_a", "shell");
+    await expect(pool.open("sess_a", ".", "shell", "", undefined, noData, undefined, ticket)).rejects.toThrow("closed while it was opening");
+    expect(spawned).toHaveLength(0);
+    expect(pool.list()).toEqual([]);
+  });
+
+  it("reports a terminal open while it spawns or runs, for every caller", async () => {
+    const { pool, holdLoads, release } = makePool();
+    expect(pool.isOpen("sess_a", "claude")).toBe(false);
+    holdLoads();
+    const pending = pool.open("sess_a", ".", "claude", "", undefined, noData);
+    expect(pool.isOpen("sess_a", "claude")).toBe(true);
+    release();
+    await pending;
+    expect(pool.isOpen("sess_a", "claude")).toBe(true);
+    expect(pool.isOpen("sess_a", "shell")).toBe(false);
+    pool.close("sess_a", "claude");
+    expect(pool.isOpen("sess_a", "claude")).toBe(false);
+  });
+
+  it("opens again normally after a close", async () => {
+    const { pool, spawned } = makePool();
+    pool.close("sess_a", "shell");
+    const ticket = pool.openTicket("sess_a", "shell");
+    await pool.open("sess_a", ".", "shell", "", undefined, noData, undefined, ticket);
+    expect(spawned).toHaveLength(1);
+    expect(pool.list()).toEqual([{ ptyId: "sess_a:shell", sessionId: "sess_a", kind: "shell" }]);
+  });
+});
+
 describe("PtyPool reattach", () => {
   it("reattaches only the terminal with the same token and replays its output", async () => {
     const { pool, spawned } = makePool();

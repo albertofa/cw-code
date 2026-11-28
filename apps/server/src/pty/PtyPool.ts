@@ -31,6 +31,19 @@ export interface PtyInstance {
   kill(): void;
 }
 
+/**
+ * node-pty's Windows (ConPTY) kill forks `conpty_console_list_agent` without `windowsHide` to find
+ * the processes attached to the console, which flashes a console window from a server that has no
+ * console of its own. `killPty` already kills the whole tree with a hidden `taskkill /T`, so the list
+ * is not needed; replace it with an empty one. Unknown node-pty shapes keep the default behavior.
+ */
+function skipConsoleListAgent(proc: PtyInstance): void {
+  const agent = (proc as { _agent?: { _getConsoleProcessList?: unknown } })._agent;
+  if (agent && typeof agent._getConsoleProcessList === "function") {
+    agent._getConsoleProcessList = () => Promise.resolve([]);
+  }
+}
+
 export interface PtyModule {
   spawn(file: string, args: string[] | string, opts: { name: string; cols: number; rows: number; cwd: string; env?: NodeJS.ProcessEnv }): PtyInstance;
 }
@@ -113,6 +126,8 @@ export class PtyPool {
   private ptys = new Map<string, PtyEntry>();
   private openings = new Map<string, Promise<PtyEntry>>();
   private pendingKills = new Set<string>();
+  /** Bumped by `close`, so an open that started preparing before the close never spawns. */
+  private closeCounts = new Map<string, number>();
   private disposed = false;
   private generation = 0;
   private shutdownReserved = false;
@@ -168,9 +183,11 @@ export class PtyPool {
     resumeCursor: string,
     env: Record<string, string> | undefined,
     onData: (ptyId: string, data: string) => void,
-    launch: () => Promise<TerminalLaunch | null> = async () => null
+    launch: () => Promise<TerminalLaunch | null> = async () => null,
+    ticket?: number
   ): Promise<PtyAttachResult> {
     const ptyId = `${sessionId}:${kind}`;
+    if (ticket !== undefined && ticket !== this.closeCount(ptyId)) throw new Error("Terminal was closed while it was opening");
     const existing = this.disposed ? undefined : this.ptys.get(ptyId);
     if (existing) return this.attach(existing, ptyId);
     this.assertCanOpen();
@@ -354,6 +371,12 @@ export class PtyPool {
     return this.ptys.has(ptyId);
   }
 
+  /** Whether a session's terminal is running or spawning, whichever client opened it. */
+  isOpen(sessionId: string, kind: PtyKind): boolean {
+    const ptyId = `${sessionId}:${kind}`;
+    return this.ptys.has(ptyId) || this.openings.has(ptyId);
+  }
+
   write(ptyId: string, clientId: string, data: string): void {
     const entry = this.ptys.get(ptyId);
     if (!entry) return;
@@ -365,6 +388,26 @@ export class PtyPool {
     const entry = this.ptys.get(ptyId);
     if (!entry || !isDimension(cols) || !isDimension(rows)) return;
     this.applySize(entry, entry.sizes.resize(clientId, { cols, rows }));
+  }
+
+  /**
+   * Taken synchronously when a `pty.open` call starts, before it awaits anything; passing it to
+   * `open` makes a close that lands while the caller is still preparing win over the spawn.
+   */
+  openTicket(sessionId: string, kind: PtyKind): number {
+    return this.closeCount(`${sessionId}:${kind}`);
+  }
+
+  private closeCount(ptyId: string): number {
+    return this.closeCounts.get(ptyId) ?? 0;
+  }
+
+  /** Closes a session's terminal for every client, including one that is still preparing or spawning. */
+  close(sessionId: string, kind: PtyKind): void {
+    const ptyId = `${sessionId}:${kind}`;
+    this.closeCounts.set(ptyId, this.closeCount(ptyId) + 1);
+    if (this.openings.has(ptyId)) this.pendingKills.add(ptyId);
+    this.kill(ptyId);
   }
 
   kill(ptyId: string): void {
@@ -383,6 +426,10 @@ export class PtyPool {
   }
 
   private killPty(proc: PtyInstance): void {
+    if (process.platform === "win32") {
+      killProcessTreeByPid(proc.pid);
+      skipConsoleListAgent(proc);
+    }
     try {
       proc.kill();
     } catch {

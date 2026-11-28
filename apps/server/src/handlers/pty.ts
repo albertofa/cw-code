@@ -16,6 +16,9 @@ export function registerPtyHandlers(router: Router, app: ServerApp): void {
   const attached = (ctx: CallContext, ptyId: string): boolean => app.topics.isSubscribed(ctx.clientId, ptyTopic(ptyId));
   handle<{ sessionId: string; kind: PtyKind }>(router, "pty.open", (args, ctx) => {
     const { sessions, ptys } = services();
+    // Taken before the first await, so a pty.close that arrives while the worktree and env are
+    // still being prepared stops this open instead of leaving a terminal nobody attaches to.
+    const ticket = ptys.openTicket(args.sessionId, args.kind);
     return sessions
       .ensureWorktree(args.sessionId)
       .then(async (root) =>
@@ -26,7 +29,8 @@ export function registerPtyHandlers(router: Router, app: ServerApp): void {
           sessions.resumeCursorFor(args.sessionId),
           await sessions.terminalEnv(args.sessionId, root, args.kind),
           (ptyId, data) => app.emit("pty.data", { ptyId, data }),
-          () => sessions.terminalLaunch(args.sessionId, args.kind, root)
+          () => sessions.terminalLaunch(args.sessionId, args.kind, root),
+          ticket
         )
       )
       .then((result) => {
@@ -47,5 +51,13 @@ export function registerPtyHandlers(router: Router, app: ServerApp): void {
     if (attached(ctx, args.ptyId)) services().ptys.resize(args.ptyId, ctx.clientId, args.cols, args.rows);
   });
   handle<{ ptyId: string }>(router, "pty.detach", (args, ctx) => app.topics.unsubscribe(ctx, [ptyTopic(args.ptyId)]));
+  handle(router, "pty.isOpen", (raw) => {
+    const args = parseArgs(raw, "pty.isOpen");
+    return services().ptys.isOpen(parseString(args.sessionId, "sessionId"), parsePtyKind(args.kind));
+  });
+  handle(router, "pty.close", (raw) => {
+    const args = parseArgs(raw, "pty.close");
+    services().ptys.close(parseString(args.sessionId, "sessionId"), parsePtyKind(args.kind));
+  });
   handle<{ ptyId: string }>(router, "pty.kill", (args) => services().ptys.kill(args.ptyId));
 }
